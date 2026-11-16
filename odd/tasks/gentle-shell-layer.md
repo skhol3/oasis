@@ -16,6 +16,7 @@ The agent-agnostic core (`odoo19`, `tools/`, `odoo19-*` skills) stays usable by 
 - S9. Accepted proposal 1: "Agrupar advertencias en el resumen: por ejemplo `warnings: 13 (odoo.tools.translate ×13: no translation language detected…)`. Sale casi gratis y es información útil."
 - S10. Accepted proposal 2: "Sumar los datos de rendimiento: `stats: 193 tests 90.6s 70974 queries`."
 - S11. Accepted proposal 3: "Darle al agente la lista de módulos con el nombre del manifiesto, por ejemplo `oa_mrp_mass_production_order — Daily Mass Production`, o una herramienta `odoo19_find_module`. Evita los `ls` y `grep` para encontrar un módulo."
+- S12. Accepted proposal 6 ("vamos por la 6"): "`odoo19_model_info`: los campos, métodos y herencias de un modelo (por ejemplo `mrp.production`) en pocas líneas, sacados del código de Odoo y de tus addons. Hoy, para entender un modelo, el agente abre archivos grandes del core de Odoo. En el trabajo diario es probablemente el gasto de tokens más grande."
 
 ## Tasks
 
@@ -27,6 +28,8 @@ The agent-agnostic core (`odoo19`, `tools/`, `odoo19-*` skills) stays usable by 
 - [x] T6 [S1 S2] README install docs for Gentle Shell and other agents — worker — commit: e4abeca
 - [x] T7 [S9 S10] Grouped warnings and stats line in the test summary — worker — commit: 7da6b3c
 - [x] T8 [S11] odoo19_find_module tool (manifest names) and prompt hint — worker — commit: a53336d
+- T9 [S12 S2] Core command `odoo19 model-info <model>` (agent-agnostic, static ast scan of Odoo source and project addons) — worker — commit: pending
+- T10 [S12] Pi tool odoo19_model_info wrapping the core command, prompt hint, README — worker — commit: pending
 
 ## Log
 
@@ -41,3 +44,4 @@ The agent-agnostic core (`odoo19`, `tools/`, `odoo19-*` skills) stays usable by 
 - L9. Field test in corpus-cafe: odoo19_test_module returned 354 chars for a 752 KB log (141 tests ok); the agent needed `ls | grep` to map "daily mass production" to oa_mrp_mass_production_order; the summary hid 13 `odoo.tools.translate: no translation language detected` warnings and the `odoo.tests.stats` line (`oa_mrp_mass_production_order: 193 tests 90.62s 70974 queries`).
 - L10. User accepted proposals 1-3 with "si".
 - L11. Field check on the real corpus-cafe run log: `stats: oa_mrp_mass_production_order: 193 tests 90.62s 70974 queries`; `warnings: 13 (odoo.tools.translate ×11 …; odoo.addons.web.controllers.utils ×1 …; odoo.http ×1 …)`. Real addons: "daily mass production" -> `oa_mrp_mass_production_order — OpenAlliance Daily Production Plans` (1/1).
+- L12. User: "vamos por la 6". Decision: model-info lives in the core (new `odoo19` command, adding is not a contract change) so other agents get it too (S2); the Pi layer only wraps it.
