@@ -28,8 +28,8 @@ The agent-agnostic core (`odoo19`, `tools/`, `odoo19-*` skills) stays usable by 
 - [x] T6 [S1 S2] README install docs for Gentle Shell and other agents — worker — commit: e4abeca
 - [x] T7 [S9 S10] Grouped warnings and stats line in the test summary — worker — commit: 7da6b3c
 - [x] T8 [S11] odoo19_find_module tool (manifest names) and prompt hint — worker — commit: a53336d
-- T9 [S12 S2] Core command `odoo19 model-info <model>` (agent-agnostic, static ast scan of Odoo source and project addons) — worker — commit: pending
-- T10 [S12] Pi tool odoo19_model_info wrapping the core command, prompt hint, README — worker — commit: pending
+- [x] T9 [S12 S2] Core command `odoo19 model-info <model>` (agent-agnostic, static ast scan of Odoo source and project addons) — worker — commit: 81727b6
+- [x] T10 [S12] Pi tool odoo19_model_info wrapping the core command, prompt hint, README — worker — commit: 5e97442
 
 ## Log
 
@@ -45,3 +45,4 @@ The agent-agnostic core (`odoo19`, `tools/`, `odoo19-*` skills) stays usable by 
 - L10. User accepted proposals 1-3 with "si".
 - L11. Field check on the real corpus-cafe run log: `stats: oa_mrp_mass_production_order: 193 tests 90.62s 70974 queries`; `warnings: 13 (odoo.tools.translate ×11 …; odoo.addons.web.controllers.utils ×1 …; odoo.http ×1 …)`. Real addons: "daily mass production" -> `oa_mrp_mass_production_order — OpenAlliance Daily Production Plans` (1/1).
 - L12. User: "vamos por la 6". Decision: model-info lives in the core (new `odoo19` command, adding is not a contract change) so other agents get it too (S2); the Pi layer only wraps it.
+- L13. model-info field run on corpus-cafe (read-only): mrp.production default 6127 B in ~0.5 s (vs 172 KB mrp_production.py), --field state 259 B, --module oa_mrp_mass_production_order 541 B. Accepted worker deviations for size: field cap 40, private methods counted unless --module/--methods, bare compute/inverse for conventional names, derived labels omitted.
