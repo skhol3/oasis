@@ -20,8 +20,8 @@ The agent-agnostic core (`odoo19`, `tools/`, `odoo19-*` skills) stays usable by 
 - [x] T2 [S3 S4] Project detection and compact prompt context — inline — commit: 64ce76d
 - [x] T3 [S3 S5] Typed tools with compact output — inline — commit: 64ce76d
 - [x] T4 [S6] Block direct odoo-bin/dropdb/psql in Odoo projects (Risk: item 2, own commit) — inline + verify — commit: d8b278f, 8dfe915
-- T5 [S7] `/odoo19` status command — inline — commit: pending
-- T6 [S1 S2] README install docs for Gentle Shell and other agents — inline — commit: pending
+- [x] T5 [S7] `/odoo19` status command — worker — commit: 0dff540
+- [x] T6 [S1 S2] README install docs for Gentle Shell and other agents — worker — commit: e4abeca
 
 ## Log
 
