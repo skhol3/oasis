@@ -1,10 +1,10 @@
 # oasis — portable Odoo 19 agent bundle
 
-*Odoo Agent Skills & Infrastructure Scripts.* This repository is the source of the reusable global package installed at `~/.agents/skills/odoo19`, **not a seventh skill** and not a project staging directory. Contributor rules are in [AGENTS.md](AGENTS.md).
+*Odoo Agent Skills & Infrastructure Scripts.* This repository is the source of the reusable global package installed at `~/.agents/skills/odoo19`, **not a seventh skill** and not a project staging directory. Contributor rules are in `AGENTS.md` in the source repository (not installed).
 
 ## Install or update
 
-With owner authorization, commit the change, run the test suite, then run [install.sh](install.sh) from this repository:
+With owner authorization, commit the change, run the test suite, then run `install.sh` from this repository:
 
 ```bash
 python3 -B -m unittest discover -s tests
