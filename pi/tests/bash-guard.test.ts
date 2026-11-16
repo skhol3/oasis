@@ -49,3 +49,27 @@ test("blockReason names the program and redirects to the guarded commands", () =
   assert.match(reason, /odoo19 --project \/work\/coffee/);
   assert.match(reason, /odoo19_test_module/);
 });
+
+test("blocks combined shell flags, control keywords, eval and launchers", () => {
+  const blocked: [string, string][] = [
+    ["bash -lc 'psql -l'", "psql"],
+    ["sh -ec 'dropdb x'", "dropdb"],
+    ["if true; then psql; fi", "psql"],
+    ["for d in a; do dropdb $d; done", "dropdb"],
+    ["while true; do odoo-bin -d x; done", "odoo-bin"],
+    ["! psql", "psql"],
+    ["eval psql", "psql"],
+    ["eval 'dropdb x'", "dropdb"],
+    ["watch -n 5 psql -c 'select 1'", "psql"],
+    ["find . -name '*.sql' -exec psql -f {} \\;", "psql"],
+  ];
+  for (const [command, program] of blocked) {
+    assert.equal(blockedProgram(command), program, command);
+  }
+});
+
+test("command -v / -V and which only look up the program", () => {
+  for (const command of ["command -v psql", "command -V odoo-bin", "which dropdb", "type psql"]) {
+    assert.equal(blockedProgram(command), null, command);
+  }
+});

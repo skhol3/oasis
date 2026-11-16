@@ -5,6 +5,10 @@
 const BLOCKED = new Set(["odoo-bin", "dropdb", "psql"]);
 const SHELLS = new Set(["bash", "sh", "zsh", "dash"]);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+// Reserved words that precede a command inside compound commands.
+const KEYWORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!"]);
+// A short-option cluster that includes -c, e.g. -c, -lc, -ec.
+const SHELL_COMMAND_FLAG = /^-[A-Za-z]*c[A-Za-z]*$/;
 // Wrappers that run the next word as the command, with options that take a value.
 const WRAPPERS: Record<string, Set<string>> = {
   sudo: new Set(["-u", "-g", "-h", "-p", "-C", "-D", "-U", "--user", "--group"]),
@@ -16,6 +20,7 @@ const WRAPPERS: Record<string, Set<string>> = {
   nice: new Set(["-n"]),
   timeout: new Set(["-s", "-k", "--signal", "--kill-after"]),
   xargs: new Set(["-I", "-n", "-P", "-d", "-L", "-s", "-E"]),
+  watch: new Set(["-n", "--interval", "-d", "--differences"]),
 };
 const DOCKER_VALUE_OPTIONS = new Set([
   "-f", "--file", "-p", "--project-name", "--project-directory", "--env-file", "--profile",
@@ -106,9 +111,20 @@ function skipOptions(words: string[], index: number, valueOptions: Set<string>):
 function classifySegment(words: string[]): string | null {
   let i = 0;
   for (;;) {
-    while (i < words.length && ASSIGNMENT.test(words[i])) i++;
+    while (i < words.length && (ASSIGNMENT.test(words[i]) || KEYWORDS.has(words[i]))) i++;
     if (i >= words.length) return null;
     const name = basename(words[i]);
+    // `command -v/-V` only looks the program up.
+    if (name === "command" && words.slice(i + 1).some((w) => w === "-v" || w === "-V")) return null;
+    if (name === "eval") return blockedProgram(words.slice(i + 1).join(" "));
+    if ((name === "source" || name === ".") && i + 1 < words.length) {
+      const sourced = basename(words[i + 1]);
+      return BLOCKED.has(sourced) ? sourced : null;
+    }
+    if (name === "find") {
+      const exec = words.findIndex((w, k) => k > i && (w === "-exec" || w === "-execdir" || w === "-ok"));
+      return exec > 0 ? classifySegment(words.slice(exec + 1)) : null;
+    }
     const wrapper = WRAPPERS[name];
     if (wrapper) {
       i = skipOptions(words, i + 1, wrapper);
@@ -129,7 +145,7 @@ function classifySegment(words: string[]): string | null {
       return target < words.length && basename(words[target]) === "odoo-bin" ? "odoo-bin" : null;
     }
     if (SHELLS.has(name)) {
-      const flag = words.indexOf("-c", i + 1);
+      const flag = words.findIndex((w, k) => k > i && SHELL_COMMAND_FLAG.test(w));
       return flag > 0 && flag + 1 < words.length ? blockedProgram(words[flag + 1]) : null;
     }
     return null;
