@@ -1,0 +1,75 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { blockedProgram, blockReason } from "../lib/bash-guard.ts";
+
+test("blocks odoo-bin, dropdb and psql in command position", () => {
+  const blocked: [string, string][] = [
+    ["odoo-bin -c dev/odoo.conf -d cc_dev_x -u coffee", "odoo-bin"],
+    ["/opt/odoo/community/odoo-bin shell -d cc_dev_x", "odoo-bin"],
+    ["python3 community/odoo-bin -d x --test-tags /coffee", "odoo-bin"],
+    [".venv/bin/python -B ../odoo/odoo-bin -i coffee", "odoo-bin"],
+    ["dropdb cc_test_coffee", "dropdb"],
+    ["psql -U odoo -c 'DROP DATABASE x'", "psql"],
+    ["cd dev && PGPASSWORD=x psql -h localhost", "psql"],
+    ["ls; sudo -u postgres dropdb x", "dropdb"],
+    ["echo ok || /usr/bin/psql x", "psql"],
+    ["cat dump.sql | psql cc_dev_x", "psql"],
+    ["env FOO=1 time nohup odoo-bin -d x", "odoo-bin"],
+    ["docker compose -f dev/compose.yaml exec -T db psql -U odoo", "psql"],
+    ["docker exec -it corpus-db dropdb -U odoo x", "dropdb"],
+    ["bash -c 'psql -l'", "psql"],
+    ["echo $(psql -Atc 'select 1')", "psql"],
+  ];
+  for (const [command, program] of blocked) {
+    assert.equal(blockedProgram(command), program, command);
+  }
+});
+
+test("allows guarded tools, reading and searching that only mention the names", () => {
+  const allowed = [
+    "~/.agents/skills/odoo19/odoo19 --project /p test-module coffee",
+    "dev/scripts/test-module coffee",
+    "grep -rn psql tools/",
+    "rg odoo-bin README.md",
+    "cat docs/dropdb-notes.md",
+    "echo 'run psql later'",
+    "git log --grep=dropdb",
+    "python3 -m unittest tests.test_lifecycle",
+    "ls community/odoo-bin",
+    "pg_dump --help",
+  ];
+  for (const command of allowed) {
+    assert.equal(blockedProgram(command), null, command);
+  }
+});
+
+test("blockReason names the program and redirects to the guarded commands", () => {
+  const reason = blockReason("psql", "/work/coffee");
+  assert.match(reason, /psql/);
+  assert.match(reason, /odoo19 --project \/work\/coffee/);
+  assert.match(reason, /odoo19_test_module/);
+});
+
+test("blocks combined shell flags, control keywords, eval and launchers", () => {
+  const blocked: [string, string][] = [
+    ["bash -lc 'psql -l'", "psql"],
+    ["sh -ec 'dropdb x'", "dropdb"],
+    ["if true; then psql; fi", "psql"],
+    ["for d in a; do dropdb $d; done", "dropdb"],
+    ["while true; do odoo-bin -d x; done", "odoo-bin"],
+    ["! psql", "psql"],
+    ["eval psql", "psql"],
+    ["eval 'dropdb x'", "dropdb"],
+    ["watch -n 5 psql -c 'select 1'", "psql"],
+    ["find . -name '*.sql' -exec psql -f {} \\;", "psql"],
+  ];
+  for (const [command, program] of blocked) {
+    assert.equal(blockedProgram(command), program, command);
+  }
+});
+
+test("command -v / -V and which only look up the program", () => {
+  for (const command of ["command -v psql", "command -V odoo-bin", "which dropdb", "type psql"]) {
+    assert.equal(blockedProgram(command), null, command);
+  }
+});

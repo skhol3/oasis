@@ -7,8 +7,8 @@ import sys
 
 COMMANDS = (
     'audit-dependencies', 'bootstrap', 'check-environment', 'create-database',
-    'drop-database', 'init-dev-database', 'install-module', 'lint-module', 'list-databases', 'module-status',
-    'odoo-shell', 'start', 'status', 'stop', 'test-module', 'update-module',
+    'drop-database', 'init-dev-database', 'install-module', 'lint-module', 'list-databases', 'model-info',
+    'module-status', 'odoo-shell', 'start', 'status', 'stop', 'test-module', 'update-module',
     'verify-module',
 )
 

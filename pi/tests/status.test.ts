@@ -1,0 +1,100 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { formatStatus, parseAssignments } from "../lib/status.ts";
+
+test("parseAssignments reads config.py shell-quoted output", () => {
+  const output = [
+    "DEV_PREFIX=cc_dev_",
+    "TEST_DATABASE=''",
+    "ODOO_SOURCE=/opt/odoo/community",
+    "ADDON_ROOTS='/p/addons",
+    "/p/vendor addons'",
+    "NOTE='it'\"'\"'s'",
+  ].join("\n");
+  assert.deepEqual(parseAssignments(output), {
+    DEV_PREFIX: "cc_dev_",
+    TEST_DATABASE: "",
+    ODOO_SOURCE: "/opt/odoo/community",
+    ADDON_ROOTS: "/p/addons\n/p/vendor addons",
+    NOTE: "it's",
+  });
+});
+
+test("formatStatus shows profile, modules, databases and worktree compactly", () => {
+  const text = formatStatus({
+    root: "/work/coffee-07.1",
+    config: { DEV_PREFIX: "cc_dev_", TEST_PREFIX: "cc_test_", TEST_DATABASE: "cc_test_coffee", ODOO_SOURCE: "/opt/odoo" },
+    modules: [
+      { root: "/work/coffee-07.1/addons", names: ["coffee", "coffee_mrp"] },
+      { root: "/work/coffee-07.1/vendor", names: Array.from({ length: 14 }, (_, i) => `m${i}`) },
+    ],
+    git: { branch: "feat/mrp-07.1", linkedWorktree: true, changedFiles: 3 },
+  });
+  assert.equal(
+    text,
+    [
+      "odoo19 project: /work/coffee-07.1",
+      "odoo source: /opt/odoo",
+      "databases: dev cc_dev_<module>, test cc_test_coffee (prefix cc_test_)",
+      "addons: /work/coffee-07.1/addons (2): coffee, coffee_mrp",
+      "addons: /work/coffee-07.1/vendor (14): m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, ... +4",
+      "git: feat/mrp-07.1, linked worktree, 3 changed files",
+    ].join("\n"),
+  );
+});
+
+test("formatStatus reports config errors and non-git projects", () => {
+  const text = formatStatus({ root: "/p", configError: "ERROR: Invalid tooling addon roots.", modules: [], git: null });
+  assert.equal(text, "odoo19 project: /p\nprofile: ERROR: Invalid tooling addon roots.\ngit: not a git checkout");
+});
+
+test("formatStatus without a configured test database names the per-module default", () => {
+  const text = formatStatus({
+    root: "/p",
+    config: { DEV_PREFIX: "x_dev_", TEST_PREFIX: "x_test_", TEST_DATABASE: "", ODOO_SOURCE: "/o" },
+    modules: [],
+    git: { branch: "main", linkedWorktree: false, changedFiles: 0 },
+  });
+  assert.equal(
+    text,
+    "odoo19 project: /p\nodoo source: /o\ndatabases: dev x_dev_<module>, test x_test_<module>\ngit: main, main checkout, clean",
+  );
+});
+
+test("listModules returns sorted directories that hold a manifest", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { listModules } = await import("../lib/status.ts");
+  const root = mkdtempSync(join(tmpdir(), "oasis-addons-"));
+  try {
+    for (const name of ["zeta", "alpha", "not_a_module"]) mkdirSync(join(root, name));
+    writeFileSync(join(root, "zeta", "__manifest__.py"), "{}");
+    writeFileSync(join(root, "alpha", "__manifest__.py"), "{}");
+    writeFileSync(join(root, "README.md"), "");
+    assert.deepEqual(listModules(root), ["alpha", "zeta"]);
+    assert.deepEqual(listModules(join(root, "missing")), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("parseGit resolves rev-parse dirs against the root and counts changed files", async () => {
+  const { parseGit } = await import("../lib/status.ts");
+  assert.deepEqual(parseGit("/p", "main\n.git\n.git\n", " M a.py\n?? b.py\n"), {
+    branch: "main",
+    linkedWorktree: false,
+    changedFiles: 2,
+  });
+  assert.deepEqual(parseGit("/w/07.1", "feat/x\n/p/.git/worktrees/07.1\n/p/.git\n", ""), {
+    branch: "feat/x",
+    linkedWorktree: true,
+    changedFiles: 0,
+  });
+  assert.deepEqual(parseGit("/p/sub", "main\n/p/.git\n../.git\n", ""), {
+    branch: "main",
+    linkedWorktree: false,
+    changedFiles: 0,
+  });
+  assert.equal(parseGit("/p", "main\n", ""), null);
+});

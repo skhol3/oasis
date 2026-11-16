@@ -6,6 +6,8 @@ Built with Gentle Shell (`github.com/Gentleman-Programming/gentle-shell`).
 
 ## Install or update
 
+Releases follow Semantic Versioning and are tagged `vX.Y.Z`; see the [changelog](CHANGELOG.md). Install a released version of the Gentle Shell layer with `gentle-shell install git:github.com/skhol3/oasis@v0.1.0`.
+
 With owner authorization, commit the change, run the test suite, then run `install.sh` from this repository:
 
 ```bash
@@ -14,9 +16,29 @@ python3 -B -m unittest discover -s tests
 ./install.sh --target /absolute/scratch/odoo19 # try it somewhere else first
 ```
 
-The installer copies the committed HEAD only (uncommitted edits are never installed), drops repository-only files (`AGENTS.md`, `.gitignore`, `install.sh`), records the installed commit in `.oasis-install.json`, and moves the previous install to `${XDG_STATE_HOME:-~/.local/state}/oasis/backups/`, outside any skill discovery directory. `OASIS_STATE_DIR` overrides that state directory.
+The installer copies the committed HEAD only (uncommitted edits are never installed), drops repository-only files (`AGENTS.md`, `.gitignore`, `install.sh`), records the installed version (from `package.json`) and commit in `.oasis-install.json`, and moves the previous install to `${XDG_STATE_HOME:-~/.local/state}/oasis/backups/`, outside any skill discovery directory. `OASIS_STATE_DIR` overrides that state directory.
 
-The installed package contains the six `odoo19-*` directories, `tools/`, `project-wrappers/`, `tests/`, `docs/`, the `odoo19` entry point, and this README. Restart the agent session or use `/reload` where supported, then check that exactly six skills are discovered. The skill entrypoints are [backend](odoo19-backend/SKILL.md), [security](odoo19-security/SKILL.md), [views/frontend](odoo19-views-frontend/SKILL.md), [testing](odoo19-testing/SKILL.md), [environment](odoo19-environment/SKILL.md), and [module lifecycle](odoo19-module-lifecycle/SKILL.md). See the [project capability contract](odoo19-environment/references/project-contract.md).
+The installed package contains the six `odoo19-*` directories, `tools/`, `project-wrappers/`, `tests/`, `docs/`, the `odoo19` entry point, the Gentle Shell layer (`package.json` and `pi/`), and this README. Restart the agent session or use `/reload` where supported, then check that exactly six skills are discovered. The skill entrypoints are [backend](odoo19-backend/SKILL.md), [security](odoo19-security/SKILL.md), [views/frontend](odoo19-views-frontend/SKILL.md), [testing](odoo19-testing/SKILL.md), [environment](odoo19-environment/SKILL.md), and [module lifecycle](odoo19-module-lifecycle/SKILL.md). See the [project capability contract](odoo19-environment/references/project-contract.md).
+
+## Gentle Shell layer
+
+A thin Pi package (`package.json`, `pi/`) layered over Gentle Shell. It changes nothing in Gentle Shell or Pi; its goal is fewer tokens in Odoo work by wrapping the guarded `odoo19` core with compact output. Install it from a local checkout or from the repository:
+
+```bash
+gentle-shell install /absolute/path/to/oasis
+gentle-shell install git:github.com/skhol3/oasis
+```
+
+Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shell and Pi already scan. The layer adds:
+
+- Tools `odoo19_test_module`, `odoo19_module_status`, `odoo19_check_environment` and `odoo19_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`. Other output is capped at 60 lines (head and tail kept). Test summaries also carry up to five `stats:` lines (tests, time, queries per module) and one `warnings:` line grouping repeated warnings by logger and message.
+- Tool `odoo19_find_module`: maps a functional name to technical module names by matching the query words against the technical name and the manifest `name`, `summary` and `category` in the profile's addon roots, so the agent needs no `ls` or `grep`.
+- Tool `odoo19_model_info`: wraps `odoo19 model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
+- Prompt context naming the `odoo19` tools when `.odoo19-agent.toml` is found at or above the working directory.
+- A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package.
+- `/odoo19`: a quick status with the profile, addon modules, configured databases and git worktree. It never starts services or queries databases.
+
+Other agents keep using the core (`odoo19` CLI and skills) unchanged.
 
 ## New project: deliberate setup
 
@@ -44,6 +66,16 @@ With authorization for the declared paths and installed plugins, run:
 The project Python must already provide Pylint and pylint-odoo supporting Odoo 19. The command selects the whole module from project-contained tooling addon roots, preserves rcfile rules/plugins, selects Odoo 19/Python 3.12 and disables bytecode/Pylint persistence. It returns raw analyzer stdout/stderr/status; it never installs dependencies, starts services, uses database credentials or automatically fixes warnings. Trusted rcfile hooks/plugins are not sandboxed. Relative rcfile paths resolve from the project root; external paths require explicit access consent. Missing lint config does not affect other commands. `lint-module --help` describes this contract; `verify-module` remains separate.
 
 Run at a relevant baseline and after a Python/manifest work unit, not each edit. See [Pylint guidance and evidence reuse](odoo19-testing/references/pylint-odoo-guidance.md) alongside the independent [SonarQube policy](odoo19-testing/references/evidence-policy.md). Static analysis never replaces functional Odoo checks.
+
+
+## Summarize a model without starting Odoo
+
+```bash
+~/.agents/skills/odoo19/odoo19 --project /absolute/project model-info mrp.production
+~/.agents/skills/odoo19/odoo19 --project /absolute/project model-info mrp.production --field state
+```
+
+`model-info <model> [--field <name>] [--module <technical>] [--methods] [--all-fields]` prints a compact summary of one model: where it is defined (with `_inherit` mixins and `_inherits` delegations), the modules that extend it, its fields with type, comodel, label and literal flags, field overrides in extensions and methods per module. It scans the profile's Odoo source (`odoo/addons`, `addons`), optional Enterprise source and `[tooling].addons_paths`, prefilters files by the quoted model name and parses them with `ast`: no Odoo or project code is imported or executed, and no environment, service or database is used. Odoo/Enterprise `test_*` modules and `tests/`, `migrations/`, `upgrades/`, `static/` directories are skipped; mixin fields are not expanded. By default the field list stops at 40 (`--all-fields` lifts it) and methods list public names with a count of private ones; `--module` restricts the details to one module and lists all its methods, `--methods` adds decorators and `super()` calls, `--field` shows one field's definition and overrides with `file:line`. An unknown model exits 1 with `model not found: <model>`; invalid arguments exit 2. `model-info --help` describes the format.
 
 ## Fresh development database with role accounts
 

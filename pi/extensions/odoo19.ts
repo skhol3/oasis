@@ -1,0 +1,231 @@
+// Gentle Shell (Pi) layer for the Odoo 19 bundle. It wraps the agent-agnostic
+// `odoo19` entry point shipped in this repository; it changes nothing in Pi or
+// Gentle Shell and keeps every guard inside the core tools.
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { blockedProgram, blockReason } from "../lib/bash-guard.ts";
+import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
+import { findProjectRoot, projectContext } from "../lib/project.ts";
+import { formatStatus, listModules, parseAssignments, parseGit, type StatusInput } from "../lib/status.ts";
+import { formatPlain, formatTestRun, testModuleArgs } from "../lib/tools.ts";
+
+const ODOO19 = fileURLToPath(new URL("../../odoo19", import.meta.url));
+const CONFIG_PY = fileURLToPath(new URL("../../tools/config.py", import.meta.url));
+const STATUS_TIMEOUT_MS = 15000;
+const MAX_LINES = 60;
+// model-info output is already compact; a larger cap keeps --methods/--all-fields useful.
+const MODEL_INFO_MAX_LINES = 200;
+const TEST_TIMEOUT_MS = 60 * 60 * 1000;
+const TOOL_TIMEOUT_MS = 10 * 60 * 1000;
+
+type Result = { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
+
+function text(body: string, details: Record<string, unknown> = {}): Result {
+  return { content: [{ type: "text", text: body }], details };
+}
+
+function requireRoot(cwd: string): string {
+  const root = findProjectRoot(cwd);
+  if (!root) throw new Error(`No .odoo19-agent.toml at or above ${cwd}; not an Odoo 19 project.`);
+  return root;
+}
+
+function readLog(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+export default function odoo19Layer(pi: ExtensionAPI) {
+  async function run(root: string, args: string[], signal: AbortSignal | undefined, timeout: number) {
+    return pi.exec("python3", ["-B", ODOO19, "--project", root, ...args], { cwd: root, signal, timeout });
+  }
+
+  async function plain(
+    cwd: string, args: string[], signal: AbortSignal | undefined, maxLines = MAX_LINES,
+  ): Promise<Result> {
+    const root = requireRoot(cwd);
+    const result = await run(root, args, signal, TOOL_TIMEOUT_MS);
+    return text(formatPlain(result, maxLines), { exit: result.code });
+  }
+
+  // Resolved profile from tools/config.py (read-only): values, or the error it reported.
+  async function profileConfig(root: string): Promise<{ config?: Record<string, string>; error?: string }> {
+    const config = await pi.exec("python3", ["-B", CONFIG_PY, root], { cwd: root, timeout: STATUS_TIMEOUT_MS });
+    if (config.code === 0) return { config: parseAssignments(config.stdout) };
+    return { error: config.stderr.trim() || `config.py exited with ${config.code}` };
+  }
+
+  function addonRoots(config: Record<string, string>): string[] {
+    return (config.ADDON_ROOTS ?? "").split("\n").filter(Boolean);
+  }
+
+  // Read-only status: the profile, addon roots and git state. Never starts services or queries databases.
+  async function projectStatus(root: string): Promise<StatusInput> {
+    const status: StatusInput = { root, modules: [], git: null };
+    const { config, error } = await profileConfig(root);
+    if (config) {
+      status.config = config;
+      status.modules = addonRoots(config).map((addons) => ({ root: addons, names: listModules(addons) }));
+    } else {
+      status.configError = error;
+    }
+    const options = { cwd: root, timeout: STATUS_TIMEOUT_MS };
+    const revParse = await pi.exec(
+      "git", ["-C", root, "rev-parse", "--abbrev-ref", "HEAD", "--git-dir", "--git-common-dir"], options,
+    );
+    if (revParse.code === 0) {
+      const porcelain = await pi.exec("git", ["-C", root, "status", "--porcelain"], options);
+      if (porcelain.code === 0) status.git = parseGit(root, revParse.stdout, porcelain.stdout);
+    }
+    return status;
+  }
+
+  pi.registerCommand("odoo19", {
+    description: "Odoo 19 project status: profile, addon modules, databases and git worktree",
+    handler: async (_args, ctx) => {
+      const root = findProjectRoot(ctx.cwd);
+      if (!root) {
+        ctx.ui.notify(`Not an Odoo 19 project: no .odoo19-agent.toml at or above ${ctx.cwd}`, "warning");
+        return;
+      }
+      const content = formatStatus(await projectStatus(root));
+      pi.sendMessage({ customType: "odoo19-status", content, display: true });
+    },
+  });
+
+  pi.on("before_agent_start", async (event, ctx) => {
+    const root = findProjectRoot(ctx.cwd);
+    if (!root) return;
+    const sections = event.systemPromptOptions?.sections;
+    if (sections) {
+      sections.odoo19 = projectContext(root);
+      return;
+    }
+    return { systemPrompt: `${event.systemPrompt}\n\n<odoo19>\n${projectContext(root)}\n</odoo19>` };
+  });
+
+  // Agent bash only: direct odoo-bin/dropdb/psql bypass the core's database guards.
+  pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName !== "bash") return;
+    const command = (event.input as { command?: unknown }).command;
+    if (typeof command !== "string") return;
+    const root = findProjectRoot(ctx.cwd);
+    if (!root) return;
+    const program = blockedProgram(command);
+    if (program) return { block: true, reason: blockReason(program, root) };
+  });
+
+  pi.registerTool({
+    name: "odoo19_test_module",
+    label: "Odoo 19 test module",
+    description:
+      "Run one Odoo 19 module's tests on its guarded test database (reset first). Returns the result line and " +
+      "failures with the end of each traceback; full logs stay under dev/logs/odoo19.",
+    promptSnippet: "Run an Odoo 19 module's tests and get only the result and failures",
+    promptGuidelines: ["Use odoo19_test_module instead of running odoo-bin --test-tags through bash."],
+    parameters: Type.Object({
+      module: Type.String({ description: "Technical module name" }),
+      database: Type.Optional(Type.String({ description: "Test database; defaults to the profile's test database" })),
+      maxFailures: Type.Optional(Type.Integer({ minimum: 0, maximum: 50, default: 10 })),
+      traceLines: Type.Optional(Type.Integer({ minimum: 0, maximum: 40, default: 6 })),
+    }),
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const root = requireRoot(ctx.cwd);
+      const result = await run(root, testModuleArgs(params), signal, TEST_TIMEOUT_MS);
+      const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };
+      return text(formatTestRun(params.module, result, readLog, options, MAX_LINES), { exit: result.code });
+    },
+  });
+
+  pi.registerTool({
+    name: "odoo19_find_module",
+    label: "Odoo 19 find module",
+    description:
+      "Find technical module names in the project's addon roots from a functional name, matching words of the " +
+      "technical name and the manifest name, summary and category. Returns `technical — manifest name` lines.",
+    promptSnippet: "Map a functional module name to its technical name",
+    promptGuidelines: [
+      "Use odoo19_find_module to map functional names to technical module names instead of ls/grep over addons.",
+    ],
+    parameters: Type.Object({
+      query: Type.String({ description: "Words of the functional or technical module name" }),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 30, default: DEFAULT_LIMIT })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const root = requireRoot(ctx.cwd);
+      const { config, error } = await profileConfig(root);
+      if (!config) throw new Error(`Cannot read the project profile: ${error}`);
+      const { matches, total } = findModules(loadModules(addonRoots(config)), params.query, params.limit ?? DEFAULT_LIMIT);
+      return text(formatModules(matches, total), { total });
+    },
+  });
+
+  pi.registerTool({
+    name: "odoo19_model_info",
+    label: "Odoo 19 model info",
+    description:
+      "Static summary of one Odoo model from the Odoo source and the project's addons (ast only; no Odoo, " +
+      "environment or database): definition, extending modules, fields, field overrides and methods.",
+    promptSnippet: "Learn an Odoo model's fields, methods and inheritance without opening source files",
+    promptGuidelines: [
+      "Use odoo19_model_info before reading Odoo source files to learn a model's fields, methods or inheritance.",
+    ],
+    parameters: Type.Object({
+      model: Type.String({ description: "Model name, e.g. sale.order" }),
+      field: Type.Optional(Type.String({ description: "Only this field: definition and overrides with file:line" })),
+      module: Type.Optional(Type.String({ description: "Only the details contributed by this technical module" })),
+      methods: Type.Optional(Type.Boolean({ description: "Every method with decorators and super() calls", default: false })),
+      allFields: Type.Optional(Type.Boolean({ description: "Do not cap the field list", default: false })),
+    }),
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const args = ["model-info", params.model];
+      if (params.field) args.push("--field", params.field);
+      if (params.module) args.push("--module", params.module);
+      if (params.methods) args.push("--methods");
+      if (params.allFields) args.push("--all-fields");
+      return plain(ctx.cwd, args, signal, MODEL_INFO_MAX_LINES);
+    },
+  });
+
+  pi.registerTool({
+    name: "odoo19_module_status",
+    label: "Odoo 19 module status",
+    description: "Database and module state (missing, uninitialized, installed, version) for a managed database.",
+    parameters: Type.Object({
+      module: Type.String({ description: "Technical module name" }),
+      database: Type.String({ description: "Managed database (dev or test prefix)" }),
+    }),
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      return plain(ctx.cwd, ["module-status", params.module, params.database], signal);
+    },
+  });
+
+  pi.registerTool({
+    name: "odoo19_check_environment",
+    label: "Odoo 19 check environment",
+    description: "Check the project's Odoo 19 environment. Quick mode by default; full mode needs the user's consent.",
+    parameters: Type.Object({
+      full: Type.Optional(Type.Boolean({ description: "Run full diagnostics", default: false })),
+    }),
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      return plain(ctx.cwd, ["check-environment", params.full ? "--full" : "--quick"], signal);
+    },
+  });
+
+  pi.registerTool({
+    name: "odoo19_lint_module",
+    label: "Odoo 19 lint module",
+    description: "Run Pylint with the project's declared rcfile on one module, without starting Odoo.",
+    parameters: Type.Object({
+      module: Type.String({ description: "Technical module name" }),
+    }),
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      return plain(ctx.cwd, ["lint-module", params.module], signal);
+    },
+  });
+}

@@ -1,0 +1,16 @@
+# Test-only synthetic project for model-info; modelled on tests/fixture-profile.toml.
+# Not a template or default for a real project. The environment, config, environment
+# file and compose paths intentionally do not exist: model-info must not need them.
+[tooling]
+version = '19.0'
+python_version = '3.12'
+community = '../source/odoo'
+environment = '.venv'
+config = 'dev/odoo.conf'
+env_file = 'dev/missing-environment-file'
+compose = 'dev/compose.yml'
+requirements = 'dev/requirements'
+addons_paths = ['addons']
+db_service = 'db'
+dev_prefix = 'cc_dev_'
+test_prefix = 'cc_test_'
