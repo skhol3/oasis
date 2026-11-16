@@ -40,6 +40,7 @@ test("projectContext names the root and routes the agent to the odoo19 tools", (
     "odoo19_check_environment",
     "odoo19_lint_module",
     "odoo19_find_module",
+    "odoo19_model_info",
   ]) {
     assert.ok(text.includes(tool), tool);
   }

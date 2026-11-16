@@ -15,6 +15,8 @@ const ODOO19 = fileURLToPath(new URL("../../odoo19", import.meta.url));
 const CONFIG_PY = fileURLToPath(new URL("../../tools/config.py", import.meta.url));
 const STATUS_TIMEOUT_MS = 15000;
 const MAX_LINES = 60;
+// model-info output is already compact; a larger cap keeps --methods/--all-fields useful.
+const MODEL_INFO_MAX_LINES = 200;
 const TEST_TIMEOUT_MS = 60 * 60 * 1000;
 const TOOL_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -43,10 +45,12 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     return pi.exec("python3", ["-B", ODOO19, "--project", root, ...args], { cwd: root, signal, timeout });
   }
 
-  async function plain(cwd: string, args: string[], signal: AbortSignal | undefined): Promise<Result> {
+  async function plain(
+    cwd: string, args: string[], signal: AbortSignal | undefined, maxLines = MAX_LINES,
+  ): Promise<Result> {
     const root = requireRoot(cwd);
     const result = await run(root, args, signal, TOOL_TIMEOUT_MS);
-    return text(formatPlain(result, MAX_LINES), { exit: result.code });
+    return text(formatPlain(result, maxLines), { exit: result.code });
   }
 
   // Resolved profile from tools/config.py (read-only): values, or the error it reported.
@@ -158,6 +162,33 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       if (!config) throw new Error(`Cannot read the project profile: ${error}`);
       const { matches, total } = findModules(loadModules(addonRoots(config)), params.query, params.limit ?? DEFAULT_LIMIT);
       return text(formatModules(matches, total), { total });
+    },
+  });
+
+  pi.registerTool({
+    name: "odoo19_model_info",
+    label: "Odoo 19 model info",
+    description:
+      "Static summary of one Odoo model from the Odoo source and the project's addons (ast only; no Odoo, " +
+      "environment or database): definition, extending modules, fields, field overrides and methods.",
+    promptSnippet: "Learn an Odoo model's fields, methods and inheritance without opening source files",
+    promptGuidelines: [
+      "Use odoo19_model_info before reading Odoo source files to learn a model's fields, methods or inheritance.",
+    ],
+    parameters: Type.Object({
+      model: Type.String({ description: "Model name, e.g. sale.order" }),
+      field: Type.Optional(Type.String({ description: "Only this field: definition and overrides with file:line" })),
+      module: Type.Optional(Type.String({ description: "Only the details contributed by this technical module" })),
+      methods: Type.Optional(Type.Boolean({ description: "Every method with decorators and super() calls", default: false })),
+      allFields: Type.Optional(Type.Boolean({ description: "Do not cap the field list", default: false })),
+    }),
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const args = ["model-info", params.model];
+      if (params.field) args.push("--field", params.field);
+      if (params.module) args.push("--module", params.module);
+      if (params.methods) args.push("--methods");
+      if (params.allFields) args.push("--all-fields");
+      return plain(ctx.cwd, args, signal, MODEL_INFO_MAX_LINES);
     },
   });
 

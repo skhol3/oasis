@@ -25,6 +25,7 @@ export function projectContext(root: string): string {
     "- odoo19_check_environment: environment diagnostics (quick by default).",
     "- odoo19_lint_module: Pylint for one module without starting Odoo.",
     "- odoo19_find_module: technical module names from a functional name (manifest name/summary); no ls/grep.",
+    "- odoo19_model_info: a model's definition, extensions, fields and methods from source; use it before reading Odoo files.",
     "Open the logs a tool reports only when its summary is not enough. Do not browse the Odoo source tree to learn",
     "framework APIs; load the matching odoo19-* skill first.",
   ].join("\n");
