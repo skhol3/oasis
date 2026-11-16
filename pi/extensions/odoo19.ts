@@ -7,9 +7,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { blockedProgram, blockReason } from "../lib/bash-guard.ts";
 import { findProjectRoot, projectContext } from "../lib/project.ts";
+import { formatStatus, listModules, parseAssignments, parseGit, type StatusInput } from "../lib/status.ts";
 import { formatPlain, formatTestRun, testModuleArgs } from "../lib/tools.ts";
 
 const ODOO19 = fileURLToPath(new URL("../../odoo19", import.meta.url));
+const CONFIG_PY = fileURLToPath(new URL("../../tools/config.py", import.meta.url));
+const STATUS_TIMEOUT_MS = 15000;
 const MAX_LINES = 60;
 const TEST_TIMEOUT_MS = 60 * 60 * 1000;
 const TOOL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -44,6 +47,41 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     const result = await run(root, args, signal, TOOL_TIMEOUT_MS);
     return text(formatPlain(result, MAX_LINES), { exit: result.code });
   }
+
+  // Read-only status: the profile, addon roots and git state. Never starts services or queries databases.
+  async function projectStatus(root: string): Promise<StatusInput> {
+    const status: StatusInput = { root, modules: [], git: null };
+    const config = await pi.exec("python3", ["-B", CONFIG_PY, root], { cwd: root, timeout: STATUS_TIMEOUT_MS });
+    if (config.code === 0) {
+      status.config = parseAssignments(config.stdout);
+      const roots = (status.config.ADDON_ROOTS ?? "").split("\n").filter(Boolean);
+      status.modules = roots.map((addons) => ({ root: addons, names: listModules(addons) }));
+    } else {
+      status.configError = config.stderr.trim() || `config.py exited with ${config.code}`;
+    }
+    const options = { cwd: root, timeout: STATUS_TIMEOUT_MS };
+    const revParse = await pi.exec(
+      "git", ["-C", root, "rev-parse", "--abbrev-ref", "HEAD", "--git-dir", "--git-common-dir"], options,
+    );
+    if (revParse.code === 0) {
+      const porcelain = await pi.exec("git", ["-C", root, "status", "--porcelain"], options);
+      if (porcelain.code === 0) status.git = parseGit(root, revParse.stdout, porcelain.stdout);
+    }
+    return status;
+  }
+
+  pi.registerCommand("odoo19", {
+    description: "Odoo 19 project status: profile, addon modules, databases and git worktree",
+    handler: async (_args, ctx) => {
+      const root = findProjectRoot(ctx.cwd);
+      if (!root) {
+        ctx.ui.notify(`Not an Odoo 19 project: no .odoo19-agent.toml at or above ${ctx.cwd}`, "warning");
+        return;
+      }
+      const content = formatStatus(await projectStatus(root));
+      pi.sendMessage({ customType: "odoo19-status", content, display: true });
+    },
+  });
 
   pi.on("before_agent_start", async (event, ctx) => {
     const root = findProjectRoot(ctx.cwd);
