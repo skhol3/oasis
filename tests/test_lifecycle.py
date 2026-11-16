@@ -40,10 +40,16 @@ class LifecycleTests(unittest.TestCase):
                                'printf "odoo %s\\n" "$*" >> "$FAKE_LOG"\n'
                                'if [ "$2" = "shell" ]; then cat; fi\n')
         docker = self.bindir / 'docker'
+        # A reset (dropdb --if-exists + createdb) records its database, so later phases of
+        # the same run see it; FAKE_EXISTS=1 makes every database exist.
         docker.write_text('''#!/bin/sh
 printf "docker %s\\n" "$*" >> "$FAKE_LOG"
+for last; do :; done
 case "$*" in
-  *"exec psql"*"SELECT 1 FROM pg_database"*) [ "${FAKE_EXISTS:-0}" = 1 ] && echo 1 ;;
+  *"dropdb --if-exists"*"createdb"*) printf "%s\\n" "$last" >> "$FAKE_LOG.databases" ;;
+  *"exec psql"*"SELECT 1 FROM pg_database"*)
+    name=$(printf "%s" "$*" | sed -n "s/.*datname = '\\([^']*\\)'.*/\\1/p")
+    if [ "${FAKE_EXISTS:-0}" = 1 ] || grep -qsx "$name" "$FAKE_LOG.databases"; then echo 1; fi ;;
   *"exec psql"*"SELECT count(*) FROM pg_stat_activity"*) echo "${FAKE_SESSIONS:-0}" ;;
   *"to_regclass"*) echo t ;;
   *"COALESCE(latest_version"*) printf 'installed\\t19.0\\n' ;;
@@ -54,7 +60,10 @@ exit 0
         docker.chmod(0o755)
         self.env = {**os.environ, 'PATH': str(self.bindir) + ':' + os.environ['PATH'],
                     'FAKE_LOG': str(self.commands), 'PYTHONDONTWRITEBYTECODE': '1',
-                    'ODOO19_TOOLS_DIR': str(STAGE / 'tools')}
+                    'ODOO19_TOOLS_DIR': str(STAGE / 'tools'),
+                    # Keep git discovery inside the scratch project: no checkout identity
+                    # leaks from the repository that holds the fixtures.
+                    'GIT_CEILING_DIRECTORIES': self.scratch.name}
 
     def invoke(self, command, *args, input=None):
         path = self.root / 'dev/scripts' / command
@@ -100,8 +109,11 @@ exit 0
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertIn('odoo ' + str(self.source / 'odoo-bin') + ' -c ' + str(self.root / 'dev/odoo.conf') +
                       ' -d cc_dev_coffee -i coffee --without-demo --stop-after-init\n', self.commands.read_text())
-        result = self.invoke('odoo-shell', 'outside_db', input='print(42)\n')
+        self.env['FAKE_EXISTS'] = '1'
+        result = self.invoke('odoo-shell', 'cc_dev_coffee', input='print(42)\n')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, 'print(42)\n', ''))
+        self.assertIn(' shell -c ' + str(self.root / 'dev/odoo.conf') + ' -d cc_dev_coffee\n',
+                      self.commands.read_text())
 
     def test_missing_tools_fails_clearly_without_fallback(self):
         self.env['ODOO19_TOOLS_DIR'] = str(self.root / 'not installed')
@@ -160,10 +172,17 @@ exit 0
                          (0, 'Database dropped: cc_dev_coffee\n', ''))
         self.assertIn('pg_terminate_backend', self.commands.read_text())
 
-    def test_update_allows_explicit_database_and_test_defaults(self):
+    def test_update_uses_explicit_existing_managed_database_and_test_defaults(self):
         result = self.invoke('update-module', 'coffee', 'other_db')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', 'Managed databases must use cc_dev_<name> or cc_test_<name>: other_db\n'))
+        self.unchanged()
+        self.env['FAKE_EXISTS'] = '1'
+        result = self.invoke('update-module', 'coffee', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
-        self.assertIn('-d other_db -u coffee --stop-after-init', self.commands.read_text())
+        self.assertIn('-d cc_dev_coffee -u coffee --stop-after-init', self.commands.read_text())
+        self.assertNotIn('createdb', self.commands.read_text())
+        del self.env['FAKE_EXISTS']
         result = self.invoke('test-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertIn('-d cc_test_coffee -i coffee --without-demo --test-tags /coffee --stop-after-init',

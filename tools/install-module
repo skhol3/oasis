@@ -4,7 +4,9 @@ source "$(dirname "$0")/common.sh"
 usage='Usage: install-module [--with-demo] <module> [database]'
 with_demo=false
 if [[ ${1:-} == --help ]]; then
-  printf '%s\nDefault: --without-demo. --with-demo is restricted to managed %s/%s databases.\n' "$usage" "$DEV_PREFIX" "$TEST_PREFIX"
+  printf '%s\nDefault: --without-demo. The database must be managed (%s/%s) and defaults to %s.\n' \
+    "$usage" "$DEV_PREFIX" "$TEST_PREFIX" "$(checkout_database_name "$DEV_PREFIX" '<module>')"
+  printf 'In a checkout with a slug it must use that checkout namespace. Creates a missing database.\n'
   exit 0
 fi
 if [[ ${1:-} == --with-demo ]]; then
@@ -19,13 +21,9 @@ if (( $# > 2 )); then
   exit 2
 fi
 module=${1:-}
-database=${2:-${DEV_PREFIX}${module}}
+database=${2:-$(checkout_database_name "$DEV_PREFIX" "$module")}
 require_module "$module"
-if [[ "$with_demo" == true ]]; then
-  require_managed_database_name "$database"
-else
-  require_database_name "$database"
-fi
+require_managed_database_name "$database"
 require_runtime
 ensure_database "$database" </dev/null
 if [[ "$with_demo" == true ]]; then

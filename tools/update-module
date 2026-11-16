@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+if [[ ${1:-} == --help && $# == 1 ]]; then
+  printf 'Usage: %s <module> <database>\n' "${ODOO19_ENTRYPOINT:-$0}"
+  printf 'Updates the module in an existing managed database (dev_prefix/test_prefix, with the\n'
+  printf 'checkout slug in a checkout that has one). A missing database is refused, never created.\n'
+  exit 0
+fi
 source "$(dirname "$0")/common.sh"
 module=${1:-}
 database=${2:-}
@@ -9,6 +15,6 @@ if [[ -z "$database" ]]; then
   printf 'Usage: %s <module> <database>\n' "${ODOO19_ENTRYPOINT:-$0}" >&2
   exit 2
 fi
-require_database_name "$database"
-ensure_database "$database"
+require_managed_database_name "$database"
+require_existing_database "$database"
 run_odoo -d "$database" -u "$module" --stop-after-init

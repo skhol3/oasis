@@ -17,6 +17,7 @@ Use for authorized local Odoo 19 module installation, updates, test runs, and st
 - Require an explicitly named local database; never guess a default or derive authorization from a template prefix.
 - Use documented project wrappers and their guards, or the installed `~/.agents/skills/odoo19/odoo19 --project /absolute/project <command>` entry point with its packaged tools and project-local profile. Missing project wrappers alone are not a blocker for an authorized global entry point; if neither guarded interface is available, report unavailable. Never bypass guards with raw SQL or guessed commands.
 - Destructive reset requires an exact named disposable test database, a guarded installed interface enforcing the project's namespace, explicit authorization, and an active-session check. Never auto-stop or terminate sessions.
+- Each checkout owns its databases: with a checkout slug, names must start with `<dev_prefix><slug>_` or `<test_prefix><slug>_` and defaults include the slug. `update-module` and `odoo-shell` refuse a missing database; create it with `install-module` or `create-database` only when authorized.
 - Treat fresh install, current-code update, historical migration, tests, and UI checks as distinct evidence.
 
 ## Decision Gates

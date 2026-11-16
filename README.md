@@ -79,7 +79,7 @@ Run at a relevant baseline and after a Python/manifest work unit, not each edit.
 
 ## Fresh development database with role accounts
 
-Use the global `init-dev-database` command for a **new, explicitly authorized development database**. By default it initializes Odoo without demo data, configures the administrator, installs one project module, and creates the project-declared role accounts. Pass `--with-demo` explicitly to use Odoo's native demo loader. Existing `create-database` (empty PostgreSQL database), `install-module`, `update-module`, `start`, and test commands keep their previous behavior; they do not provision these users.
+Use the global `init-dev-database` command for a **new, explicitly authorized development database**. By default it initializes Odoo without demo data, configures the administrator, installs one project module, and creates the project-declared role accounts. Pass `--with-demo` explicitly to use Odoo's native demo loader. `create-database` (empty PostgreSQL database), `install-module`, `update-module`, `start`, and test commands do not provision these users.
 
 Declare non-secret accounts in the project's `.odoo19-agent.toml`:
 
@@ -136,7 +136,7 @@ Keep manual development data in a persistent development database. For sequentia
 test_database = 'sample_test_suite'
 ```
 
-The name must be longer than `test_prefix`, contain only letters/digits/underscores, and be at most 56 bytes (reserving `_update` within PostgreSQL's 63-byte identifier limit). Without this setting, existing module-derived defaults remain unchanged. An explicit database argument overrides the test destination; it must still be an approved disposable test database.
+The name must be longer than `test_prefix`, contain only letters/digits/underscores, and be at most 56 bytes (reserving `_update` within PostgreSQL's 63-byte identifier limit). Without this setting, module-derived defaults apply. In a checkout with a slug the slug is inserted after `test_prefix` (see *Databases per checkout* below) and the 56 bytes include it. An explicit database argument overrides the test destination; it must still be an approved disposable test database.
 
 After obtaining authorization to reset the exact destinations:
 
@@ -173,7 +173,24 @@ Each checkout of a project gets an identity derived from the folder it runs in, 
 checkout_slug = 'mrp_2'
 ```
 
-`/odoo19` shows it as `checkout: main`, `checkout: linked worktree, slug 07_1` or `checkout: main, slug mrp_2 (profile)`. For now the identity is only reported: database names, ports and command behavior are unchanged. Per-checkout database names follow in the next step.
+`/odoo19` shows it as `checkout: main`, `checkout: linked worktree, slug 07_1` or `checkout: main, slug mrp_2 (profile)`. The slug selects the checkout's database names (below); ports and processes are not per checkout yet.
+
+## Databases per checkout
+
+The slug goes right after the managed prefix, so each checkout has its own database namespace. A checkout without a slug (the main checkout, unless `checkout_slug` is set) keeps the previous names.
+
+| Default | Main checkout | Checkout with slug `07_1` |
+| --- | --- | --- |
+| `install-module` target | `<dev_prefix><module>` | `<dev_prefix>07_1_<module>` |
+| `test-module` and `verify-module` test target | `<test_prefix><module>` | `<test_prefix>07_1_<module>` |
+| `verify-module` update target | `<test_prefix><module>_update` | `<test_prefix>07_1_<module>_update` |
+| configured `test_database = '<test_prefix>shared'` | `<test_prefix>shared` | `<test_prefix>07_1_shared` (its sibling `<test_prefix>07_1_shared_update`) |
+
+Every command that takes a database (`install-module` with or without `--with-demo`, `update-module`, `odoo-shell`, `start` with `-d`/`--database`, `test-module`, `verify-module`, `create-database`, `drop-database`, `module-status`, `init-dev-database`) requires a managed `<dev_prefix><name>` or `<test_prefix><name>` name. In a checkout with a slug the name must also start with `<dev_prefix><slug>_` or `<test_prefix><slug>_`, so a linked worktree cannot touch the main checkout's databases or another worktree's. The rejection names the checkout and the expected prefixes, and nothing runs.
+
+Database names are at most 63 bytes (PostgreSQL's identifier limit, counted in UTF-8 bytes). A test database that gets an `_update` sibling in `verify-module` is at most 56 bytes, and a configured `test_database` must fit in 56 bytes after the slug is inserted. Longer names fail before any database command.
+
+`update-module` and `odoo-shell` work on existing databases only: a missing database exits 2 with `Database <name> does not exist; create it with install-module or create-database.` and is never created. `install-module` and `create-database` still create their target. oasis never drops a checkout's databases on its own.
 
 ## Portable verification
 

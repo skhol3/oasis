@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+# Options, including --help, go to odoo-bin; only database selections are guarded.
 source "$(dirname "$0")/common.sh"
 require_runtime
+# Guard every database odoo-bin would receive, including optparse's unambiguous
+# abbreviations of --database, before the database service is touched.
+arguments=("$@")
+for (( index = 0; index < ${#arguments[@]}; index++ )); do
+  case ${arguments[index]} in
+    --) break ;;
+    -d|--datab|--databa|--databas|--database)
+      require_managed_database_name "${arguments[index + 1]:-}"
+      (( index += 1 )) ;;
+    -d*) require_managed_database_name "${arguments[index]#-d}" ;;
+    --datab=*|--databa=*|--databas=*|--database=*)
+      require_managed_database_name "${arguments[index]#*=}" ;;
+  esac
+done
 wait_for_database
 exec "$PYTHON" "$ODOO_BIN" -c "$ODOO_CONFIG" "$@"

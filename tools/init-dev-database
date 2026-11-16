@@ -23,6 +23,7 @@ if [[ ! "$database" =~ ^[A-Za-z0-9_]+$ || "$database" != "$DEV_PREFIX"* || "$dat
   printf 'ERROR: Initialization requires a named development database.\n' >&2
   exit 2
 fi
+require_managed_database_name "$database"
 require_module "$module"
 helper="$(dirname "$0")/dev_users.py"
 python3 -B "$helper" --validate "$PROJECT_ROOT" "$module" "$database" "$with_demo"

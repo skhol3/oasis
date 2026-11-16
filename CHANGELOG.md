@@ -14,7 +14,23 @@ still change in a minor release; every such change is listed here under **Change
 - Checkout identity: `tools/config.py` also emits `CHECKOUT_KIND` (`main`, `linked`, `none`)
   and `CHECKOUT_SLUG`, derived read-only from git; a linked worktree's slug comes from its
   directory name (`corpus-cafe-07.1` -> `07_1`). Optional `[tooling].checkout_slug` overrides
-  it. `/odoo19` shows a `checkout:` line. Database names and commands do not change yet.
+  it. `/odoo19` shows a `checkout:` line.
+- `update-module --help` and `odoo-shell --help` describe their database guards.
+
+### Changed
+
+- Per-checkout database names: in a checkout with a slug (a linked worktree, or any checkout
+  with `[tooling].checkout_slug`) the slug goes right after the managed prefix in every
+  default: `install-module` uses `<dev_prefix><slug>_<module>`, `test-module` and
+  `verify-module` use `<test_prefix><slug>_<module>` and its `_update` sibling, and a
+  configured `test_database` becomes `<test_prefix><slug>_<rest>` (still at most 56 bytes).
+  Database arguments must use that checkout namespace. The main checkout keeps its names.
+- `install-module` (with or without `--with-demo`), `update-module`, `odoo-shell` and `start`
+  with `-d`/`--database` now require a managed `<dev_prefix>`/`<test_prefix>` database name;
+  every database name is limited to 63 bytes, and a `verify-module` test database with an
+  `_update` sibling to 56 bytes.
+- `update-module` and `odoo-shell` no longer create a missing database: they exit 2 with
+  `Database <name> does not exist; create it with install-module or create-database.`
 
 ## [0.1.0] - 2026-11-16
 

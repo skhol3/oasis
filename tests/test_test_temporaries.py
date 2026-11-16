@@ -204,9 +204,10 @@ exit "$FAKE_EXIT"
     def test_install_and_update_keep_inherited_environment_and_streams(self):
         self.caller_tmpdir = os.environ.get('TMPDIR')
         self.prepare_probe()
+        self.env['FAKE_EXISTS'] = '1'
         for command, args, expected in (
                 ('install-module', ('coffee',), '-d cc_dev_coffee -i coffee --without-demo --stop-after-init'),
-                ('update-module', ('coffee', 'other_db'), '-d other_db -u coffee --stop-after-init')):
+                ('update-module', ('coffee', 'cc_dev_coffee'), '-d cc_dev_coffee -u coffee --stop-after-init')):
             with self.subTest(command=command):
                 result = self.invoke(command, *args)
                 self.assertEqual((result.returncode, result.stdout, result.stderr),

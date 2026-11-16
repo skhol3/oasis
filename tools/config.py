@@ -148,6 +148,11 @@ def load(root: Path) -> dict[str, str]:
     output['CHECKOUT_KIND'] = kind
     output['CHECKOUT_SLUG'] = (override if override is not None
                                else derived_slug(top, main) if kind == 'linked' else '')
+    slug = output['CHECKOUT_SLUG']
+    # common.sh inserts '<slug>_' after test_prefix; the result must still leave room for
+    # verify-module's _update sibling.
+    if output['TEST_DATABASE'] and slug and len(output['TEST_DATABASE'].encode('utf-8')) + len(slug) + 1 > 56:
+        raise InvalidConfig(f'Tooling test database exceeds 56 bytes with checkout slug {slug}.')
     return output
 
 
