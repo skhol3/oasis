@@ -38,3 +38,17 @@ target. Install only after the suite passes and the change is committed:
 ```bash
 ./install.sh            # or ./install.sh --target /absolute/scratch/odoo19 to try it
 ```
+
+## Releases
+
+Versions follow Semantic Versioning and are tagged on `main` only:
+
+1. In the release pull request, move the `[Unreleased]` entries of `CHANGELOG.md` under the
+   new version and set the same `version` in `package.json` (patch: fixes; minor: additions,
+   or contract changes while `0.x`; major: contract changes after `1.0.0`). Commit as
+   `chore(release): vX.Y.Z`.
+2. Merge the pull request to `main`.
+3. On the updated `main`, run the test suite, then tag: `git tag -a vX.Y.Z -m "oasis vX.Y.Z"` and push the tag.
+4. Publish the GitHub release with the changelog section as notes.
+
+`install.sh` records the installed `version` and commit in `.oasis-install.json`.
