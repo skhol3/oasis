@@ -19,7 +19,7 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 
 ## Tasks
 
-- T1 [S2 S3 S9] Checkout identity (slug) from git, profile override, shown by `/odoo19` — worker — commit: pending
+- [x] T1 [S2 S3 S9] Checkout identity (slug) from git, profile override, shown by `/odoo19` — worker — commit: ebdbcb4
 - T2 [S3 S4 S8] Per-checkout DB names, test_database + slug in linked worktrees, 63-byte check, managed-prefix guard and missing-DB refusal for update-module, odoo-shell, install-module, start -d (Risk: items 2, 3) — worker + verify — commit: pending
 - T3 [S5] Disposable test databases per run + `odoo19 gc` (Risk: item 1) — pending (v0.3.0)
 - T4 [S6 S7] Per-checkout HTTP port with fallback, pidfile, own start/stop — pending (v0.3.0)
@@ -30,3 +30,4 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - L1. User request: see S1.
 - L2. User: "si me parece que si complementan sin pisar gentle-shell" (accepts S2-S10).
 - L3. Evidence: corpus-cafe `.odoo19-agent.toml` is untracked (each checkout has its own), so a `[tooling].checkout_slug` override is per checkout. `git worktree list`: corpus-cafe (main, feature/AZ_daily_mass_production) and corpus-cafe-07.1 (linked, feature/AZ_mrp_cost_deviation_alert).
+- L4. T1 field check (read-only): corpus-cafe -> CHECKOUT_KIND=main, slug empty; corpus-cafe-07.1 -> CHECKOUT_KIND=linked, slug 07_1. Suite 122 OK. Override also applies outside git (kind none). Needs git >= 2.31 (--path-format), else kind none.
