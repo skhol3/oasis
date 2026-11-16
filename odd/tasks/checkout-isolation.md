@@ -31,3 +31,9 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - L2. User: "si me parece que si complementan sin pisar gentle-shell" (accepts S2-S10).
 - L3. Evidence: corpus-cafe `.odoo19-agent.toml` is untracked (each checkout has its own), so a `[tooling].checkout_slug` override is per checkout. `git worktree list`: corpus-cafe (main, feature/AZ_daily_mass_production) and corpus-cafe-07.1 (linked, feature/AZ_mrp_cost_deviation_alert).
 - L4. T1 field check (read-only): corpus-cafe -> CHECKOUT_KIND=main, slug empty; corpus-cafe-07.1 -> CHECKOUT_KIND=linked, slug 07_1. Suite 122 OK. Override also applies outside git (kind none). Needs git >= 2.31 (--path-format), else kind none.
+- L5. T2 decisions derived from the accepted S3, S4 and S8 (no new user decision needed):
+  - Names: the slug goes right after the managed prefix, as in S4/S5: dev default `<dev_prefix><slug>_<module>` (`cc_dev_07_1_coffee`), test default `<test_prefix><slug>_<module>`. A configured `test_database` becomes `<test_prefix><slug>_<rest>` (`cc_test_corpus_cafe` -> `cc_test_07_1_corpus_cafe`). Empty slug (main checkout) -> names unchanged.
+  - Namespace guard: in a checkout with a slug, every managed name (explicit or default) must start with `<prefix><slug>_`, so a linked worktree cannot touch the main checkout's databases. The main checkout keeps the current managed-prefix rule.
+  - Length: every database name the tools compute or accept is at most 63 UTF-8 bytes; names that get an `_update` sibling at most 56. Fail with a clear message before any database command.
+  - S8 guards: update-module, odoo-shell, install-module (with and without demo) and `start -d` require a managed name; update-module and odoo-shell refuse a missing database (`does not exist; create it with install-module or create-database`) instead of creating it.
+  - Contract change (AGENTS.md): listed under `### Changed` in CHANGELOG `[Unreleased]` and noted in the README.
