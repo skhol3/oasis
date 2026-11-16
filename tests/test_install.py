@@ -21,6 +21,8 @@ def head_commit():
                           capture_output=True, text=True).stdout.strip()
 
 
+@unittest.skipUnless((ROOT / '.git').exists() and INSTALL.is_file(),
+                     'install.sh runs only from the source repository')
 class InstallTest(unittest.TestCase):
 
     def setUp(self):
