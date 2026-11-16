@@ -46,7 +46,8 @@ Versions follow Semantic Versioning and are tagged on `main` only:
 1. In the release pull request, move the `[Unreleased]` entries of `CHANGELOG.md` under the
    new version and set the same `version` in `package.json` (patch: fixes; minor: additions,
    or contract changes while `0.x`; major: contract changes after `1.0.0`). Commit as
-   `chore(release): vX.Y.Z`.
+   `chore(release): vX.Y.Z`. Update the compare links at the bottom of the changelog:
+   `[Unreleased]` compares `vX.Y.Z...HEAD` and the new `[X.Y.Z]` points to its release.
 2. Merge the pull request to `main`.
 3. On the updated `main`, run the test suite, then tag: `git tag -a vX.Y.Z -m "oasis vX.Y.Z"` and push the tag.
 4. Publish the GitHub release with the changelog section as notes.
