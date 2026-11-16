@@ -6,6 +6,7 @@ import { Type } from "typebox";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { blockedProgram, blockReason } from "../lib/bash-guard.ts";
+import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findProjectRoot, projectContext } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, type StatusInput } from "../lib/status.ts";
 import { formatPlain, formatTestRun, testModuleArgs } from "../lib/tools.ts";
@@ -48,16 +49,26 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     return text(formatPlain(result, MAX_LINES), { exit: result.code });
   }
 
+  // Resolved profile from tools/config.py (read-only): values, or the error it reported.
+  async function profileConfig(root: string): Promise<{ config?: Record<string, string>; error?: string }> {
+    const config = await pi.exec("python3", ["-B", CONFIG_PY, root], { cwd: root, timeout: STATUS_TIMEOUT_MS });
+    if (config.code === 0) return { config: parseAssignments(config.stdout) };
+    return { error: config.stderr.trim() || `config.py exited with ${config.code}` };
+  }
+
+  function addonRoots(config: Record<string, string>): string[] {
+    return (config.ADDON_ROOTS ?? "").split("\n").filter(Boolean);
+  }
+
   // Read-only status: the profile, addon roots and git state. Never starts services or queries databases.
   async function projectStatus(root: string): Promise<StatusInput> {
     const status: StatusInput = { root, modules: [], git: null };
-    const config = await pi.exec("python3", ["-B", CONFIG_PY, root], { cwd: root, timeout: STATUS_TIMEOUT_MS });
-    if (config.code === 0) {
-      status.config = parseAssignments(config.stdout);
-      const roots = (status.config.ADDON_ROOTS ?? "").split("\n").filter(Boolean);
-      status.modules = roots.map((addons) => ({ root: addons, names: listModules(addons) }));
+    const { config, error } = await profileConfig(root);
+    if (config) {
+      status.config = config;
+      status.modules = addonRoots(config).map((addons) => ({ root: addons, names: listModules(addons) }));
     } else {
-      status.configError = config.stderr.trim() || `config.py exited with ${config.code}`;
+      status.configError = error;
     }
     const options = { cwd: root, timeout: STATUS_TIMEOUT_MS };
     const revParse = await pi.exec(
@@ -124,6 +135,29 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       const result = await run(root, testModuleArgs(params), signal, TEST_TIMEOUT_MS);
       const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };
       return text(formatTestRun(params.module, result, readLog, options, MAX_LINES), { exit: result.code });
+    },
+  });
+
+  pi.registerTool({
+    name: "odoo19_find_module",
+    label: "Odoo 19 find module",
+    description:
+      "Find technical module names in the project's addon roots from a functional name, matching words of the " +
+      "technical name and the manifest name, summary and category. Returns `technical — manifest name` lines.",
+    promptSnippet: "Map a functional module name to its technical name",
+    promptGuidelines: [
+      "Use odoo19_find_module to map functional names to technical module names instead of ls/grep over addons.",
+    ],
+    parameters: Type.Object({
+      query: Type.String({ description: "Words of the functional or technical module name" }),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 30, default: DEFAULT_LIMIT })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const root = requireRoot(ctx.cwd);
+      const { config, error } = await profileConfig(root);
+      if (!config) throw new Error(`Cannot read the project profile: ${error}`);
+      const { matches, total } = findModules(loadModules(addonRoots(config)), params.query, params.limit ?? DEFAULT_LIMIT);
+      return text(formatModules(matches, total), { total });
     },
   });
 

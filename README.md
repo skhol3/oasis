@@ -29,7 +29,8 @@ gentle-shell install git:github.com/skhol3/oasis
 
 Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shell and Pi already scan. The layer adds:
 
-- Tools `odoo19_test_module`, `odoo19_module_status`, `odoo19_check_environment` and `odoo19_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`. Other output is capped at 60 lines (head and tail kept).
+- Tools `odoo19_test_module`, `odoo19_module_status`, `odoo19_check_environment` and `odoo19_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`. Other output is capped at 60 lines (head and tail kept). Test summaries also carry up to five `stats:` lines (tests, time, queries per module) and one `warnings:` line grouping repeated warnings by logger and message.
+- Tool `odoo19_find_module`: maps a functional name to technical module names by matching the query words against the technical name and the manifest `name`, `summary` and `category` in the profile's addon roots, so the agent needs no `ls` or `grep`.
 - Prompt context naming the `odoo19` tools when `.odoo19-agent.toml` is found at or above the working directory.
 - A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package.
 - `/odoo19`: a quick status with the profile, addon modules, configured databases and git worktree. It never starts services or queries databases.

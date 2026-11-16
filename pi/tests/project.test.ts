@@ -34,7 +34,13 @@ test("findProjectRoot returns null outside an Odoo project", () => {
 test("projectContext names the root and routes the agent to the odoo19 tools", () => {
   const text = projectContext("/work/coffee");
   assert.match(text, /Odoo 19 project root: \/work\/coffee/);
-  for (const tool of ["odoo19_test_module", "odoo19_module_status", "odoo19_check_environment", "odoo19_lint_module"]) {
+  for (const tool of [
+    "odoo19_test_module",
+    "odoo19_module_status",
+    "odoo19_check_environment",
+    "odoo19_lint_module",
+    "odoo19_find_module",
+  ]) {
     assert.ok(text.includes(tool), tool);
   }
   assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
