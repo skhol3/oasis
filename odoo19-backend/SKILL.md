@@ -31,6 +31,7 @@ Use for Odoo 19 Python backend changes. Follow the project's own instructions an
 ## Execution Steps
 
 1. Trace relevant callers, exact field names, and existing tests in the permitted scope.
+   Before opening Odoo source to learn a model, run `odoo19 --project <root> model-info <model>` (static summary of definition, extensions, fields and methods; add `--field`, `--module` or `--methods` for detail).
 2. Implement the smallest Odoo-native change consistent with project conventions.
 3. Run supported focused tests and applicable installation/update checks; do not invent a runner.
 

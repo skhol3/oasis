@@ -11,8 +11,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'odoo19'
 PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database',
-          'drop-database', 'init-dev-database', 'install-module', 'lint-module', 'list-databases', 'module-status',
-          'odoo-shell', 'start', 'status', 'stop', 'test-module', 'update-module',
+          'drop-database', 'init-dev-database', 'install-module', 'lint-module', 'list-databases', 'model-info',
+          'module-status', 'odoo-shell', 'start', 'status', 'stop', 'test-module', 'update-module',
           'verify-module')
 
 
