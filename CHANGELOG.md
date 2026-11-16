@@ -9,6 +9,13 @@ still change in a minor release; every such change is listed here under **Change
 
 ## [Unreleased]
 
+### Added
+
+- Checkout identity: `tools/config.py` also emits `CHECKOUT_KIND` (`main`, `linked`, `none`)
+  and `CHECKOUT_SLUG`, derived read-only from git; a linked worktree's slug comes from its
+  directory name (`corpus-cafe-07.1` -> `07_1`). Optional `[tooling].checkout_slug` overrides
+  it. `/odoo19` shows a `checkout:` line. Database names and commands do not change yet.
+
 ## [0.1.0] - 2026-11-16
 
 First tagged release: one project checkout per Odoo project.

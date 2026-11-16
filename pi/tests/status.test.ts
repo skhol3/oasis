@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatStatus, parseAssignments } from "../lib/status.ts";
+import { formatStatus, parseAssignments, type StatusInput } from "../lib/status.ts";
 
 test("parseAssignments reads config.py shell-quoted output", () => {
   const output = [
@@ -97,4 +97,22 @@ test("parseGit resolves rev-parse dirs against the root and counts changed files
     changedFiles: 0,
   });
   assert.equal(parseGit("/p", "main\n", ""), null);
+});
+
+test("formatStatus adds the checkout identity reported by the profile", () => {
+  const base = { DEV_PREFIX: "x_dev_", TEST_PREFIX: "x_test_", TEST_DATABASE: "", ODOO_SOURCE: "/o" };
+  const head = "odoo19 project: /p\nodoo source: /o\ndatabases: dev x_dev_<module>, test x_test_<module>\n";
+  const cases: [Record<string, string>, StatusInput["git"], string][] = [
+    [{ CHECKOUT_KIND: "main", CHECKOUT_SLUG: "" }, { branch: "main", linkedWorktree: false, changedFiles: 0 },
+      "git: main, main checkout, clean\ncheckout: main"],
+    [{ CHECKOUT_KIND: "linked", CHECKOUT_SLUG: "07_1" }, { branch: "feat/x", linkedWorktree: true, changedFiles: 1 },
+      "git: feat/x, linked worktree, 1 changed files\ncheckout: linked worktree, slug 07_1"],
+    [{ CHECKOUT_KIND: "main", CHECKOUT_SLUG: "x" }, { branch: "main", linkedWorktree: false, changedFiles: 0 },
+      "git: main, main checkout, clean\ncheckout: main, slug x (profile)"],
+    [{ CHECKOUT_KIND: "none", CHECKOUT_SLUG: "" }, null, "git: not a git checkout\ncheckout: outside git"],
+    [{ CHECKOUT_KIND: "none", CHECKOUT_SLUG: "solo" }, null, "git: not a git checkout\ncheckout: outside git, slug solo (profile)"],
+  ];
+  for (const [identity, git, tail] of cases) {
+    assert.equal(formatStatus({ root: "/p", config: { ...base, ...identity }, modules: [], git }), head + tail);
+  }
 });

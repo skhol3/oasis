@@ -110,6 +110,16 @@ class BundleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check_example(raw + "\n[database_extra]\npassword = 'example'\n")
 
+    def test_checkout_slug_is_documented_but_not_set_in_the_example(self):
+        raw = CONFIG.read_text(encoding='utf-8')
+        self.assertNotIn('checkout_slug', tomllib.loads(raw)['tooling'])
+        documented = re.findall(r"^# checkout_slug = '([^']*)'$", raw, re.MULTILINE)
+        self.assertEqual(len(documented), 1)
+        self.assertRegex(documented[0], r'^[a-z0-9][a-z0-9_]{0,19}$')
+        contract = (ROOT / 'odoo19-environment/references/project-contract.md').read_text(encoding='utf-8')
+        for phrase in ('`checkout_slug`', '`CHECKOUT_KIND`', '`CHECKOUT_SLUG`'):
+            self.assertIn(phrase, contract)
+
     def test_reference_and_package_docs(self):
         reference = ROOT / 'odoo19-environment/references/project-contract.md'
         self.assertTrue(reference.is_file())

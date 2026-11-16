@@ -30,6 +30,10 @@ dev_prefix = 'sample_dev_'
 test_prefix = 'sample_test_'
 # Optional reusable sequential test target; never implies reset permission.
 # test_database = 'sample_test_suite'
+# Optional checkout slug: 1-20 of a-z, 0-9 and _, starting with a letter or digit.
+# Linked git worktrees derive it from their directory name; set it to override
+# that, or to give the main checkout a slug. Reported only; names are unchanged.
+# checkout_slug = 'sample_07_1'
 
 # Optional advisory command discovery, never shell strings or authorization.
 # Expand ~ for the current user; use an absolute --project root as separate args.

@@ -36,7 +36,7 @@ Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shel
 - Tool `odoo19_model_info`: wraps `odoo19 model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
 - Prompt context naming the `odoo19` tools when `.odoo19-agent.toml` is found at or above the working directory.
 - A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package.
-- `/odoo19`: a quick status with the profile, addon modules, configured databases and git worktree. It never starts services or queries databases.
+- `/odoo19`: a quick status with the profile, addon modules, configured databases, git worktree and checkout identity. It never starts services or queries databases.
 
 Other agents keep using the core (`odoo19` CLI and skills) unchanged.
 
@@ -158,6 +158,22 @@ This does not change Odoo's skip classification: a successful exit can still inc
 Both commands support `--help`. Ensure `dev/logs/` is ignored by project version control. Logs can contain application data; do not publish them or collect credentials. Run shared destinations **sequentially**: there is no execution scheduler or lock. Existing active sessions block reset, but that check is not a concurrency lock. Use explicitly approved separate targets for parallel jobs or retained baseline scenarios. Do not invent a new database name for every edit. Preserve failed-run evidence until investigation is complete; a later reset overwrites database state even though prior logs remain.
 
 The setting is **not reset consent** and does not create a database when read. Never reset the manual development database, infer approval from the namespace, terminate sessions automatically, or clean up other databases. Existing databases are left untouched by installing this change. Template/profile changes require the normal authorization.
+
+## Checkout identity
+
+Each checkout of a project gets an identity derived from the folder it runs in, so linked git worktrees (for example the ones Gentle Shell creates for sessions) can later get their own runtime resources. oasis keeps no registry: it runs a read-only `git rev-parse` in the project root and the same folder always gives the same identity.
+
+- The main checkout has kind `main` and no slug. A project outside git has kind `none` and no slug.
+- A linked worktree has kind `linked` and a slug from its directory name. When the name starts with the main checkout's directory name followed by `-`, `_` or `.`, that prefix is dropped. The rest is lowercased and every run of other characters than `a-z` and `0-9` becomes `_`, trimmed at both ends: `corpus-cafe-07.1` next to `corpus-cafe` gives `07_1`, `Feature Branch!` gives `feature_branch`.
+- The slug must be 1-20 characters of `a-z`, `0-9` and `_`, starting with a letter or digit. When a name cannot produce one (empty or too long), the reader fails and asks for `[tooling].checkout_slug`.
+- Optional `checkout_slug` in `[tooling]` overrides the slug for any checkout, including the main one (opt-in suffix); the reported kind stays the real one. An empty value is invalid: omit the key instead.
+
+```toml
+# Example only.
+checkout_slug = 'mrp_2'
+```
+
+`/odoo19` shows it as `checkout: main`, `checkout: linked worktree, slug 07_1` or `checkout: main, slug mrp_2 (profile)`. For now the identity is only reported: database names, ports and command behavior are unchanged. Per-checkout database names follow in the next step.
 
 ## Portable verification
 
