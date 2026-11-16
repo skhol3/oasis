@@ -20,7 +20,7 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 ## Tasks
 
 - [x] T1 [S2 S3 S9] Checkout identity (slug) from git, profile override, shown by `/odoo19` — worker — commit: ebdbcb4
-- T2 [S3 S4 S8] Per-checkout DB names, test_database + slug in linked worktrees, 63-byte check, managed-prefix guard and missing-DB refusal for update-module, odoo-shell, install-module, start -d (Risk: items 2, 3) — worker + verify — commit: pending
+- [x] T2 [S3 S4 S8] Per-checkout DB names, test_database + slug in linked worktrees, 63-byte check, managed-prefix guard and missing-DB refusal for update-module, odoo-shell, install-module, start -d (Risk: items 2, 3) — worker + verify — commit: d09f5b9
 - T3 [S5] Disposable test databases per run + `odoo19 gc` (Risk: item 1) — pending (v0.3.0)
 - T4 [S6 S7] Per-checkout HTTP port with fallback, pidfile, own start/stop — pending (v0.3.0)
 - T5 [S2] `worktree-init` — pending (v0.3.0)
@@ -37,3 +37,4 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
   - Length: every database name the tools compute or accept is at most 63 UTF-8 bytes; names that get an `_update` sibling at most 56. Fail with a clear message before any database command.
   - S8 guards: update-module, odoo-shell, install-module (with and without demo) and `start -d` require a managed name; update-module and odoo-shell refuse a missing database (`does not exist; create it with install-module or create-database`) instead of creating it.
   - Contract change (AGENTS.md): listed under `### Changed` in CHANGELOG `[Unreleased]` and noted in the README.
+- L6. T2 independent verify on d09f5b9: S3, S4, S8 and all L5 bullets met, no must-fix (probes: main/foreign names, wt_10 vs wt_1 boundary, bare namespace, %/\\_/quote names, 63/64 bytes, rejection before docker). Accepted limits documented in README: start without -d uses odoo.conf db_name/--db-filter; slugs match as prefixes. Slice boundary: v0.2.0 is T1+T2 (~820 lines).
