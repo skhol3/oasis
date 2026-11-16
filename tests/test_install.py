@@ -16,6 +16,12 @@ def committed_files():
     return {line for line in output.splitlines() if line}
 
 
+def head_version():
+    package = subprocess.run(['git', '-C', str(ROOT), 'show', 'HEAD:package.json'],
+                             capture_output=True, text=True, check=True).stdout
+    return json.loads(package)['version']
+
+
 def head_commit():
     return subprocess.run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], check=True,
                           capture_output=True, text=True).stdout.strip()
@@ -52,7 +58,9 @@ class InstallTest(unittest.TestCase):
         self.assertTrue(os.access(self.target / 'tools' / 'test-module', os.X_OK))
         record = json.loads((self.target / '.oasis-install.json').read_text())
         self.assertEqual(record['commit'], head_commit())
-        self.assertIn('installed', result.stdout)
+        version = head_version()
+        self.assertEqual(record['version'], version)
+        self.assertEqual(result.stdout, f'oasis {version} ({head_commit()[:12]}) installed in {self.target}\n')
 
     def test_replaces_previous_install_and_keeps_backup_outside_target(self):
         self.target.mkdir()
@@ -65,6 +73,25 @@ class InstallTest(unittest.TestCase):
         self.assertEqual((backups[0] / 'stale.txt').read_text(), 'old')
         self.assertNotIn(self.target, backups[0].parents)
         self.assertEqual([p.name for p in self.target.parent.iterdir()], ['odoo19'])
+
+    def test_refuses_package_without_semver_version_and_keeps_target(self):
+        repo = self.scratch / 'repo'
+        repo.mkdir()
+        (repo / 'install.sh').write_bytes(INSTALL.read_bytes())
+        (repo / 'install.sh').chmod(0o755)
+        (repo / 'package.json').write_text('{"version": "first"}\n')
+        git = ['git', '-C', str(repo), '-c', 'user.name=t', '-c', 'user.email=t@example.invalid']
+        subprocess.run([*git, 'init', '-q'], check=True)
+        subprocess.run([*git, 'add', '.'], check=True)
+        subprocess.run([*git, 'commit', '-qm', 'fixture'], check=True)
+        self.target.mkdir()
+        (self.target / 'keep.txt').write_text('old')
+        result = subprocess.run([str(repo / 'install.sh'), '--target', str(self.target)],
+                                capture_output=True, text=True, env=self.env, cwd=self.scratch)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('package.json has no valid SemVer version', result.stderr)
+        self.assertEqual(result.stdout, '')
+        self.assertEqual((self.target / 'keep.txt').read_text(), 'old')
 
     def test_refuses_target_inside_repository(self):
         inside = ROOT / 'tmp-install-target'

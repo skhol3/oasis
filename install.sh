@@ -67,8 +67,25 @@ git -C "$repo" archive --format=tar "$commit" | tar -xf - -C "$staging"
 for name in "${repo_only[@]}"; do
   rm -f "$staging/$name"
 done
-printf '{"commit": "%s", "installed_at": "%s", "source": "%s"}\n' \
-  "$commit" "$stamp" "$repo" > "$staging/.oasis-install.json"
+# The installed version is the committed package.json version (SemVer).
+version=$(python3 -I -B - "$staging/package.json" <<'PY'
+import json, re, sys
+try:
+    version = json.load(open(sys.argv[1], encoding='utf-8'))['version']
+except (OSError, ValueError, KeyError):
+    sys.exit(1)
+if not isinstance(version, str) or not re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?', version):
+    sys.exit(1)
+print(version)
+PY
+) || die 'package.json has no valid SemVer version'
+python3 -I -B - "$staging/.oasis-install.json" "$commit" "$version" "$stamp" "$repo" <<'PY'
+import json, sys
+path, commit, version, stamp, source = sys.argv[1:]
+with open(path, 'w', encoding='utf-8') as handle:
+    json.dump({'commit': commit, 'version': version, 'installed_at': stamp, 'source': source}, handle)
+    handle.write('\n')
+PY
 
 backup=
 if [[ -e $target || -L $target ]]; then
@@ -81,5 +98,5 @@ if ! mv "$staging" "$target"; then
 fi
 trap - EXIT
 
-echo "oasis ${commit:0:12} installed in $target"
+echo "oasis $version (${commit:0:12}) installed in $target"
 [[ -z $backup ]] || echo "previous install kept in $backup"
