@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source "$(dirname "$0")/common.sh"
+database=${1:-}
+mode=${2:-}
+require_runtime
+if [[ -z "$database" || ( -n "$mode" && "$mode" != "--terminate" ) || $# -gt 2 ]]; then
+  printf 'Usage: %s <%s*|%s*> [--terminate]\n' "${ODOO19_ENTRYPOINT:-$0}" "$DEV_PREFIX" "$TEST_PREFIX" >&2
+  exit 2
+fi
+require_managed_database_name "$database"
+if ! database_exists "$database"; then
+  printf 'Database does not exist: %s\n' "$database"
+  exit 0
+fi
+session_count=$(managed_database_session_count "$database")
+if (( session_count > 0 )); then
+  if [[ "$mode" != "--terminate" ]]; then
+    printf 'Refusing to drop database with %s active session(s): %s\n' "$session_count" "$database" >&2
+    printf 'Retry with --terminate only after confirming those sessions may be closed.\n' >&2
+    exit 3
+  fi
+  terminate_managed_database_sessions "$database"
+fi
+compose exec -T "$DB_SERVICE" sh -c '
+  set -eu
+  export PGPASSWORD="$ODOO_DB_PASSWORD"
+  exec dropdb -U "$ODOO_DB_USER" "$1"
+' sh "$database"
+printf 'Database dropped: %s\n' "$database"

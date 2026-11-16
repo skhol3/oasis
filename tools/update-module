@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source "$(dirname "$0")/common.sh"
+module=${1:-}
+database=${2:-}
+require_runtime
+require_module "$module"
+if [[ -z "$database" ]]; then
+  printf 'Usage: %s <module> <database>\n' "${ODOO19_ENTRYPOINT:-$0}" >&2
+  exit 2
+fi
+require_database_name "$database"
+ensure_database "$database"
+run_odoo -d "$database" -u "$module" --stop-after-init

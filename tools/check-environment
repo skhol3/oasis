@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source "$(dirname "$0")/common.sh"
+mode=${1:---quick}
+if (( $# > 1 )) || [[ "$mode" != "--quick" && "$mode" != "--full" ]]; then
+  printf 'Usage: %s [--quick|--full]\n' "${ODOO19_ENTRYPOINT:-$0}" >&2
+  exit 2
+fi
+require_runtime
+requirements_dir="$REQUIREMENTS_DIR"
+required_files=(
+  "$requirements_dir/runtime.in"
+  "$requirements_dir/runtime.txt"
+  "$requirements_dir/dev.in"
+  "$requirements_dir/dev.txt"
+  "$requirements_dir/lock.sha256"
+)
+failures=0
+pass() { printf 'PASS %s\n' "$1"; }
+fail() { printf 'FAIL %s\n' "$1" >&2; failures=$((failures + 1)); }
+for path in "${required_files[@]}"; do
+  if [[ -f "$path" ]]; then pass "file:${path#$PROJECT_ROOT/}"
+  else fail "missing_file:${path#$PROJECT_ROOT/}"
+  fi
+done
+python_version=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+if [[ "$python_version" == "3.12" ]]; then pass "python_version=$python_version"
+else fail "python_version=$python_version expected=3.12"
+fi
+venv_prefix=$("$PYTHON" -c 'import sys; print(sys.prefix)')
+if [[ "$venv_prefix/bin/python" -ef "$PYTHON" ]]; then pass "virtualenv=$venv_prefix"
+else fail "virtualenv_prefix_mismatch=$venv_prefix"
+fi
+if command -v uv >/dev/null 2>&1; then pass "uv=$(uv --version | awk '{print $2}')"
+else fail "uv=missing"
+fi
+odoo_version=$("$PYTHON" "$ODOO_BIN" --version 2>/dev/null || true)
+if [[ "$odoo_version" == *"19.0"* ]]; then pass "odoo_version=19.0"
+else fail "odoo_version=${odoo_version:-unavailable} expected=19.0"
+fi
+fingerprint=$(lock_fingerprint_arg)
+if [[ -f "$requirements_dir/lock.sha256" ]] &&
+   (cd "$PROJECT_ROOT"; sha256sum --check --strict "$fingerprint" >/dev/null 2>&1); then
+  pass "dependency_locks=current"
+else fail "dependency_locks=stale_or_modified"
+fi
+if compose config -q >/dev/null 2>&1; then pass "compose_config=valid"
+else fail "compose_config=invalid"
+fi
+if [[ "$mode" == "--full" ]]; then
+  if uv pip check --python "$PYTHON"; then pass "package_compatibility=valid"
+  else fail "package_compatibility=invalid"
+  fi
+  if "$PYTHON" "$(dirname "$0")/check_environment.py" "$requirements_dir/dev.txt"; then pass "locked_environment=exact"
+  else fail "locked_environment=drifted"
+  fi
+  if "$(dirname "$0")/audit-dependencies"; then pass "dependency_audit=clean"
+  else fail "dependency_audit=failed"
+  fi
+  if compose ps --status running --services | grep -qx "$DB_SERVICE"; then
+    pass "postgres_service=running"
+    if database_psql -Atqc 'SELECT 1' | grep -qx 1; then pass "postgres_connection=ready"
+    else fail "postgres_connection=failed"
+    fi
+  else fail "postgres_service=not_running"
+  fi
+else
+  printf 'SKIP locked_environment=use_--full\n'
+  printf 'SKIP dependency_audit=use_--full\n'
+  printf 'SKIP postgres_connection=use_--full\n'
+fi
+printf 'environment_mode=%s\n' "${mode#--}"
+printf 'environment_failures=%s\n' "$failures"
+exit "$((failures > 0))"

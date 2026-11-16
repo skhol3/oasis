@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source "$(dirname "$0")/common.sh"
+module=${1:-}
+database=${2:-}
+require_runtime
+if [[ -z "$module" || -z "$database" || $# -ne 2 ]]; then
+  printf 'Usage: %s <module> <%s*|%s*>\n' "${ODOO19_ENTRYPOINT:-$0}" "$DEV_PREFIX" "$TEST_PREFIX" >&2
+  exit 2
+fi
+require_module "$module"
+require_managed_database_name "$database"
+printf 'database=%s\n' "$database"
+printf 'module=%s\n' "$module"
+if ! database_exists "$database"; then
+  printf 'database_state=missing\nmodule_state=unknown\n'
+  exit 0
+fi
+initialized=$(database_query "$database" -Atqc "SELECT to_regclass('public.ir_module_module') IS NOT NULL")
+if [[ "$initialized" != t ]]; then
+  printf 'database_state=uninitialized\nmodule_state=unknown\n'
+  exit 0
+fi
+printf 'database_state=ready\n'
+module_row=$(database_query "$database" -AtF $'\t' -qc "SELECT state, COALESCE(latest_version, '') FROM ir_module_module WHERE name = '$module'")
+if [[ -z "$module_row" ]]; then
+  printf 'module_state=not_found\ninstalled_version=\n'
+  exit 0
+fi
+IFS=$'\t' read -r module_state installed_version <<<"$module_row"
+printf 'module_state=%s\ninstalled_version=%s\n' "$module_state" "$installed_version"

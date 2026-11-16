@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source "$(dirname "$0")/common.sh"
+require_runtime
+if (( $# != 0 )); then
+  printf 'Usage: %s\n' "${ODOO19_ENTRYPOINT:-$0}" >&2
+  exit 2
+fi
+list_managed_databases

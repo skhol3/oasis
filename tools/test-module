@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ ${1:-} == --help ]]; then
+  printf 'Usage: %s [--compact] <module> [test_database]\n' "${ODOO19_ENTRYPOINT:-$0}"
+  printf 'Resets the selected test database. Default: tooling.test_database, otherwise test_prefix + module.\n'
+  printf 'Run shared targets sequentially. --compact retains stdout/stderr under project dev/logs/odoo19.\n'
+  printf 'Tests use private short scratch; browser diagnostics remain under project dev/logs/odoo19.\n'
+  exit 0
+fi
+source "$(dirname "$0")/common.sh"
+compact=false
+if [[ ${1:-} == --compact ]]; then compact=true; shift; fi
+module=${1:-}
+database=${2:-${TEST_DATABASE:-${TEST_PREFIX}${module}}}
+require_runtime
+require_module "$module"
+require_database_name "$database"
+if [[ "$database" != "$TEST_PREFIX"* ]]; then
+  printf 'Test databases must use the %s prefix.\n' "$TEST_PREFIX" >&2
+  exit 2
+fi
+if "$compact"; then
+  source "$(dirname "$0")/compact.sh"
+  log_directory=$(compact_log_directory)
+  status=0
+  # A fresh Bash process preserves errexit inside reset_test_database.
+  # Calling the function in an &&/|| context would disable its fail-closed checks.
+  bash "$0" "$module" "$database" \
+    >"$log_directory/stdout.log" 2>"$log_directory/stderr.log" || status=$?
+  chmod 600 "$log_directory/stdout.log" "$log_directory/stderr.log"
+  printf 'phase=tests database=%s exit=%s\nstdout_log=%s\nstderr_log=%s\n' \
+    "$database" "$status" "$log_directory/stdout.log" "$log_directory/stderr.log"
+  exit "$status"
+fi
+reset_test_database "$database"
+python3 -B "$(dirname "$0")/test_temp.py" "$PROJECT_ROOT" \
+  "$PYTHON" "$ODOO_BIN" -c "$ODOO_CONFIG" \
+  -d "$database" -i "$module" --without-demo --test-tags "/$module" --stop-after-init

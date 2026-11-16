@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ ${1:-} == --help ]]; then
+  printf 'Usage: %s [--compact] <module> [test_database] [update_database]\n' "${ODOO19_ENTRYPOINT:-$0}"
+  printf 'Resets two distinct test targets: tests and current-code fresh-install/update baseline.\n'
+  printf 'Defaults: tooling.test_database and its _update sibling, otherwise module-derived names.\n'
+  printf 'Run shared targets sequentially. --compact retains per-phase stdout/stderr under project dev/logs/odoo19.\n'
+  exit 0
+fi
+source "$(dirname "$0")/common.sh"
+compact=false
+if [[ ${1:-} == --compact ]]; then compact=true; shift; fi
+module=${1:-}
+test_database=${2:-${TEST_DATABASE:-${TEST_PREFIX}${module}}}
+update_database=${3:-${TEST_DATABASE:+${test_database}_update}}
+update_database=${update_database:-${TEST_PREFIX}${module}_update}
+require_runtime
+if [[ -z "$module" || $# -gt 3 ]]; then
+  printf 'Usage: %s <module> [%sdatabase] [%supdate_database]\n' "${ODOO19_ENTRYPOINT:-$0}" "$TEST_PREFIX" "$TEST_PREFIX" >&2
+  exit 2
+fi
+require_module "$module"
+require_managed_database_name "$test_database"
+require_managed_database_name "$update_database"
+if [[ "$test_database" != "$TEST_PREFIX"* || "$update_database" != "$TEST_PREFIX"* ]]; then
+  printf 'Verification databases must use the %s prefix.\n' "$TEST_PREFIX" >&2
+  exit 2
+fi
+if [[ "$test_database" == "$update_database" ]]; then
+  printf 'Test and update verification require different databases.\n' >&2
+  exit 2
+fi
+if "$compact"; then
+  source "$(dirname "$0")/compact.sh"
+  log_directory=$(compact_log_directory)
+fi
+run_phase() {
+  local phase=$1 database=$2
+  shift 2
+  if "$compact"; then
+    local status=0
+    "$@" >"$log_directory/$phase.stdout.log" 2>"$log_directory/$phase.stderr.log" || status=$?
+    chmod 600 "$log_directory/$phase.stdout.log" "$log_directory/$phase.stderr.log"
+    printf 'phase=%s database=%s exit=%s\nstdout_log=%s\nstderr_log=%s\n' \
+      "$phase" "$database" "$status" "$log_directory/$phase.stdout.log" "$log_directory/$phase.stderr.log"
+    return "$status"
+  fi
+  printf '\n=== %s (%s) ===\n' "$phase" "$database"
+  if "$@"; then
+    printf 'phase=%s database=%s exit=0\n' "$phase" "$database"
+    return 0
+  else
+    local status=$?
+    printf 'phase=%s database=%s exit=%s\n' "$phase" "$database" "$status" >&2
+    return "$status"
+  fi
+}
+test_exit=0
+prepare_exit=0
+install_exit=0
+update_exit=0
+run_phase tests "$test_database" "$(dirname "$0")/test-module" "$module" "$test_database" || test_exit=$?
+run_phase prepare_update_database "$update_database" reset_test_database "$update_database" || prepare_exit=$?
+if (( prepare_exit == 0 )); then
+  run_phase fresh_install "$update_database" "$(dirname "$0")/install-module" "$module" "$update_database" || install_exit=$?
+else
+  install_exit=125
+  printf 'phase=fresh_install database=%s exit=125 status=skipped reason=prepare_update_database_failed\n' "$update_database" >&2
+fi
+if (( install_exit == 0 )); then
+  run_phase current_code_update "$update_database" "$(dirname "$0")/update-module" "$module" "$update_database" || update_exit=$?
+else
+  update_exit=125
+  printf 'phase=current_code_update database=%s exit=125 status=skipped reason=fresh_install_failed\n' "$update_database" >&2
+fi
+printf '\n=== verification summary ===\n'
+printf 'module=%s\ntests_database=%s\nupdate_database=%s\nupdate_baseline=current_code_fresh_install\n' "$module" "$test_database" "$update_database"
+printf 'tests_exit=%s\nprepare_update_database_exit=%s\nfresh_install_exit=%s\ncurrent_code_update_exit=%s\n' "$test_exit" "$prepare_exit" "$install_exit" "$update_exit"
+if (( test_exit != 0 || prepare_exit != 0 || install_exit != 0 || update_exit != 0 )); then exit 1; fi
+"$(dirname "$0")/module-status" "$module" "$test_database"
+"$(dirname "$0")/module-status" "$module" "$update_database"

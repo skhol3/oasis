@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source "$(dirname "$0")/common.sh"
+usage='Usage: install-module [--with-demo] <module> [database]'
+with_demo=false
+if [[ ${1:-} == --help ]]; then
+  printf '%s\nDefault: --without-demo. --with-demo is restricted to managed %s/%s databases.\n' "$usage" "$DEV_PREFIX" "$TEST_PREFIX"
+  exit 0
+fi
+if [[ ${1:-} == --with-demo ]]; then
+  with_demo=true
+  shift
+elif [[ ${1:-} == --* ]]; then
+  printf 'Unknown option: %s\n' "$1" >&2
+  exit 2
+fi
+if (( $# > 2 )); then
+  printf '%s\n' "$usage" >&2
+  exit 2
+fi
+module=${1:-}
+database=${2:-${DEV_PREFIX}${module}}
+require_module "$module"
+if [[ "$with_demo" == true ]]; then
+  require_managed_database_name "$database"
+else
+  require_database_name "$database"
+fi
+require_runtime
+ensure_database "$database" </dev/null
+if [[ "$with_demo" == true ]]; then
+  run_odoo -d "$database" -i "$module" --with-demo --stop-after-init
+else
+  run_odoo -d "$database" -i "$module" --without-demo --stop-after-init
+fi

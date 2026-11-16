@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ ${1:-} == --help && $# == 1 ]]; then
+  printf '%s\n' 'Usage: init-dev-database [--with-demo] <module> <database>' \
+    'Create a NEW development database with explicit administrator and project role accounts.' \
+    'Requires [development] configuration and hidden interactive password entry; excludes tests.' \
+    '--with-demo opts in to the native Odoo demo loader and project development.demo_modules.'
+  exit 0
+fi
+source "$(dirname "$0")/common.sh"
+with_demo=false
+if [[ ${1:-} == --with-demo ]]; then
+  with_demo=true
+  shift
+fi
+if (( $# != 2 )); then
+  printf 'Usage: init-dev-database [--with-demo] <module> <database>\n' >&2
+  exit 2
+fi
+module=$1
+database=$2
+if [[ ! "$database" =~ ^[A-Za-z0-9_]+$ || "$database" != "$DEV_PREFIX"* || "$database" == "$DEV_PREFIX" ]]; then
+  printf 'ERROR: Initialization requires a named development database.\n' >&2
+  exit 2
+fi
+require_module "$module"
+helper="$(dirname "$0")/dev_users.py"
+python3 -B "$helper" --validate "$PROJECT_ROOT" "$module" "$database" "$with_demo"
+require_runtime
+exec python3 -B "$helper" "$PROJECT_ROOT" "$module" "$database" "$with_demo"

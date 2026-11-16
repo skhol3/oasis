@@ -1,0 +1,15 @@
+# Test-only tooling inputs for synthetic projects inside tests/fixturesroot.
+# Not a template or default for a real project. No operation is authorized.
+[tooling]
+version = '19.0'
+python_version = '3.12'
+community = '../../source/odoo'
+environment = '../../environments/example'
+config = 'dev/odoo.conf'
+env_file = 'dev/.env'
+compose = 'dev/compose.yml'
+requirements = 'dev/requirements'
+addons_paths = ['.']
+db_service = 'db'
+dev_prefix = 'cc_dev_'
+test_prefix = 'cc_test_'

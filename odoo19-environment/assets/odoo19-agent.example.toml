@@ -1,0 +1,45 @@
+# Optional project-local declarations for an explicitly authorized project.
+# Values are placeholders, not defaults, discovery, access consent or executable checks.
+# Never add credentials or read/log runtime config or env-file contents.
+[odoo]
+# Consultation roots only; this does not expand installed-tool module roots.
+addons_paths = ['addons', 'source/enterprise']
+
+[environment]
+# Dependency/lock metadata; never grants permission to access external paths.
+dependency_inputs = ['requirements.txt']
+lock_files = ['requirements.lock']
+
+# The installed tooling reads only [tooling]; these paths and namespace guards
+# must be adapted to the actual project before use. A template never authorizes
+# an operation or an external path read/write.
+[tooling]
+version = '19.0'
+python_version = '3.12'
+community = 'source/odoo'
+environment = '.venv'
+config = 'local/odoo.conf'
+env_file = 'local/.env'
+compose = 'local/compose.yml'
+requirements = 'dev/requirements'
+addons_paths = ['addons']
+# Optional; only lint-module consumes it. File/plugins must exist and be trusted.
+# lint_rcfile = 'dev/lint/.pylintrc'
+db_service = 'db'
+dev_prefix = 'sample_dev_'
+test_prefix = 'sample_test_'
+# Optional reusable sequential test target; never implies reset permission.
+# test_database = 'sample_test_suite'
+
+# Optional advisory command discovery, never shell strings or authorization.
+# Expand ~ for the current user; use an absolute --project root as separate args.
+# [commands]
+# entrypoint = '~/.agents/skills/odoo19/odoo19'
+# check_environment = 'check-environment'
+# bootstrap = 'bootstrap'
+# install = 'install-module'
+# update = 'update-module'
+# test = 'test-module'
+# module_status = 'module-status'
+# odoo_shell = 'odoo-shell'
+# lint = 'lint-module'

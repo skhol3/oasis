@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source "$(dirname "$0")/common.sh"
+database=${1:-}
+require_runtime
+if [[ -z "$database" ]]; then
+  printf 'Usage: %s <database>\n' "${ODOO19_ENTRYPOINT:-$0}" >&2
+  exit 2
+fi
+require_database_name "$database"
+# Preparation must not consume commands piped to the Odoo shell.
+ensure_database "$database" </dev/null
+exec "$PYTHON" "$ODOO_BIN" shell -c "$ODOO_CONFIG" -d "$database"

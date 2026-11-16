@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source "$(dirname "$0")/common.sh"
+mode=${1:---preview}
+lockfile="$REQUIREMENTS_DIR/dev.txt"
+required_paths=("$ODOO_BIN" "$ODOO_CONFIG" "$COMPOSE_FILE" "$ENV_FILE" "$lockfile")
+if (( $# > 1 )) || [[ "$mode" != "--preview" && "$mode" != "--apply" ]]; then
+  printf 'Usage: %s [--preview|--apply]\n' "${ODOO19_ENTRYPOINT:-$0}" >&2
+  exit 2
+fi
+for path in "${required_paths[@]}"; do
+  if [[ ! -e "$path" ]]; then
+    printf 'Missing required local path: %s\n' "$path" >&2
+    exit 2
+  fi
+done
+require_source
+if ! command -v uv >/dev/null 2>&1; then
+  printf 'uv is required to bootstrap this environment.\n' >&2
+  exit 2
+fi
+fingerprint=$(lock_fingerprint_arg)
+if [[ ! -f "$REQUIREMENTS_DIR/lock.sha256" ]] || ! (
+  cd "$PROJECT_ROOT"
+  sha256sum --check --strict "$fingerprint" >/dev/null 2>&1
+); then
+  printf 'Refusing bootstrap because dependency inputs or locks do not match lock.sha256.\n' >&2
+  printf 'Regenerate the locks and fingerprint before preview or apply.\n' >&2
+  exit 2
+fi
+if [[ -e "$PROJECT_ENVIRONMENT" && ! -x "$PYTHON" ]]; then
+  printf 'Refusing to replace a non-virtualenv path: %s\n' "$PROJECT_ENVIRONMENT" >&2
+  exit 2
+fi
+# An existing isolated interpreter must be 3.12, even before a dry-run or repair.
+# Odoo may lack dependencies until the explicitly requested sync completes.
+if [[ -x "$PYTHON" ]]; then require_python_version; fi
+printf 'mode=%s\n' "${mode#--}"
+printf 'project=%s\n' "$PROJECT_NAME"
+printf 'environment=%s\n' "$PROJECT_ENVIRONMENT"
+printf 'lockfile=%s\n' "${lockfile#$PROJECT_ROOT/}"
+if [[ "$mode" == "--preview" ]]; then
+  printf 'mutation=none\n'
+  if [[ -x "$PYTHON" ]]; then
+    printf 'environment_state=ready\n'
+    exec uv pip sync --dry-run --python "$PYTHON" "$lockfile"
+  fi
+  printf 'environment_state=missing\n'
+  printf 'planned_action=create_python_3.12_and_sync_lock\n'
+  exit 0
+fi
+printf 'mutation=isolated_project_virtualenv\n'
+mkdir -p "$ENVIRONMENTS_DIR"
+if [[ ! -x "$PYTHON" ]]; then
+  uv venv --python 3.12 "$PROJECT_ENVIRONMENT"
+  require_python_version
+fi
+# The local runtime snapshot path stays project-owned, never under global tools.
+uv pip freeze --python "$PYTHON" > "$PROJECT_ROOT/dev/runtime/bootstrap-before.txt"
+uv pip sync --python "$PYTHON" "$lockfile"
+require_runtime
+exec "$(dirname "$0")/check-environment" --full
