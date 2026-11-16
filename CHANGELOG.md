@@ -9,6 +9,10 @@ still change in a minor release; every such change is listed here under **Change
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-16
+
+Linked git worktrees get their own databases: one checkout no longer steps on another.
+
 ### Added
 
 - Checkout identity: `tools/config.py` also emits `CHECKOUT_KIND` (`main`, `linked`, `none`)
@@ -31,6 +35,16 @@ still change in a minor release; every such change is listed here under **Change
   `_update` sibling to 56 bytes.
 - `update-module` and `odoo-shell` no longer create a missing database: they exit 2 with
   `Database <name> does not exist; create it with install-module or create-database.`
+
+### Known limitations
+
+- `start` without `-d`/`--database` uses the `db_name` and `--db-filter` of the project's
+  `odoo.conf`; keep `db_name` out of a linked worktree's `odoo.conf`.
+- Slugs are matched as prefixes: a slug that is the start of another (`wt`, `wt_1`) can reach
+  the other checkout's databases.
+- Checkout detection needs git 2.31 or newer; without it a worktree is treated as outside
+  git and keeps the main checkout's names.
+- Linked worktrees still share the HTTP port and the Compose stack (planned for 0.3.0).
 
 ## [0.1.0] - 2026-11-16
 
@@ -63,5 +77,6 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/skhol3/oasis/releases/tag/v0.2.0
 [0.1.0]: https://github.com/skhol3/oasis/releases/tag/v0.1.0
