@@ -5,6 +5,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { blockedProgram, blockReason } from "../lib/bash-guard.ts";
 import { findProjectRoot, projectContext } from "../lib/project.ts";
 import { formatPlain, formatTestRun, testModuleArgs } from "../lib/tools.ts";
 
@@ -53,6 +54,17 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       return;
     }
     return { systemPrompt: `${event.systemPrompt}\n\n<odoo19>\n${projectContext(root)}\n</odoo19>` };
+  });
+
+  // Agent bash only: direct odoo-bin/dropdb/psql bypass the core's database guards.
+  pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName !== "bash") return;
+    const command = (event.input as { command?: unknown }).command;
+    if (typeof command !== "string") return;
+    const root = findProjectRoot(ctx.cwd);
+    if (!root) return;
+    const program = blockedProgram(command);
+    if (program) return { block: true, reason: blockReason(program, root) };
   });
 
   pi.registerTool({
