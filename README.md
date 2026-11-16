@@ -2,6 +2,8 @@
 
 *Odoo Agent Skills & Infrastructure Scripts.* This repository is the source of the reusable global package installed at `~/.agents/skills/odoo19`, **not a seventh skill** and not a project staging directory. Contributor rules are in `AGENTS.md` in the source repository (not installed).
 
+Built with Gentle Shell (`github.com/Gentleman-Programming/gentle-shell`).
+
 ## Install or update
 
 With owner authorization, commit the change, run the test suite, then run `install.sh` from this repository:
