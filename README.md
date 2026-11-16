@@ -1,6 +1,20 @@
-# Portable Odoo 19 agent bundle
+# oasis — portable Odoo 19 agent bundle
 
-This is the reusable global package for `~/.agents/skills/odoo19`, **not a seventh skill** and not a project staging directory. Install its six `odoo19-*` directories, `tools/`, `project-wrappers/`, `tests/`, the `odoo19` entry point, and this README at that destination with owner authorization; installation is a separate step, not performed by these instructions. Restart the agent session or use `/reload` where supported, then check that exactly six skills are discovered. The skill entrypoints are [backend](odoo19-backend/SKILL.md), [security](odoo19-security/SKILL.md), [views/frontend](odoo19-views-frontend/SKILL.md), [testing](odoo19-testing/SKILL.md), [environment](odoo19-environment/SKILL.md), and [module lifecycle](odoo19-module-lifecycle/SKILL.md). See the [project capability contract](odoo19-environment/references/project-contract.md).
+*Odoo Agent Skills & Infrastructure Scripts.* This repository is the source of the reusable global package installed at `~/.agents/skills/odoo19`, **not a seventh skill** and not a project staging directory. Contributor rules are in [AGENTS.md](AGENTS.md).
+
+## Install or update
+
+With owner authorization, commit the change, run the test suite, then run [install.sh](install.sh) from this repository:
+
+```bash
+python3 -B -m unittest discover -s tests
+./install.sh                                  # installs HEAD into ~/.agents/skills/odoo19
+./install.sh --target /absolute/scratch/odoo19 # try it somewhere else first
+```
+
+The installer copies the committed HEAD only (uncommitted edits are never installed), drops repository-only files (`AGENTS.md`, `.gitignore`, `install.sh`), records the installed commit in `.oasis-install.json`, and moves the previous install to `${XDG_STATE_HOME:-~/.local/state}/oasis/backups/`, outside any skill discovery directory. `OASIS_STATE_DIR` overrides that state directory.
+
+The installed package contains the six `odoo19-*` directories, `tools/`, `project-wrappers/`, `tests/`, `docs/`, the `odoo19` entry point, and this README. Restart the agent session or use `/reload` where supported, then check that exactly six skills are discovered. The skill entrypoints are [backend](odoo19-backend/SKILL.md), [security](odoo19-security/SKILL.md), [views/frontend](odoo19-views-frontend/SKILL.md), [testing](odoo19-testing/SKILL.md), [environment](odoo19-environment/SKILL.md), and [module lifecycle](odoo19-module-lifecycle/SKILL.md). See the [project capability contract](odoo19-environment/references/project-contract.md).
 
 ## New project: deliberate setup
 
