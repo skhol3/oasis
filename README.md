@@ -16,7 +16,25 @@ python3 -B -m unittest discover -s tests
 
 The installer copies the committed HEAD only (uncommitted edits are never installed), drops repository-only files (`AGENTS.md`, `.gitignore`, `install.sh`), records the installed commit in `.oasis-install.json`, and moves the previous install to `${XDG_STATE_HOME:-~/.local/state}/oasis/backups/`, outside any skill discovery directory. `OASIS_STATE_DIR` overrides that state directory.
 
-The installed package contains the six `odoo19-*` directories, `tools/`, `project-wrappers/`, `tests/`, `docs/`, the `odoo19` entry point, and this README. Restart the agent session or use `/reload` where supported, then check that exactly six skills are discovered. The skill entrypoints are [backend](odoo19-backend/SKILL.md), [security](odoo19-security/SKILL.md), [views/frontend](odoo19-views-frontend/SKILL.md), [testing](odoo19-testing/SKILL.md), [environment](odoo19-environment/SKILL.md), and [module lifecycle](odoo19-module-lifecycle/SKILL.md). See the [project capability contract](odoo19-environment/references/project-contract.md).
+The installed package contains the six `odoo19-*` directories, `tools/`, `project-wrappers/`, `tests/`, `docs/`, the `odoo19` entry point, the Gentle Shell layer (`package.json` and `pi/`), and this README. Restart the agent session or use `/reload` where supported, then check that exactly six skills are discovered. The skill entrypoints are [backend](odoo19-backend/SKILL.md), [security](odoo19-security/SKILL.md), [views/frontend](odoo19-views-frontend/SKILL.md), [testing](odoo19-testing/SKILL.md), [environment](odoo19-environment/SKILL.md), and [module lifecycle](odoo19-module-lifecycle/SKILL.md). See the [project capability contract](odoo19-environment/references/project-contract.md).
+
+## Gentle Shell layer
+
+A thin Pi package (`package.json`, `pi/`) layered over Gentle Shell. It changes nothing in Gentle Shell or Pi; its goal is fewer tokens in Odoo work by wrapping the guarded `odoo19` core with compact output. Install it from a local checkout or from the repository:
+
+```bash
+gentle-shell install /absolute/path/to/oasis
+gentle-shell install git:github.com/skhol3/oasis
+```
+
+Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shell and Pi already scan. The layer adds:
+
+- Tools `odoo19_test_module`, `odoo19_module_status`, `odoo19_check_environment` and `odoo19_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`. Other output is capped at 60 lines (head and tail kept).
+- Prompt context naming the `odoo19` tools when `.odoo19-agent.toml` is found at or above the working directory.
+- A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package.
+- `/odoo19`: a quick status with the profile, addon modules, configured databases and git worktree. It never starts services or queries databases.
+
+Other agents keep using the core (`odoo19` CLI and skills) unchanged.
 
 ## New project: deliberate setup
 
