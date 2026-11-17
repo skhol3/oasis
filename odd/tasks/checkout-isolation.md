@@ -15,6 +15,7 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - S7. Accepted principle 5: "**Cada checkout controla solo lo suyo.** `start` y `stop` manejan su propio proceso de Odoo, con un archivo de PID. Apagar el contenedor de DB compartido requiere que ningún otro checkout lo esté usando."
 - S8. Accepted principle 6: "**Guards en todos los comandos que tocan una DB**, incluidos `update-module` y `odoo-shell`. Si la base no existe, el comando la rechaza en vez de crearla."
 - S9. Accepted rule: "oasis solo *agrega*. El bloqueo de bash frena únicamente comandos de Odoo y las herramientas solo leen la carpeta actual. No hay worktrees, memoria ni review propios."
+- S11. User: "pero como que tengo que hacerlo manual ajajajaj, se supone que la herramienta tambien es para eso, para no tener que hacer esas configuraciones manuales". Accepted: "**`/odoo19 setup`**, una sola vez: instala o actualiza el overlay de subagentes en la carpeta correcta, respetando `GENTLE_PI_CONFIG_HOME` si la usás; te muestra qué va a escribir y te pide confirmación; si lo corrés de nuevo y no hay cambios, no hace nada. Además, al abrir una sesión en un proyecto Odoo, oasis te avisa si el overlay falta o quedó viejo". Choice: "setup en 0.2.0, worktree en 0.3.0".
 - S10. Accepted plan: steps 1-2 -> v0.2.0 (worktrees no longer step on the main checkout); steps 3-5 -> v0.3.0.
 
 ## Tasks
@@ -27,6 +28,8 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - [x] T6 [S2 S9] Compact logs in a linked worktree whose dev/logs links to the main checkout (Risk: item 2, relaxes a path guard) — worker — commit: fb85c34, 0e51cd2
 - [x] T7 [S2] Document the manual dev/.env link for linked worktrees (agents may not create .env paths) — worker — commit: fb85c34
 - [x] T8 [S9] Give subagents the odoo19_* tools, or document the CLI fallback — explore first — commit: e1f2bb5
+- T9 [S9 S11] `/odoo19 setup` installs or updates the subagent overlay after confirmation; session-start notice when it is missing or outdated — worker — commit: pending
+- T5 note: `/odoo19 worktree <feature>` (user-run, creates the env-file link) is the first task of 0.3.0
 
 ## Log
 
