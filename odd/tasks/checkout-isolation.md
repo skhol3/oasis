@@ -28,7 +28,7 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - [x] T6 [S2 S9] Compact logs in a linked worktree whose dev/logs links to the main checkout (Risk: item 2, relaxes a path guard) — worker — commit: fb85c34, 0e51cd2
 - [x] T7 [S2] Document the manual dev/.env link for linked worktrees (agents may not create .env paths) — worker — commit: fb85c34
 - [x] T8 [S9] Give subagents the odoo19_* tools, or document the CLI fallback — explore first — commit: e1f2bb5
-- T9 [S9 S11] `/odoo19 setup` installs or updates the subagent overlay after confirmation; session-start notice when it is missing or outdated — worker — commit: pending
+- [x] T9 [S9 S11] `/odoo19 setup` installs or updates the subagent overlay after confirmation; session-start notice when it is missing or outdated — worker — commit: 5fe722a
 - T5 note: `/odoo19 worktree <feature>` (user-run, creates the env-file link) is the first task of 0.3.0
 
 ## Log
