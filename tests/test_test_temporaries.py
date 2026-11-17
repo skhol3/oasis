@@ -6,6 +6,7 @@ import signal
 import subprocess
 import time
 import unittest
+import test_compact_guards as compact_guards
 import test_lifecycle as lifecycle
 
 
@@ -218,6 +219,36 @@ exit "$FAKE_EXIT"
         self.assertNotIn('--test-tags', self.commands.read_text())
         self.assert_caller_intact()
         self.assertEqual(list(self.inherited.iterdir()), [self.sentinel])
+
+
+class LinkedWorktreeEvidenceTests(unittest.TestCase):
+    """Browser evidence follows a linked worktree's dev/logs link to the main checkout."""
+    setUp = compact_guards.LinkedWorktreeCompactTests.setUp
+    setUp_fixture = lifecycle.LifecycleTests.setUp
+    git = compact_guards.LinkedWorktreeCompactTests.git
+    invoke = compact_guards.LinkedWorktreeCompactTests.invoke
+    prepare_probe = TestTemporaryTests.prepare_probe
+    assert_caller_intact = TestTemporaryTests.assert_caller_intact
+    assert_short_private_cleaned = TestTemporaryTests.assert_short_private_cleaned
+
+    def test_evidence_is_copied_under_the_main_checkout_logs(self):
+        self.caller_tmpdir = os.environ.get('TMPDIR')
+        self.prepare_probe()
+        (self.main / 'dev/logs').mkdir()
+        (self.linked / 'dev/logs').symlink_to(self.main / 'dev/logs', target_is_directory=True)
+        result = self.invoke(self.linked, 'coffee')
+        scratch = Path(self.observation.read_text().splitlines()[0])
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, 'test stdout\n', 'test stderr\n'))
+        runs = list((self.main / 'dev/logs/odoo19').iterdir())
+        self.assertEqual(len(runs), 1)
+        files = {p.relative_to(runs[0]): p.read_text() for p in runs[0].rglob('*') if p.is_file()}
+        self.assertEqual(files, {
+            Path('odoo_tests/run/chrome_logs/browser.log'): 'fake browser diagnostic\n',
+            Path('odoo_tests/run/screenshot.png'): 'fake screenshot\n'})
+        self.assert_caller_intact()
+        self.assert_short_private_cleaned(self.observation.read_text().splitlines()[::2])
 
 
 if __name__ == '__main__':
