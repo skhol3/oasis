@@ -127,6 +127,15 @@ class LinkedWorktreeCompactTests(unittest.TestCase):
         self.assertEqual(list(outside.iterdir()), [])
         self.unchanged()
 
+    def test_linked_logs_elsewhere_in_the_main_checkout_are_refused(self):
+        source = self.main / 'addons'
+        source.mkdir()
+        (self.linked / 'dev/logs').symlink_to(source, target_is_directory=True)
+        result = self.invoke(self.linked, '--compact', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', REFUSED))
+        self.assertEqual(list(source.iterdir()), [])
+        self.unchanged()
+
     def test_main_checkout_logs_outside_stay_refused(self):
         outside = self.main.parent.parent / 'outside'
         outside.mkdir()

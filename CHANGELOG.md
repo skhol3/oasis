@@ -43,7 +43,7 @@ Linked git worktrees get their own databases: one checkout no longer steps on an
 
 - `test-module --compact` in a linked worktree whose `dev/logs` links to the main checkout:
   `tools/config.py` also emits `CHECKOUT_MAIN_ROOT`, and compact runs in a linked worktree
-  accept a log directory inside the main checkout. Every other location outside the project
+  accept a log directory inside the main checkout's `dev/logs/odoo19`. Every other location outside the project
   is still refused.
 - Browser evidence (`chrome_logs`, screenshots, videos) of `test-module` in a linked worktree
   whose `dev/logs` links to the main checkout is now copied there instead of being refused:

@@ -11,9 +11,10 @@ root = Path(sys.argv[1]).resolve()
 kind, main_root = sys.argv[2], sys.argv[3]
 target = root / 'dev/logs/odoo19'
 resolved = target.resolve()
-# A linked worktree may keep its logs in the main checkout's work tree; nothing else.
+# A linked worktree may keep its logs in the main checkout's dev/logs/odoo19; nothing else.
 allowed = resolved.is_relative_to(root) or (
-    kind == 'linked' and main_root and resolved.is_relative_to(Path(main_root).resolve()))
+    kind == 'linked' and main_root
+    and resolved.is_relative_to((Path(main_root) / 'dev/logs/odoo19').resolve()))
 if not allowed:
     raise SystemExit('Compact logs must remain inside the project.')
 os.umask(0o077)

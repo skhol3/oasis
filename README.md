@@ -216,7 +216,7 @@ A linked worktree needs its own `.odoo19-agent.toml` profile and its own `dev/od
 ln -s <main>/<env_file path> <worktree>/<env_file path>
 ```
 
-`dev/logs` may stay a link to the main checkout's `dev/logs`: in a linked worktree, `--compact` runs accept a log directory that resolves inside the main checkout (`CHECKOUT_MAIN_ROOT` from `tools/config.py`); any other location outside the project is still refused with `Compact logs must remain inside the project.` A planned `worktree-init` (0.3.0) will prepare this.
+`dev/logs` may stay a link to the main checkout's `dev/logs`: in a linked worktree, `--compact` runs accept a log directory that resolves inside the main checkout's `dev/logs/odoo19` (`CHECKOUT_MAIN_ROOT` from `tools/config.py`); any other location outside the project is still refused with `Compact logs must remain inside the project.` A planned `worktree-init` (0.3.0) will prepare this.
 
 ## Portable verification
 
