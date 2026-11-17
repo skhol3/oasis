@@ -40,6 +40,20 @@ Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shel
 
 Other agents keep using the core (`odoo19` CLI and skills) unchanged.
 
+### Subagents
+
+Gentle Shell subagents (for example `gentle-ai-worker` and `gentle-ai-verify`) receive only the tools in their allowlist, so they do not see the `odoo19_*` tools by default. oasis ships an overlay template, [`pi/agent-overlays/oasis.json`](pi/agent-overlays/oasis.json), that adds the six tools to both agents. Copy it once:
+
+```bash
+mkdir -p ~/.gentle-shell/gentle-ai/agent-overlays.d
+cp /absolute/path/to/oasis/pi/agent-overlays/oasis.json ~/.gentle-shell/gentle-ai/agent-overlays.d/oasis.json
+```
+
+- That folder is user configuration: Gentle Shell updates do not replace it. Copy the template again after an oasis update that changes it.
+- If Gentle AI renames an agent, the overlay entry for the old name only produces a notice; update the agent name in your copy.
+- `odoo19_test_module` resets the module's test database (the checkout's `<test_prefix>` namespace) before each run, so a verify subagent with the overlay can do so too.
+- Without the overlay, subagents can still run the core through bash: `python3 /absolute/path/to/oasis/odoo19 --project <project root> <command>` (for example `test-module --compact <module>`).
+
 ## New project: deliberate setup
 
 1. Review the [example project profile](odoo19-environment/assets/odoo19-agent.example.toml) and the actual project's permissions and layout. Only with authorization, fill a **project-local** `.odoo19-agent.toml` with its real paths and namespace; do not copy test fixture values as defaults. The `[tooling]` table is the path and namespace authority for the [tools](tools/config.py); the optional `[development]` account declaration below is consumed only by `init-dev-database`. Other sections guide agents. Do not put credentials in the profile or inspect secret-bearing runtime files.

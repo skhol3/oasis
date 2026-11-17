@@ -9,7 +9,7 @@ still change in a minor release; every such change is listed here under **Change
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-16
+## [0.2.0] - 2026-11-17
 
 Linked git worktrees get their own databases: one checkout no longer steps on another.
 
@@ -20,6 +20,9 @@ Linked git worktrees get their own databases: one checkout no longer steps on an
   directory name (`corpus-cafe-07.1` -> `07_1`). Optional `[tooling].checkout_slug` overrides
   it. `/odoo19` shows a `checkout:` line.
 - `update-module --help` and `odoo-shell --help` describe their database guards.
+- Subagent overlay template `pi/agent-overlays/oasis.json`: copied to
+  `~/.gentle-shell/gentle-ai/agent-overlays.d/`, it adds the six `odoo19_*` tools to the
+  `gentle-ai-worker` and `gentle-ai-verify` subagents (see the README, Subagents).
 
 ### Changed
 
@@ -42,6 +45,9 @@ Linked git worktrees get their own databases: one checkout no longer steps on an
   `tools/config.py` also emits `CHECKOUT_MAIN_ROOT`, and compact runs in a linked worktree
   accept a log directory inside the main checkout. Every other location outside the project
   is still refused.
+- Browser evidence (`chrome_logs`, screenshots, videos) of `test-module` in a linked worktree
+  whose `dev/logs` links to the main checkout is now copied there instead of being refused:
+  `tools/common.sh` exports `CHECKOUT_KIND` and `CHECKOUT_MAIN_ROOT` to the evidence helper.
 
 ### Known limitations
 
