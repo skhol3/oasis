@@ -38,6 +38,8 @@ Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shel
 - A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package.
 - `/odoo19`: a quick status with the profile, addon modules, configured databases, git worktree and checkout identity. It never starts services or queries databases. `/odoo19 setup` installs the subagent overlay (see Subagents).
 
+The `odoo19_*` tools are active only in sessions started inside an Odoo 19 project (a directory with `.odoo19-agent.toml` at or above it), so other projects pay no tokens for them; `/odoo19` is available everywhere.
+
 Other agents keep using the core (`odoo19` CLI and skills) unchanged.
 
 ### Subagents

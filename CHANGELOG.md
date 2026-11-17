@@ -42,6 +42,9 @@ Linked git worktrees get their own databases: one checkout no longer steps on an
   `_update` sibling to 56 bytes.
 - `update-module` and `odoo-shell` no longer create a missing database: they exit 2 with
   `Database <name> does not exist; create it with install-module or create-database.`
+- The six `odoo19_*` tools are only active in Odoo projects: they are registered inactive and
+  activated at session start when `.odoo19-agent.toml` is found at or above the working
+  directory, so other projects pay no tokens for them. `/odoo19` stays available everywhere.
 
 ### Fixed
 

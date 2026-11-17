@@ -10,6 +10,7 @@ import { blockedProgram, blockReason } from "../lib/bash-guard.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findProjectRoot, projectContext } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, type StatusInput } from "../lib/status.ts";
+import { nextActiveTools, ODOO19_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
 import { formatPlain, formatTestRun, testModuleArgs } from "../lib/tools.ts";
 
@@ -145,6 +146,14 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     },
   });
 
+  // The odoo19_* tools are registered inactive; activate them only in sessions inside an Odoo 19
+  // project so other projects pay no tokens for their schemas and guidelines. Other tools are untouched.
+  pi.on("session_start", async (_event, ctx) => {
+    const active = pi.getActiveTools();
+    const next = nextActiveTools(active, findProjectRoot(ctx.cwd) !== null, ODOO19_TOOLS);
+    if (next.length !== active.length || next.some((name, index) => name !== active[index])) pi.setActiveTools(next);
+  });
+
   // Session notice: remind the user once when the subagent overlay is missing or outdated.
   let overlayNoticeShown = false;
   pi.on("session_start", async (_event, ctx) => {
@@ -185,6 +194,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "odoo19_test_module",
+    defaultActive: false,
     label: "Odoo 19 test module",
     description:
       "Run one Odoo 19 module's tests on its guarded test database (reset first). Returns the result line and " +
@@ -207,6 +217,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "odoo19_find_module",
+    defaultActive: false,
     label: "Odoo 19 find module",
     description:
       "Find technical module names in the project's addon roots from a functional name, matching words of the " +
@@ -230,6 +241,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "odoo19_model_info",
+    defaultActive: false,
     label: "Odoo 19 model info",
     description:
       "Static summary of one Odoo model from the Odoo source and the project's addons (ast only; no Odoo, " +
@@ -257,6 +269,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "odoo19_module_status",
+    defaultActive: false,
     label: "Odoo 19 module status",
     description: "Database and module state (missing, uninitialized, installed, version) for a managed database.",
     parameters: Type.Object({
@@ -270,6 +283,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "odoo19_check_environment",
+    defaultActive: false,
     label: "Odoo 19 check environment",
     description: "Check the project's Odoo 19 environment. Quick mode by default; full mode needs the user's consent.",
     parameters: Type.Object({
@@ -282,6 +296,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "odoo19_lint_module",
+    defaultActive: false,
     label: "Odoo 19 lint module",
     description: "Run Pylint with the project's declared rcfile on one module, without starting Odoo.",
     parameters: Type.Object({
