@@ -36,21 +36,17 @@ Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shel
 - Tool `odoo19_model_info`: wraps `odoo19 model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
 - Prompt context naming the `odoo19` tools when `.odoo19-agent.toml` is found at or above the working directory.
 - A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package.
-- `/odoo19`: a quick status with the profile, addon modules, configured databases, git worktree and checkout identity. It never starts services or queries databases.
+- `/odoo19`: a quick status with the profile, addon modules, configured databases, git worktree and checkout identity. It never starts services or queries databases. `/odoo19 setup` installs the subagent overlay (see Subagents).
 
 Other agents keep using the core (`odoo19` CLI and skills) unchanged.
 
 ### Subagents
 
-Gentle Shell subagents (for example `gentle-ai-worker` and `gentle-ai-verify`) receive only the tools in their allowlist, so they do not see the `odoo19_*` tools by default. oasis ships an overlay template, [`pi/agent-overlays/oasis.json`](pi/agent-overlays/oasis.json), that adds the six tools to both agents. Copy it once:
+Gentle Shell subagents (for example `gentle-ai-worker` and `gentle-ai-verify`) receive only the tools in their allowlist, so they do not see the `odoo19_*` tools by default. oasis ships an overlay template, [`pi/agent-overlays/oasis.json`](pi/agent-overlays/oasis.json), that adds the six tools to both agents. Run `/odoo19 setup` once in Gentle Shell (it asks before writing); oasis reminds you at session start when the overlay is missing or outdated.
 
-```bash
-mkdir -p ~/.gentle-shell/gentle-ai/agent-overlays.d
-cp /absolute/path/to/oasis/pi/agent-overlays/oasis.json ~/.gentle-shell/gentle-ai/agent-overlays.d/oasis.json
-```
-
-- That folder is user configuration: Gentle Shell updates do not replace it. Copy the template again after an oasis update that changes it.
-- If Gentle AI renames an agent, the overlay entry for the old name only produces a notice; update the agent name in your copy.
+- `/odoo19 setup` writes only `agent-overlays.d/oasis.json` under the Gentle AI config home (`$GENTLE_PI_CONFIG_HOME` when it is an absolute path, else `~/.gentle-shell/gentle-ai`). It works outside an Odoo project, does nothing when the overlay is already up to date, and only the user can run it: no agent tool triggers it. Start a new session or `/reload` afterwards.
+- That folder is user configuration: Gentle Shell updates do not replace it. Run `/odoo19 setup` again after an oasis update that changes the template.
+- If Gentle AI renames an agent, the overlay entry for the old name only produces a notice until an oasis update renames it.
 - `odoo19_test_module` resets the module's test database (the checkout's `<test_prefix>` namespace) before each run, so a verify subagent with the overlay can do so too.
 - Without the overlay, subagents can still run the core through bash: `python3 /absolute/path/to/oasis/odoo19 --project <project root> <command>` (for example `test-module --compact <module>`).
 

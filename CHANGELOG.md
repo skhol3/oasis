@@ -20,9 +20,13 @@ Linked git worktrees get their own databases: one checkout no longer steps on an
   directory name (`corpus-cafe-07.1` -> `07_1`). Optional `[tooling].checkout_slug` overrides
   it. `/odoo19` shows a `checkout:` line.
 - `update-module --help` and `odoo-shell --help` describe their database guards.
-- Subagent overlay template `pi/agent-overlays/oasis.json`: copied to
-  `~/.gentle-shell/gentle-ai/agent-overlays.d/`, it adds the six `odoo19_*` tools to the
-  `gentle-ai-worker` and `gentle-ai-verify` subagents (see the README, Subagents).
+- `/odoo19 setup`: after confirmation, installs or updates the subagent overlay
+  `pi/agent-overlays/oasis.json` as `agent-overlays.d/oasis.json` in the Gentle AI config
+  home (`GENTLE_PI_CONFIG_HOME` or `~/.gentle-shell/gentle-ai`), adding the six `odoo19_*`
+  tools to the `gentle-ai-worker` and `gentle-ai-verify` subagents; it does nothing when the
+  overlay is up to date (see the README, Subagents).
+- Session notice: in an Odoo project, oasis reminds the user once per session to run
+  `/odoo19 setup` when the overlay is missing or outdated.
 
 ### Changed
 

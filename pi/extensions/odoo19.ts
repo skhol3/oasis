@@ -4,15 +4,18 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { blockedProgram, blockReason } from "../lib/bash-guard.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findProjectRoot, projectContext } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, type StatusInput } from "../lib/status.ts";
+import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
 import { formatPlain, formatTestRun, testModuleArgs } from "../lib/tools.ts";
 
 const ODOO19 = fileURLToPath(new URL("../../odoo19", import.meta.url));
 const CONFIG_PY = fileURLToPath(new URL("../../tools/config.py", import.meta.url));
+const OVERLAY_TEMPLATE = fileURLToPath(new URL("../agent-overlays/oasis.json", import.meta.url));
 const STATUS_TIMEOUT_MS = 15000;
 const MAX_LINES = 60;
 // model-info output is already compact; a larger cap keeps --methods/--all-fields useful.
@@ -85,9 +88,53 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     return status;
   }
 
+  function currentOverlayTarget(): string {
+    return overlayTarget(configHome(process.env, homedir()));
+  }
+
+  // User-run only (no tool registers it): install or update the subagent overlay after confirmation.
+  async function setup(ctx: { ui: { notify: (message: string, level?: "info" | "warning" | "error") => void;
+    confirm: (title: string, message: string) => Promise<boolean> } }): Promise<void> {
+    try {
+      const target = currentOverlayTarget();
+      const state = overlayState(OVERLAY_TEMPLATE, target);
+      if (state === "current") {
+        ctx.ui.notify(`odoo19 setup: subagent overlay is up to date (${target})`, "info");
+        return;
+      }
+      const verb = state === "missing" ? "Create" : "Update";
+      const question = `${verb} ${target} so gentle-ai-worker and gentle-ai-verify get the odoo19 tools?`;
+      if (!(await ctx.ui.confirm("odoo19 setup", question))) {
+        ctx.ui.notify("odoo19 setup: nothing changed.", "info");
+        return;
+      }
+      const result = installOverlay(OVERLAY_TEMPLATE, target);
+      if (result.state === "unchanged") {
+        ctx.ui.notify(`odoo19 setup: subagent overlay is up to date (${target})`, "info");
+        return;
+      }
+      ctx.ui.notify(
+        `odoo19 setup: subagent overlay ${result.state} at ${target}. ` +
+          "Start a new session or /reload for subagents to use it.",
+        "info",
+      );
+    } catch (error) {
+      ctx.ui.notify(`odoo19 setup failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+  }
+
   pi.registerCommand("odoo19", {
-    description: "Odoo 19 project status: profile, addon modules, databases and git worktree",
-    handler: async (_args, ctx) => {
+    description: "Odoo 19 project status: profile, addon modules, databases and git worktree; `setup` installs the subagent overlay",
+    handler: async (args, ctx) => {
+      const argument = (args ?? "").trim();
+      if (argument === "setup") {
+        await setup(ctx);
+        return;
+      }
+      if (argument) {
+        ctx.ui.notify("Usage: /odoo19 [setup]", "warning");
+        return;
+      }
       const root = findProjectRoot(ctx.cwd);
       if (!root) {
         ctx.ui.notify(`Not an Odoo 19 project: no .odoo19-agent.toml at or above ${ctx.cwd}`, "warning");
@@ -96,6 +143,22 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       const content = formatStatus(await projectStatus(root));
       pi.sendMessage({ customType: "odoo19-status", content, display: true });
     },
+  });
+
+  // Session notice: remind the user once when the subagent overlay is missing or outdated.
+  let overlayNoticeShown = false;
+  pi.on("session_start", async (_event, ctx) => {
+    if (overlayNoticeShown) return;
+    try {
+      if (!findProjectRoot(ctx.cwd)) return;
+      const state = overlayState(OVERLAY_TEMPLATE, currentOverlayTarget());
+      if (state === "current") return;
+      overlayNoticeShown = true;
+      const problem = state === "missing" ? "subagents do not have the odoo19 tools yet" : "overlay is outdated";
+      ctx.ui.notify(`oasis: ${problem}; run /odoo19 setup`, "info");
+    } catch {
+      // Never block startup on the overlay check.
+    }
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
