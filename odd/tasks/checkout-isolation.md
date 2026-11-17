@@ -24,9 +24,9 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - T3 [S5] Disposable test databases per run + `odoo19 gc` (Risk: item 1) — pending (v0.3.0)
 - T4 [S6 S7] Per-checkout HTTP port with fallback, pidfile, own start/stop — pending (v0.3.0)
 - T5 [S2] `worktree-init` — pending (v0.3.0)
-- [x] T6 [S2 S9] Compact logs in a linked worktree whose dev/logs links to the main checkout (Risk: item 2, relaxes a path guard) — worker — commit: fb85c34, e.g. evidence follow-up below
+- [x] T6 [S2 S9] Compact logs in a linked worktree whose dev/logs links to the main checkout (Risk: item 2, relaxes a path guard) — worker — commit: fb85c34, 0e51cd2
 - [x] T7 [S2] Document the manual dev/.env link for linked worktrees (agents may not create .env paths) — worker — commit: fb85c34
-- [x] T8 [S9] Give subagents the odoo19_* tools, or document the CLI fallback — explore first — commit: see L10
+- [x] T8 [S9] Give subagents the odoo19_* tools, or document the CLI fallback — explore first — commit: e1f2bb5
 
 ## Log
 
