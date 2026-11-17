@@ -148,6 +148,9 @@ def load(root: Path) -> dict[str, str]:
     output['CHECKOUT_KIND'] = kind
     output['CHECKOUT_SLUG'] = (override if override is not None
                                else derived_slug(top, main) if kind == 'linked' else '')
+    # The main checkout's work tree: a linked worktree may keep its dev/logs linked there.
+    output['CHECKOUT_MAIN_ROOT'] = (str(main) if kind == 'linked'
+                                    else str(root) if kind == 'main' else '')
     slug = output['CHECKOUT_SLUG']
     # common.sh inserts '<slug>_' after test_prefix; the result must still leave room for
     # verify-module's _update sibling.

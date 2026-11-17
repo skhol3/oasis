@@ -36,8 +36,18 @@ Linked git worktrees get their own databases: one checkout no longer steps on an
 - `update-module` and `odoo-shell` no longer create a missing database: they exit 2 with
   `Database <name> does not exist; create it with install-module or create-database.`
 
+### Fixed
+
+- `test-module --compact` in a linked worktree whose `dev/logs` links to the main checkout:
+  `tools/config.py` also emits `CHECKOUT_MAIN_ROOT`, and compact runs in a linked worktree
+  accept a log directory inside the main checkout. Every other location outside the project
+  is still refused.
+
 ### Known limitations
 
+- A linked worktree needs a link to the main checkout's environment file at the profile's
+  `env_file` path, created by the user (agents may not create or read environment files);
+  `worktree-init` is planned for 0.3.0.
 - `start` without `-d`/`--database` uses the `db_name` and `--db-filter` of the project's
   `odoo.conf`; keep `db_name` out of a linked worktree's `odoo.conf`.
 - Slugs are matched as prefixes: a slug that is the start of another (`wt`, `wt_1`) can reach

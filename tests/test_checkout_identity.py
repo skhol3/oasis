@@ -60,7 +60,12 @@ class CheckoutIdentityTests(unittest.TestCase):
 
     def identity(self, root):
         lines = self.assignments(root)
-        return [line for line in lines if line.startswith('CHECKOUT_')]
+        return [line for line in lines if line.startswith(('CHECKOUT_KIND=', 'CHECKOUT_SLUG='))]
+
+    def main_root(self, root):
+        lines = [line for line in self.assignments(root) if line.startswith('CHECKOUT_MAIN_ROOT=')]
+        self.assertEqual(len(lines), 1, lines)
+        return lines[0]
 
     def previous_assignments(self, root):
         """The exact lines config.py emitted before the checkout identity existed."""
@@ -140,11 +145,29 @@ class CheckoutIdentityTests(unittest.TestCase):
         main = self.repository('proj')
         linked = self.worktree(main, 'proj-07.1')
         outside = self.project('outside')
-        for root, identity in ((main, ["CHECKOUT_KIND=main", "CHECKOUT_SLUG=''"]),
-                               (linked, ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=07_1']),
-                               (outside, ["CHECKOUT_KIND=none", "CHECKOUT_SLUG=''"])):
+        main_line = 'CHECKOUT_MAIN_ROOT=' + shlex.quote(str(main.resolve()))
+        for root, identity in ((main, ["CHECKOUT_KIND=main", "CHECKOUT_SLUG=''", main_line]),
+                               (linked, ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=07_1', main_line]),
+                               (outside, ["CHECKOUT_KIND=none", "CHECKOUT_SLUG=''",
+                                          "CHECKOUT_MAIN_ROOT=''"])):
             with self.subTest(root=root.name):
                 self.assertEqual(self.assignments(root), self.previous_assignments(root) + identity)
+
+    def test_main_root_names_the_main_checkout(self):
+        main = self.repository('proj')
+        linked = self.worktree(main, 'proj-07.1')
+        quoted = 'CHECKOUT_MAIN_ROOT=' + shlex.quote(str(main.resolve()))
+        self.assertEqual(self.main_root(main), quoted)
+        self.assertEqual(self.main_root(linked), quoted)
+        self.assertEqual(self.main_root(self.project('outside')), "CHECKOUT_MAIN_ROOT=''")
+
+    def test_main_root_of_a_project_below_the_main_top_level_is_the_project(self):
+        main = self.repository('repo')
+        nested = main / 'sub project'
+        nested.mkdir()
+        (nested / '.odoo19-agent.toml').write_text(PROFILE)
+        self.assertEqual(self.main_root(nested),
+                         'CHECKOUT_MAIN_ROOT=' + shlex.quote(str(nested.resolve())))
 
     def test_git_location_overrides_do_not_change_the_identity(self):
         main = self.repository('proj')

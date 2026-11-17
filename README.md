@@ -194,6 +194,16 @@ Database names are at most 63 bytes (PostgreSQL's identifier limit, counted in U
 
 `update-module` and `odoo-shell` work on existing databases only: a missing database exits 2 with `Database <name> does not exist; create it with install-module or create-database.` and is never created. `install-module` and `create-database` still create their target. oasis never drops a checkout's databases on its own.
 
+### Preparing a linked worktree
+
+A linked worktree needs its own `.odoo19-agent.toml` profile and its own `dev/odoo.conf` whose `addons_path` points at the worktree's addons. It also needs the main checkout's environment file at the path the profile's `env_file` names. Agents are not allowed to create or read environment files, so the user creates that link once:
+
+```bash
+ln -s <main>/<env_file path> <worktree>/<env_file path>
+```
+
+`dev/logs` may stay a link to the main checkout's `dev/logs`: in a linked worktree, `--compact` runs accept a log directory that resolves inside the main checkout (`CHECKOUT_MAIN_ROOT` from `tools/config.py`); any other location outside the project is still refused with `Compact logs must remain inside the project.` A planned `worktree-init` (0.3.0) will prepare this.
+
 ## Portable verification
 
 From any working directory, run `python3 -B -m unittest discover -s <absolute-path-to-global-odoo19>/tests -v`. These fixture tests use isolated synthetic projects and fake tools under the bundle-local `tests/fixturesroot`, which they remove after each test. [Fixture profile](tests/fixture-profile.toml) is test-only, not a project default. The suite requires no customer project checkout, original staging trees, historical baseline, differential reports, or archive. Historical project-specific evidence belongs in a separately verified compressed archive, not in this runtime package. Passing fixture tests does not authorize actual environment or database operations.

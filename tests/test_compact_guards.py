@@ -1,8 +1,15 @@
 """Compact execution must preserve fail-closed behavior and evidence."""
 from pathlib import Path
 import hashlib
+import os
+import shutil
+import subprocess
 import unittest
 import test_lifecycle as lifecycle
+
+REFUSED = 'Compact logs must remain inside the project.\n'
+GIT = ['git', '-c', 'user.name=oasis tests', '-c', 'user.email=tests@example.invalid',
+       '-c', 'init.defaultBranch=main', '-c', 'commit.gpgsign=false']
 
 
 class CompactGuardTests(unittest.TestCase):
@@ -58,3 +65,79 @@ class CompactGuardTests(unittest.TestCase):
         self.assertEqual(len(paths), 8)
         self.assertTrue(any(p.read_text() == 'update out\n' for p in paths))
         self.assertTrue(any(p.read_text() == 'update err\n' for p in paths))
+
+
+@unittest.skipUnless(shutil.which('git'), 'git is required')
+class LinkedWorktreeCompactTests(unittest.TestCase):
+    """A linked worktree may keep its dev/logs linked to the main checkout's dev/logs."""
+    setUp_fixture = lifecycle.LifecycleTests.setUp
+    unchanged = lifecycle.LifecycleTests.unchanged
+
+    def setUp(self):
+        self.setUp_fixture()
+        self.env.update({'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1',
+                         'GIT_CEILING_DIRECTORIES': str(Path(self.scratch.name).resolve())})
+        for key in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE'):
+            self.env.pop(key, None)
+        self.main = self.root.resolve()
+        self.git(self.main, 'init', '-q')
+        self.git(self.main, 'add', '.odoo19-agent.toml')
+        self.git(self.main, 'commit', '-q', '-m', 'profile')
+        self.linked = self.main.parent / 'a project-wt'
+        self.git(self.main, 'worktree', 'add', '-q', '-b', 'wt', str(self.linked))
+        # The linked checkout gets its own runtime files; a neutral env file name.
+        (self.linked / '.odoo19-agent.toml').write_text(
+            lifecycle.PROFILE.replace("env_file = 'dev/.env'", "env_file = 'dev/runtime-env'"))
+        for name in ('dev/odoo.conf', 'dev/runtime-env', 'dev/compose.yml', 'coffee/__manifest__.py'):
+            path = self.linked / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+
+    def git(self, cwd, *args):
+        subprocess.run([*GIT, '-C', str(cwd), *args], check=True, capture_output=True, env=self.env)
+
+    def invoke(self, root, *args):
+        path = root / 'dev/scripts/test-module'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes((lifecycle.STAGE / 'project-wrappers/test-module').read_bytes())
+        return subprocess.run(['bash', str(path), *args], text=True, cwd=root, env=self.env,
+                              capture_output=True)
+
+    def test_logs_linked_to_the_main_checkout_are_accepted(self):
+        (self.main / 'dev/logs').mkdir()
+        (self.linked / 'dev/logs').symlink_to(self.main / 'dev/logs', target_is_directory=True)
+        result = self.invoke(self.linked, '--compact', 'coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[0], 'phase=tests database=cc_test_wt_coffee exit=0')
+        logs = dict(line.split('=', 1) for line in lines[1:])
+        runs = list((self.main / 'dev/logs/odoo19').iterdir())
+        self.assertEqual(len(runs), 1)
+        self.assertTrue(runs[0].name.startswith('run-'))
+        self.assertEqual(Path(logs['stdout_log']).resolve(), runs[0] / 'stdout.log')
+        self.assertEqual(Path(logs['stderr_log']).resolve(), runs[0] / 'stderr.log')
+        self.assertEqual(runs[0].stat().st_mode & 0o777, 0o700)
+
+    def test_linked_logs_outside_both_checkouts_are_refused(self):
+        outside = self.main.parent.parent / 'outside'
+        outside.mkdir()
+        (self.linked / 'dev/logs').symlink_to(outside, target_is_directory=True)
+        result = self.invoke(self.linked, '--compact', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', REFUSED))
+        self.assertEqual(list(outside.iterdir()), [])
+        self.unchanged()
+
+    def test_main_checkout_logs_outside_stay_refused(self):
+        outside = self.main.parent.parent / 'outside'
+        outside.mkdir()
+        (self.main / 'dev/logs').symlink_to(outside, target_is_directory=True)
+        result = self.invoke(self.main, '--compact', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', REFUSED))
+        self.assertEqual(list(outside.iterdir()), [])
+        self.unchanged()
+
+    def test_main_checkout_logs_inside_still_work(self):
+        result = self.invoke(self.main, '--compact', 'coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout.splitlines()[0], 'phase=tests database=cc_test_coffee exit=0')
+        self.assertEqual(len(list((self.main / 'dev/logs/odoo19').iterdir())), 1)
