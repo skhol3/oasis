@@ -16,6 +16,7 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - S8. Accepted principle 6: "**Guards en todos los comandos que tocan una DB**, incluidos `update-module` y `odoo-shell`. Si la base no existe, el comando la rechaza en vez de crearla."
 - S9. Accepted rule: "oasis solo *agrega*. El bloqueo de bash frena únicamente comandos de Odoo y las herramientas solo leen la carpeta actual. No hay worktrees, memoria ni review propios."
 - S11. User: "pero como que tengo que hacerlo manual ajajajaj, se supone que la herramienta tambien es para eso, para no tener que hacer esas configuraciones manuales". Accepted: "**`/odoo19 setup`**, una sola vez: instala o actualiza el overlay de subagentes en la carpeta correcta, respetando `GENTLE_PI_CONFIG_HOME` si la usás; te muestra qué va a escribir y te pide confirmación; si lo corrés de nuevo y no hay cambios, no hace nada. Además, al abrir una sesión en un proyecto Odoo, oasis te avisa si el overlay falta o quedó viejo". Choice: "setup en 0.2.0, worktree en 0.3.0".
+- S12. User: "ahora que recuerdo aqui hago mas proyectos no solo con odoo ajajaj, ahora la config es global, como la ambio por proyecto de odoo?" then "por el momento que es lo menos invasivo en gentle-shell?" -> option A: "global, pero la capa se activa solo en proyectos Odoo": tools registered inactive (`defaultActive: false`) and activated at session start when `.odoo19-agent.toml` is found; `/odoo19` stays available everywhere (slash commands cost no model tokens).
 - S10. Accepted plan: steps 1-2 -> v0.2.0 (worktrees no longer step on the main checkout); steps 3-5 -> v0.3.0.
 
 ## Tasks
@@ -30,6 +31,7 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - [x] T8 [S9] Give subagents the odoo19_* tools, or document the CLI fallback — explore first — commit: e1f2bb5
 - [x] T9 [S9 S11] `/odoo19 setup` installs or updates the subagent overlay after confirmation; session-start notice when it is missing or outdated — worker — commit: 5fe722a
 - T5 note: `/odoo19 worktree <feature>` (user-run, creates the env-file link) is the first task of 0.3.0
+- T10 [S12] Register the odoo19_* tools inactive and activate them only when the session's project has .odoo19-agent.toml — worker — commit: pending
 
 ## Log
 
@@ -48,3 +50,4 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - L8. User: "vamos con proyecto oasis: observación #5790" -> fix T6-T8 before tagging v0.2.0 (PR #2 still open).
 - L9. T8 decisions: user asked whether a global overlay conflicts with Gentle Shell updates; evidence: ~/.gentle-shell/gentle-ai holds user config (models.json, profiles.json), package updates replace gentle-pi, not that folder; agent-overlays.d/ is the third-party drop-in; a renamed agent only yields a notice. Chosen: global overlay ~/.gentle-shell/gentle-ai/agent-overlays.d/oasis.json, shipped by oasis as a template the user copies. User: verify may use odoo19_test_module ("Sí"). Overlay schema: {"<agent>": {"add": [...], "remove": [...]}}; a listed tool must be registered in the child (oasis loads there via settings packages).
 - L10. T6 evidence follow-up and T8 overlay commits (newest first): e1f2bb5 0e51cd2 ; CHANGELOG 0.2.0 date moved to 2026-11-17. Suite 149 OK.
+- L11. Evidence for T10: this oasis session (not an Odoo project) lists all six odoo19_* tools and their prompt guidelines, because pi/extensions/odoo19.ts registers them active (6 registerTool calls, no defaultActive).
