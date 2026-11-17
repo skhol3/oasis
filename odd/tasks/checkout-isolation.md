@@ -24,9 +24,9 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - T3 [S5] Disposable test databases per run + `odoo19 gc` (Risk: item 1) — pending (v0.3.0)
 - T4 [S6 S7] Per-checkout HTTP port with fallback, pidfile, own start/stop — pending (v0.3.0)
 - T5 [S2] `worktree-init` — pending (v0.3.0)
-- T6 [S2 S9] Compact logs in a linked worktree whose dev/logs links to the main checkout (Risk: item 2, relaxes a path guard) — worker — commit: pending
-- T7 [S2] Document the manual dev/.env link for linked worktrees (agents may not create .env paths) — worker — commit: pending
-- T8 [S9] Give subagents the odoo19_* tools, or document the CLI fallback — explore first — commit: pending
+- [x] T6 [S2 S9] Compact logs in a linked worktree whose dev/logs links to the main checkout (Risk: item 2, relaxes a path guard) — worker — commit: fb85c34, e.g. evidence follow-up below
+- [x] T7 [S2] Document the manual dev/.env link for linked worktrees (agents may not create .env paths) — worker — commit: fb85c34
+- [x] T8 [S9] Give subagents the odoo19_* tools, or document the CLI fallback — explore first — commit: see L10
 
 ## Log
 
@@ -44,3 +44,4 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - L7. Field test of 0.2.0 in corpus-cafe-cost-deviation (memory observation #5790): cc_test_cost_deviation_oa_mrp_cost_deviation_alert works. Defects: (1) `test-module --compact` refused with "Compact logs must remain inside the project." because tools/compact.sh requires dev/logs/odoo19 to resolve inside PROJECT_ROOT and the worktree's dev/logs is a symlink to the main checkout (local workaround: real dev/logs dir); (2) the worktree lacked dev/.env and the Gentle AI safety policy blocks agents from any .env path, so the user linked it by hand; (3) subagents (gentle-ai-worker, gentle-ai-verify) do not get the odoo19_* Pi tools and had to run `python3 ~/Projects/oasis/odoo19 --project <root> test-module --compact <module>` through bash.
 - L8. User: "vamos con proyecto oasis: observación #5790" -> fix T6-T8 before tagging v0.2.0 (PR #2 still open).
 - L9. T8 decisions: user asked whether a global overlay conflicts with Gentle Shell updates; evidence: ~/.gentle-shell/gentle-ai holds user config (models.json, profiles.json), package updates replace gentle-pi, not that folder; agent-overlays.d/ is the third-party drop-in; a renamed agent only yields a notice. Chosen: global overlay ~/.gentle-shell/gentle-ai/agent-overlays.d/oasis.json, shipped by oasis as a template the user copies. User: verify may use odoo19_test_module ("Sí"). Overlay schema: {"<agent>": {"add": [...], "remove": [...]}}; a listed tool must be registered in the child (oasis loads there via settings packages).
+- L10. T6 evidence follow-up and T8 overlay commits (newest first): e1f2bb5 0e51cd2 ; CHANGELOG 0.2.0 date moved to 2026-11-17. Suite 149 OK.
