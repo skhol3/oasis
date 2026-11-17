@@ -24,6 +24,9 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - T3 [S5] Disposable test databases per run + `odoo19 gc` (Risk: item 1) — pending (v0.3.0)
 - T4 [S6 S7] Per-checkout HTTP port with fallback, pidfile, own start/stop — pending (v0.3.0)
 - T5 [S2] `worktree-init` — pending (v0.3.0)
+- T6 [S2 S9] Compact logs in a linked worktree whose dev/logs links to the main checkout (Risk: item 2, relaxes a path guard) — worker — commit: pending
+- T7 [S2] Document the manual dev/.env link for linked worktrees (agents may not create .env paths) — worker — commit: pending
+- T8 [S9] Give subagents the odoo19_* tools, or document the CLI fallback — explore first — commit: pending
 
 ## Log
 
@@ -38,3 +41,5 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
   - S8 guards: update-module, odoo-shell, install-module (with and without demo) and `start -d` require a managed name; update-module and odoo-shell refuse a missing database (`does not exist; create it with install-module or create-database`) instead of creating it.
   - Contract change (AGENTS.md): listed under `### Changed` in CHANGELOG `[Unreleased]` and noted in the README.
 - L6. T2 independent verify on d09f5b9: S3, S4, S8 and all L5 bullets met, no must-fix (probes: main/foreign names, wt_10 vs wt_1 boundary, bare namespace, %/\\_/quote names, 63/64 bytes, rejection before docker). Accepted limits documented in README: start without -d uses odoo.conf db_name/--db-filter; slugs match as prefixes. Slice boundary: v0.2.0 is T1+T2 (~820 lines).
+- L7. Field test of 0.2.0 in corpus-cafe-cost-deviation (memory observation #5790): cc_test_cost_deviation_oa_mrp_cost_deviation_alert works. Defects: (1) `test-module --compact` refused with "Compact logs must remain inside the project." because tools/compact.sh requires dev/logs/odoo19 to resolve inside PROJECT_ROOT and the worktree's dev/logs is a symlink to the main checkout (local workaround: real dev/logs dir); (2) the worktree lacked dev/.env and the Gentle AI safety policy blocks agents from any .env path, so the user linked it by hand; (3) subagents (gentle-ai-worker, gentle-ai-verify) do not get the odoo19_* Pi tools and had to run `python3 ~/Projects/oasis/odoo19 --project <root> test-module --compact <module>` through bash.
+- L8. User: "vamos con proyecto oasis: observación #5790" -> fix T6-T8 before tagging v0.2.0 (PR #2 still open).
