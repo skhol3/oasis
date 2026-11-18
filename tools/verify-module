@@ -8,6 +8,7 @@ if [[ ${1:-} == --help ]]; then
   printf 'that checkout namespace. A test database with an _update sibling is limited to 56 bytes.\n'
   printf 'Run shared targets sequentially. --compact retains per-phase stdout/stderr under odoo19/ of\n'
   printf 'the profile'\''s logs directory (default dev/logs); with [tooling].logs, in odoo19/<slug or main>.\n'
+  printf 'The tests phase runs on its own free --http-port, so it never collides with a running server.\n'
   exit 0
 fi
 source "$(dirname "$0")/common.sh"

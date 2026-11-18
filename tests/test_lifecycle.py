@@ -1,6 +1,8 @@
 """Lifecycle CLI tests use only a disposable project and deterministic command fakes."""
 from pathlib import Path
 import os
+import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -8,6 +10,27 @@ import unittest
 
 STAGE = Path(__file__).resolve().parents[1]
 PROFILE = (Path(__file__).resolve().parent / 'fixture-profile.toml').read_text()
+
+
+def free_port():
+    """A port that is free on 127.0.0.1 now (tests bind 127.0.0.1 only)."""
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        return probe.getsockname()[1]
+
+
+def any_test_port(line):
+    """The Odoo test process gets a fresh free --http-port; compare the rest exactly.
+
+    Only the test process (a --test-tags line) and a valid port (1-65535) are replaced;
+    start's ports stay exact. test_runtime_state checks that the test port was free.
+    """
+    if ' --test-tags ' not in line:
+        return line
+
+    def replace(match):
+        return ' --http-port=<free> ' if 1 <= int(match.group(1)) <= 65535 else match.group(0)
+    return re.sub(r' --http-port=(\d{1,5}) ', replace, line)
 
 
 class LifecycleTests(unittest.TestCase):
@@ -64,6 +87,10 @@ exit 0
                     # Keep git discovery inside the scratch project: no checkout identity
                     # leaks from the repository that holds the fixtures.
                     'GIT_CEILING_DIRECTORIES': self.scratch.name}
+        # Server records (tools/runtime_state.py) stay in a private runtime directory per test.
+        self.runtime = tempfile.TemporaryDirectory(prefix='oasis-runtime-')
+        self.addCleanup(self.runtime.cleanup)
+        self.env['XDG_RUNTIME_DIR'] = self.runtime.name
 
     def invoke(self, command, *args, input=None):
         path = self.root / 'dev/scripts' / command
@@ -325,26 +352,38 @@ exit 0
     def test_odoo_command_lines_outside_git_are_exact(self):
         odoo = 'odoo ' + str(self.source / 'odoo-bin')
         conf = str(self.root / 'dev/odoo.conf')
+        port = free_port()
+        (self.root / 'dev/odoo.conf').write_text(f'[options]\nhttp_port = {port}\n')
         for command, args, exists, line in (
-                ('test-module', ('coffee',), '0', f'{odoo} -c {conf} -d cc_test_coffee -i coffee '
+                ('test-module', ('coffee',), '0', f'{odoo} -c {conf} --http-port=<free> -d cc_test_coffee -i coffee '
                  '--without-demo --test-tags /coffee --stop-after-init'),
                 ('install-module', ('coffee',), '0',
                  f'{odoo} -c {conf} -d cc_dev_coffee -i coffee --without-demo --stop-after-init'),
                 ('update-module', ('coffee', 'cc_dev_coffee'), '1',
                  f'{odoo} -c {conf} -d cc_dev_coffee -u coffee --stop-after-init'),
                 ('odoo-shell', ('cc_dev_coffee',), '1', f'{odoo} shell -c {conf} -d cc_dev_coffee'),
-                ('start', ('--stop-after-init',), '0', f'{odoo} -c {conf} --stop-after-init')):
+                ('start', ('--stop-after-init',), '0', f'{odoo} -c {conf} --http-port={port} --stop-after-init')):
             with self.subTest(command=command):
                 self.env['FAKE_EXISTS'] = exists
                 result = self.invoke(command, *args, input='')
-                self.assertEqual((result.returncode, result.stderr), (0, ''))
-                self.assertEqual([entry for entry in self.commands.read_text().splitlines()
+                self.assertEqual(result.returncode, 0)
+                if command == 'start':
+                    self.assertRegex(result.stderr, rf'^odoo19 start: http://localhost:{port} \(pid \d+\)\n$')
+                else:
+                    self.assertEqual(result.stderr, '')
+                self.assertEqual([any_test_port(entry) for entry in self.commands.read_text().splitlines()
                                   if entry.startswith('odoo ')], [line])
                 self.commands.unlink()
 
     def test_start_status_stop_create_list_and_module_status(self):
+        port = free_port()
+        (self.root / 'dev/odoo.conf').write_text(f'[options]\nhttp_port = {port}\n')
+        result = self.invoke('start', '--stop-after-init')
+        self.assertEqual((result.returncode, result.stdout), (0, ''))
+        self.assertRegex(result.stderr, rf'^odoo19 start: http://localhost:{port} \(pid \d+\)\n$')
         for command, args, output in (
-                ('start', ('--stop-after-init',), ''), ('status', (), ''), ('stop', (), ''),
+                ('status', (), 'server: stopped\n'),
+                ('stop', (), 'No Odoo server running for this checkout.\n'),
                 ('create-database', ('cc_dev_coffee',), 'Database ready: cc_dev_coffee\n'),
                 ('list-databases', (), ''),
                 ('module-status', ('coffee', 'cc_dev_coffee'),

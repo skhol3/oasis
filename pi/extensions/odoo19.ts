@@ -9,13 +9,14 @@ import { fileURLToPath } from "node:url";
 import { blockedProgram, blockReason, WORKTREE_INIT } from "../lib/bash-guard.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findProjectRoot, projectContext } from "../lib/project.ts";
-import { formatStatus, listModules, parseAssignments, parseGit, type StatusInput } from "../lib/status.ts";
+import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
 import { nextActiveTools, ODOO19_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
 import { formatPlain, formatTestRun, testModuleArgs } from "../lib/tools.ts";
 
 const ODOO19 = fileURLToPath(new URL("../../odoo19", import.meta.url));
 const CONFIG_PY = fileURLToPath(new URL("../../tools/config.py", import.meta.url));
+const RUNTIME_STATE_PY = fileURLToPath(new URL("../../tools/runtime_state.py", import.meta.url));
 const OVERLAY_TEMPLATE = fileURLToPath(new URL("../agent-overlays/oasis.json", import.meta.url));
 const STATUS_TIMEOUT_MS = 15000;
 const MAX_LINES = 60;
@@ -68,7 +69,17 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     return (config.ADDON_ROOTS ?? "").split("\n").filter(Boolean);
   }
 
-  // Read-only status: the profile, addon roots and git state. Never starts services or queries databases.
+  // This checkout's server record (pid, port) from tools/runtime_state.py; no service or database access.
+  async function serverState(root: string): Promise<Pick<StatusInput, "server" | "serverError">> {
+    const shown = await pi.exec("python3", ["-I", "-B", RUNTIME_STATE_PY, "show", root], {
+      cwd: root, timeout: STATUS_TIMEOUT_MS,
+    });
+    if (shown.code === 0) return { server: parseServer(shown.stdout) };
+    return { serverError: shown.stderr.trim() || `runtime_state.py exited with ${shown.code}` };
+  }
+
+  // Read-only status: the profile, addon roots, git state and this checkout's server record.
+  // Never starts services or queries databases.
   async function projectStatus(root: string): Promise<StatusInput> {
     const status: StatusInput = { root, modules: [], git: null };
     const { config, error } = await profileConfig(root);
@@ -86,6 +97,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       const porcelain = await pi.exec("git", ["-C", root, "status", "--porcelain"], options);
       if (porcelain.code === 0) status.git = parseGit(root, revParse.stdout, porcelain.stdout);
     }
+    Object.assign(status, await serverState(root));
     return status;
   }
 
@@ -156,8 +168,8 @@ export default function odoo19Layer(pi: ExtensionAPI) {
 
   pi.registerCommand("odoo19", {
     description:
-      "Odoo 19 project status: profile, addon modules, databases and git worktree; `setup` installs the " +
-      "subagent overlay; `worktree <feature> <branch>` creates a prepared linked worktree",
+      "Odoo 19 project status: profile, addon modules, databases, git worktree and this checkout's server; " +
+      "`setup` installs the subagent overlay; `worktree <feature> <branch>` creates a prepared linked worktree",
     handler: async (args, ctx) => {
       const argument = (args ?? "").trim();
       if (argument === "setup") {

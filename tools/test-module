@@ -8,6 +8,7 @@ if [[ ${1:-} == --help ]]; then
   printf 'Run shared targets sequentially. --compact retains stdout/stderr under odoo19/ of\n'
   printf 'the profile'\''s logs directory (default dev/logs); with [tooling].logs, in odoo19/<slug or main>.\n'
   printf 'Tests use private short scratch; browser diagnostics remain under the same directory.\n'
+  printf 'The test server gets its own free --http-port, so it never collides with a running server.\n'
   exit 0
 fi
 source "$(dirname "$0")/common.sh"
@@ -38,6 +39,8 @@ if "$compact"; then
 fi
 odoo_config_arguments
 reset_test_database "$database"
+# The test server binds its own free port, so a test run never collides with a dev server.
+http_port=$(runtime_state ephemeral-port)
 python3 -B "$(dirname "$0")/test_temp.py" "$PROJECT_ROOT" \
-  "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" \
+  "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "--http-port=$http_port" \
   -d "$database" -i "$module" --without-demo --test-tags "/$module" --stop-after-init

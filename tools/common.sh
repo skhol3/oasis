@@ -96,6 +96,16 @@ odoo_config_arguments() {
   fi
 }
 
+# One option of the configured odoo.conf (http_port, gevent_port or http_interface), or nothing.
+odoo_conf_option() {
+  python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/odoo_addons_path.py" --option "$1" "$ODOO_CONFIG"
+}
+
+# This checkout's server record and port probes, outside the repository (tools/runtime_state.py).
+runtime_state() {
+  python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/runtime_state.py" "$@"
+}
+
 require_module() {
   local module=${1:-} root
   if [[ -z "$module" || ! "$module" =~ ^[A-Za-z0-9_]+$ ]]; then

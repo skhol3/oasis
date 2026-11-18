@@ -36,7 +36,7 @@ Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shel
 - Tool `odoo19_model_info`: wraps `odoo19 model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
 - Prompt context naming the `odoo19` tools when `.odoo19-agent.toml` is found at or above the working directory.
 - A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. In every session it also blocks the agent from running `worktree-init` (through `odoo19`, `tools/worktree-init` or `worktree_init.py`, `--dry-run` included), which only the user runs. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package.
-- `/odoo19`: a quick status with the profile, addon modules, configured databases, git worktree and checkout identity. It never starts services or queries databases. `/odoo19 setup` installs the subagent overlay (see Subagents). `/odoo19 worktree <feature> <branch>` creates a prepared linked worktree after confirmation (see *Preparing a linked worktree*).
+- `/odoo19`: a quick status with the profile, addon modules, configured databases, git worktree, checkout identity and this checkout's server (`server: running on port <port> (pid <pid>)` or `server: stopped`, read from the runtime record). It never starts services or queries databases. `/odoo19 setup` installs the subagent overlay (see Subagents). `/odoo19 worktree <feature> <branch>` creates a prepared linked worktree after confirmation (see *Preparing a linked worktree*).
 
 The `odoo19_*` tools are active only in sessions started inside an Odoo 19 project (a directory with `.odoo19-agent.toml` at or above it), so other projects pay no tokens for them; `/odoo19` is available everywhere.
 
@@ -163,6 +163,8 @@ After obtaining authorization to reset the exact destinations:
 | `verify-module` | Uses that test destination and a separate `<destination>_update` for a fresh install followed by current-code update. With an explicit test destination, its `_update` sibling is used; an explicit third argument overrides it. Without the setting, legacy module-derived defaults remain. This does not prove historical migration. |
 | `--compact` | Opt-in summaries preserve phase status and stdout/stderr log paths. Full streams remain in unique private directories under project `dev/logs/odoo19/` (with `[tooling].logs`, under `<logs>/odoo19/<main|slug>/`; see Preparing a linked worktree); without it, output remains unchanged. Inspect relevant failing log excerpts, not all successful logs. |
 
+The Odoo test process also gets `--http-port=<free port>` right after the configuration options: a port the system hands out as free on 127.0.0.1 just before the run, so `test-module` and the tests phase of `verify-module` (with or without `--compact`) never collide with a running development server. The install and update phases and the rest of the command line are unchanged.
+
 The Odoo **test process only** receives a fresh private (0700) short `/tmp/odoo19-test-*` directory as `TMPDIR`, independent of inherited nesting. The caller's environment, runtime probes, database guards, install and update invocations are unchanged. After the child exits, browser `chrome_logs` files and screenshots/videos remaining under its `odoo_tests` tree are copied privately (directories 0700, files 0600) into a unique directory under project `dev/logs/odoo19/` (or the `[tooling].logs` directory of the checkout), then only that invocation's scratch is removed. Browser profiles/cookies and evidence symlinks are not collected. No extra normal output is emitted; child stdout/stderr and exit status (including signal-derived status) are preserved, including through `--compact`. Retention or cleanup failure reports the owned scratch path for inspection and returns failure rather than claiming success; failed retention leaves scratch intact. SIGINT/SIGTERM are forwarded to the child before collection; uncatchable termination cannot guarantee collection or cleanup.
 
 This does not change Odoo's skip classification: a successful exit can still include skipped browser tests. Inspect test results and retained diagnostics; the wrapper does not count tests or reinterpret skips. Retained diagnostics can contain application data and require deliberate owner-managed retention; no previous temporary directories or evidence are cleaned automatically.
@@ -185,7 +187,7 @@ Each checkout of a project gets an identity derived from the folder it runs in, 
 checkout_slug = 'mrp_2'
 ```
 
-`/odoo19` shows it as `checkout: main`, `checkout: linked worktree, slug 07_1` or `checkout: main, slug mrp_2 (profile)`. The slug selects the checkout's database names (below); ports and processes are not per checkout yet.
+`/odoo19` shows it as `checkout: main`, `checkout: linked worktree, slug 07_1` or `checkout: main, slug mrp_2 (profile)`. The slug selects the checkout's database names (below); the checkout's directory selects its server and port (see *Servers and ports per checkout*).
 
 ## Databases per checkout
 
@@ -250,6 +252,19 @@ The shared `odoo.conf` names the main checkout in its `addons_path`. In a linked
 - Agents cannot run it: the bash guard blocks it because it can link the environment file, which agents may not create or read.
 
 Without `[tooling].logs`, `dev/logs` may stay a link to the main checkout's `dev/logs`: in a linked worktree, `--compact` runs accept a log directory that resolves inside the main checkout's `dev/logs/odoo19` (`CHECKOUT_MAIN_ROOT` from `tools/config.py`); any other location outside the project is still refused with `Compact logs must remain inside the project.`
+
+## Servers and ports per checkout
+
+Each checkout controls only its own Odoo server; the PostgreSQL service is one and shared.
+
+- `start` runs at most one server per checkout and records its pid and HTTP port in `${XDG_RUNTIME_DIR:-/tmp}/oasis-<uid>/<16 hex of sha256(checkout path)>/server.json` (directories 0700, refused when they are symlinks or owned by another user; never inside the repository). A record is live only while its pid exists and that process's command line names the profile's `odoo-bin`; a stale record is removed when read. A second `start` while the server lives exits 2 with `Odoo is already running for this checkout: pid <pid>, port <port>.`
+- Port: an explicit `-p <port>`, `--http-port <port>` or `--http-port=<port>` is used as given (`Port <port> is in use; pass another --http-port or stop the other server.` when busy). Otherwise the main checkout, and a project outside git, use the `http_port` of `odoo.conf` (8069 when absent) and refuse a busy one with `Port <port> is in use; pass --http-port or stop the other server.`; a linked worktree takes the first free port from `http_port + 1` to `http_port + 50`, and also the first free `--gevent-port` after the conf's `gevent_port` (8072 when absent), so two servers with workers never collide. Only these options (and `http_interface`, the address probed) are read from `odoo.conf`. The chosen `--http-port=<port>` goes after the configuration options; a port the user passed is not repeated.
+- Before Odoo starts, `start` prints `odoo19 start: http://localhost:<port> (pid <pid>)` to stderr. `start --help`, `-h` and `--version` go straight to Odoo: no port check, no record.
+- `stop` sends SIGTERM to this checkout's server, waits up to 20 s and reports `Stopped Odoo for this checkout: pid <pid>, port <port>.` (exit 1 when it does not stop in time); without a server it prints `No Odoo server running for this checkout.` and exits 0. It never stops another checkout's Odoo.
+- `stop --database` stops the Compose database service (`compose stop <db_service>`) only when no other checkout has a live server; otherwise it exits 2 with `Refusing to stop the database: Odoo is running for other checkouts:` followed by one `  <checkout> (port <port>, pid <pid>)` line each.
+- `status` prints `server: running pid <pid> port <port>` or `server: stopped` for this checkout, then `compose ps`.
+
+Contract change in 0.3.0: `stop` used to stop every Compose service; use `stop --database` for PostgreSQL.
 
 ## Portable verification
 

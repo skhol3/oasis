@@ -37,8 +37,30 @@ still change in a minor release; every such change is listed here under **Change
   `tools/config.py` reports it as a new last line `LOGS_DIR` (empty without the key), and
   `worktree-init` checks that a shared layout's copied profile resolves it to the same
   directory. Without the key, logs stay under `dev/logs/odoo19` as before.
+- Per-checkout Odoo server: `start` records its pid and HTTP port in
+  `${XDG_RUNTIME_DIR:-/tmp}/oasis-<uid>/<sha256(checkout)[:16]>/server.json` (0700, outside
+  the repository; `tools/runtime_state.py`) and refuses a second server for the same checkout.
+  The main checkout uses the `http_port` of `odoo.conf` (8069 when absent) and refuses a busy
+  one; a linked worktree takes the first free port from `http_port + 1` (up to `+ 50`) and a
+  free `--gevent-port` after `gevent_port`; an explicit `-p`/`--http-port` wins. `start`
+  passes `--http-port=<port>` after the configuration options and prints
+  `odoo19 start: http://localhost:<port> (pid <pid>)` to stderr.
+- `status` starts with `server: running pid <pid> port <port>` or `server: stopped`;
+  `/odoo19` shows `server: running on port <port> (pid <pid>)` or `server: stopped`
+  (`runtime_state.py show <checkout>`, no service or database access).
+- `test-module` and the tests phase of `verify-module` (also with `--compact`) pass
+  `--http-port=<free port>` to the Odoo test process, so test runs never collide with a
+  running server ("Port ... is in use by another program").
 
 ### Changed
+
+- `stop` (contract change) stops only this checkout's Odoo server (SIGTERM, up to 20 s);
+  without one it prints `No Odoo server running for this checkout.` and exits 0. It used to
+  stop every Compose service. `stop --database` stops the database service, and only when no
+  other checkout has a live server; otherwise it exits 2 and lists those checkouts and ports.
+- `start` in the main checkout refuses a busy `http_port` with
+  `Port <port> is in use; pass --http-port or stop the other server.` before anything runs,
+  and reads `http_port`, `gevent_port` and `http_interface` (only those) from `odoo.conf`.
 
 - `worktree-init` with a shared configuration directory (the profile's `config`, `env_file`,
   `compose` and `requirements` all outside the checkouts) copies only the profile, after

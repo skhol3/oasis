@@ -1,5 +1,32 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+usage() {
+  printf 'Usage: %s [--database]\n' "${ODOO19_ENTRYPOINT:-$0}"
+}
+case $# in
+  0) mode=server ;;
+  1) case $1 in
+       --database) mode=database ;;
+       --help)
+         usage
+         printf 'Stops the Odoo server that start runs for this checkout (SIGTERM, waits up to 20 s).\n'
+         printf -- '--database stops the Compose database service, only when no other checkout has\n'
+         printf 'a running Odoo server. It never stops another checkout'\''s Odoo.\n'
+         exit 0 ;;
+       *) usage >&2; exit 2 ;;
+     esac ;;
+  *) usage >&2; exit 2 ;;
+esac
 source "$(dirname "$0")/common.sh"
 require_runtime
-compose stop
+if [[ "$mode" == server ]]; then
+  exec python3 -I -B "$(dirname "$0")/runtime_state.py" stop "$PROJECT_ROOT"
+fi
+# The database service is shared by every checkout: refuse while another one serves.
+others=$(runtime_state others "$PROJECT_ROOT")
+if [[ -n "$others" ]]; then
+  printf 'Refusing to stop the database: Odoo is running for other checkouts:\n' >&2
+  while IFS= read -r line; do printf '  %s\n' "$line" >&2; done <<< "$others"
+  exit 2
+fi
+compose stop "$DB_SERVICE"

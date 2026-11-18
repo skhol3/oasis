@@ -28,6 +28,19 @@ SHARED_PROFILE = (lifecycle.PROFILE
 SECRET = 'fixture-secret-value'
 
 
+def free_pair():
+    """A port P with P and P+1 free on 127.0.0.1: the conf port and a linked worktree's first."""
+    for _ in range(100):
+        port = lifecycle.free_port()
+        try:
+            with lifecycle.socket.socket() as probe:
+                probe.bind(('127.0.0.1', port + 1))
+        except OSError:
+            continue
+        return port
+    raise AssertionError('no free port pair on 127.0.0.1')
+
+
 def shared_layout(test, profile=SHARED_PROFILE):
     """Turn the lifecycle fixture into <projects>/{a project, a project-wt, config}."""
     test.env.update({'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1',
@@ -42,6 +55,7 @@ def shared_layout(test, profile=SHARED_PROFILE):
     test.conf = test.config_dir / 'odoo.conf'
     test.enterprise = test.main.parent.parent / 'source' / 'enterprise'
     test.odoo_addons = test.source / 'addons'
+    test.http_port, test.gevent_port = free_pair(), free_pair()
     write_conf(test, f'{test.enterprise},{test.main},{test.odoo_addons}')
     (test.main / '.odoo19-agent.toml').write_text(profile)
 
@@ -60,7 +74,9 @@ def write_conf(test, addons_path):
     test.conf.write_text('[options]\n'
                          f'addons_path = {addons_path}\n'
                          f'admin_passwd = {SECRET}\n'
-                         'db_host = db\n')
+                         'db_host = db\n'
+                         f'http_port = {test.http_port}\n'
+                         f'gevent_port = {test.gevent_port}\n')
 
 
 class SharedConfTests(unittest.TestCase):
@@ -81,7 +97,8 @@ class SharedConfTests(unittest.TestCase):
     def odoo_lines(self):
         if not self.commands.exists():
             return []
-        lines = [line for line in self.commands.read_text().splitlines() if line.startswith('odoo ')]
+        lines = [lifecycle.any_test_port(line) for line in self.commands.read_text().splitlines()
+                 if line.startswith('odoo ')]
         self.commands.unlink()
         return lines
 
@@ -105,35 +122,41 @@ class SharedConfTests(unittest.TestCase):
                 ('start', ('--stop-after-init',), None)):
             self.env['FAKE_EXISTS'] = '1' if command in ('update-module', 'odoo-shell') else '0'
             result = self.invoke(root, command, *args, input=stdin)
-            self.assertEqual((result.returncode, result.stderr), (0, ''), command)
+            self.assertEqual(result.returncode, 0, command)
+            if command == 'start':
+                self.assertRegex(result.stderr, r'^odoo19 start: http://localhost:\d+ \(pid \d+\)\n$')
+            else:
+                self.assertEqual(result.stderr, '', command)
             lines[command] = self.odoo_lines()
         self.assertEqual(set(lines), {'test-module', 'install-module', 'update-module', 'odoo-shell', 'start'})
         return lines, dev, test
 
-    def expected(self, dev, test, **kwargs):
+    def expected(self, dev, test, ports, **kwargs):
         return {
-            'test-module': [self.odoo_call('-d', test, '-i', 'coffee', '--without-demo',
+            'test-module': [self.odoo_call('--http-port=<free>', '-d', test, '-i', 'coffee', '--without-demo',
                                            '--test-tags', '/coffee', '--stop-after-init', **kwargs)],
             'install-module': [self.odoo_call('-d', dev, '-i', 'coffee', '--without-demo',
                                               '--stop-after-init', **kwargs)],
             'update-module': [self.odoo_call('-d', dev, '-u', 'coffee', '--stop-after-init', **kwargs)],
             'odoo-shell': [self.odoo_call('-d', dev, shell=True, **kwargs)],
-            'start': [self.odoo_call('--stop-after-init', **kwargs)],
+            'start': [self.odoo_call(*ports, '--stop-after-init', **kwargs)],
         }
 
     def test_linked_worktree_gets_the_rewritten_addons_path_everywhere(self):
         lines, dev, test = self.run_all(self.linked, 'wt_')
         addons = f'{self.enterprise},{self.linked},{self.odoo_addons}'
-        self.assertEqual(lines, self.expected(dev, test, addons=addons))
+        # A linked worktree takes the first free ports after the conf's http_port and gevent_port.
+        ports = (f'--http-port={self.http_port + 1}', f'--gevent-port={self.gevent_port + 1}')
+        self.assertEqual(lines, self.expected(dev, test, ports, addons=addons))
 
     def test_main_checkout_command_lines_are_unchanged(self):
         lines, dev, test = self.run_all(self.main)
-        self.assertEqual(lines, self.expected(dev, test))
+        self.assertEqual(lines, self.expected(dev, test, (f'--http-port={self.http_port}',)))
 
     def test_compact_and_verify_runs_of_a_linked_worktree_pass_the_addons_path(self):
         addons = f'{self.enterprise},{self.linked},{self.odoo_addons}'
         test = 'cc_test_wt_coffee'
-        tests = self.odoo_call('-d', test, '-i', 'coffee', '--without-demo', '--test-tags',
+        tests = self.odoo_call('--http-port=<free>', '-d', test, '-i', 'coffee', '--without-demo', '--test-tags',
                                '/coffee', '--stop-after-init', addons=addons)
         result = self.invoke(self.linked, 'test-module', '--compact', 'coffee')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
@@ -274,6 +297,23 @@ class AddonsPathHelperTests(unittest.TestCase):
                 self.conf.write_text(content)
                 result = self.run_helper(self.scratch / 'other')
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+
+    def test_option_mode_prints_only_the_requested_port_option(self):
+        self.conf.write_text(f'[options]\nhttp_port = 8019\nadmin_passwd = {SECRET}\n')
+        for option, output in (('http_port', '8019\n'), ('gevent_port', ''), ('http_interface', '')):
+            with self.subTest(option=option):
+                result = subprocess.run([sys.executable, '-B', str(HELPER), '--option', option,
+                                         str(self.conf)], capture_output=True, text=True)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, output, ''))
+        self.conf.write_text(f'[options]\nhttp_port = {SECRET}\n')
+        result = subprocess.run([sys.executable, '-B', str(HELPER), '--option', 'http_port',
+                                 str(self.conf)], capture_output=True, text=True)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', f'ERROR: Invalid http_port in {self.conf}: it must be a port number.\n'))
+        result = subprocess.run([sys.executable, '-B', str(HELPER), '--option', 'admin_passwd',
+                                 str(self.conf)], capture_output=True, text=True)
+        self.assertEqual((result.returncode, result.stdout), (2, ''))
+        self.assertNotIn(SECRET, result.stderr)
 
     def test_errors_exit_2_without_content(self):
         missing = self.scratch / 'missing.conf'
