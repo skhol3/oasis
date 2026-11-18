@@ -6,7 +6,7 @@ import { Type } from "typebox";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { blockedProgram, blockReason } from "../lib/bash-guard.ts";
+import { blockedProgram, blockReason, WORKTREE_INIT } from "../lib/bash-guard.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findProjectRoot, projectContext } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, type StatusInput } from "../lib/status.ts";
@@ -124,16 +124,57 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     }
   }
 
+  // User-run only (agents are blocked from worktree-init): show the dry-run plan, then create it on yes.
+  async function worktree(ctx: { cwd: string; ui: { notify: (message: string, level?: "info" | "warning" | "error") => void;
+    confirm: (title: string, message: string) => Promise<boolean> } }, feature: string, branch: string): Promise<void> {
+    const root = findProjectRoot(ctx.cwd);
+    if (!root) {
+      ctx.ui.notify(`Not an Odoo 19 project: no .odoo19-agent.toml at or above ${ctx.cwd}`, "warning");
+      return;
+    }
+    const args = ["worktree-init", feature, branch];
+    try {
+      const plan = await run(root, [...args, "--dry-run"], undefined, TOOL_TIMEOUT_MS);
+      if (plan.code !== 0) {
+        ctx.ui.notify(`odoo19 worktree: ${plan.stderr.trim() || `exit ${plan.code}`}`, "error");
+        return;
+      }
+      const steps = plan.stdout.trim().split("\n").filter((line) => line !== "dry run: nothing changed");
+      if (!(await ctx.ui.confirm("odoo19 worktree", `${steps.join("\n")}\n\nCreate this worktree?`))) {
+        ctx.ui.notify("odoo19 worktree: nothing changed.", "info");
+        return;
+      }
+      const result = await run(root, args, undefined, TOOL_TIMEOUT_MS);
+      const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
+      ctx.ui.notify(`odoo19 worktree:\n${output || `exit ${result.code}`}`, result.code === 0 ? "info" : "error");
+    } catch (error) {
+      ctx.ui.notify(`odoo19 worktree failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+  }
+
+  const USAGE = "Usage: /odoo19 [setup | worktree <feature> <branch>]";
+
   pi.registerCommand("odoo19", {
-    description: "Odoo 19 project status: profile, addon modules, databases and git worktree; `setup` installs the subagent overlay",
+    description:
+      "Odoo 19 project status: profile, addon modules, databases and git worktree; `setup` installs the " +
+      "subagent overlay; `worktree <feature> <branch>` creates a prepared linked worktree",
     handler: async (args, ctx) => {
       const argument = (args ?? "").trim();
       if (argument === "setup") {
         await setup(ctx);
         return;
       }
+      const words = argument.split(/\s+/);
+      if (words[0] === "worktree") {
+        if (words.length !== 3 || words.slice(1).some((word) => word.startsWith("-"))) {
+          ctx.ui.notify(USAGE, "warning");
+          return;
+        }
+        await worktree(ctx, words[1], words[2]);
+        return;
+      }
       if (argument) {
-        ctx.ui.notify("Usage: /odoo19 [setup]", "warning");
+        ctx.ui.notify(USAGE, "warning");
         return;
       }
       const root = findProjectRoot(ctx.cwd);
@@ -181,15 +222,17 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     return { systemPrompt: `${event.systemPrompt}\n\n<odoo19>\n${projectContext(root)}\n</odoo19>` };
   });
 
-  // Agent bash only: direct odoo-bin/dropdb/psql bypass the core's database guards.
+  // Agent bash only: direct odoo-bin/dropdb/psql bypass the core's database guards (Odoo projects);
+  // worktree-init links environment files, so it is user-run in every session.
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName !== "bash") return;
     const command = (event.input as { command?: unknown }).command;
     if (typeof command !== "string") return;
-    const root = findProjectRoot(ctx.cwd);
-    if (!root) return;
     const program = blockedProgram(command);
-    if (program) return { block: true, reason: blockReason(program, root) };
+    if (!program) return;
+    if (program === WORKTREE_INIT) return { block: true, reason: blockReason(program, "") };
+    const root = findProjectRoot(ctx.cwd);
+    if (root) return { block: true, reason: blockReason(program, root) };
   });
 
   pi.registerTool({

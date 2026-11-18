@@ -9,6 +9,18 @@ still change in a minor release; every such change is listed here under **Change
 
 ## [Unreleased]
 
+### Added
+
+- `odoo19 --project <checkout> worktree-init <feature> <branch> [--dry-run]`: creates the
+  linked worktree `<main folder>-<feature>` next to the main checkout (existing local branch,
+  tracked `origin/<branch>`, or a new branch from the main checkout's `HEAD`) and prepares it:
+  copies the untracked profile, links the untracked and ignored entries of `dev/`, copies
+  `dev/odoo.conf` (0600) with the worktree root in `addons_path` and without `db_name`, creates
+  an own `dev/runtime`, and links the profile's `env_file`. User-run only.
+- `/odoo19 worktree <feature> <branch>` in Gentle Shell: shows the dry-run plan and runs
+  `worktree-init` after confirmation. The bash guard blocks agents from running
+  `worktree-init` in every session.
+
 ## [0.2.0] - 2026-11-17
 
 Linked git worktrees get their own databases: one checkout no longer steps on another.

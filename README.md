@@ -35,8 +35,8 @@ Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shel
 - Tool `odoo19_find_module`: maps a functional name to technical module names by matching the query words against the technical name and the manifest `name`, `summary` and `category` in the profile's addon roots, so the agent needs no `ls` or `grep`.
 - Tool `odoo19_model_info`: wraps `odoo19 model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
 - Prompt context naming the `odoo19` tools when `.odoo19-agent.toml` is found at or above the working directory.
-- A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package.
-- `/odoo19`: a quick status with the profile, addon modules, configured databases, git worktree and checkout identity. It never starts services or queries databases. `/odoo19 setup` installs the subagent overlay (see Subagents).
+- A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. In every session it also blocks the agent from running `worktree-init` (through `odoo19`, `tools/worktree-init` or `worktree_init.py`, `--dry-run` included), which only the user runs. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package.
+- `/odoo19`: a quick status with the profile, addon modules, configured databases, git worktree and checkout identity. It never starts services or queries databases. `/odoo19 setup` installs the subagent overlay (see Subagents). `/odoo19 worktree <feature> <branch>` creates a prepared linked worktree after confirmation (see *Preparing a linked worktree*).
 
 The `odoo19_*` tools are active only in sessions started inside an Odoo 19 project (a directory with `.odoo19-agent.toml` at or above it), so other projects pay no tokens for them; `/odoo19` is available everywhere.
 
@@ -208,13 +208,23 @@ Database names are at most 63 bytes (PostgreSQL's identifier limit, counted in U
 
 ### Preparing a linked worktree
 
-A linked worktree needs its own `.odoo19-agent.toml` profile and its own `dev/odoo.conf` whose `addons_path` points at the worktree's addons. It also needs the main checkout's environment file at the path the profile's `env_file` names. Agents are not allowed to create or read environment files, so the user creates that link once:
+A linked worktree needs its own `.odoo19-agent.toml` profile, its own `dev/odoo.conf` whose `addons_path` points at the worktree's addons, and the main checkout's environment file at the path the profile's `env_file` names. `worktree-init` creates the worktree and prepares all of it. Run it yourself, in Gentle Shell or in a terminal, from the main checkout or any of its worktrees:
 
-```bash
-ln -s <main>/<env_file path> <worktree>/<env_file path>
+```text
+/odoo19 worktree <feature> <branch>
 ```
 
-`dev/logs` may stay a link to the main checkout's `dev/logs`: in a linked worktree, `--compact` runs accept a log directory that resolves inside the main checkout's `dev/logs/odoo19` (`CHECKOUT_MAIN_ROOT` from `tools/config.py`); any other location outside the project is still refused with `Compact logs must remain inside the project.` A planned `worktree-init` (0.3.0) will prepare this.
+```bash
+~/.agents/skills/odoo19/odoo19 --project /absolute/project worktree-init <feature> <branch> [--dry-run]
+```
+
+- The folder is `<main folder>-<feature>` next to the main checkout, so the feature becomes the checkout slug (`corpus-cafe` with `cost deviation` gives `corpus-cafe-cost-deviation`, slug `cost_deviation`). An existing folder is refused.
+- An existing local branch is checked out; otherwise `origin/<branch>` is tracked when it exists; otherwise the branch is created from the main checkout's `HEAD`. A branch already checked out in another worktree is refused.
+- An untracked `.odoo19-agent.toml` is copied (one that sets `checkout_slug` is refused, since the worktree would share its databases). Every untracked or ignored entry of the main checkout's `dev/` is linked, except `dev/odoo.conf`, copied with mode 0600, the main root replaced by the worktree root in `addons_path` and `db_name` removed, and `dev/runtime`, a new empty 0700 directory. The `env_file` path is linked to the main checkout's file. Existing paths are never replaced.
+- It prints the plan line by line (`copied`, `linked`, `created dir`, `rewrote addons_path`, `removed db_name`) and never prints the content of `odoo.conf` or the environment file. `--dry-run` prints the same plan and changes nothing; `/odoo19 worktree` shows it and asks before creating anything. A failure after the worktree exists keeps what was created and reports it.
+- Agents cannot run it: the bash guard blocks it because it links the environment file, which agents may not create or read.
+
+`dev/logs` may stay a link to the main checkout's `dev/logs`: in a linked worktree, `--compact` runs accept a log directory that resolves inside the main checkout's `dev/logs/odoo19` (`CHECKOUT_MAIN_ROOT` from `tools/config.py`); any other location outside the project is still refused with `Compact logs must remain inside the project.`
 
 ## Portable verification
 

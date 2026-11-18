@@ -13,7 +13,7 @@ CLI = ROOT / 'odoo19'
 PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database',
           'drop-database', 'init-dev-database', 'install-module', 'lint-module', 'list-databases', 'model-info',
           'module-status', 'odoo-shell', 'start', 'status', 'stop', 'test-module', 'update-module',
-          'verify-module')
+          'verify-module', 'worktree-init')
 
 
 class GlobalCliTests(unittest.TestCase):
