@@ -19,7 +19,7 @@ Use for Odoo 19 test design, bug reproduction, module install/update verificatio
 - Do not treat XML parsing, import success, or a current-code update as proof of historical migration.
 - Never assume a wrapper accepts test selectors it does not document.
 - Reuse `[tooling].test_database` sequentially; obtain exact-target reset authorization. Preserve development data and failed-run evidence. Separate targets serve parallel jobs or isolated baselines; active-session checks are not locks. Configuration is not consent.
-- Prefer `test-module --compact` or `verify-module --compact`: report exits/log paths; inspect relevant failures. Full streams remain under project `dev/logs/odoo19/`. Verification uses a separate `_update` target, not a historical migration baseline.
+- Prefer `test-module --compact` or `verify-module --compact`: report exits/log paths; inspect relevant failures. Full streams remain under project `dev/logs/odoo19/`. Verification uses a separate `_update` target, not a historical migration baseline. With a checkout slug, test targets are `<test_prefix><slug>_<name>`.
 - For Python/manifest changes, use the authorized standalone `lint-module` command with the project's trusted rcfile and targets; follow the [Pylint guidance](references/pylint-odoo-guidance.md). Do not run it per edit or treat lint as functional proof.
 - Read and apply the [verification evidence policy](references/evidence-policy.md) before reusing a passing phase or claiming evidence for the current candidate.
 - For SonarQube findings, consult active rules and effective parameters, assess Odoo 19 applicability, and compare analysis before and after correction under that policy. Static analysis never replaces functional verification.

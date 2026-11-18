@@ -82,7 +82,22 @@ export function formatStatus(input: StatusInput): string {
     const state = git.changedFiles ? `${git.changedFiles} changed files` : "clean";
     lines.push(`git: ${git.branch}, ${kind}, ${state}`);
   }
+  const checkout = formatCheckout(config);
+  if (checkout) lines.push(checkout);
   return lines.join("\n");
+}
+
+/**
+ * Checkout identity from config.py's CHECKOUT_KIND / CHECKOUT_SLUG. Only a linked worktree
+ * derives a slug, so a slug on any other kind comes from `[tooling].checkout_slug`.
+ */
+function formatCheckout(config: Record<string, string> | undefined): string | null {
+  const kind = config?.CHECKOUT_KIND;
+  if (!kind) return null;
+  const slug = config.CHECKOUT_SLUG ?? "";
+  if (kind === "linked") return `checkout: linked worktree, slug ${slug || "?"}`;
+  const label = kind === "main" ? "main" : "outside git";
+  return slug ? `checkout: ${label}, slug ${slug} (profile)` : `checkout: ${label}`;
 }
 
 /** Technical names of the modules (directories with __manifest__.py) directly under an addons root. */

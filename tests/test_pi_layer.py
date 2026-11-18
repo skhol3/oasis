@@ -1,6 +1,7 @@
 """The Gentle Shell (Pi) layer: package manifest and its node:test suite."""
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import unittest
@@ -15,6 +16,23 @@ class PiLayerTests(unittest.TestCase):
         self.assertIn('pi-package', manifest['keywords'])
         self.assertEqual(manifest['pi'], {'extensions': ['./pi/extensions/odoo19.ts']})
         self.assertTrue((ROOT / 'pi/extensions/odoo19.ts').is_file())
+
+    def test_agent_overlay_template_lists_only_registered_tools(self):
+        overlay = json.loads((ROOT / 'pi/agent-overlays/oasis.json').read_text())
+        tools = ['odoo19_test_module', 'odoo19_find_module', 'odoo19_model_info',
+                 'odoo19_module_status', 'odoo19_lint_module', 'odoo19_check_environment']
+        self.assertEqual(overlay, {'gentle-ai-worker': {'add': tools},
+                                   'gentle-ai-verify': {'add': tools}})
+        for agent, entry in overlay.items():
+            self.assertLessEqual(set(entry), {'add', 'remove'}, agent)
+            for key, names in entry.items():
+                self.assertIsInstance(names, list, f'{agent}.{key}')
+                self.assertTrue(all(isinstance(name, str) for name in names), f'{agent}.{key}')
+        source = (ROOT / 'pi/extensions/odoo19.ts').read_text()
+        registered = set(re.findall(r'\bname:\s*"(odoo19_[A-Za-z0-9_]+)"', source))
+        listed = {name for entry in overlay.values() for names in entry.values() for name in names}
+        self.assertTrue(listed)
+        self.assertLessEqual(listed, registered, 'overlay names a tool the extension does not register')
 
     @unittest.skipUnless(shutil.which('node') and PI_TESTS, 'node or pi tests unavailable')
     def test_node_suite(self):

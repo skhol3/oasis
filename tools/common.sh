@@ -9,6 +9,32 @@ fi
 _config_output=$(python3 -B "$(dirname "${BASH_SOURCE[0]}")/config.py" "$ODOO19_PROJECT_ROOT") || return $?
 eval "$_config_output"
 unset _config_output
+# Child helpers (test_temp.py -> compact_log_directory) need the checkout to apply the
+# linked-worktree log rule.
+export CHECKOUT_KIND CHECKOUT_MAIN_ROOT
+
+# The single derivation of a checkout's managed database name: the checkout slug goes right
+# after the managed prefix (cc_dev_07_1_coffee); the main checkout keeps <prefix><rest>.
+checkout_database_name() {
+  local prefix=$1 rest=$2
+  if [[ -n "${CHECKOUT_SLUG:-}" ]]; then
+    printf '%s%s_%s\n' "$prefix" "$CHECKOUT_SLUG" "$rest"
+  else
+    printf '%s%s\n' "$prefix" "$rest"
+  fi
+}
+
+# A configured test_database belongs to the main checkout's namespace; config.py already
+# checked that the slugged name still fits in 56 bytes.
+if [[ -n "$TEST_DATABASE" ]]; then
+  TEST_DATABASE=$(checkout_database_name "$TEST_PREFIX" "${TEST_DATABASE#"$TEST_PREFIX"}")
+fi
+
+# PostgreSQL identifiers hold at most 63 bytes; count bytes, not characters.
+database_name_bytes() {
+  local LC_ALL=C
+  printf '%s\n' "${#1}"
+}
 
 compose() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
@@ -78,6 +104,39 @@ require_managed_database_name() {
   if [[ "$database" != "$DEV_PREFIX"* && "$database" != "$TEST_PREFIX"* ||
         "$database" == "$DEV_PREFIX" || "$database" == "$TEST_PREFIX" ]]; then
     printf 'Managed databases must use %s<name> or %s<name>: %s\n' "$DEV_PREFIX" "$TEST_PREFIX" "$database" >&2
+    return 2
+  fi
+  if [[ -n "${CHECKOUT_SLUG:-}" ]]; then
+    local dev_namespace="$DEV_PREFIX${CHECKOUT_SLUG}_" test_namespace="$TEST_PREFIX${CHECKOUT_SLUG}_"
+    if [[ "$database" != "$dev_namespace"* && "$database" != "$test_namespace"* ||
+          "$database" == "$dev_namespace" || "$database" == "$test_namespace" ]]; then
+      printf 'Databases of checkout %s must use %s<name> or %s<name>: %s\n' \
+        "$CHECKOUT_SLUG" "$dev_namespace" "$test_namespace" "$database" >&2
+      return 2
+    fi
+  fi
+  if (( $(database_name_bytes "$database") > 63 )); then
+    printf 'Database names must be at most 63 bytes: %s\n' "$database" >&2
+    return 2
+  fi
+}
+
+# A database that gets an _update sibling must leave room for it within 63 bytes.
+require_update_sibling_room() {
+  local database=$1
+  if (( $(database_name_bytes "$database") > 56 )); then
+    printf 'Test databases with an _update sibling must be at most 56 bytes: %s\n' "$database" >&2
+    return 2
+  fi
+}
+
+# update-module and odoo-shell operate on existing databases only; they never create one.
+require_existing_database() {
+  local database=$1
+  # Outside the condition, so an unavailable service fails instead of looking missing.
+  wait_for_database >/dev/null
+  if ! database_exists "$database"; then
+    printf 'Database %s does not exist; create it with install-module or create-database.\n' "$database" >&2
     return 2
   fi
 }

@@ -36,9 +36,21 @@ Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shel
 - Tool `odoo19_model_info`: wraps `odoo19 model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
 - Prompt context naming the `odoo19` tools when `.odoo19-agent.toml` is found at or above the working directory.
 - A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package.
-- `/odoo19`: a quick status with the profile, addon modules, configured databases and git worktree. It never starts services or queries databases.
+- `/odoo19`: a quick status with the profile, addon modules, configured databases, git worktree and checkout identity. It never starts services or queries databases. `/odoo19 setup` installs the subagent overlay (see Subagents).
+
+The `odoo19_*` tools are active only in sessions started inside an Odoo 19 project (a directory with `.odoo19-agent.toml` at or above it), so other projects pay no tokens for them; `/odoo19` is available everywhere.
 
 Other agents keep using the core (`odoo19` CLI and skills) unchanged.
+
+### Subagents
+
+Gentle Shell subagents (for example `gentle-ai-worker` and `gentle-ai-verify`) receive only the tools in their allowlist, so they do not see the `odoo19_*` tools by default. oasis ships an overlay template, [`pi/agent-overlays/oasis.json`](pi/agent-overlays/oasis.json), that adds the six tools to both agents. Run `/odoo19 setup` once in Gentle Shell (it asks before writing); oasis reminds you at session start when the overlay is missing or outdated.
+
+- `/odoo19 setup` writes only `agent-overlays.d/oasis.json` under the Gentle AI config home (`$GENTLE_PI_CONFIG_HOME` when it is an absolute path, else `~/.gentle-shell/gentle-ai`). It works outside an Odoo project, does nothing when the overlay is already up to date, and only the user can run it: no agent tool triggers it. Start a new session or `/reload` afterwards.
+- That folder is user configuration: Gentle Shell updates do not replace it. Run `/odoo19 setup` again after an oasis update that changes the template.
+- If Gentle AI renames an agent, the overlay entry for the old name only produces a notice until an oasis update renames it.
+- `odoo19_test_module` resets the module's test database (the checkout's `<test_prefix>` namespace) before each run, so a verify subagent with the overlay can do so too.
+- Without the overlay, subagents can still run the core through bash: `python3 /absolute/path/to/oasis/odoo19 --project <project root> <command>` (for example `test-module --compact <module>`).
 
 ## New project: deliberate setup
 
@@ -79,7 +91,7 @@ Run at a relevant baseline and after a Python/manifest work unit, not each edit.
 
 ## Fresh development database with role accounts
 
-Use the global `init-dev-database` command for a **new, explicitly authorized development database**. By default it initializes Odoo without demo data, configures the administrator, installs one project module, and creates the project-declared role accounts. Pass `--with-demo` explicitly to use Odoo's native demo loader. Existing `create-database` (empty PostgreSQL database), `install-module`, `update-module`, `start`, and test commands keep their previous behavior; they do not provision these users.
+Use the global `init-dev-database` command for a **new, explicitly authorized development database**. By default it initializes Odoo without demo data, configures the administrator, installs one project module, and creates the project-declared role accounts. Pass `--with-demo` explicitly to use Odoo's native demo loader. `create-database` (empty PostgreSQL database), `install-module`, `update-module`, `start`, and test commands do not provision these users.
 
 Declare non-secret accounts in the project's `.odoo19-agent.toml`:
 
@@ -136,7 +148,7 @@ Keep manual development data in a persistent development database. For sequentia
 test_database = 'sample_test_suite'
 ```
 
-The name must be longer than `test_prefix`, contain only letters/digits/underscores, and be at most 56 bytes (reserving `_update` within PostgreSQL's 63-byte identifier limit). Without this setting, existing module-derived defaults remain unchanged. An explicit database argument overrides the test destination; it must still be an approved disposable test database.
+The name must be longer than `test_prefix`, contain only letters/digits/underscores, and be at most 56 bytes (reserving `_update` within PostgreSQL's 63-byte identifier limit). Without this setting, module-derived defaults apply. In a checkout with a slug the slug is inserted after `test_prefix` (see *Databases per checkout* below) and the 56 bytes include it. An explicit database argument overrides the test destination; it must still be an approved disposable test database.
 
 After obtaining authorization to reset the exact destinations:
 
@@ -158,6 +170,51 @@ This does not change Odoo's skip classification: a successful exit can still inc
 Both commands support `--help`. Ensure `dev/logs/` is ignored by project version control. Logs can contain application data; do not publish them or collect credentials. Run shared destinations **sequentially**: there is no execution scheduler or lock. Existing active sessions block reset, but that check is not a concurrency lock. Use explicitly approved separate targets for parallel jobs or retained baseline scenarios. Do not invent a new database name for every edit. Preserve failed-run evidence until investigation is complete; a later reset overwrites database state even though prior logs remain.
 
 The setting is **not reset consent** and does not create a database when read. Never reset the manual development database, infer approval from the namespace, terminate sessions automatically, or clean up other databases. Existing databases are left untouched by installing this change. Template/profile changes require the normal authorization.
+
+## Checkout identity
+
+Each checkout of a project gets an identity derived from the folder it runs in, so linked git worktrees (for example the ones Gentle Shell creates for sessions) can later get their own runtime resources. oasis keeps no registry: it runs a read-only `git rev-parse` in the project root and the same folder always gives the same identity.
+
+- The main checkout has kind `main` and no slug. A project outside git has kind `none` and no slug.
+- A linked worktree has kind `linked` and a slug from its directory name. When the name starts with the main checkout's directory name followed by `-`, `_` or `.`, that prefix is dropped. The rest is lowercased and every run of other characters than `a-z` and `0-9` becomes `_`, trimmed at both ends: `corpus-cafe-07.1` next to `corpus-cafe` gives `07_1`, `Feature Branch!` gives `feature_branch`.
+- The slug must be 1-20 characters of `a-z`, `0-9` and `_`, starting with a letter or digit. When a name cannot produce one (empty or too long), the reader fails and asks for `[tooling].checkout_slug`.
+- Optional `checkout_slug` in `[tooling]` overrides the slug for any checkout, including the main one (opt-in suffix); the reported kind stays the real one. An empty value is invalid: omit the key instead.
+
+```toml
+# Example only.
+checkout_slug = 'mrp_2'
+```
+
+`/odoo19` shows it as `checkout: main`, `checkout: linked worktree, slug 07_1` or `checkout: main, slug mrp_2 (profile)`. The slug selects the checkout's database names (below); ports and processes are not per checkout yet.
+
+## Databases per checkout
+
+The slug goes right after the managed prefix, so each checkout has its own database namespace. A checkout without a slug (the main checkout, unless `checkout_slug` is set) keeps the previous names.
+
+| Default | Main checkout | Checkout with slug `07_1` |
+| --- | --- | --- |
+| `install-module` target | `<dev_prefix><module>` | `<dev_prefix>07_1_<module>` |
+| `test-module` and `verify-module` test target | `<test_prefix><module>` | `<test_prefix>07_1_<module>` |
+| `verify-module` update target | `<test_prefix><module>_update` | `<test_prefix>07_1_<module>_update` |
+| configured `test_database = '<test_prefix>shared'` | `<test_prefix>shared` | `<test_prefix>07_1_shared` (its sibling `<test_prefix>07_1_shared_update`) |
+
+Every command that takes a database (`install-module` with or without `--with-demo`, `update-module`, `odoo-shell`, `start` with `-d`/`--database`, `test-module`, `verify-module`, `create-database`, `drop-database`, `module-status`, `init-dev-database`) requires a managed `<dev_prefix><name>` or `<test_prefix><name>` name. In a checkout with a slug the name must also start with `<dev_prefix><slug>_` or `<test_prefix><slug>_`, so a linked worktree cannot touch the main checkout's databases or another worktree's. The rejection names the checkout and the expected prefixes, and nothing runs.
+
+Not guarded: `start` without `-d`/`--database` uses whatever `db_name` and `--db-filter` the project's `odoo.conf` sets, so keep `db_name` out of a linked worktree's `odoo.conf`. Slugs are matched as prefixes: give each worktree a slug that is not the start of another (`wt` would also accept `wt_1`'s databases).
+
+Database names are at most 63 bytes (PostgreSQL's identifier limit, counted in UTF-8 bytes). A test database that gets an `_update` sibling in `verify-module` is at most 56 bytes, and a configured `test_database` must fit in 56 bytes after the slug is inserted. Longer names fail before any database command.
+
+`update-module` and `odoo-shell` work on existing databases only: a missing database exits 2 with `Database <name> does not exist; create it with install-module or create-database.` and is never created. `install-module` and `create-database` still create their target. oasis never drops a checkout's databases on its own.
+
+### Preparing a linked worktree
+
+A linked worktree needs its own `.odoo19-agent.toml` profile and its own `dev/odoo.conf` whose `addons_path` points at the worktree's addons. It also needs the main checkout's environment file at the path the profile's `env_file` names. Agents are not allowed to create or read environment files, so the user creates that link once:
+
+```bash
+ln -s <main>/<env_file path> <worktree>/<env_file path>
+```
+
+`dev/logs` may stay a link to the main checkout's `dev/logs`: in a linked worktree, `--compact` runs accept a log directory that resolves inside the main checkout's `dev/logs/odoo19` (`CHECKOUT_MAIN_ROOT` from `tools/config.py`); any other location outside the project is still refused with `Compact logs must remain inside the project.` A planned `worktree-init` (0.3.0) will prepare this.
 
 ## Portable verification
 

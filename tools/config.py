@@ -5,9 +5,11 @@ The caller must supply the project root; this module never discovers it from its
 (global installation) location. Path declarations do not grant access consent.
 """
 import ast
+import os
 from pathlib import Path
 import re
 import shlex
+import subprocess
 import sys
 import tomllib
 
@@ -21,6 +23,47 @@ PATHS = {
 
 class InvalidConfig(ValueError):
     pass
+
+
+SLUG = re.compile(r'[a-z0-9][a-z0-9_]{0,19}')
+GIT_TIMEOUT_SECONDS = 5
+
+
+def git_checkout(root: Path) -> tuple[str, Path | None, Path | None]:
+    """Return the checkout kind with its top-level and main directories, read-only.
+
+    The kind is `main`, `linked` (git dir differs from the common dir) or `none` when the
+    root is not inside a git work tree or git is unavailable.
+    """
+    env = {key: value for key, value in os.environ.items()
+           if key not in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR')}
+    try:
+        result = subprocess.run(
+            ['git', '-C', str(root), 'rev-parse', '--path-format=absolute',
+             '--git-dir', '--git-common-dir', '--show-toplevel'],
+            capture_output=True, text=True, env=env, timeout=GIT_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError):
+        return 'none', None, None
+    lines = result.stdout.splitlines()
+    if result.returncode != 0 or len(lines) != 3 or not all(lines):
+        return 'none', None, None
+    git_dir, common_dir, top = (Path(line).resolve() for line in lines)
+    if git_dir == common_dir:
+        return 'main', top, top
+    return 'linked', top, common_dir.parent
+
+
+def derived_slug(top: Path, main: Path) -> str:
+    """Slug of a linked worktree from its directory name, without the main directory prefix."""
+    name = top.name
+    if (main.name and name.startswith(main.name) and len(name) > len(main.name)
+            and name[len(main.name)] in '-_.'):
+        name = name[len(main.name):].lstrip('-_.')
+    slug = re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
+    if not SLUG.fullmatch(slug):
+        raise InvalidConfig('Cannot derive a checkout slug from the worktree directory name; '
+                            'set [tooling].checkout_slug.')
+    return slug
 
 
 def load(root: Path) -> dict[str, str]:
@@ -96,6 +139,23 @@ def load(root: Path) -> dict[str, str]:
     output['PYTHON'] = str(Path(output['PROJECT_ENVIRONMENT']) / 'bin/python')
     output['ODOO_BIN'] = str(Path(output['ODOO_SOURCE']) / 'odoo-bin')
     output['ENVIRONMENTS_DIR'] = str(Path(output['PROJECT_ENVIRONMENT']).parent)
+    override = tooling.get('checkout_slug')
+    if 'checkout_slug' in tooling and (not isinstance(override, str)
+                                       or not SLUG.fullmatch(override)):
+        raise InvalidConfig('Invalid tooling checkout slug.')
+    kind, top, main = git_checkout(root)
+    # A profile slug wins for every kind; only a linked worktree derives one.
+    output['CHECKOUT_KIND'] = kind
+    output['CHECKOUT_SLUG'] = (override if override is not None
+                               else derived_slug(top, main) if kind == 'linked' else '')
+    # The main checkout's work tree: a linked worktree may keep its dev/logs linked there.
+    output['CHECKOUT_MAIN_ROOT'] = (str(main) if kind == 'linked'
+                                    else str(root) if kind == 'main' else '')
+    slug = output['CHECKOUT_SLUG']
+    # common.sh inserts '<slug>_' after test_prefix; the result must still leave room for
+    # verify-module's _update sibling.
+    if output['TEST_DATABASE'] and slug and len(output['TEST_DATABASE'].encode('utf-8')) + len(slug) + 1 > 56:
+        raise InvalidConfig(f'Tooling test database exceeds 56 bytes with checkout slug {slug}.')
     return output
 
 

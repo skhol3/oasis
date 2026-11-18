@@ -181,6 +181,17 @@ class DevelopmentUsersTests(unittest.TestCase):
             self.assertFalse(self.state.exists())
             self.assertFalse(self.commands.exists())
 
+    def test_slugged_checkout_rejects_main_checkout_name_without_effects(self):
+        self.profile.write_text(self.profile.read_text().replace(
+            "test_prefix = 'cc_test_'\n", "test_prefix = 'cc_test_'\ncheckout_slug = 'wt_1'\n"))
+        for database in ('cc_dev_coffee', 'cc_dev_wt_1_'):
+            result = self.invoke('coffee', database)
+            self.assertEqual((result.returncode, result.stdout, result.stderr),
+                (2, '', 'Databases of checkout wt_1 must use cc_dev_wt_1_<name> or '
+                        f'cc_test_wt_1_<name>: {database}\n'))
+            self.assertFalse(self.state.exists())
+            self.assertFalse(self.commands.exists())
+
     def test_requires_explicit_module_and_database(self):
         result = self.invoke('coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr),

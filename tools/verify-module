@@ -4,6 +4,8 @@ if [[ ${1:-} == --help ]]; then
   printf 'Usage: %s [--compact] <module> [test_database] [update_database]\n' "${ODOO19_ENTRYPOINT:-$0}"
   printf 'Resets two distinct test targets: tests and current-code fresh-install/update baseline.\n'
   printf 'Defaults: tooling.test_database and its _update sibling, otherwise module-derived names.\n'
+  printf 'In a checkout with a slug the defaults get it after the prefix and explicit names must use\n'
+  printf 'that checkout namespace. A test database with an _update sibling is limited to 56 bytes.\n'
   printf 'Run shared targets sequentially. --compact retains per-phase stdout/stderr under project dev/logs/odoo19.\n'
   exit 0
 fi
@@ -11,9 +13,9 @@ source "$(dirname "$0")/common.sh"
 compact=false
 if [[ ${1:-} == --compact ]]; then compact=true; shift; fi
 module=${1:-}
-test_database=${2:-${TEST_DATABASE:-${TEST_PREFIX}${module}}}
+test_database=${2:-${TEST_DATABASE:-$(checkout_database_name "$TEST_PREFIX" "$module")}}
 update_database=${3:-${TEST_DATABASE:+${test_database}_update}}
-update_database=${update_database:-${TEST_PREFIX}${module}_update}
+update_database=${update_database:-$(checkout_database_name "$TEST_PREFIX" "${module}_update")}
 require_runtime
 if [[ -z "$module" || $# -gt 3 ]]; then
   printf 'Usage: %s <module> [%sdatabase] [%supdate_database]\n' "${ODOO19_ENTRYPOINT:-$0}" "$TEST_PREFIX" "$TEST_PREFIX" >&2
@@ -21,6 +23,9 @@ if [[ -z "$module" || $# -gt 3 ]]; then
 fi
 require_module "$module"
 require_managed_database_name "$test_database"
+if [[ "$update_database" == "${test_database}_update" ]]; then
+  require_update_sibling_room "$test_database"
+fi
 require_managed_database_name "$update_database"
 if [[ "$test_database" != "$TEST_PREFIX"* || "$update_database" != "$TEST_PREFIX"* ]]; then
   printf 'Verification databases must use the %s prefix.\n' "$TEST_PREFIX" >&2

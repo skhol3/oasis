@@ -1,0 +1,4 @@
+{
+  "gentle-ai-worker": { "add": ["odoo19_test_module", "odoo19_find_module", "odoo19_model_info", "odoo19_module_status", "odoo19_lint_module", "odoo19_check_environment"] },
+  "gentle-ai-verify": { "add": ["odoo19_test_module", "odoo19_find_module", "odoo19_model_info", "odoo19_module_status", "odoo19_lint_module", "odoo19_check_environment"] }
+}
