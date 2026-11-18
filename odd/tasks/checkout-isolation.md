@@ -33,7 +33,7 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - T5 note: `/odoo19 worktree <feature>` (user-run, creates the env-file link) is the first task of 0.3.0
 - [x] T10 [S12] Register the odoo19_* tools inactive and activate them only when the session's project has .odoo19-agent.toml — worker — commit: 05f72df
 - T11 [S3] Fail closed when git detection fails inside a linked worktree (review advisory R3-git-failure-fails-open) — pending (v0.3.0)
-- T12 [S2 S9] Shared odoo.conf: in a linked worktree, run Odoo with the conf's addons_path where the main checkout root is replaced by the worktree root (passed as --addons-path); worktree-init adapted to the shared config layout (copy the profile, no links, no own odoo.conf) — worker — commit: pending
+- [x] T12 [S2 S9] Shared odoo.conf: in a linked worktree, run Odoo with the conf's addons_path where the main checkout root is replaced by the worktree root (passed as --addons-path); worktree-init adapted to the shared config layout (copy the profile, no links, no own odoo.conf) — worker — commit: e5fafbd
 
 ## Log
 
@@ -60,3 +60,4 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - L16. Native review review-aedc62c99d86d669 approved 88864e5..cf25e24 (worktree-init). Advisories to fold into the shared-config redesign: no resume after a partial apply (existing folder is refused, so missing items cannot be finished); /odoo19 worktree reuses the 10-minute tool timeout while `git worktree add` may take longer, leaving a half-created folder.
 - L17. User reorganized corpus-cafe (memory #5800): projects/corpus-cafe/{codigo/<checkouts>, config/ (.env, odoo.conf, compose.yml, init-odoo-role.sh, odools.toml, requirements/), data/ (Odoo data_dir), backups/, logs/, srs/, archivos/}. Agent fixed paths, git worktree repair, lock.sha256 paths; quick checks pass in both checkouts. The linked worktree still uses its own dev/odoo.conf until T12.
 - L18. T12 decision (owned): no new profile key; tools read only the `addons_path` key of the configured odoo.conf and, when CHECKOUT_KIND is linked, replace items equal to CHECKOUT_MAIN_ROOT (or under it) with PROJECT_ROOT, passing the result as --addons-path; other items (enterprise, oca) are kept. Main checkout: unchanged command line.
+- L19. T12 verified against real Odoo 19 parse_config (no DB): conf only -> main checkout addons; with the oasis --addons-path -> worktree addons. Suite 186 OK.
