@@ -130,6 +130,25 @@ class SharedConfTests(unittest.TestCase):
         lines, dev, test = self.run_all(self.main)
         self.assertEqual(lines, self.expected(dev, test))
 
+    def test_compact_and_verify_runs_of_a_linked_worktree_pass_the_addons_path(self):
+        addons = f'{self.enterprise},{self.linked},{self.odoo_addons}'
+        test = 'cc_test_wt_coffee'
+        tests = self.odoo_call('-d', test, '-i', 'coffee', '--without-demo', '--test-tags',
+                               '/coffee', '--stop-after-init', addons=addons)
+        result = self.invoke(self.linked, 'test-module', '--compact', 'coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(self.odoo_lines(), [tests])
+        update = test + '_update'
+        verify = [tests,
+                  self.odoo_call('-d', update, '-i', 'coffee', '--without-demo', '--stop-after-init',
+                                 addons=addons),
+                  self.odoo_call('-d', update, '-u', 'coffee', '--stop-after-init', addons=addons)]
+        for args in ((), ('--compact',)):
+            with self.subTest(args=args):
+                result = self.invoke(self.linked, 'verify-module', *args, 'coffee')
+                self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+                self.assertEqual(self.odoo_lines(), verify)
+
     def test_sub_paths_move_and_unrelated_items_stay_in_order(self):
         write_conf(self, f' {self.main}/vendor , {self.main}-other/addons,/srv/oca, {self.main} ')
         result = self.invoke(self.linked, 'install-module', 'coffee')

@@ -10,8 +10,8 @@ _config_output=$(python3 -B "$(dirname "${BASH_SOURCE[0]}")/config.py" "$ODOO19_
 eval "$_config_output"
 unset _config_output
 # Child helpers (test_temp.py -> compact_log_directory) need the checkout to apply the
-# linked-worktree log rule.
-export CHECKOUT_KIND CHECKOUT_MAIN_ROOT
+# linked-worktree log rule and the [tooling].logs directory.
+export CHECKOUT_KIND CHECKOUT_SLUG CHECKOUT_MAIN_ROOT LOGS_DIR
 
 # The single derivation of a checkout's managed database name: the checkout slug goes right
 # after the managed prefix (cc_dev_07_1_coffee); the main checkout keeps <prefix><rest>.

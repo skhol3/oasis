@@ -24,9 +24,9 @@ otherwise created from the main checkout's HEAD.
 
 Shared layout: when the profile's config, env_file, compose and requirements all resolve
 outside the checkouts (a shared config directory), only an untracked .odoo19-agent.toml is
-copied; its relative paths give the same files from the new sibling folder. Nothing is
-linked and no odoo.conf is written: the tools pass the shared odoo.conf's addons_path with
-the worktree root as --addons-path.
+copied; its relative paths (and [tooling].logs, when set) give the same files from the new
+sibling folder. Nothing is linked and no odoo.conf is written: the tools pass the shared
+odoo.conf's addons_path with the worktree root as --addons-path.
 
 Otherwise (legacy layout): an untracked .odoo19-agent.toml is copied; each untracked or
 ignored entry of the main checkout's dev/ is linked, except dev/odoo.conf (copied with mode
@@ -190,7 +190,11 @@ def shared_config(config, main, root, new, values):
         return None
     with (source / PROFILE).open('rb') as stream:
         tooling = tomllib.load(stream)['tooling']
-    for key, path in zip(SHARED_KEYS, paths):
+    checked = list(zip(SHARED_KEYS, paths))
+    if 'logs' in tooling:
+        # The copied profile keeps [tooling].logs: every checkout must share that directory.
+        checked.append(('logs', Path(values['LOGS_DIR'])))
+    for key, path in checked:
         # The resolution of tools/config.py, from the new folder.
         copied = (new / tooling[key]).resolve()
         if copied != path:

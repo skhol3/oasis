@@ -146,10 +146,13 @@ class CheckoutIdentityTests(unittest.TestCase):
         linked = self.worktree(main, 'proj-07.1')
         outside = self.project('outside')
         main_line = 'CHECKOUT_MAIN_ROOT=' + shlex.quote(str(main.resolve()))
-        for root, identity in ((main, ["CHECKOUT_KIND=main", "CHECKOUT_SLUG=''", main_line]),
-                               (linked, ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=07_1', main_line]),
+        # Only LOGS_DIR follows the identity; it is empty without [tooling].logs.
+        for root, identity in ((main, ["CHECKOUT_KIND=main", "CHECKOUT_SLUG=''", main_line,
+                                       "LOGS_DIR=''"]),
+                               (linked, ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=07_1', main_line,
+                                         "LOGS_DIR=''"]),
                                (outside, ["CHECKOUT_KIND=none", "CHECKOUT_SLUG=''",
-                                          "CHECKOUT_MAIN_ROOT=''"])):
+                                          "CHECKOUT_MAIN_ROOT=''", "LOGS_DIR=''"])):
             with self.subTest(root=root.name):
                 self.assertEqual(self.assignments(root), self.previous_assignments(root) + identity)
 

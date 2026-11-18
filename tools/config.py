@@ -118,6 +118,12 @@ def load(root: Path) -> dict[str, str]:
         if not isinstance(value, str) or not value or '\x00' in value or '\n' in value:
             raise InvalidConfig(f'Invalid tooling path: {key}.')
         output[variable] = str((root / value).resolve())
+    # Optional; emitted last (empty when absent) so the previous assignments stay unchanged.
+    logs = tooling.get('logs')
+    if 'logs' in tooling and (not isinstance(logs, str) or not logs or '\x00' in logs
+                              or '\n' in logs):
+        raise InvalidConfig('Invalid tooling path: logs.')
+    logs_dir = str((root / logs).resolve()) if logs is not None else ''
     target = Path(output['PROJECT_ENVIRONMENT'])
     source = Path(output['ODOO_SOURCE'])
     if (target == root or target in root.parents or target == source
@@ -156,6 +162,8 @@ def load(root: Path) -> dict[str, str]:
     # verify-module's _update sibling.
     if output['TEST_DATABASE'] and slug and len(output['TEST_DATABASE'].encode('utf-8')) + len(slug) + 1 > 56:
         raise InvalidConfig(f'Tooling test database exceeds 56 bytes with checkout slug {slug}.')
+    # Compact runs and browser evidence go to <LOGS_DIR>/odoo19/<slug or main> when set.
+    output['LOGS_DIR'] = logs_dir
     return output
 
 

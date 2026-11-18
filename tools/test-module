@@ -5,8 +5,9 @@ if [[ ${1:-} == --help ]]; then
   printf 'Resets the selected test database. Default: tooling.test_database, otherwise test_prefix + module.\n'
   printf 'In a checkout with a slug both defaults get it after the prefix (test_prefix + slug_ + module);\n'
   printf 'explicit names must use that checkout namespace. Names are limited to 63 bytes.\n'
-  printf 'Run shared targets sequentially. --compact retains stdout/stderr under project dev/logs/odoo19.\n'
-  printf 'Tests use private short scratch; browser diagnostics remain under project dev/logs/odoo19.\n'
+  printf 'Run shared targets sequentially. --compact retains stdout/stderr under odoo19/ of\n'
+  printf 'the profile'\''s logs directory (default dev/logs); with [tooling].logs, in odoo19/<slug or main>.\n'
+  printf 'Tests use private short scratch; browser diagnostics remain under the same directory.\n'
   exit 0
 fi
 source "$(dirname "$0")/common.sh"

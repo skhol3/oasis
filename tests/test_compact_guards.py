@@ -150,3 +150,102 @@ class LinkedWorktreeCompactTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         self.assertEqual(result.stdout.splitlines()[0], 'phase=tests database=cc_test_coffee exit=0')
         self.assertEqual(len(list((self.main / 'dev/logs/odoo19').iterdir())), 1)
+
+
+LOGS_REFUSED = 'Compact logs must remain inside the configured logs directory.\n'
+
+
+@unittest.skipUnless(shutil.which('git'), 'git is required')
+class ConfiguredLogsCompactTests(unittest.TestCase):
+    """[tooling].logs sends compact runs to <logs>/odoo19/<main|slug>/run-* for every checkout."""
+    setUp_fixture = lifecycle.LifecycleTests.setUp
+    unchanged = lifecycle.LifecycleTests.unchanged
+    git = LinkedWorktreeCompactTests.git
+
+    def setUp(self):
+        LinkedWorktreeCompactTests.setUp(self)
+        # <projects>/logs, shared by '<projects>/a project' and '<projects>/a project-wt'.
+        self.logs = self.main.parent / 'logs'
+        for root in (self.main, self.linked):
+            profile = root / '.odoo19-agent.toml'
+            profile.write_text(profile.read_text() + "logs = '../logs'\n")
+
+    def invoke(self, root, command, *args):
+        path = root / 'dev/scripts' / command
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes((lifecycle.STAGE / 'project-wrappers' / command).read_bytes())
+        return subprocess.run(['bash', str(path), *args], text=True, cwd=root, env=self.env,
+                              capture_output=True)
+
+    def assert_single_run(self, root, checkout_id, database):
+        result = self.invoke(root, 'test-module', '--compact', 'coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[0], f'phase=tests database={database} exit=0')
+        logs = dict(line.split('=', 1) for line in lines[1:])
+        runs = list((self.logs / 'odoo19' / checkout_id).iterdir())
+        self.assertEqual(len(runs), 1)
+        self.assertTrue(runs[0].name.startswith('run-'))
+        self.assertEqual(Path(logs['stdout_log']), runs[0] / 'stdout.log')
+        self.assertEqual(Path(logs['stderr_log']), runs[0] / 'stderr.log')
+        for directory in (self.logs, self.logs / 'odoo19', self.logs / 'odoo19' / checkout_id, runs[0]):
+            with self.subTest(directory=directory):
+                self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+        # No dev/ log directory is needed in either checkout.
+        self.assertFalse((self.main / 'dev/logs').exists())
+        self.assertFalse((self.linked / 'dev/logs').exists())
+
+    def test_main_checkout_runs_go_under_the_main_id(self):
+        self.assert_single_run(self.main, 'main', 'cc_test_coffee')
+
+    def test_linked_worktree_runs_go_under_its_slug(self):
+        self.assert_single_run(self.linked, 'wt', 'cc_test_wt_coffee')
+
+    def test_each_checkout_keeps_its_own_directory(self):
+        for root in (self.main, self.linked):
+            result = self.invoke(root, 'test-module', '--compact', 'coffee')
+            self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(sorted(path.name for path in (self.logs / 'odoo19').iterdir()), ['main', 'wt'])
+
+    def test_verify_module_uses_the_same_directory(self):
+        result = self.invoke(self.linked, 'verify-module', '--compact', 'coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        runs = list((self.logs / 'odoo19' / 'wt').iterdir())
+        self.assertEqual(len(runs), 1)
+        paths = [Path(line.split('=', 1)[1]) for line in result.stdout.splitlines()
+                 if line.startswith(('stdout_log=', 'stderr_log='))]
+        self.assertEqual(len(paths), 8)
+        self.assertTrue(all(path.parent == runs[0] for path in paths), paths)
+
+    def test_checkout_directory_escaping_the_logs_directory_is_refused(self):
+        outside = self.main.parent.parent / 'outside'
+        outside.mkdir()
+        (self.logs / 'odoo19').mkdir(parents=True)
+        for root, checkout_id in ((self.main, 'main'), (self.linked, 'wt')):
+            (self.logs / 'odoo19' / checkout_id).symlink_to(outside, target_is_directory=True)
+            for command in ('test-module', 'verify-module'):
+                with self.subTest(checkout=checkout_id, command=command):
+                    result = self.invoke(root, command, '--compact', 'coffee')
+                    self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                     (1, '', LOGS_REFUSED))
+                    self.assertEqual(list(outside.iterdir()), [])
+                    self.unchanged()
+
+    def test_odoo19_directory_escaping_the_logs_directory_is_refused(self):
+        outside = self.main.parent.parent / 'outside'
+        outside.mkdir()
+        self.logs.mkdir()
+        (self.logs / 'odoo19').symlink_to(outside, target_is_directory=True)
+        result = self.invoke(self.main, 'test-module', '--compact', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', LOGS_REFUSED))
+        self.assertEqual(list(outside.iterdir()), [])
+        self.unchanged()
+
+    def test_dev_logs_link_is_ignored_when_the_key_is_set(self):
+        outside = self.main.parent.parent / 'outside'
+        outside.mkdir()
+        (self.main / 'dev/logs').symlink_to(outside, target_is_directory=True)
+        result = self.invoke(self.main, 'test-module', '--compact', 'coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assertEqual(len(list((self.logs / 'odoo19' / 'main').iterdir())), 1)

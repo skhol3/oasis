@@ -102,14 +102,14 @@ class WorktreeInitTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         return [line for line in result.stdout.splitlines() if line.startswith(SHARED_KEYS)]
 
-    def shared_repository(self):
+    def shared_repository(self, profile=SHARED_PROFILE):
         """Main checkout whose profile points at <scratch>/config, outside every checkout."""
         config = self.scratch / 'config'
         (config / 'requirements').mkdir(parents=True)
         (config / 'odoo.conf').write_text(CONF.format(main=self.main))
         (config / 'runtime-env').write_text('FIXTURE=1\n')
         (config / 'compose.yml').write_text('services: {}\n')
-        return self.repository(profile=SHARED_PROFILE)
+        return self.repository(profile=profile)
 
     def assert_shared(self, new):
         self.assertEqual(sorted(path.name for path in new.iterdir()),
@@ -308,6 +308,37 @@ class WorktreeInitTests(unittest.TestCase):
         result = self.invoke(main, 'part', 'part')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertEqual(result.stdout, self.plan(new, f'part (created from HEAD {head[:12]})', 'part'))
+
+    def logs_dir(self, root):
+        result = subprocess.run([sys.executable, '-B', str(READER), str(root)],
+                                capture_output=True, text=True, env=self.env)
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        return [line for line in result.stdout.splitlines() if line.startswith('LOGS_DIR=')]
+
+    def test_shared_layout_keeps_a_shared_logs_key(self):
+        profile = SHARED_PROFILE + "logs = '../logs'\n"
+        main = self.shared_repository(profile)
+        head = self.head(main)
+        new = self.scratch / 'proj-logs'
+        result = self.invoke(main, 'logs', 'feature/logs')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout, (f'worktree: {new}\n'
+                                         f'branch: feature/logs (created from HEAD {head[:12]})\n'
+                                         'slug: logs\n'
+                                         f'shared config: {self.scratch / "config"}\n'
+                                         'copied .odoo19-agent.toml\n'))
+        self.assertEqual((new / '.odoo19-agent.toml').read_text(), profile)
+        self.assertEqual(self.logs_dir(new), ["LOGS_DIR=" + str(self.scratch / 'logs')])
+        self.assertEqual(self.logs_dir(new), self.logs_dir(main))
+        self.assertFalse((new / 'dev').exists())
+
+    def test_shared_layout_refuses_a_logs_key_that_would_move(self):
+        profile = SHARED_PROFILE + "logs = 'own-logs'\n"
+        main = self.shared_repository(profile)
+        new = self.scratch / 'proj-logs'
+        self.assert_refused(main, ('logs', 'feature/logs'),
+                            f'ERROR: The copied profile would resolve logs to {new}/own-logs instead of '
+                            f'{main}/own-logs; prepare the worktree by hand.\n')
 
     # -- resume -----------------------------------------------------------------------------
 

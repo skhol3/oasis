@@ -29,6 +29,14 @@ still change in a minor release; every such change is listed here under **Change
   `odoo.conf` that cannot be parsed stops those commands with exit 2 before Odoo starts.
 - `worktree-init --resume`: an existing folder that is a worktree of this repository on the
   requested branch gets only its missing items (`kept existing <path>` for the others).
+- Optional `[tooling].logs` (a path relative to the checkout): `--compact` runs of
+  `test-module` and `verify-module` and the browser evidence of test runs go to
+  `<logs>/odoo19/<checkout>/run-*` (`main` for the main checkout, the slug for a linked
+  worktree), so checkouts need no `dev/` directory. A run directory that resolves outside
+  `<logs>` is refused with `Compact logs must remain inside the configured logs directory.`
+  `tools/config.py` reports it as a new last line `LOGS_DIR` (empty without the key), and
+  `worktree-init` checks that a shared layout's copied profile resolves it to the same
+  directory. Without the key, logs stay under `dev/logs/odoo19` as before.
 
 ### Changed
 

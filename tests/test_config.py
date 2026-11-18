@@ -98,6 +98,28 @@ class ConfigCliTests(unittest.TestCase):
         self.assertIn("PROJECT_ROOT='" + str(self.root) + "'\n", result.stdout)
         self.assertIn("PROJECT_ENVIRONMENT='" + str((self.root / '../../environments/corpus cafe').resolve()) + "'\n", result.stdout)
 
+    def test_logs_path_is_resolved_from_the_checkout_and_emitted_last(self):
+        (self.root / '.odoo19-agent.toml').write_text(PROFILE + "logs = '../shared logs'\n")
+        result = self.run_reader()
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout.splitlines()[-1],
+                         "LOGS_DIR='" + str((self.root / '../shared logs').resolve()) + "'")
+        self.assertEqual(result.stdout.count('LOGS_DIR='), 1)
+
+    def test_absent_logs_key_emits_an_empty_logs_dir_last(self):
+        (self.root / '.odoo19-agent.toml').write_text(PROFILE)
+        result = self.run_reader()
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout.splitlines()[-1], "LOGS_DIR=''")
+
+    def test_invalid_logs_path_is_rejected_without_emitting_assignments(self):
+        for value in ('""', '7', '["logs"]', '"a\\nb"', '"a\\u0000b"'):
+            with self.subTest(value=value):
+                (self.root / '.odoo19-agent.toml').write_text(PROFILE + f'logs = {value}\n')
+                result = self.run_reader()
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (2, '', 'ERROR: Invalid tooling path: logs.\n'))
+
 
 if __name__ == '__main__':
     unittest.main()

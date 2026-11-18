@@ -120,6 +120,14 @@ class BundleTests(unittest.TestCase):
         for phrase in ('`checkout_slug`', '`CHECKOUT_KIND`', '`CHECKOUT_SLUG`'):
             self.assertIn(phrase, contract)
 
+    def test_logs_is_documented_but_not_set_in_the_example(self):
+        raw = CONFIG.read_text(encoding='utf-8')
+        self.assertNotIn('logs', tomllib.loads(raw)['tooling'])
+        self.assertEqual(re.findall(r"^# logs = '([^']*)'$", raw, re.MULTILINE), ['../logs'])
+        contract = (ROOT / 'odoo19-environment/references/project-contract.md').read_text(encoding='utf-8')
+        for phrase in ('`logs`', '`LOGS_DIR`', '<logs>/odoo19/'):
+            self.assertIn(phrase, contract)
+
     def test_reference_and_package_docs(self):
         reference = ROOT / 'odoo19-environment/references/project-contract.md'
         self.assertTrue(reference.is_file())

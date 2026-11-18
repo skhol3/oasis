@@ -251,5 +251,56 @@ class LinkedWorktreeEvidenceTests(unittest.TestCase):
         self.assert_short_private_cleaned(self.observation.read_text().splitlines()[::2])
 
 
+
+class ConfiguredLogsEvidenceTests(unittest.TestCase):
+    """With [tooling].logs, browser evidence goes to <logs>/odoo19/<main|slug>/run-*."""
+    setUp = compact_guards.ConfiguredLogsCompactTests.setUp
+    setUp_fixture = lifecycle.LifecycleTests.setUp
+    git = compact_guards.LinkedWorktreeCompactTests.git
+    invoke = compact_guards.ConfiguredLogsCompactTests.invoke
+    prepare_probe = TestTemporaryTests.prepare_probe
+    assert_caller_intact = TestTemporaryTests.assert_caller_intact
+    assert_short_private_cleaned = TestTemporaryTests.assert_short_private_cleaned
+
+    def test_evidence_is_copied_under_each_checkout_directory(self):
+        self.caller_tmpdir = os.environ.get('TMPDIR')
+        self.prepare_probe()
+        for root in (self.main, self.linked):
+            result = self.invoke(root, 'test-module', 'coffee')
+            self.assertEqual((result.returncode, result.stdout, result.stderr),
+                             (0, 'test stdout\n', 'test stderr\n'))
+        for checkout_id in ('main', 'wt'):
+            with self.subTest(checkout=checkout_id):
+                runs = list((self.logs / 'odoo19' / checkout_id).iterdir())
+                self.assertEqual(len(runs), 1)
+                self.assertTrue(runs[0].name.startswith('run-'))
+                files = {p.relative_to(runs[0]): p.read_text() for p in runs[0].rglob('*') if p.is_file()}
+                self.assertEqual(files, {
+                    Path('odoo_tests/run/chrome_logs/browser.log'): 'fake browser diagnostic\n',
+                    Path('odoo_tests/run/screenshot.png'): 'fake screenshot\n'})
+        self.assertFalse((self.main / 'dev/logs').exists())
+        self.assertFalse((self.linked / 'dev/logs').exists())
+        self.assert_caller_intact()
+        self.assert_short_private_cleaned(self.observation.read_text().splitlines()[::2])
+
+    def test_escaping_checkout_directory_keeps_the_scratch(self):
+        self.caller_tmpdir = os.environ.get('TMPDIR')
+        self.prepare_probe()
+        outside = self.main.parent.parent / 'outside'
+        outside.mkdir()
+        (self.logs / 'odoo19').mkdir(parents=True)
+        (self.logs / 'odoo19' / 'wt').symlink_to(outside, target_is_directory=True)
+        result = self.invoke(self.linked, 'test-module', 'coffee')
+        scratch = Path(self.observation.read_text().splitlines()[0])
+        self.assertEqual(scratch.parent, Path('/tmp'))
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        self.assertEqual((result.returncode, result.stdout), (1, 'test stdout\n'))
+        self.assertEqual(result.stderr, 'test stderr\n' +
+                         f'Cannot retain browser evidence; test scratch kept at {scratch}. '
+                         'Inspect it before manual removal.\n')
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assert_caller_intact()
+
+
 if __name__ == '__main__':
     unittest.main()
