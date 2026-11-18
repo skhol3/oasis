@@ -17,5 +17,6 @@ for (( index = 0; index < ${#arguments[@]}; index++ )); do
       require_managed_database_name "${arguments[index]#*=}" ;;
   esac
 done
+odoo_config_arguments
 wait_for_database
-exec "$PYTHON" "$ODOO_BIN" -c "$ODOO_CONFIG" "$@"
+exec "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "$@"

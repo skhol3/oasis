@@ -77,6 +77,25 @@ require_runtime() {
   fi
 }
 
+# The single source of the configuration options of every Odoo command line, set right before
+# Odoo starts: "$PYTHON" "$ODOO_BIN" [shell] "${ODOO_CONFIG_ARGUMENTS[@]}" ...
+# A linked worktree that shares the main checkout's odoo.conf gets that file's addons_path
+# with the main checkout's root replaced by its own root, as --addons-path after -c. The main
+# checkout and a project outside git never read the file: their command line stays -c only.
+# dev_users_runtime.py makes the same decision through odoo_addons_path.linked_addons_path.
+odoo_config_arguments() {
+  ODOO_CONFIG_ARGUMENTS=(-c "$ODOO_CONFIG")
+  if [[ "${CHECKOUT_KIND:-}" != linked ]]; then return 0; fi
+  local helper rewritten unchanged
+  helper="$(dirname "${BASH_SOURCE[0]}")/odoo_addons_path.py"
+  rewritten=$(python3 -I -B "$helper" "$ODOO_CONFIG" "$CHECKOUT_MAIN_ROOT" "$PROJECT_ROOT") || return $?
+  # The same normalization without the move: a conf that already names this checkout adds nothing.
+  unchanged=$(python3 -I -B "$helper" "$ODOO_CONFIG" "$PROJECT_ROOT" "$PROJECT_ROOT") || return $?
+  if [[ -n "$rewritten" && "$rewritten" != "$unchanged" ]]; then
+    ODOO_CONFIG_ARGUMENTS+=("--addons-path=$rewritten")
+  fi
+}
+
 require_module() {
   local module=${1:-} root
   if [[ -z "$module" || ! "$module" =~ ^[A-Za-z0-9_]+$ ]]; then
@@ -146,7 +165,8 @@ wait_for_database() {
 }
 
 run_odoo() {
-  "$PYTHON" "$ODOO_BIN" -c "$ODOO_CONFIG" "$@"
+  odoo_config_arguments || return $?
+  "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "$@"
 }
 
 lock_fingerprint_arg() {

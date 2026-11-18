@@ -39,7 +39,7 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 class Config:
     def parse_config(self, args):
-        pass
+        Path(os.environ['FAKE_STATE'] + '.config').write_text(json.dumps(args))
 tools = SimpleNamespace(config=Config())
 class Database:
     def exp_create_database(self, database, demo, lang, user_password, login):

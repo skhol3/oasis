@@ -35,7 +35,8 @@ if "$compact"; then
     "$database" "$status" "$log_directory/stdout.log" "$log_directory/stderr.log"
   exit "$status"
 fi
+odoo_config_arguments
 reset_test_database "$database"
 python3 -B "$(dirname "$0")/test_temp.py" "$PROJECT_ROOT" \
-  "$PYTHON" "$ODOO_BIN" -c "$ODOO_CONFIG" \
+  "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" \
   -d "$database" -i "$module" --without-demo --test-tags "/$module" --stop-after-init

@@ -200,7 +200,7 @@ The slug goes right after the managed prefix, so each checkout has its own datab
 
 Every command that takes a database (`install-module` with or without `--with-demo`, `update-module`, `odoo-shell`, `start` with `-d`/`--database`, `test-module`, `verify-module`, `create-database`, `drop-database`, `module-status`, `init-dev-database`) requires a managed `<dev_prefix><name>` or `<test_prefix><name>` name. In a checkout with a slug the name must also start with `<dev_prefix><slug>_` or `<test_prefix><slug>_`, so a linked worktree cannot touch the main checkout's databases or another worktree's. The rejection names the checkout and the expected prefixes, and nothing runs.
 
-Not guarded: `start` without `-d`/`--database` uses whatever `db_name` and `--db-filter` the project's `odoo.conf` sets, so keep `db_name` out of a linked worktree's `odoo.conf`. Slugs are matched as prefixes: give each worktree a slug that is not the start of another (`wt` would also accept `wt_1`'s databases).
+Not guarded: `start` without `-d`/`--database` uses whatever `db_name` and `--db-filter` the project's `odoo.conf` sets, so keep `db_name` out of a linked worktree's `odoo.conf` and out of an `odoo.conf` shared by several checkouts. Slugs are matched as prefixes: give each worktree a slug that is not the start of another (`wt` would also accept `wt_1`'s databases).
 
 Database names are at most 63 bytes (PostgreSQL's identifier limit, counted in UTF-8 bytes). A test database that gets an `_update` sibling in `verify-module` is at most 56 bytes, and a configured `test_database` must fit in 56 bytes after the slug is inserted. Longer names fail before any database command.
 
@@ -208,21 +208,43 @@ Database names are at most 63 bytes (PostgreSQL's identifier limit, counted in U
 
 ### Preparing a linked worktree
 
-A linked worktree needs its own `.odoo19-agent.toml` profile, its own `dev/odoo.conf` whose `addons_path` points at the worktree's addons, and the main checkout's environment file at the path the profile's `env_file` names. `worktree-init` creates the worktree and prepares all of it. Run it yourself, in Gentle Shell or in a terminal, from the main checkout or any of its worktrees:
+Recommended: the shared layout. Keep the checkouts in one folder and the files they share next to it, so every checkout's profile points at the same configuration:
+
+```text
+<project>/codigo/<main checkout>          main checkout
+<project>/codigo/<main checkout>-<feature> linked worktrees, siblings at the same depth
+<project>/config/                          odoo.conf, environment file, compose file, requirements/
+<project>/data/                            Odoo data_dir (set data_dir in the shared odoo.conf)
+```
+
+```toml
+# Example only: the profile of every checkout in that layout.
+config = '../../config/odoo.conf'
+env_file = '../../config/.env'
+compose = '../../config/compose.yml'
+requirements = '../../config/requirements'
+```
+
+The shared `odoo.conf` names the main checkout in its `addons_path`. In a linked worktree (`CHECKOUT_KIND=linked`), every command that starts Odoo (`test-module`, `verify-module`, `install-module`, `update-module`, `odoo-shell`, `start`, `init-dev-database`) reads only that option and passes it after `-c` as `--addons-path=<value>`, with each item that is the main checkout's root or lies inside it moved to the worktree's root (`<main>/vendor` becomes `<worktree>/vendor`); other items (Enterprise, OCA, the Odoo addons) stay as they are, in order. Nothing is added when no item names the main checkout, when there is no `addons_path`, or when the worktree's own `odoo.conf` already names the worktree. The main checkout and a project outside git keep their previous command line. An `odoo.conf` that cannot be parsed stops those commands with exit 2 before Odoo starts (`Cannot read addons_path from <path>: invalid configuration file.`); its content is never printed.
+
+`worktree-init` creates a linked worktree and prepares it. Run it yourself, in Gentle Shell or in a terminal, from the main checkout or any of its worktrees:
 
 ```text
 /odoo19 worktree <feature> <branch>
 ```
 
 ```bash
-~/.agents/skills/odoo19/odoo19 --project /absolute/project worktree-init <feature> <branch> [--dry-run]
+~/.agents/skills/odoo19/odoo19 --project /absolute/project worktree-init <feature> <branch> [--dry-run] [--resume]
 ```
 
-- The folder is `<main folder>-<feature>` next to the main checkout, so the feature becomes the checkout slug (`corpus-cafe` with `cost deviation` gives `corpus-cafe-cost-deviation`, slug `cost_deviation`). An existing folder is refused.
+- The folder is `<main folder>-<feature>` next to the main checkout, so the feature becomes the checkout slug (`corpus-cafe` with `cost deviation` gives `corpus-cafe-cost-deviation`, slug `cost_deviation`). An existing folder is refused, unless you pass `--resume` (below).
 - An existing local branch is checked out; otherwise `origin/<branch>` is tracked when it exists; otherwise the branch is created from the main checkout's `HEAD`. A branch already checked out in another worktree is refused.
-- An untracked `.odoo19-agent.toml` is copied (one that sets `checkout_slug` is refused, since the worktree would share its databases). Every untracked or ignored entry of the main checkout's `dev/` is linked, except `dev/odoo.conf`, copied with mode 0600, the main root replaced by the worktree root in `addons_path` and `db_name` removed, and `dev/runtime`, a new empty 0700 directory. The `env_file` path is linked to the main checkout's file. Existing paths are never replaced.
-- It prints the plan line by line (`copied`, `linked`, `created dir`, `rewrote addons_path`, `removed db_name`) and never prints the content of `odoo.conf` or the environment file. `--dry-run` prints the same plan and changes nothing; `/odoo19 worktree` shows it and asks before creating anything. A failure after the worktree exists keeps what was created and reports it.
-- Agents cannot run it: the bash guard blocks it because it links the environment file, which agents may not create or read.
+- An untracked `.odoo19-agent.toml` is copied (one that sets `checkout_slug` is refused, since the worktree would share its databases).
+- Shared layout: when the profile's `config`, `env_file`, `compose` and `requirements` all resolve outside the checkouts, the profile is the only thing copied. Its relative paths give the same files from the new sibling folder (checked before anything is created; otherwise it refuses). Nothing is linked, no `odoo.conf` is written and no `dev/` is created. The plan starts with `shared config: <directory of odoo.conf>`.
+- Legacy layout (any of those four paths inside the checkout): every untracked or ignored entry of the main checkout's `dev/` is linked, except `dev/odoo.conf`, which is copied with mode 0600, the main root replaced by the worktree root in `addons_path` and `db_name` removed, and `dev/runtime`, which is created as a new empty 0700 directory. The `env_file` path is linked to the main checkout's file.
+- Existing paths are never replaced. `--resume` accepts an existing folder only when it is a worktree of this repository with `<branch>` checked out. It then adds the missing items and reports the others as `kept existing <path>`. A plain folder, a symlink, another repository's worktree or a worktree on another branch is refused. Without the folder, `--resume` creates the worktree as usual.
+- It prints the plan line by line (`copied`, `linked`, `created dir`, `rewrote addons_path`, `removed db_name`, `kept existing`) and never prints the content of `odoo.conf` or the environment file. `--dry-run` prints the same plan and changes nothing; `/odoo19 worktree` shows it and asks before creating anything. A failure after the worktree exists keeps what was created and reports it; run the terminal command again with `--resume` to finish it (`/odoo19 worktree` does not pass `--resume` yet).
+- Agents cannot run it: the bash guard blocks it because it can link the environment file, which agents may not create or read.
 
 `dev/logs` may stay a link to the main checkout's `dev/logs`: in a linked worktree, `--compact` runs accept a log directory that resolves inside the main checkout's `dev/logs/odoo19` (`CHECKOUT_MAIN_ROOT` from `tools/config.py`); any other location outside the project is still refused with `Compact logs must remain inside the project.`
 

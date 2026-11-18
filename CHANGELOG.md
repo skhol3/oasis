@@ -20,6 +20,24 @@ still change in a minor release; every such change is listed here under **Change
 - `/odoo19 worktree <feature> <branch>` in Gentle Shell: shows the dry-run plan and runs
   `worktree-init` after confirmation. The bash guard blocks agents from running
   `worktree-init` in every session.
+- Shared `odoo.conf` for every checkout: in a linked worktree, the commands that start Odoo
+  (`test-module`, `verify-module`, `install-module`, `update-module`, `odoo-shell`, `start`,
+  `init-dev-database`) pass `--addons-path=<value>` after `-c`. The value is the conf's
+  `addons_path` (read with `tools/odoo_addons_path.py`; no other option is read or printed),
+  with each item at or under the main checkout's root moved to the worktree's root. The main
+  checkout and projects outside git keep the same command line. In a linked worktree, an
+  `odoo.conf` that cannot be parsed stops those commands with exit 2 before Odoo starts.
+- `worktree-init --resume`: an existing folder that is a worktree of this repository on the
+  requested branch gets only its missing items (`kept existing <path>` for the others).
+
+### Changed
+
+- `worktree-init` with a shared configuration directory (the profile's `config`, `env_file`,
+  `compose` and `requirements` all outside the checkouts) copies only the profile, after
+  checking that its paths resolve to the same files from the new folder. It links nothing and
+  writes no `odoo.conf` or `dev/`. Other layouts keep the previous behaviour. The README
+  recommends the shared layout (`<project>/codigo/<checkouts>`, `<project>/config/`,
+  `<project>/data/`).
 
 ## [0.2.0] - 2026-11-17
 

@@ -1,4 +1,4 @@
-"""`odoo19 --project <checkout> worktree-init <feature> <branch> [--dry-run]` on synthetic repos.
+"""`odoo19 --project <checkout> worktree-init <feature> <branch> [--dry-run] [--resume]` on synthetic repos.
 
 Every repository lives in a fresh system temp directory; git runs with explicit -c identity
 flags, an empty global configuration and a ceiling at the scratch directory, so it never
@@ -21,6 +21,12 @@ GIT = ['git', '-c', 'user.name=oasis tests', '-c', 'user.email=tests@example.inv
        '-c', 'init.defaultBranch=main', '-c', 'commit.gpgsign=false']
 PROFILE = (ROOT / 'tests' / 'fixture-profile.toml').read_text().replace(
     "env_file = 'dev/.env'", "env_file = 'dev/runtime-env'")
+SHARED_PROFILE = (PROFILE
+                  .replace("config = 'dev/odoo.conf'", "config = '../config/odoo.conf'")
+                  .replace("env_file = 'dev/runtime-env'", "env_file = '../config/runtime-env'")
+                  .replace("compose = 'dev/compose.yml'", "compose = '../config/compose.yml'")
+                  .replace("requirements = 'dev/requirements'", "requirements = '../config/requirements'"))
+SHARED_KEYS = ('ODOO_CONFIG=', 'ENV_FILE=', 'COMPOSE_FILE=', 'REQUIREMENTS_DIR=')
 CONF = ('[options]\n'
         'addons_path = /x,{main},{main}/extra,{main}-other/addons,/y\n'
         'db_name = cc_dev_main\n'
@@ -89,6 +95,29 @@ class WorktreeInitTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         return [line for line in result.stdout.splitlines()
                 if line.startswith(('CHECKOUT_KIND=', 'CHECKOUT_SLUG='))]
+
+    def shared_paths(self, root):
+        result = subprocess.run([sys.executable, '-B', str(READER), str(root)],
+                                capture_output=True, text=True, env=self.env)
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        return [line for line in result.stdout.splitlines() if line.startswith(SHARED_KEYS)]
+
+    def shared_repository(self):
+        """Main checkout whose profile points at <scratch>/config, outside every checkout."""
+        config = self.scratch / 'config'
+        (config / 'requirements').mkdir(parents=True)
+        (config / 'odoo.conf').write_text(CONF.format(main=self.main))
+        (config / 'runtime-env').write_text('FIXTURE=1\n')
+        (config / 'compose.yml').write_text('services: {}\n')
+        return self.repository(profile=SHARED_PROFILE)
+
+    def assert_shared(self, new):
+        self.assertEqual(sorted(path.name for path in new.iterdir()),
+                         ['.git', '.gitignore', '.odoo19-agent.toml', 'README.md'])
+        self.assertFalse((new / '.odoo19-agent.toml').is_symlink())
+        self.assertEqual((new / '.odoo19-agent.toml').read_text(), SHARED_PROFILE)
+        self.assertEqual(self.shared_paths(new), self.shared_paths(self.main))
+        self.assertEqual((self.scratch / 'config/odoo.conf').read_text(), CONF.format(main=self.main))
 
     def plan(self, new, branch_line, slug):
         main = self.main
@@ -236,6 +265,114 @@ class WorktreeInitTests(unittest.TestCase):
         self.assertEqual(os.readlink(new / 'local' / 'runtime-env'), str(main / 'local' / 'runtime-env'))
         self.assertEqual(os.readlink(new / 'dev' / 'notes.txt'), str(main / 'dev' / 'notes.txt'))
 
+    def test_shared_layout_copies_only_the_profile(self):
+        main = self.shared_repository()
+        head = self.head(main)
+        new = self.scratch / 'proj-shared'
+        expected = (f'worktree: {new}\n'
+                    f'branch: feature/shared (created from HEAD {head[:12]})\n'
+                    'slug: shared\n'
+                    f'shared config: {self.scratch / "config"}\n'
+                    'copied .odoo19-agent.toml\n')
+        before = (self.snapshot(), self.branches(main), self.worktrees(main))
+        result = self.invoke(main, 'shared', 'feature/shared', '--dry-run')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, expected + 'dry run: nothing changed\n', ''))
+        self.assertEqual((self.snapshot(), self.branches(main), self.worktrees(main)), before)
+        result = self.invoke(main, 'shared', 'feature/shared')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected, ''))
+        self.assert_shared(new)
+        self.assertEqual(self.identity(new), ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=shared'])
+
+    def test_shared_layout_from_a_linked_worktree(self):
+        main = self.shared_repository()
+        self.assertEqual(self.invoke(main, 'one', 'one').returncode, 0)
+        head = self.head(main)
+        new = self.scratch / 'proj-two'
+        result = self.invoke(self.scratch / 'proj-one', 'two', 'two')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout, (f'worktree: {new}\n'
+                                         f'branch: two (created from HEAD {head[:12]})\n'
+                                         'slug: two\n'
+                                         f'shared config: {self.scratch / "config"}\n'
+                                         'copied .odoo19-agent.toml\n'))
+        self.assert_shared(new)
+
+    def test_partly_shared_profile_keeps_the_legacy_layout(self):
+        profile = PROFILE.replace("config = 'dev/odoo.conf'", "config = '../config/odoo.conf'")
+        (self.scratch / 'config').mkdir()
+        (self.scratch / 'config/odoo.conf').write_text(CONF.format(main=self.main))
+        main = self.repository(profile=profile)
+        head = self.head(main)
+        new = self.scratch / 'proj-part'
+        result = self.invoke(main, 'part', 'part')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout, self.plan(new, f'part (created from HEAD {head[:12]})', 'part'))
+
+    # -- resume -----------------------------------------------------------------------------
+
+    def test_resume_completes_missing_items_and_keeps_existing_ones(self):
+        main = self.repository()
+        new = self.scratch / 'proj-feat'
+        self.git(main, 'worktree', 'add', '-q', '-b', 'feat', str(new))
+        (new / '.odoo19-agent.toml').write_text(PROFILE + '# edited by hand\n')
+        plan = self.plan(new, 'feat (resumed)', 'feat').replace(
+            'copied .odoo19-agent.toml\n', 'kept existing .odoo19-agent.toml\n')
+        before = (self.snapshot(), self.branches(main), self.worktrees(main))
+        result = self.invoke(main, 'feat', 'feat', '--resume', '--dry-run')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, plan + 'dry run: nothing changed\n', ''))
+        self.assertEqual((self.snapshot(), self.branches(main), self.worktrees(main)), before)
+        result = self.invoke(main, 'feat', '--resume', 'feat')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, plan, ''))
+        self.assertEqual((new / '.odoo19-agent.toml').read_text(), PROFILE + '# edited by hand\n')
+        (new / '.odoo19-agent.toml').write_text(PROFILE)
+        self.assert_prepared(new)
+        self.assertEqual((self.branches(main), self.worktrees(main)), before[1:])
+        result = self.invoke(main, 'feat', 'feat', '--resume')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout.splitlines()[3:],
+                         ['kept existing .odoo19-agent.toml', 'kept existing dev',
+                          'kept existing dev/compose.yml', 'kept existing dev/logs',
+                          'kept existing dev/odoo.conf', 'kept existing dev/runtime',
+                          'kept existing dev/runtime-env'])
+        self.assert_prepared(new)
+
+    def test_resume_without_a_folder_creates_the_worktree(self):
+        main = self.repository()
+        head = self.head(main)
+        new = self.scratch / 'proj-feat'
+        result = self.invoke(main, 'feat', 'feat', '--resume')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.plan(new, f'feat (created from HEAD {head[:12]})', 'feat'), ''))
+        self.assert_prepared(new)
+
+    def test_resume_refuses_a_folder_that_is_not_a_worktree_of_this_repository(self):
+        main = self.repository()
+        new = self.scratch / 'proj-feat'
+        new.mkdir()
+        self.assert_refused(main, ('feat', 'feat', '--resume'),
+                            f'ERROR: {new} is not a worktree of this repository.\n')
+        other = self.scratch / 'other'
+        other.mkdir()
+        self.git(other, 'init', '-q')
+        self.git(other, 'commit', '-q', '--allow-empty', '-m', 'other')
+        self.git(other, 'worktree', 'add', '-q', '-b', 'side', str(self.scratch / 'proj-side'))
+        self.assert_refused(main, ('side', 'side', '--resume'),
+                            f'ERROR: {self.scratch / "proj-side"} is not a worktree of this repository.\n')
+        link = self.scratch / 'proj-link'
+        self.git(main, 'worktree', 'add', '-q', '-b', 'real', str(self.scratch / 'proj-real'))
+        link.symlink_to(self.scratch / 'proj-real', target_is_directory=True)
+        self.assert_refused(main, ('link', 'real', '--resume'),
+                            f'ERROR: {link} is not a worktree of this repository.\n')
+
+    def test_resume_refuses_a_worktree_on_another_branch(self):
+        main = self.repository()
+        new = self.scratch / 'proj-feat'
+        self.git(main, 'worktree', 'add', '-q', '-b', 'other', str(new))
+        self.assert_refused(main, ('feat', 'feat', '--resume'),
+                            f'ERROR: Worktree {new} is not on branch feat.\n')
+
     # -- refusals ---------------------------------------------------------------------------
 
     def test_existing_folder_is_refused(self):
@@ -276,8 +413,9 @@ class WorktreeInitTests(unittest.TestCase):
 
     def test_usage_errors_are_refused(self):
         main = self.repository()
-        usage = 'ERROR: Usage: worktree-init <feature> <branch> [--dry-run]\n'
-        for args in ((), ('feat',), ('feat', 'branch', 'extra'), ('feat', '-b'), ('feat', 'b', '--force')):
+        usage = 'ERROR: Usage: worktree-init <feature> <branch> [--dry-run] [--resume]\n'
+        for args in ((), ('feat',), ('feat', 'branch', 'extra'), ('feat', '-b'), ('feat', 'b', '--force'),
+                     ('feat', 'b', '--resume', '--resume'), ('feat', 'b', '--dry-run', '--dry-run')):
             with self.subTest(args=args):
                 self.assert_refused(main, args, usage)
 

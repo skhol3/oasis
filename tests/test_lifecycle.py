@@ -322,6 +322,26 @@ exit 0
         self.assertNotIn('dropdb ', self.commands.read_text())
         self.assertNotIn('odoo ', self.commands.read_text())
 
+    def test_odoo_command_lines_outside_git_are_exact(self):
+        odoo = 'odoo ' + str(self.source / 'odoo-bin')
+        conf = str(self.root / 'dev/odoo.conf')
+        for command, args, exists, line in (
+                ('test-module', ('coffee',), '0', f'{odoo} -c {conf} -d cc_test_coffee -i coffee '
+                 '--without-demo --test-tags /coffee --stop-after-init'),
+                ('install-module', ('coffee',), '0',
+                 f'{odoo} -c {conf} -d cc_dev_coffee -i coffee --without-demo --stop-after-init'),
+                ('update-module', ('coffee', 'cc_dev_coffee'), '1',
+                 f'{odoo} -c {conf} -d cc_dev_coffee -u coffee --stop-after-init'),
+                ('odoo-shell', ('cc_dev_coffee',), '1', f'{odoo} shell -c {conf} -d cc_dev_coffee'),
+                ('start', ('--stop-after-init',), '0', f'{odoo} -c {conf} --stop-after-init')):
+            with self.subTest(command=command):
+                self.env['FAKE_EXISTS'] = exists
+                result = self.invoke(command, *args, input='')
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                self.assertEqual([entry for entry in self.commands.read_text().splitlines()
+                                  if entry.startswith('odoo ')], [line])
+                self.commands.unlink()
+
     def test_start_status_stop_create_list_and_module_status(self):
         for command, args, output in (
                 ('start', ('--stop-after-init',), ''), ('status', (), ''), ('stop', (), ''),
