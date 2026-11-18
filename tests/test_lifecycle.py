@@ -362,7 +362,7 @@ exit 0
                 ('update-module', ('coffee', 'cc_dev_coffee'), '1',
                  f'{odoo} -c {conf} -d cc_dev_coffee -u coffee --stop-after-init'),
                 ('odoo-shell', ('cc_dev_coffee',), '1', f'{odoo} shell -c {conf} -d cc_dev_coffee'),
-                ('start', ('--stop-after-init',), '0', f'{odoo} -c {conf} --http-port={port} --stop-after-init')):
+                ('start', ('--workers=0',), '0', f'{odoo} -c {conf} --http-port={port} --workers=0')):
             with self.subTest(command=command):
                 self.env['FAKE_EXISTS'] = exists
                 result = self.invoke(command, *args, input='')
@@ -378,7 +378,7 @@ exit 0
     def test_start_status_stop_create_list_and_module_status(self):
         port = free_port()
         (self.root / 'dev/odoo.conf').write_text(f'[options]\nhttp_port = {port}\n')
-        result = self.invoke('start', '--stop-after-init')
+        result = self.invoke('start')
         self.assertEqual((result.returncode, result.stdout), (0, ''))
         self.assertRegex(result.stderr, rf'^odoo19 start: http://localhost:{port} \(pid \d+\)\n$')
         for command, args, output in (
@@ -390,7 +390,7 @@ exit 0
                  'database=cc_dev_coffee\nmodule=coffee\ndatabase_state=missing\nmodule_state=unknown\n')):
             result = self.invoke(command, *args)
             self.assertEqual((result.returncode, result.stdout, result.stderr), (0, output, ''), command)
-        self.assertIn(' --stop-after-init', self.commands.read_text())
+        self.assertIn(f' --http-port={port}\n', self.commands.read_text())
 
 
 if __name__ == '__main__':

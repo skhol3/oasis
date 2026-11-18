@@ -159,14 +159,14 @@ class SluggedCheckoutTests(IsolationBase):
                  lambda name: ('--database', name), lambda name: ('--database=' + name,),
                  lambda name: ('--datab', name), lambda name: ('--databas=' + name,))
         for form in forms:
-            args = (*form('cc_dev_wt_1_coffee'), '--stop-after-init')
+            args = (*form('cc_dev_wt_1_coffee'), '--workers=0')
             with self.subTest(accepted=args):
                 self.commands.unlink(missing_ok=True)
                 result = self.invoke('start', *args)
                 self.assertEqual((result.returncode, result.stdout), (0, ''))
                 self.assertRegex(result.stderr, rf'^odoo19 start: http://localhost:{port} \(pid \d+\)\n$')
                 self.assertEqual(self.odoo_lines(), [self.odoo_call(f'--http-port={port}', *args)])
-            args = ('--stop-after-init', *form('cc_dev_coffee'))
+            args = ('--workers=0', *form('cc_dev_coffee'))
             with self.subTest(rejected=args):
                 self.commands.unlink(missing_ok=True)
                 self.assert_rejected(self.invoke('start', *args), NAMESPACE + 'cc_dev_coffee\n')
@@ -272,7 +272,7 @@ class MainCheckoutTests(IsolationBase):
                 ('update-module', ('coffee', 'cc_test_coffee'), self.odoo_call(
                     '-d', 'cc_test_coffee', '-u', 'coffee', '--stop-after-init')),
                 ('start', ('-d', 'cc_dev_coffee'), self.odoo_call(f'--http-port={port}', '-d', 'cc_dev_coffee')),
-                ('start', ('--stop-after-init',), self.odoo_call(f'--http-port={port}', '--stop-after-init'))):
+                ('start', ('--workers=0',), self.odoo_call(f'--http-port={port}', '--workers=0'))):
             with self.subTest(command=command, args=args):
                 self.commands.unlink(missing_ok=True)
                 result = self.invoke(command, *args)

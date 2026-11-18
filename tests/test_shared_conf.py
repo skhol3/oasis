@@ -119,7 +119,7 @@ class SharedConfTests(unittest.TestCase):
                 ('install-module', ('coffee',), None),
                 ('update-module', ('coffee', dev), None),
                 ('odoo-shell', (dev,), 'print(1)\n'),
-                ('start', ('--stop-after-init',), None)):
+                ('start', ('--workers=0',), None)):
             self.env['FAKE_EXISTS'] = '1' if command in ('update-module', 'odoo-shell') else '0'
             result = self.invoke(root, command, *args, input=stdin)
             self.assertEqual(result.returncode, 0, command)
@@ -139,7 +139,7 @@ class SharedConfTests(unittest.TestCase):
                                               '--stop-after-init', **kwargs)],
             'update-module': [self.odoo_call('-d', dev, '-u', 'coffee', '--stop-after-init', **kwargs)],
             'odoo-shell': [self.odoo_call('-d', dev, shell=True, **kwargs)],
-            'start': [self.odoo_call(*ports, '--stop-after-init', **kwargs)],
+            'start': [self.odoo_call(*ports, '--workers=0', **kwargs)],
         }
 
     def test_linked_worktree_gets_the_rewritten_addons_path_everywhere(self):

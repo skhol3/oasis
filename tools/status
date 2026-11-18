@@ -3,8 +3,14 @@ set -Eeuo pipefail
 source "$(dirname "$0")/common.sh"
 require_runtime
 # This checkout's server first, then the shared Compose services.
-server=$(runtime_state show "$PROJECT_ROOT")
-if [[ -n "$server" ]]; then
+# A failing runtime state read degrades to `server: unknown (<reason>)`; compose ps still runs.
+state_status=0
+server=$(runtime_state show "$PROJECT_ROOT" 2>&1) || state_status=$?
+if (( state_status != 0 )); then
+  reason=$(printf '%s\n' "$server" | sed '/^[[:space:]]*$/d' | tail -n 1)
+  reason=${reason#ERROR: }
+  printf 'server: unknown (%s)\n' "${reason:-runtime_state.py exited with $state_status}"
+elif [[ -n "$server" ]]; then
   read -r server_pid server_port <<< "$server"
   printf 'server: running pid %s port %s\n' "${server_pid#pid=}" "${server_port#port=}"
 else

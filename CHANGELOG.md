@@ -44,8 +44,16 @@ still change in a minor release; every such change is listed here under **Change
   one; a linked worktree takes the first free port from `http_port + 1` (up to `+ 50`) and a
   free `--gevent-port` after `gevent_port`; an explicit `-p`/`--http-port` wins. `start`
   passes `--http-port=<port>` after the configuration options and prints
-  `odoo19 start: http://localhost:<port> (pid <pid>)` to stderr.
-- `status` starts with `server: running pid <pid> port <port>` or `server: stopped`;
+  `odoo19 start: http://localhost:<port> (pid <pid>)` to stderr. A port that cannot be bound
+  for another reason than being in use stops `start` with `Cannot bind port <port>: <reason>.`
+  (exit 2). A record stays live for 10 s after `started_at` while its pid exists (the window
+  before Odoo is exec'd), then only while the process is the Odoo launch
+  (`<python> <odoo-bin> ...`); a stale record is removed only if the file is unchanged.
+- `start ... --stop-after-init` is a batch run: it skips the server and port checks, writes no
+  record and passes a free `--http-port=<port>` (an explicit port is passed as given), so it
+  runs while this checkout's server serves. Database guards still apply.
+- `status` starts with `server: running pid <pid> port <port>` or `server: stopped`
+  (`server: unknown (<reason>)` when the runtime state cannot be read; `compose ps` still runs);
   `/odoo19` shows `server: running on port <port> (pid <pid>)` or `server: stopped`
   (`runtime_state.py show <checkout>`, no service or database access).
 - `test-module` and the tests phase of `verify-module` (also with `--compact`) pass
@@ -68,6 +76,13 @@ still change in a minor release; every such change is listed here under **Change
   writes no `odoo.conf` or `dev/`. Other layouts keep the previous behaviour. The README
   recommends the shared layout (`<project>/codigo/<checkouts>`, `<project>/config/`,
   `<project>/data/`).
+
+### Known limitations
+
+- Server liveness reads `/proc`: per-checkout servers work on Linux only.
+- Simultaneous `start` runs may probe and pick the same free port; start them one at a time.
+- Only `-p`, `--http-port <port>` and `--http-port=<port>` are recognized as explicit ports;
+  abbreviations such as `--http-p` reach Odoo but are not checked or recorded.
 
 ## [0.2.0] - 2026-11-17
 

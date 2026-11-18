@@ -5,8 +5,10 @@ XDG_RUNTIME_DIR per test; the linked checkout comes from the shared-conf fixture
 socket a test binds uses 127.0.0.1 only, and every spawned process is killed in cleanup.
 """
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -23,8 +25,10 @@ import test_lifecycle as lifecycle
 import test_shared_conf as shared
 
 STATE = lifecycle.STAGE / 'tools' / 'runtime_state.py'
-# Appended to the fake python: with FAKE_SERVE=1 the "server" stays alive until killed.
-SERVE = 'if [ -n "${FAKE_SERVE:-}" ]; then while :; do sleep 0.1; done; fi\n'
+# Appended to the fake python: with FAKE_SERVE=1 the "server" becomes `<python> <odoo-bin> ...`
+# (the shape of a real Odoo launch) and stays alive until killed; odoo-bin is a sleeping script.
+SERVE = f'if [ -n "${{FAKE_SERVE:-}}" ]; then exec "{sys.executable}" "$@"; fi\n'
+SLEEPER = 'import time\nwhile True:\n    time.sleep(0.1)\n'
 
 
 def bindable(port):
@@ -69,6 +73,22 @@ def state_dir(xdg, root):
     return Path(xdg) / f'oasis-{os.getuid()}' / digest
 
 
+def load_state_module():
+    spec = importlib.util.spec_from_file_location('runtime_state_under_test', STATE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def ago(seconds):
+    return (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat(timespec='seconds')
+
+
+def privileged_port_is_refused():
+    """Port 1 is refused with EACCES for an unprivileged user (not root, default sysctl)."""
+    return os.geteuid() != 0 and not bindable(1)
+
+
 class RuntimeStateHelperTests(unittest.TestCase):
     """tools/runtime_state.py on its own."""
 
@@ -80,18 +100,40 @@ class RuntimeStateHelperTests(unittest.TestCase):
         self.root = self.scratch / 'checkout'
         self.root.mkdir()
         self.odoo_bin = self.scratch / 'source' / 'odoo-bin'
+        self.odoo_bin.parent.mkdir()
+        self.odoo_bin.write_text(SLEEPER)
         self.env = {**os.environ, 'XDG_RUNTIME_DIR': str(self.xdg)}
 
     def helper(self, *args):
         return subprocess.run([sys.executable, '-B', str(STATE), *args], capture_output=True,
                               text=True, env=self.env)
 
-    def spawn(self, odoo_bin=None):
-        process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)',
-                                    str(odoo_bin or self.odoo_bin)])
+    def spawn(self, *argv):
+        """A process shaped like the Odoo launch (`<python> <odoo-bin>`) unless argv is given."""
+        process = subprocess.Popen(list(argv) or [sys.executable, str(self.odoo_bin)])
         self.addCleanup(process.wait)
         self.addCleanup(process.kill)
         return process
+
+    def dummy(self, last):
+        """A python process that only names `last` as a later argument."""
+        return self.spawn(sys.executable, '-c', 'import time; time.sleep(30)', str(last))
+
+    def record_path(self):
+        return state_dir(self.xdg, self.root) / 'server.json'
+
+    def write(self, pid, started_at, port=8070):
+        """A record for pid with the given started_at (written by `record`, then adjusted)."""
+        result = self.helper('record', str(self.root), str(pid), str(port), str(self.odoo_bin))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = json.loads(self.record_path().read_text())
+        data['started_at'] = started_at
+        self.record_path().write_text(json.dumps(data))
+        return data
+
+    def assert_show(self, stdout):
+        result = self.helper('show', str(self.root))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, stdout, ''))
 
     def test_record_creates_private_state_per_checkout(self):
         process = self.spawn()
@@ -121,11 +163,82 @@ class RuntimeStateHelperTests(unittest.TestCase):
         self.assertFalse((state_dir(self.xdg, self.root) / 'server.json').exists())
 
     def test_a_process_without_the_odoo_bin_path_is_stale(self):
-        process = self.spawn(self.scratch / 'other-bin')
-        self.helper('record', str(self.root), str(process.pid), '8070', str(self.odoo_bin))
-        result = self.helper('show', str(self.root))
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
-        self.assertFalse((state_dir(self.xdg, self.root) / 'server.json').exists())
+        other = self.scratch / 'other-bin'
+        other.write_text(SLEEPER)
+        process = self.spawn(sys.executable, str(other))
+        self.write(process.pid, ago(60))
+        self.assert_show('')
+        self.assertFalse(self.record_path().exists())
+
+    def test_a_fresh_record_is_live_during_the_start_to_exec_grace(self):
+        # This test process exists but is not Odoo: live within 10 s of started_at, stale after.
+        self.write(os.getpid(), ago(0))
+        self.assert_show(f'pid={os.getpid()} port=8070\n')
+        self.assertTrue(self.record_path().exists())
+        self.write(os.getpid(), ago(60))
+        self.assert_show('')
+        self.assertFalse(self.record_path().exists())
+
+    def test_liveness_requires_the_odoo_launch_shape(self):
+        # Past the grace period only `<python> <odoo-bin>` (or argv[0] == odoo-bin) is live.
+        later = self.dummy(self.odoo_bin)
+        self.write(later.pid, ago(60))
+        self.assert_show('')
+        self.assertFalse(self.record_path().exists())
+        launched = self.spawn()
+        deadline = time.monotonic() + 10
+        while Path(f'/proc/{launched.pid}/cmdline').read_bytes().split(b'\0')[1:2] != [
+                os.fsencode(self.odoo_bin)]:
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.02)
+        self.write(launched.pid, ago(60))
+        self.assert_show(f'pid={launched.pid} port=8070\n')
+        self.assertTrue(self.record_path().exists())
+
+    def test_wrongly_typed_records_are_stale_without_traceback(self):
+        process = self.spawn()
+        valid = {'pid': process.pid, 'port': 8070, 'started_at': ago(0),
+                 'project_root': str(self.root), 'odoo_bin': str(self.odoo_bin)}
+        for text in ('[1, 2]', 'null', '"server"', '42',
+                     json.dumps({**valid, 'pid': str(process.pid)}),
+                     json.dumps({**valid, 'port': '8070'}),
+                     json.dumps({**valid, 'pid': True}),
+                     json.dumps({key: value for key, value in valid.items() if key != 'port'})):
+            with self.subTest(text=text):
+                self.write(process.pid, ago(0))
+                self.record_path().write_text(text)
+                self.assert_show('')
+                self.assertFalse(self.record_path().exists())
+
+    def test_a_record_replaced_while_judged_stale_survives(self):
+        module = load_state_module()
+        stale = self.write(os.getpid(), ago(60))
+        directory = self.record_path().parent
+        fresh = {**stale, 'pid': os.getpid(), 'port': 8071, 'started_at': ago(0)}
+        judged = []
+
+        def replaced_before_unlink(record):
+            # Another start writes its record between read_live's read and its unlink.
+            judged.append(record['port'])
+            (directory / 'fresh.json').write_text(json.dumps(fresh))
+            os.replace(directory / 'fresh.json', self.record_path())
+            return False
+
+        module.is_live = replaced_before_unlink
+        self.assertIsNone(module.read_live(directory))
+        self.assertEqual(judged, [8070])
+        self.assertEqual(json.loads(self.record_path().read_text()), fresh)
+        # Unchanged stale bytes are still removed.
+        module = load_state_module()
+        self.write(os.getpid(), ago(60))
+        self.assertIsNone(module.read_live(directory))
+        self.assertFalse(self.record_path().exists())
+
+    @unittest.skipUnless(privileged_port_is_refused(), 'port 1 is bindable here (root or sysctl)')
+    def test_an_unbindable_port_is_reported_without_traceback(self):
+        result = self.helper('port', '127.0.0.1', '1', '1')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', 'Cannot bind port 1: permission denied.\n'))
 
     def test_show_without_state_prints_nothing_and_creates_nothing(self):
         result = self.helper('show', str(self.root))
@@ -175,6 +288,7 @@ class ServerLifecycleTests(unittest.TestCase):
         self.setUp_fixture()
         self.xdg = Path(self.env['XDG_RUNTIME_DIR'])
         self.python.write_text(self.python.read_text() + SERVE)
+        (self.source / 'odoo-bin').write_text(SLEEPER)
         self.port = free_ports(4)
         self.write_conf(self.root / 'dev/odoo.conf')
 
@@ -231,11 +345,11 @@ class ServerLifecycleTests(unittest.TestCase):
         process.communicate()
 
     def test_main_start_uses_the_conf_port_and_records_it(self):
-        result = self.invoke(self.root, 'start', '--stop-after-init')
+        result = self.invoke(self.root, 'start', '--workers=0')
         self.assertEqual((result.returncode, result.stdout), (0, ''))
         pid = self.started(result, self.port)
         self.assertEqual(self.odoo_lines(), [self.odoo_call(self.root, f'--http-port={self.port}',
-                                                            '--stop-after-init')])
+                                                            '--workers=0')])
         record = self.record(self.root)
         self.assertEqual((record['pid'], record['port'], record['project_root']),
                          (pid, self.port, str(self.root.resolve())))
@@ -244,14 +358,14 @@ class ServerLifecycleTests(unittest.TestCase):
         (self.root / 'dev/odoo.conf').write_text('[options]\n')
         if not bindable(8069):
             self.skipTest('8069 is in use on this host')
-        result = self.invoke(self.root, 'start', '--stop-after-init')
+        result = self.invoke(self.root, 'start')
         self.assertEqual((result.returncode, result.stdout), (0, ''), result.stderr)
         self.started(result, 8069)
-        self.assertEqual(self.odoo_lines(), [self.odoo_call(self.root, '--http-port=8069', '--stop-after-init')])
+        self.assertEqual(self.odoo_lines(), [self.odoo_call(self.root, '--http-port=8069')])
 
     def test_main_start_refuses_a_busy_conf_port_before_anything_runs(self):
         with busy(self.port):
-            result = self.invoke(self.root, 'start', '--stop-after-init')
+            result = self.invoke(self.root, 'start')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (2, '', f'Port {self.port} is in use; pass --http-port or stop the other server.\n'))
         self.unchanged()
@@ -263,10 +377,10 @@ class ServerLifecycleTests(unittest.TestCase):
                      (f'--http-port={explicit}',)):
             with self.subTest(args=args), busy(self.port):
                 self.commands.unlink(missing_ok=True)
-                result = self.invoke(self.root, 'start', *args, '--stop-after-init')
+                result = self.invoke(self.root, 'start', *args)
                 self.assertEqual((result.returncode, result.stdout), (0, ''), result.stderr)
                 self.started(result, explicit)
-                self.assertEqual(self.odoo_lines(), [self.odoo_call(self.root, *args, '--stop-after-init')])
+                self.assertEqual(self.odoo_lines(), [self.odoo_call(self.root, *args)])
                 self.assertEqual(self.record(self.root)['port'], explicit)
         with busy(explicit):
             self.commands.unlink()
@@ -307,6 +421,74 @@ class ServerLifecycleTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, f'pid={process.pid} port={self.port}\n', ''))
 
+    def assert_batch_port(self, line, prefix, suffix):
+        match = re.fullmatch(re.escape(prefix) + r' --http-port=(\d+) ' + re.escape(suffix), line)
+        self.assertIsNotNone(match, line)
+        port = int(match.group(1))
+        self.assertGreaterEqual(port, 1024)
+        self.assertNotEqual(port, self.port)
+        self.assertTrue(bindable(port))
+
+    def test_batch_start_ignores_the_live_server_and_the_busy_port(self):
+        process = self.serve(self.root)
+        path = state_dir(self.xdg, self.root) / 'server.json'
+        before = path.read_bytes()
+        self.assertEqual(json.loads(before)['pid'], process.pid)
+        with busy(self.port):
+            result = self.invoke(self.root, 'start', '--stop-after-init', '-u', 'coffee', '-d', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        lines = self.odoo_lines()
+        self.assertEqual(lines[0], self.odoo_call(self.root, f'--http-port={self.port}'))
+        self.assertEqual(len(lines), 2, lines)
+        self.assert_batch_port(lines[1], self.odoo_call(self.root),
+                               '--stop-after-init -u coffee -d cc_dev_coffee')
+        self.assertEqual(path.read_bytes(), before)
+        self.assertIsNone(process.poll())
+        # An explicit port in a batch run is passed as given, unchecked and not repeated.
+        with busy(self.port):
+            result = self.invoke(self.root, 'start', '--stop-after-init', f'--http-port={self.port}')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(self.odoo_lines()[2:], [self.odoo_call(self.root, '--stop-after-init',
+                                                                f'--http-port={self.port}')])
+        self.assertEqual(path.read_bytes(), before)
+        # The database guards still apply to batch runs.
+        result = self.invoke(self.root, 'start', '--stop-after-init', '-d', 'other_db')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', 'Managed databases must use cc_dev_<name> or cc_test_<name>: other_db\n'))
+        self.assertEqual(len(self.odoo_lines()), 3)
+
+    def test_batch_start_in_a_linked_worktree_gets_only_a_free_http_port(self):
+        self.linked_layout()
+        result = self.invoke(self.linked, 'start', '--stop-after-init', '-u', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        [line] = self.odoo_lines()
+        self.assert_batch_port(line, ' '.join(['odoo', str(self.source / 'odoo-bin'), '-c', str(self.conf),
+                                               self.addons]), '--stop-after-init -u coffee')
+        self.assertIsNone(self.record(self.linked))
+
+    @unittest.skipUnless(privileged_port_is_refused(), 'port 1 is bindable here (root or sysctl)')
+    def test_start_relays_an_unbindable_port(self):
+        for args, conf in ((('-p', '1'), None), (('--http-port=1',), None), ((), '[options]\nhttp_port = 1\n')):
+            with self.subTest(args=args, conf=conf):
+                if conf:
+                    (self.root / 'dev/odoo.conf').write_text(conf)
+                result = self.invoke(self.root, 'start', *args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (2, '', 'Cannot bind port 1: permission denied.\n'))
+                self.unchanged()
+                self.assertIsNone(self.record(self.root))
+
+    def test_status_degrades_when_runtime_state_fails(self):
+        target = self.xdg / 'elsewhere'
+        target.mkdir(mode=0o700)
+        user_root = self.xdg / f'oasis-{os.getuid()}'
+        user_root.symlink_to(target, target_is_directory=True)
+        result = self.invoke(self.root, 'status')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, f'server: unknown (Runtime state directory is a symlink: {user_root})\n', ''))
+        self.assertTrue(self.commands.read_text().endswith(' ps\n'))
+        self.assertEqual(list(target.iterdir()), [])
+
     def test_stop_without_a_server(self):
         result = self.invoke(self.root, 'stop')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
@@ -322,13 +504,13 @@ class ServerLifecycleTests(unittest.TestCase):
     def test_linked_start_takes_the_next_free_port_after_the_conf_port(self):
         self.linked_layout()
         with busy(self.port, self.port + 1):
-            result = self.invoke(self.linked, 'start', '--stop-after-init')
+            result = self.invoke(self.linked, 'start')
         self.assertEqual((result.returncode, result.stdout), (0, ''), result.stderr)
         self.started(result, self.port + 2)
         # gevent: the first free port after the conf's gevent_port that is not the HTTP port.
         self.assertEqual(self.odoo_lines(), [' '.join([
             'odoo', str(self.source / 'odoo-bin'), '-c', str(self.conf), self.addons,
-            f'--http-port={self.port + 2}', f'--gevent-port={self.port + 3}', '--stop-after-init'])])
+            f'--http-port={self.port + 2}', f'--gevent-port={self.port + 3}'])])
         self.assertEqual(self.record(self.linked)['port'], self.port + 2)
 
     def test_stop_terminates_only_this_checkout_and_database_waits_for_others(self):

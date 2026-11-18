@@ -8,17 +8,23 @@ Usage:
   runtime_state.py others <project_root>     live servers of the other checkouts, one per line
   runtime_state.py port <interface> <first> <last> [<excluded>...]
                                              first port in [first, last] free on the interface
+                                             (exit 1 when none; exit 2 and `Cannot bind port
+                                             <p>: <reason>.` when a bind fails otherwise)
   runtime_state.py ephemeral-port            a free ephemeral port on 127.0.0.1
 
 State lives in ${XDG_RUNTIME_DIR, or /tmp}/oasis-<uid>/<first 16 hex of sha256(realpath
 project_root)>/server.json ({pid, port, started_at, project_root, odoo_bin}); both directories
 are 0700 and refused when they are symlinks, not directories or owned by another user. Never
-inside a repository or a shared directory. A record is live only while its pid exists and that
-process's command line names the recorded odoo-bin path; a stale record is removed when read.
+inside a repository or a shared directory. A record is live while its pid is a process of this
+user whose command line (/proc, Linux) is the Odoo launch: argv[1] is the recorded odoo-bin
+(argv[0] a python interpreter) or argv[0] is odoo-bin. Within GRACE seconds of started_at any
+process of the pid is live (start writes the record before it execs Odoo). A stale or invalid
+record is removed when read, only if the file still holds what was read.
 """
 from datetime import datetime, timezone
 import errno
 import hashlib
+import math
 import json
 import os
 from pathlib import Path
@@ -31,10 +37,15 @@ import time
 
 RECORD = 'server.json'
 STOP_TIMEOUT = 20
+GRACE = 10
 
 
 class StateError(Exception):
     """An unsafe or unreadable state directory; the message names the path."""
+
+
+class PortError(Exception):
+    """A port that cannot be probed for a reason other than being in use."""
 
 
 def user_root():
@@ -93,24 +104,51 @@ def state_dir(project_root, create):
 
 
 def command_line(pid):
+    """argv of a process of this user, or None when there is none (gone, zombie, other user)."""
     try:
         if os.stat(f'/proc/{pid}').st_uid != os.getuid():
-            return []
+            return None
         with open(f'/proc/{pid}/cmdline', 'rb') as stream:
             raw = stream.read()
-    except OSError:
-        return []
-    return [os.fsdecode(part) for part in raw.split(b'\0') if part]
+    except (OSError, ValueError):
+        return None
+    parts = raw.split(b'\0')
+    if parts[-1] == b'':
+        parts.pop()
+    # A zombie has an empty command line: it is not running anything.
+    return [os.fsdecode(part) for part in parts] or None
+
+
+def is_odoo_launch(argv, odoo_bin):
+    names = {odoo_bin, os.path.realpath(odoo_bin)}
+    if argv[0] in names:
+        return True
+    return (len(argv) > 1 and argv[1] in names
+            and os.path.basename(argv[0]).startswith('python'))
+
+
+def in_grace(record):
+    try:
+        started = datetime.fromisoformat(record.get('started_at'))
+    except (TypeError, ValueError):
+        return False
+    if started.tzinfo is None:
+        return False
+    age = (datetime.now(timezone.utc) - started).total_seconds()
+    return math.isfinite(age) and 0 <= age < GRACE
 
 
 def is_live(record):
-    odoo_bin = record['odoo_bin']
-    names = {odoo_bin, os.path.realpath(odoo_bin)}
-    return any(arg in names for arg in command_line(record['pid']))
+    argv = command_line(record['pid'])
+    if argv is None:
+        return False
+    return is_odoo_launch(argv, record['odoo_bin']) or in_grace(record)
 
 
-def parse(text):
-    data = json.loads(text)
+def parse(raw):
+    data = json.loads(raw.decode('utf-8'))
+    if not isinstance(data, dict):
+        raise ValueError('invalid record')
     pid, port = data.get('pid'), data.get('port')
     if (not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0 or not isinstance(port, int)
             or isinstance(port, bool) or not isinstance(data.get('odoo_bin'), str)
@@ -119,29 +157,58 @@ def parse(text):
     return data
 
 
+def snapshot(path):
+    """What the record path holds: None when missing, else a comparable (kind, content)."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    if stat.S_ISLNK(info.st_mode):
+        return ('link', os.readlink(path))
+    if not stat.S_ISREG(info.st_mode):
+        return ('other', info.st_mode, info.st_ino)
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            return ('link', os.readlink(path))
+        raise
+    with os.fdopen(descriptor, 'rb') as stream:
+        return ('file', stream.read())
+
+
+def discard_stale(path, seen):
+    """Remove the record only if it still holds what was judged stale (best effort)."""
+    try:
+        if snapshot(path) == seen:
+            path.unlink()
+    except FileNotFoundError:
+        pass
+
+
 def read_live(directory):
     """The live record of a state directory, or None; a stale or invalid record is removed."""
     path = directory / RECORD
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    except FileNotFoundError:
-        return None
+        seen = snapshot(path)
     except OSError as exc:
-        if exc.errno != errno.ELOOP:
-            raise StateError(f'Cannot read runtime state: {path}') from exc
-        record = None
-    else:
-        with os.fdopen(descriptor, encoding='utf-8') as stream:
-            try:
-                record = parse(stream.read())
-            except (ValueError, UnicodeDecodeError):
-                record = None
+        raise StateError(f'Cannot read runtime state: {path}') from exc
+    if seen is None:
+        return None
+    record = None
+    if seen[0] == 'file':
+        try:
+            record = parse(seen[1])
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            record = None
     if record is not None and is_live(record):
         return record
     try:
-        path.unlink()
-    except FileNotFoundError:
-        pass
+        discard_stale(path, seen)
+    except OSError as exc:
+        raise StateError(f'Cannot remove stale runtime state: {path}') from exc
     return None
 
 
@@ -232,7 +299,8 @@ def port_is_free(interface, port):
                 if exc.errno == errno.EADDRINUSE:
                     return False
                 if exc.errno != errno.EADDRNOTAVAIL:
-                    raise
+                    reason = os.strerror(exc.errno) if exc.errno else str(exc)
+                    raise PortError(f'Cannot bind port {port}: {reason[:1].lower()}{reason[1:]}.') from exc
     return True
 
 
@@ -283,6 +351,9 @@ def main(argv):
             return 0
     except StateError as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
+        return 2
+    except PortError as exc:
+        print(exc, file=sys.stderr)
         return 2
     except ValueError:
         pass
