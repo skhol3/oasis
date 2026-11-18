@@ -34,6 +34,7 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - [x] T10 [S12] Register the odoo19_* tools inactive and activate them only when the session's project has .odoo19-agent.toml — worker — commit: 05f72df
 - T11 [S3] Fail closed when git detection fails inside a linked worktree (review advisory R3-git-failure-fails-open) — pending (v0.3.0)
 - [x] T12 [S2 S9] Shared odoo.conf: in a linked worktree, run Odoo with the conf's addons_path where the main checkout root is replaced by the worktree root (passed as --addons-path); worktree-init adapted to the shared config layout (copy the profile, no links, no own odoo.conf) — worker — commit: e5fafbd
+- T13 [S2 S9] Optional `[tooling].logs`: compact logs and browser evidence under `<logs>/odoo19/<main|slug>/`; without the key today's dev/logs/odoo19 — worker — commit: pending
 
 ## Log
 
@@ -61,3 +62,4 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - L17. User reorganized corpus-cafe (memory #5800): projects/corpus-cafe/{codigo/<checkouts>, config/ (.env, odoo.conf, compose.yml, init-odoo-role.sh, odools.toml, requirements/), data/ (Odoo data_dir), backups/, logs/, srs/, archivos/}. Agent fixed paths, git worktree repair, lock.sha256 paths; quick checks pass in both checkouts. The linked worktree still uses its own dev/odoo.conf until T12.
 - L18. T12 decision (owned): no new profile key; tools read only the `addons_path` key of the configured odoo.conf and, when CHECKOUT_KIND is linked, replace items equal to CHECKOUT_MAIN_ROOT (or under it) with PROJECT_ROOT, passing the result as --addons-path; other items (enterprise, oca) are kept. Main checkout: unchanged command line.
 - L19. T12 verified against real Odoo 19 parse_config (no DB): conf only -> main checkout addons; with the oasis --addons-path -> worktree addons. Suite 186 OK.
+- L20. User: "la carpeta dev ya no deberia existir como tal". Decision (owned): new optional profile key `[tooling].logs` (path relative to the checkout, like other tooling paths); when set, compact runs and browser evidence go to `<logs>/odoo19/<checkout id>/run-*` where checkout id is the slug or `main`, and the guard requires the resolved run directory inside `<logs>`; when absent, behaviour is unchanged. Adding an optional key is not a contract change.
