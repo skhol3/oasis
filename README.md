@@ -49,7 +49,7 @@ Gentle Shell subagents (for example `gentle-ai-worker` and `gentle-ai-verify`) r
 - `/odoo19 setup` writes only `agent-overlays.d/oasis.json` under the Gentle AI config home (`$GENTLE_PI_CONFIG_HOME` when it is an absolute path, else `~/.gentle-shell/gentle-ai`). It works outside an Odoo project, does nothing when the overlay is already up to date, and only the user can run it: no agent tool triggers it. Start a new session or `/reload` afterwards.
 - That folder is user configuration: Gentle Shell updates do not replace it. Run `/odoo19 setup` again after an oasis update that changes the template.
 - If Gentle AI renames an agent, the overlay entry for the old name only produces a notice until an oasis update renames it.
-- `odoo19_test_module` resets the module's test database (the checkout's `<test_prefix>` namespace) before each run, so a verify subagent with the overlay can do so too.
+- `odoo19_test_module` runs each test on a new disposable database of the checkout's `<test_prefix>` namespace and drops it at the end (an explicit `database` or a configured `test_database` is reset and reused instead), so a verify subagent with the overlay can do so too. Its summary line then ends with `database_lifecycle=disposable dropped=<yes|no>`. There is no agent tool for `odoo19 gc`: removing leftovers is up to the user.
 - Without the overlay, subagents can still run the core through bash: `python3 /absolute/path/to/oasis/odoo19 --project <project root> <command>` (for example `test-module --compact <module>`).
 
 ## New project: deliberate setup
@@ -148,7 +148,7 @@ Keep manual development data in a persistent development database. For sequentia
 test_database = 'sample_test_suite'
 ```
 
-The name must be longer than `test_prefix`, contain only letters/digits/underscores, and be at most 56 bytes (reserving `_update` within PostgreSQL's 63-byte identifier limit). Without this setting, module-derived defaults apply. In a checkout with a slug the slug is inserted after `test_prefix` (see *Databases per checkout* below) and the 56 bytes include it. An explicit database argument overrides the test destination; it must still be an approved disposable test database.
+The name must be longer than `test_prefix`, contain only letters/digits/underscores, and be at most 56 bytes (reserving `_update` within PostgreSQL's 63-byte identifier limit). Without this setting, each run uses its own disposable database (see *Disposable test databases* below). In a checkout with a slug the slug is inserted after `test_prefix` (see *Databases per checkout* below) and the 56 bytes include it. An explicit database argument overrides the test destination; it must still be an approved disposable test database.
 
 After obtaining authorization to reset the exact destinations:
 
@@ -159,8 +159,8 @@ After obtaining authorization to reset the exact destinations:
 
 | Command | Destinations and evidence |
 | --- | --- |
-| `test-module` | Resets the configured destination, installs the module and runs its tests. |
-| `verify-module` | Uses that test destination and a separate `<destination>_update` for a fresh install followed by current-code update. With an explicit test destination, its `_update` sibling is used; an explicit third argument overrides it. Without the setting, legacy module-derived defaults remain. This does not prove historical migration. |
+| `test-module` | Resets the configured destination (or the explicit one), installs the module and runs its tests. Without either, it runs on a new disposable database. |
+| `verify-module` | Uses that test destination and a separate `<destination>_update` for a fresh install followed by current-code update. With an explicit test destination and a configured one, its `_update` sibling is used; with only an explicit one, `<test_prefix><module>_update`; an explicit third argument overrides it. Without either, both are disposable: the run's database and its `_update` sibling. This does not prove historical migration. |
 | `--compact` | Opt-in summaries preserve phase status and stdout/stderr log paths. Full streams remain in unique private directories under project `dev/logs/odoo19/` (with `[tooling].logs`, under `<logs>/odoo19/<main|slug>/`; see Preparing a linked worktree); without it, output remains unchanged. Inspect relevant failing log excerpts, not all successful logs. |
 
 The Odoo test process also gets `--http-port=<free port>` right after the configuration options: a port the system hands out as free on 127.0.0.1 just before the run, so `test-module` and the tests phase of `verify-module` (with or without `--compact`) never collide with a running development server. The install and update phases and the rest of the command line are unchanged.
@@ -169,9 +169,35 @@ The Odoo **test process only** receives a fresh private (0700) short `/tmp/odoo1
 
 This does not change Odoo's skip classification: a successful exit can still include skipped browser tests. Inspect test results and retained diagnostics; the wrapper does not count tests or reinterpret skips. Retained diagnostics can contain application data and require deliberate owner-managed retention; no previous temporary directories or evidence are cleaned automatically.
 
-Both commands support `--help`. Ensure `dev/logs/` (or a `[tooling].logs` directory inside the checkout) is ignored by project version control. Logs can contain application data; do not publish them or collect credentials. Run shared destinations **sequentially**: there is no execution scheduler or lock. Existing active sessions block reset, but that check is not a concurrency lock. Use explicitly approved separate targets for parallel jobs or retained baseline scenarios. Do not invent a new database name for every edit. Preserve failed-run evidence until investigation is complete; a later reset overwrites database state even though prior logs remain.
+Both commands support `--help`. Ensure `dev/logs/` (or a `[tooling].logs` directory inside the checkout) is ignored by project version control. Logs can contain application data; do not publish them or collect credentials. Run shared destinations (an explicit or configured database) **sequentially**: there is no execution scheduler or lock for them. Existing active sessions block reset, but that check is not a concurrency lock. Disposable databases are private to their run, so default runs may run in parallel. Use explicitly approved separate targets for retained baseline scenarios; do not invent explicit database names for every edit. Preserve failed-run evidence until investigation is complete: a disposable database is dropped at the end of its run, and a later reset overwrites a shared destination, even though prior logs remain.
 
-The setting is **not reset consent** and does not create a database when read. Never reset the manual development database, infer approval from the namespace, terminate sessions automatically, or clean up other databases. Existing databases are left untouched by installing this change. Template/profile changes require the normal authorization.
+The setting is **not reset consent** and does not create a database when read. Never reset the manual development database, infer approval from the namespace, or terminate sessions of a shared destination automatically; only a run's own disposable databases and `gc --apply` close sessions and drop databases. Existing databases are left untouched by installing this change. Template/profile changes require the normal authorization.
+
+### Disposable test databases
+
+Without an explicit database argument and without a configured `test_database`, `test-module` and the tests phase of `verify-module` use a new database for every run:
+
+- Name: `<test_prefix><module>_r<6 hex>` (`<test_prefix><slug>_<module>_r<6 hex>` in a checkout with a slug), random per run. When it would exceed 56 bytes, the module part becomes its first characters plus `_` and the first 4 hex of the module name's SHA-256, so the name is at most 56 bytes and `verify-module`'s `<name>_update` sibling still fits in 63. A test prefix and slug that leave no room exit 2 before anything runs. The suffix `_r<6 hex>` (optionally followed by `_update`) is reserved for these databases: do not give a configured or explicit database such a name.
+- Before the database exists, the run writes a lock `runs/<database>.json` (`pid`, `started_at`, `database`, `project_root`, `argv`) in the checkout's private runtime state directory (see *Servers and ports per checkout*). A name that already exists is refused (`Disposable test database already exists: <name>`, exit 2) and never touched. The database is then created, the tests run exactly as for a shared destination, and at the end the run always closes the database's sessions, drops it, removes its filestore directory `<data_dir>/filestore/<database>` and removes the lock: after success, after failing tests, and after SIGINT (Ctrl+C) or SIGTERM. `data_dir` is the only other option read from `odoo.conf` for this; without an absolute `data_dir` the filestore step is skipped (Odoo's default data directory is not guessed).
+- `tools/test_temp.py` owns this cleanup, because it already owns the signals: `test-module` execs it, so a SIGTERM to the `test-module` process or a Ctrl+C to its process group reaches it; it forwards the signal to Odoo and cleans up when Odoo has ended. `verify-module` holds locks for both of its databases and drops both from an exit trap; Bash runs that trap when the phase in progress returns. SIGKILL or a lost machine cannot clean up: `odoo19 gc` finds what is left.
+- With `--compact`, `test-module` runs the tests in a child process: a SIGTERM sent only to the outer process ends it without the summary, while the run still finishes and drops its database; a Ctrl+C reaches both.
+- A database that cannot be dropped keeps its lock and is reported on stderr (`Cannot drop disposable test database <name>; run odoo19 gc --apply later.`); the run then exits non-zero.
+- With `--compact`, the summary gets one line after `phase=tests database=<name> exit=<n>`: `database_lifecycle=disposable dropped=<yes|no>`; `yes` means the run left no database behind (dropped, or never created). Without `--compact` nothing extra is printed. Shared destinations print no such line.
+
+### Cleaning up after interrupted runs
+
+```bash
+~/.agents/skills/odoo19/odoo19 --project /absolute/project gc            # list, change nothing
+~/.agents/skills/odoo19/odoo19 --project /absolute/project gc --apply    # drop them
+~/.agents/skills/odoo19/odoo19 --project /absolute/project gc --all-checkouts
+```
+
+`gc` lists the disposable test databases of this checkout's namespace that no live run holds, one `orphan <name>` line each, then `orphans=<n>`; it changes nothing. A run is live while the pid of its lock (in any checkout of the current user) still runs the command line recorded in the lock, so a reused pid does not keep an orphan alive (Linux `/proc`, like server records). With `--apply` it closes each orphan's sessions, drops it, removes its filestore and its stale lock, printing `dropped <name>` and `dropped=<n>`. It exits 0 also when there is nothing to do.
+
+- Namespace: a checkout with a slug owns `<test_prefix><slug>_...`; the main checkout (or a project outside git) owns `<test_prefix>...` except the namespaces of its existing linked worktrees (their slugs come from `git worktree list`: the worktree's `checkout_slug`, else the slug of its folder name). Leftovers of a worktree that no longer exists belong to the main checkout. Slugs still match as prefixes: a checkout skips the namespaces of other existing checkouts that start with its own (`wt` skips `wt_1_`).
+- `--all-checkouts` lists every namespace of the test prefix. A checkout with a slug may drop only its own databases, so `--apply --all-checkouts` runs only in the main checkout (elsewhere it exits 2 before changing anything).
+- Only names with the run suffix are candidates: development databases, test databases without it and the configured `test_database` (with its `_update` sibling) are never touched. Databases of another OS user's runs on the same PostgreSQL server have no visible lock; run `gc --apply` only for your own projects.
+- There is no project wrapper and no agent tool for `gc`; the bash guard does not block it.
 
 ## Checkout identity
 
@@ -196,17 +222,18 @@ The slug goes right after the managed prefix, so each checkout has its own datab
 | Default | Main checkout | Checkout with slug `07_1` |
 | --- | --- | --- |
 | `install-module` target | `<dev_prefix><module>` | `<dev_prefix>07_1_<module>` |
-| `test-module` and `verify-module` test target | `<test_prefix><module>` | `<test_prefix>07_1_<module>` |
-| `verify-module` update target | `<test_prefix><module>_update` | `<test_prefix>07_1_<module>_update` |
+| `test-module` and `verify-module` test target (disposable, new per run) | `<test_prefix><module>_r<6 hex>` | `<test_prefix>07_1_<module>_r<6 hex>` |
+| `verify-module` update target (disposable) | `<test_prefix><module>_r<6 hex>_update` | `<test_prefix>07_1_<module>_r<6 hex>_update` |
+| `verify-module` update target with only an explicit test database | `<test_prefix><module>_update` | `<test_prefix>07_1_<module>_update` |
 | configured `test_database = '<test_prefix>shared'` | `<test_prefix>shared` | `<test_prefix>07_1_shared` (its sibling `<test_prefix>07_1_shared_update`) |
 
 Every command that takes a database (`install-module` with or without `--with-demo`, `update-module`, `odoo-shell`, `start` with `-d`/`--database`, `test-module`, `verify-module`, `create-database`, `drop-database`, `module-status`, `init-dev-database`) requires a managed `<dev_prefix><name>` or `<test_prefix><name>` name. In a checkout with a slug the name must also start with `<dev_prefix><slug>_` or `<test_prefix><slug>_`, so a linked worktree cannot touch the main checkout's databases or another worktree's. The rejection names the checkout and the expected prefixes, and nothing runs.
 
 Not guarded: `start` without `-d`/`--database` uses whatever `db_name` and `--db-filter` the project's `odoo.conf` sets, so keep `db_name` out of a linked worktree's `odoo.conf` and out of an `odoo.conf` shared by several checkouts. Slugs are matched as prefixes: give each worktree a slug that is not the start of another (`wt` would also accept `wt_1`'s databases).
 
-Database names are at most 63 bytes (PostgreSQL's identifier limit, counted in UTF-8 bytes). A test database that gets an `_update` sibling in `verify-module` is at most 56 bytes, and a configured `test_database` must fit in 56 bytes after the slug is inserted. Longer names fail before any database command.
+Database names are at most 63 bytes (PostgreSQL's identifier limit, counted in UTF-8 bytes). A test database that gets an `_update` sibling in `verify-module` is at most 56 bytes, and a configured `test_database` must fit in 56 bytes after the slug is inserted. Longer names fail before any database command; disposable names are shortened to fit instead.
 
-`update-module` and `odoo-shell` work on existing databases only: a missing database exits 2 with `Database <name> does not exist; create it with install-module or create-database.` and is never created. `install-module` and `create-database` still create their target. oasis never drops a checkout's databases on its own.
+`update-module` and `odoo-shell` work on existing databases only: a missing database exits 2 with `Database <name> does not exist; create it with install-module or create-database.` and is never created. `install-module` and `create-database` still create their target. oasis never drops a checkout's databases on its own, except the disposable test databases a run created for itself (see *Disposable test databases*) and the orphans `gc --apply` drops when you run it.
 
 ### Preparing a linked worktree
 
@@ -268,6 +295,8 @@ Each checkout controls only its own Odoo server; the PostgreSQL service is one a
 - `status` prints `server: running pid <pid> port <port>` or `server: stopped` for this checkout (`server: unknown (<reason>)` when the runtime state cannot be read, for example a symlinked state directory), then `compose ps`.
 
 Contract change in 0.3.0: `stop` used to stop every Compose service; use `stop --database` for PostgreSQL.
+
+Contract change in 0.3.0: `test-module` and `verify-module` without an explicit or configured test database used to reset and reuse `<test_prefix>[<slug>_]<module>` (and `..._update`); they now run on disposable databases dropped at the end of each run. Pass that name explicitly, or set `test_database`, to keep a reusable destination. New public command: `gc`.
 
 ## Portable verification
 

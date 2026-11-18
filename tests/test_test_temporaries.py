@@ -97,8 +97,9 @@ exit "$FAKE_EXIT"
         result = self.invoke('test-module', '--compact', 'coffee')
         self.assertEqual((result.returncode, result.stderr), (7, ''))
         lines = result.stdout.splitlines()
-        self.assertEqual(lines[0], 'phase=tests database=cc_test_coffee exit=7')
-        logs = dict(line.split('=', 1) for line in lines[1:])
+        self.assertRegex(lines[0], r'^phase=tests database=cc_test_coffee_r[0-9a-f]{6} exit=7$')
+        self.assertEqual(lines[1], 'database_lifecycle=disposable dropped=yes')
+        logs = dict(line.split('=', 1) for line in lines[2:])
         self.assertEqual(set(logs), {'stdout_log', 'stderr_log'})
         for key, stream in (('stdout_log', 'test stdout\n'), ('stderr_log', 'test stderr\n')):
             path = Path(logs[key])

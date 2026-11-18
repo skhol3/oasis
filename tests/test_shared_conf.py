@@ -97,8 +97,8 @@ class SharedConfTests(unittest.TestCase):
     def odoo_lines(self):
         if not self.commands.exists():
             return []
-        lines = [lifecycle.any_test_port(line) for line in self.commands.read_text().splitlines()
-                 if line.startswith('odoo ')]
+        lines = [lifecycle.any_run_database(lifecycle.any_test_port(line))
+                 for line in self.commands.read_text().splitlines() if line.startswith('odoo ')]
         self.commands.unlink()
         return lines
 
@@ -112,7 +112,8 @@ class SharedConfTests(unittest.TestCase):
     def run_all(self, root, slug=''):
         """Run the five Odoo-launching commands; return their recorded Odoo argv lines."""
         dev = f'cc_dev_{slug}coffee'
-        test = f'cc_test_{slug}coffee'
+        # A disposable run database (any_run_database normalizes its suffix).
+        test = f'cc_test_{slug}coffee_r<run>'
         lines = {}
         for command, args, stdin in (
                 ('test-module', ('coffee',), None),
@@ -155,7 +156,7 @@ class SharedConfTests(unittest.TestCase):
 
     def test_compact_and_verify_runs_of_a_linked_worktree_pass_the_addons_path(self):
         addons = f'{self.enterprise},{self.linked},{self.odoo_addons}'
-        test = 'cc_test_wt_coffee'
+        test = 'cc_test_wt_coffee_r<run>'
         tests = self.odoo_call('--http-port=<free>', '-d', test, '-i', 'coffee', '--without-demo', '--test-tags',
                                '/coffee', '--stop-after-init', addons=addons)
         result = self.invoke(self.linked, 'test-module', '--compact', 'coffee')

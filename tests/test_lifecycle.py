@@ -33,6 +33,18 @@ def any_test_port(line):
     return re.sub(r' --http-port=(\d{1,5}) ', replace, line)
 
 
+RUN_DATABASE = r'_r[0-9a-f]{6}'
+
+
+def any_run_database(line):
+    """A disposable test database gets a fresh _r<6 hex> per run; compare the rest exactly.
+
+    Only `-d <name>` arguments are rewritten, to `<name>_r<run>` (or `..._r<run>_update`);
+    test_disposable_tests checks the names themselves.
+    """
+    return re.sub(r'(-d \S+?)_r[0-9a-f]{6}(?=(?:_update)?(?:\s|$))', r'\1_r<run>', line)
+
+
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
         fixture_root = Path(__file__).resolve().parent / 'fixturesroot'
@@ -180,7 +192,7 @@ exit 0
 
     def test_test_reset_refuses_active_sessions(self):
         self.env.update(FAKE_EXISTS='1', FAKE_SESSIONS='2')
-        result = self.invoke('test-module', 'coffee')
+        result = self.invoke('test-module', 'coffee', 'cc_test_coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (3, '', 'Refusing to reset database with 2 active session(s): cc_test_coffee\n'
                           'Close those sessions or explicitly drop the database with --terminate.\n'))
@@ -212,8 +224,8 @@ exit 0
         del self.env['FAKE_EXISTS']
         result = self.invoke('test-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
-        self.assertIn('-d cc_test_coffee -i coffee --without-demo --test-tags /coffee --stop-after-init',
-                      self.commands.read_text())
+        self.assertRegex(self.commands.read_text(), '-d cc_test_coffee' + RUN_DATABASE +
+                         ' -i coffee --without-demo --test-tags /coffee --stop-after-init')
 
     def test_custom_prefixes_and_verify_distinct_names(self):
         path = self.root / '.odoo19-agent.toml'
@@ -231,14 +243,14 @@ exit 0
         result = self.invoke('verify-module', 'coffee')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, '')
-        self.assertIn('tests_database=cc_test_coffee\n', result.stdout)
-        self.assertIn('update_database=cc_test_coffee_update\n', result.stdout)
+        tests = re.search('^tests_database=(cc_test_coffee' + RUN_DATABASE + ')$', result.stdout, re.M).group(1)
+        self.assertIn(f'update_database={tests}_update\n', result.stdout)
         self.assertIn('update_baseline=current_code_fresh_install\n', result.stdout)
         self.assertIn('current_code_update_exit=0\n', result.stdout)
         log = self.commands.read_text()
-        self.assertIn('-d cc_test_coffee -i coffee --without-demo --test-tags /coffee --stop-after-init', log)
-        self.assertIn('-d cc_test_coffee_update -i coffee --without-demo --stop-after-init', log)
-        self.assertIn('-d cc_test_coffee_update -u coffee --stop-after-init', log)
+        self.assertIn(f'-d {tests} -i coffee --without-demo --test-tags /coffee --stop-after-init', log)
+        self.assertIn(f'-d {tests}_update -i coffee --without-demo --stop-after-init', log)
+        self.assertIn(f'-d {tests}_update -u coffee --stop-after-init', log)
 
     def configure_test_database(self, value='cc_test_shared'):
         path = self.root / '.odoo19-agent.toml'
@@ -258,7 +270,7 @@ exit 0
         result = self.invoke('test-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertNotIn('cc_test_unintended', self.commands.read_text())
-        self.assertIn('-d cc_test_coffee -i coffee', self.commands.read_text())
+        self.assertRegex(self.commands.read_text(), '-d cc_test_coffee' + RUN_DATABASE + ' -i coffee')
 
     def test_invalid_configured_test_target_blocks_commands(self):
         for value in ('cc_dev_manual', 'other_db', 'cc_test_', 'cc_test_bad;echo',
@@ -355,8 +367,8 @@ exit 0
         port = free_port()
         (self.root / 'dev/odoo.conf').write_text(f'[options]\nhttp_port = {port}\n')
         for command, args, exists, line in (
-                ('test-module', ('coffee',), '0', f'{odoo} -c {conf} --http-port=<free> -d cc_test_coffee -i coffee '
-                 '--without-demo --test-tags /coffee --stop-after-init'),
+                ('test-module', ('coffee',), '0', f'{odoo} -c {conf} --http-port=<free> -d cc_test_coffee_r<run> '
+                 '-i coffee --without-demo --test-tags /coffee --stop-after-init'),
                 ('install-module', ('coffee',), '0',
                  f'{odoo} -c {conf} -d cc_dev_coffee -i coffee --without-demo --stop-after-init'),
                 ('update-module', ('coffee', 'cc_dev_coffee'), '1',
@@ -371,7 +383,8 @@ exit 0
                     self.assertRegex(result.stderr, rf'^odoo19 start: http://localhost:{port} \(pid \d+\)\n$')
                 else:
                     self.assertEqual(result.stderr, '')
-                self.assertEqual([any_test_port(entry) for entry in self.commands.read_text().splitlines()
+                self.assertEqual([any_run_database(any_test_port(entry))
+                                  for entry in self.commands.read_text().splitlines()
                                   if entry.startswith('odoo ')], [line])
                 self.commands.unlink()
 

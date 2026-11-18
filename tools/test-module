@@ -2,11 +2,15 @@
 set -Eeuo pipefail
 if [[ ${1:-} == --help ]]; then
   printf 'Usage: %s [--compact] <module> [test_database]\n' "${ODOO19_ENTRYPOINT:-$0}"
-  printf 'Resets the selected test database. Default: tooling.test_database, otherwise test_prefix + module.\n'
-  printf 'In a checkout with a slug both defaults get it after the prefix (test_prefix + slug_ + module);\n'
-  printf 'explicit names must use that checkout namespace. Names are limited to 63 bytes.\n'
-  printf 'Run shared targets sequentially. --compact retains stdout/stderr under odoo19/ of\n'
-  printf 'the profile'\''s logs directory (default dev/logs); with [tooling].logs, in odoo19/<slug or main>.\n'
+  printf 'Without a test_database argument or tooling.test_database, each run uses a new disposable\n'
+  printf 'database test_prefix + module + _r<6 hex> (test_prefix + slug_ + module + ... in a checkout\n'
+  printf 'with a slug; shortened with a hash to fit 56 bytes), created for the run and always dropped\n'
+  printf 'with its filestore at the end, also on failure or Ctrl+C. A run that was killed leaves it\n'
+  printf 'behind: odoo19 gc lists such databases and odoo19 gc --apply drops them.\n'
+  printf 'An explicit test_database or tooling.test_database is reset and reused; run shared targets\n'
+  printf 'sequentially. Explicit names must use the checkout namespace and are limited to 63 bytes.\n'
+  printf -- '--compact retains stdout/stderr under odoo19/ of the profile'\''s logs directory (default\n'
+  printf 'dev/logs); with [tooling].logs, in odoo19/<slug or main>.\n'
   printf 'Tests use private short scratch; browser diagnostics remain under the same directory.\n'
   printf 'The test server gets its own free --http-port, so it never collides with a running server.\n'
   exit 0
@@ -14,33 +18,66 @@ fi
 source "$(dirname "$0")/common.sh"
 compact=false
 if [[ ${1:-} == --compact ]]; then compact=true; shift; fi
+# Internal: a compact run passes the disposable name it reports to the run it starts.
+run_database=''
+if [[ ${1:-} == --disposable-run ]]; then
+  run_database=${2:-}
+  shift $(( $# < 2 ? $# : 2 ))
+fi
 module=${1:-}
-database=${2:-${TEST_DATABASE:-$(checkout_database_name "$TEST_PREFIX" "$module")}}
 require_runtime
 require_module "$module"
+disposable=false
+if [[ -n ${2:-} ]]; then
+  database=$2
+elif [[ -n "$TEST_DATABASE" ]]; then
+  database=$TEST_DATABASE
+else
+  disposable=true
+  database=${run_database:-$(new_disposable_database_name "$module")}
+fi
 require_database_name "$database"
 if [[ "$database" != "$TEST_PREFIX"* ]]; then
   printf 'Test databases must use the %s prefix.\n' "$TEST_PREFIX" >&2
   exit 2
 fi
 require_managed_database_name "$database"
+if "$disposable"; then
+  require_disposable_database_name "$database"
+  require_update_sibling_room "$database"
+fi
 if "$compact"; then
   source "$(dirname "$0")/compact.sh"
   log_directory=$(compact_log_directory)
   status=0
+  run_arguments=("$module" "$database")
+  if "$disposable"; then run_arguments=(--disposable-run "$database" "$module"); fi
   # A fresh Bash process preserves errexit inside reset_test_database.
   # Calling the function in an &&/|| context would disable its fail-closed checks.
-  bash "$0" "$module" "$database" \
+  bash "$0" "${run_arguments[@]}" \
     >"$log_directory/stdout.log" 2>"$log_directory/stderr.log" || status=$?
   chmod 600 "$log_directory/stdout.log" "$log_directory/stderr.log"
-  printf 'phase=tests database=%s exit=%s\nstdout_log=%s\nstderr_log=%s\n' \
-    "$database" "$status" "$log_directory/stdout.log" "$log_directory/stderr.log"
+  printf 'phase=tests database=%s exit=%s\n' "$database" "$status"
+  if "$disposable"; then
+    # The run removes its lock only once the database is gone (or was never created).
+    held=0
+    runtime_state run-held "$PROJECT_ROOT" "$database" || held=$?
+    dropped=no
+    if (( held == 1 )); then dropped=yes; fi
+    printf 'database_lifecycle=disposable dropped=%s\n' "$dropped"
+  fi
+  printf 'stdout_log=%s\nstderr_log=%s\n' "$log_directory/stdout.log" "$log_directory/stderr.log"
   exit "$status"
 fi
 odoo_config_arguments
-reset_test_database "$database"
 # The test server binds its own free port, so a test run never collides with a dev server.
 http_port=$(runtime_state ephemeral-port)
-python3 -B "$(dirname "$0")/test_temp.py" "$PROJECT_ROOT" \
-  "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "--http-port=$http_port" \
-  -d "$database" -i "$module" --without-demo --test-tags "/$module" --stop-after-init
+odoo_command=("$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "--http-port=$http_port"
+  -d "$database" -i "$module" --without-demo --test-tags "/$module" --stop-after-init)
+if "$disposable"; then
+  # test_temp.py owns the whole disposable lifecycle and the signals; exec keeps this pid.
+  exec python3 -B "$(dirname "$0")/test_temp.py" --disposable "$database" "$ODOO_CONFIG" \
+    "$PROJECT_ROOT" "${odoo_command[@]}"
+fi
+reset_test_database "$database"
+python3 -B "$(dirname "$0")/test_temp.py" "$PROJECT_ROOT" "${odoo_command[@]}"

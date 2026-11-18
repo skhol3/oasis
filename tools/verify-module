@@ -2,10 +2,13 @@
 set -Eeuo pipefail
 if [[ ${1:-} == --help ]]; then
   printf 'Usage: %s [--compact] <module> [test_database] [update_database]\n' "${ODOO19_ENTRYPOINT:-$0}"
-  printf 'Resets two distinct test targets: tests and current-code fresh-install/update baseline.\n'
-  printf 'Defaults: tooling.test_database and its _update sibling, otherwise module-derived names.\n'
-  printf 'In a checkout with a slug the defaults get it after the prefix and explicit names must use\n'
-  printf 'that checkout namespace. A test database with an _update sibling is limited to 56 bytes.\n'
+  printf 'Runs two distinct test targets: tests and current-code fresh-install/update baseline.\n'
+  printf 'Without a test_database argument or tooling.test_database both are disposable: a new\n'
+  printf 'test_prefix + module + _r<6 hex> database (with slug_ after the prefix in a checkout with a\n'
+  printf 'slug) and its _update sibling, dropped with their filestores at the end, also on failure or\n'
+  printf 'Ctrl+C; odoo19 gc drops what a killed run left behind. Otherwise both are reset and reused:\n'
+  printf 'tooling.test_database and its _update sibling, or the explicit names. Explicit names must\n'
+  printf 'use the checkout namespace. A test database with an _update sibling is limited to 56 bytes.\n'
   printf 'Run shared targets sequentially. --compact retains per-phase stdout/stderr under odoo19/ of\n'
   printf 'the profile'\''s logs directory (default dev/logs); with [tooling].logs, in odoo19/<slug or main>.\n'
   printf 'The tests phase runs on its own free --http-port, so it never collides with a running server.\n'
@@ -15,15 +18,22 @@ source "$(dirname "$0")/common.sh"
 compact=false
 if [[ ${1:-} == --compact ]]; then compact=true; shift; fi
 module=${1:-}
-test_database=${2:-${TEST_DATABASE:-$(checkout_database_name "$TEST_PREFIX" "$module")}}
-update_database=${3:-${TEST_DATABASE:+${test_database}_update}}
-update_database=${update_database:-$(checkout_database_name "$TEST_PREFIX" "${module}_update")}
 require_runtime
 if [[ -z "$module" || $# -gt 3 ]]; then
   printf 'Usage: %s <module> [%sdatabase] [%supdate_database]\n' "${ODOO19_ENTRYPOINT:-$0}" "$TEST_PREFIX" "$TEST_PREFIX" >&2
   exit 2
 fi
 require_module "$module"
+disposable=false
+if [[ -z ${2:-} && -z "$TEST_DATABASE" ]]; then
+  disposable=true
+  test_database=$(new_disposable_database_name "$module")
+  update_database=${test_database}_update
+else
+  test_database=${2:-$TEST_DATABASE}
+  update_database=${3:-${TEST_DATABASE:+${test_database}_update}}
+  update_database=${update_database:-$(checkout_database_name "$TEST_PREFIX" "${module}_update")}
+fi
 require_managed_database_name "$test_database"
 if [[ "$update_database" == "${test_database}_update" ]]; then
   require_update_sibling_room "$test_database"
@@ -40,6 +50,33 @@ fi
 if "$compact"; then
   source "$(dirname "$0")/compact.sh"
   log_directory=$(compact_log_directory)
+fi
+# A disposable pair: both names must be new; their run locks are written before either exists,
+# and the EXIT trap drops both (with their filestores) whatever ends the run. A signal ends the
+# phase in progress first: Bash runs traps once the foreground command returns.
+discard_disposable_pair() {
+  local status=$? database dropped=yes
+  trap - EXIT INT TERM
+  for database in "$test_database" "$update_database"; do
+    python3 -B "$(dirname "$0")/test_temp.py" --discard "$database" "$ODOO_CONFIG" "$PROJECT_ROOT" ||
+      dropped=no
+  done
+  printf 'database_lifecycle=disposable dropped=%s\n' "$dropped"
+  if [[ "$dropped" == no ]]; then
+    printf 'Cannot drop the disposable databases %s and %s; run odoo19 gc --apply later.\n' \
+      "$test_database" "$update_database" >&2
+    if (( status == 0 )); then status=1; fi
+  fi
+  exit "$status"
+}
+if "$disposable"; then
+  require_free_disposable_database "$test_database"
+  require_free_disposable_database "$update_database"
+  trap discard_disposable_pair EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  runtime_state run-lock "$PROJECT_ROOT" "$test_database" "$$"
+  runtime_state run-lock "$PROJECT_ROOT" "$update_database" "$$"
 fi
 run_phase() {
   local phase=$1 database=$2

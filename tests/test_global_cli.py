@@ -11,7 +11,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'odoo19'
 PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database',
-          'drop-database', 'init-dev-database', 'install-module', 'lint-module', 'list-databases', 'model-info',
+          'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases', 'model-info',
           'module-status', 'odoo-shell', 'start', 'status', 'stop', 'test-module', 'update-module',
           'verify-module', 'worktree-init')
 
@@ -63,6 +63,8 @@ class GlobalCliTests(unittest.TestCase):
         self.assertIn('check-environment --quick', result.stdout)
         for name in PUBLIC:
             self.assertIn(name, result.stdout)
+        [listed] = [line for line in result.stdout.splitlines() if line.startswith('Commands: ')]
+        self.assertEqual(listed.removeprefix('Commands: ').split(', '), list(PUBLIC))
         self.assertFalse(self.log.exists())
 
     def test_dispatch_preserves_argv_stdin_exit_and_explicit_root(self):

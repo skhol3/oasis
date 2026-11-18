@@ -2,6 +2,7 @@
 from pathlib import Path
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -26,7 +27,8 @@ class CompactGuardTests(unittest.TestCase):
         result = self.invoke('test-module', '--compact', 'coffee')
         self.assertEqual((result.returncode, result.stderr), (41, ''))
         lines = result.stdout.splitlines()
-        self.assertEqual(lines[0], 'phase=tests database=cc_test_coffee exit=41')
+        self.assertRegex(lines[0], r'^phase=tests database=cc_test_coffee_r[0-9a-f]{6} exit=41$')
+        self.assertEqual(lines[1], 'database_lifecycle=disposable dropped=yes')
         logs = dict(line.split('=', 1) for line in lines[1:])
         self.assertEqual(Path(logs['stdout_log']).read_text(), '')
         self.assertEqual(Path(logs['stderr_log']).read_text(), 'database unavailable\n')
@@ -57,8 +59,8 @@ class CompactGuardTests(unittest.TestCase):
             'echo "update err" >&2; exit 7 ;; esac\n')
         result = self.invoke('verify-module', '--compact', 'coffee')
         self.assertEqual((result.returncode, result.stderr), (1, ''))
-        self.assertIn('phase=current_code_update database=cc_test_coffee_update exit=7\n',
-                      result.stdout)
+        self.assertRegex(result.stdout,
+                         r'(?m)^phase=current_code_update database=cc_test_coffee_r[0-9a-f]{6}_update exit=7$')
         self.assertIn('current_code_update_exit=7\n', result.stdout)
         paths = [Path(line.split('=', 1)[1]) for line in result.stdout.splitlines()
                  if line.startswith(('stdout_log=', 'stderr_log='))]
@@ -109,7 +111,8 @@ class LinkedWorktreeCompactTests(unittest.TestCase):
         result = self.invoke(self.linked, '--compact', 'coffee')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         lines = result.stdout.splitlines()
-        self.assertEqual(lines[0], 'phase=tests database=cc_test_wt_coffee exit=0')
+        self.assertRegex(lines[0], r'^phase=tests database=cc_test_wt_coffee_r[0-9a-f]{6} exit=0$')
+        self.assertEqual(lines[1], 'database_lifecycle=disposable dropped=yes')
         logs = dict(line.split('=', 1) for line in lines[1:])
         runs = list((self.main / 'dev/logs/odoo19').iterdir())
         self.assertEqual(len(runs), 1)
@@ -148,7 +151,7 @@ class LinkedWorktreeCompactTests(unittest.TestCase):
     def test_main_checkout_logs_inside_still_work(self):
         result = self.invoke(self.main, '--compact', 'coffee')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
-        self.assertEqual(result.stdout.splitlines()[0], 'phase=tests database=cc_test_coffee exit=0')
+        self.assertRegex(result.stdout.splitlines()[0], r'^phase=tests database=cc_test_coffee_r[0-9a-f]{6} exit=0$')
         self.assertEqual(len(list((self.main / 'dev/logs/odoo19').iterdir())), 1)
 
 
@@ -181,7 +184,8 @@ class ConfiguredLogsCompactTests(unittest.TestCase):
         result = self.invoke(root, 'test-module', '--compact', 'coffee')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         lines = result.stdout.splitlines()
-        self.assertEqual(lines[0], f'phase=tests database={database} exit=0')
+        self.assertRegex(lines[0], '^' + re.escape(f'phase=tests database={database}') + r'_r[0-9a-f]{6} exit=0$')
+        self.assertEqual(lines[1], 'database_lifecycle=disposable dropped=yes')
         logs = dict(line.split('=', 1) for line in lines[1:])
         runs = list((self.logs / 'odoo19' / checkout_id).iterdir())
         self.assertEqual(len(runs), 1)

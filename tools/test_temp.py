@@ -1,4 +1,19 @@
-"""Run only the Odoo test process with short owned scratch (internal CLI)."""
+"""Run only the Odoo test process with short owned scratch (internal CLI).
+
+Usage:
+  test_temp.py <project_root> <command...>
+  test_temp.py --disposable <database> <odoo.conf> <project_root> <command...>
+      the same run on a new disposable test database: write its run lock, check that the name
+      is free, create it, run the tests, then always drop it, remove its filestore and the
+      lock (success, failure, SIGINT and SIGTERM alike). A database that cannot be dropped
+      keeps its lock and is reported; `odoo19 gc --apply` removes it later.
+  test_temp.py --discard <database> <odoo.conf> <project_root>
+      drop a disposable database and its filestore, then remove its run lock (verify-module).
+
+This process owns the cleanup because it already owns the signals: it forwards SIGINT and
+SIGTERM to the Odoo test process and cleans up after that process ends, whether the signal
+reached the whole process group (a terminal) or only this process (test-module execs it).
+"""
 from pathlib import Path
 import os
 import shutil
@@ -7,6 +22,64 @@ import stat
 import subprocess
 import sys
 import tempfile
+
+import odoo_addons_path
+import runtime_state
+
+TOOLS = Path(__file__).resolve().parent
+USAGE = ('Usage: test_temp.py [--disposable <database> <odoo.conf>] <project_root> <command...> | '
+         '--discard <database> <odoo.conf> <project_root>')
+
+
+def database_step(function, database):
+    """Run one common.sh database function in a fresh Bash (errexit kept); its exit status."""
+    return subprocess.run(['bash', '-c', 'source "$1"; "$2" "$3"', 'test-temp',
+                           str(TOOLS / 'common.sh'), function, database]).returncode
+
+
+def remove_filestore(conf, database):
+    """Remove <data_dir>/filestore/<database>; only the conf's data_dir is read.
+
+    Without an absolute data_dir (absent, or relative to an unknown working directory) there
+    is nothing known to remove. A filestore entry that is not a directory is never followed.
+    """
+    try:
+        value = (odoo_addons_path.read_option(conf, 'data_dir') or '').strip()
+    except odoo_addons_path.ConfError as exc:
+        print(f'{exc} Filestore of {database} not removed.', file=sys.stderr)
+        return False
+    data_dir = os.path.expanduser(value) if value else ''
+    if not os.path.isabs(data_dir):
+        return True
+    path = Path(data_dir) / 'filestore' / database
+    try:
+        if not stat.S_ISDIR(os.lstat(path).st_mode):
+            print(f'Filestore of {database} is not a directory; not removed: {path}', file=sys.stderr)
+            return False
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        print(f'Cannot remove the filestore of {database}: {path}', file=sys.stderr)
+        return False
+    return True
+
+
+def discard(conf, database):
+    """Drop a disposable database, then remove its filestore; True when the database is gone."""
+    if database_step('drop_disposable_database', database) != 0:
+        return False
+    remove_filestore(conf, database)
+    return True
+
+
+def unlock(root, database):
+    try:
+        runtime_state.remove_run_lock(root, database)
+    except (runtime_state.StateError, runtime_state.RunError) as exc:
+        print(f'ERROR: {exc}', file=sys.stderr)
+        return False
+    return True
 
 
 def retain_evidence(root, scratch):
@@ -54,9 +127,25 @@ def retain_evidence(root, scratch):
 
 
 def main():
-    if len(sys.argv) < 3:
+    args = sys.argv[1:]
+    if args[:1] == ['--discard']:
+        if len(args) != 4:
+            print(USAGE, file=sys.stderr)
+            return 2
+        database, conf, root = args[1:]
+        if not discard(conf, database):
+            return 1
+        return 0 if unlock(root, database) else 1
+    disposable = conf = None
+    if args[:1] == ['--disposable']:
+        if len(args) < 5:
+            print(USAGE, file=sys.stderr)
+            return 2
+        disposable, conf, args = args[1], args[2], args[3:]
+    if len(args) < 2:
         print('Test scratch helper requires project root and command.', file=sys.stderr)
         return 2
+    root, command = args[0], args[1:]
     try:
         scratch = Path(tempfile.mkdtemp(prefix='odoo19-test-', dir='/tmp'))
     except OSError:
@@ -76,29 +165,53 @@ def main():
 
     previous = {sig: signal.signal(sig, forward) for sig in (signal.SIGINT, signal.SIGTERM)}
     status = 1
+    locked = created = False
     try:
+        if disposable is not None:
+            # The lock comes first, so gc never takes the database for an orphan.
+            try:
+                runtime_state.write_run_lock(root, disposable, os.getpid())
+                locked = True
+            except (runtime_state.StateError, runtime_state.RunError) as exc:
+                print(f'ERROR: {exc}', file=sys.stderr)
+                status = 2
+            if locked:
+                status = database_step('require_free_disposable_database', disposable)
+            if locked and status == 0 and received is None:
+                # From here on the database may exist: it is always dropped.
+                created = True
+                status = database_step('create_disposable_database', disposable)
+        if disposable is None or (created and status == 0 and received is None):
+            try:
+                child = subprocess.Popen(command, env={**os.environ, 'TMPDIR': str(scratch)})
+                if received is not None:
+                    forward(received, None)
+                code = child.wait()
+                status = 128 + (-code) if code < 0 else code
+            except OSError:
+                print('Cannot launch Odoo test process.', file=sys.stderr)
+                status = 1
+        if received is not None:
+            status = 128 + received
         try:
-            child = subprocess.Popen(sys.argv[2:], env={**os.environ, 'TMPDIR': str(scratch)})
-            if received is not None:
-                forward(received, None)
-            code = child.wait()
-            status = 128 + (-code) if code < 0 else code
-            if received is not None:
-                status = 128 + received
-        except OSError:
-            print('Cannot launch Odoo test process.', file=sys.stderr)
-        try:
-            retain_evidence(Path(sys.argv[1]).resolve(), scratch)
+            retain_evidence(Path(root).resolve(), scratch)
         except (OSError, subprocess.SubprocessError):
             print(f'Cannot retain browser evidence; test scratch kept at {scratch}. '
                   'Inspect it before manual removal.', file=sys.stderr)
-            return status or 1
-        try:
-            shutil.rmtree(scratch)
-        except OSError:
-            print(f'Cannot clean owned test scratch: {scratch}. Inspect before manual removal.',
+            status = status or 1
+        else:
+            try:
+                shutil.rmtree(scratch)
+            except OSError:
+                print(f'Cannot clean owned test scratch: {scratch}. Inspect before manual removal.',
+                      file=sys.stderr)
+                status = status or 1
+        if created and not discard(conf, disposable):
+            print(f'Cannot drop disposable test database {disposable}; run odoo19 gc --apply later.',
                   file=sys.stderr)
-            return status or 1
+            status = status or 1
+        elif locked and not unlock(root, disposable):
+            status = status or 1
         return status
     finally:
         for sig, handler in previous.items():

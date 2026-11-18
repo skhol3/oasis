@@ -59,6 +59,16 @@ still change in a minor release; every such change is listed here under **Change
 - `test-module` and the tests phase of `verify-module` (also with `--compact`) pass
   `--http-port=<free port>` to the Odoo test process, so test runs never collide with a
   running server ("Port ... is in use by another program").
+- `odoo19 --project <checkout> gc [--apply] [--all-checkouts]` (new public command): lists
+  the disposable test databases of this checkout's namespace that no live run holds
+  (`orphan <name>` lines and `orphans=<n>`) and changes nothing; `--apply` closes their
+  sessions, drops them and removes their filestores and stale run locks (`dropped <name>`,
+  `dropped=<n>`). The main checkout's namespace excludes its existing linked worktrees';
+  `--all-checkouts` lists every slug of the test prefix (dropping other namespaces is refused
+  in a checkout with a slug). Development databases, test databases without the run suffix
+  and the configured `test_database` are never touched. No agent tool runs it.
+- `odoo19_test_module` reports `database_lifecycle=disposable dropped=<yes|no>` on its result
+  line for disposable runs.
 
 ### Changed
 
@@ -66,6 +76,17 @@ still change in a minor release; every such change is listed here under **Change
   without one it prints `No Odoo server running for this checkout.` and exits 0. It used to
   stop every Compose service. `stop --database` stops the database service, and only when no
   other checkout has a live server; otherwise it exits 2 and lists those checkouts and ports.
+- `test-module` and `verify-module` (contract change) without an explicit database and
+  without `[tooling].test_database` run on a new disposable database
+  `<test_prefix>[<slug>_]<module>_r<6 hex>` (shortened with a hash of the module to fit 56
+  bytes; `verify-module` adds its `_update` sibling) instead of resetting and reusing
+  `<test_prefix>[<slug>_]<module>`. Each run writes a run lock in the checkout's runtime
+  state directory before creating the database, refuses a name that already exists, and
+  always drops the database, its `<data_dir>/filestore/<name>` directory and the lock at the
+  end: on success, failure, SIGINT and SIGTERM. `--compact` adds the line
+  `database_lifecycle=disposable dropped=<yes|no>` after `phase=tests ...`. An explicit or
+  configured database keeps the reset-and-reuse behaviour; pass `<test_prefix><module>`
+  explicitly to keep the previous default.
 - `start` in the main checkout refuses a busy `http_port` with
   `Port <port> is in use; pass --http-port or stop the other server.` before anything runs,
   and reads `http_port`, `gevent_port` and `http_interface` (only those) from `odoo.conf`.
@@ -81,6 +102,12 @@ still change in a minor release; every such change is listed here under **Change
 
 - Server liveness reads `/proc`: per-checkout servers work on Linux only.
 - Simultaneous `start` runs may probe and pick the same free port; start them one at a time.
+- Disposable runs and `gc` read `/proc` for run-lock liveness (Linux only). SIGKILL leaves a
+  disposable database behind for `gc`. A SIGTERM sent only to `verify-module` (not to its
+  process group) takes effect when the phase in progress ends. Without an absolute
+  `data_dir` in `odoo.conf` filestores are not removed. With `--compact`, a SIGTERM sent only
+  to the outer `test-module` process ends it without the summary; the run it started still
+  finishes and drops its database.
 - Only `-p`, `--http-port <port>` and `--http-port=<port>` are recognized as explicit ports;
   abbreviations such as `--http-p` reach Odoo but are not checked or recorded.
 

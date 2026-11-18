@@ -252,13 +252,16 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     defaultActive: false,
     label: "Odoo 19 test module",
     description:
-      "Run one Odoo 19 module's tests on its guarded test database (reset first). Returns the result line and " +
+      "Run one Odoo 19 module's tests on a new disposable test database dropped afterwards (a given or configured " +
+      "database is reset first instead). Returns the result line and " +
       "failures with the end of each traceback; full logs stay in the profile logs directory (default dev/logs/odoo19).",
     promptSnippet: "Run an Odoo 19 module's tests and get only the result and failures",
     promptGuidelines: ["Use odoo19_test_module instead of running odoo-bin --test-tags through bash."],
     parameters: Type.Object({
       module: Type.String({ description: "Technical module name" }),
-      database: Type.Optional(Type.String({ description: "Test database; defaults to the profile's test database" })),
+      database: Type.Optional(Type.String({
+        description: "Test database to reset and reuse; default: the profile's test_database, else a disposable one",
+      })),
       maxFailures: Type.Optional(Type.Integer({ minimum: 0, maximum: 50, default: 10 })),
       traceLines: Type.Optional(Type.Integer({ minimum: 0, maximum: 40, default: 6 })),
     }),

@@ -569,19 +569,21 @@ class TestRunPortTests(unittest.TestCase):
 
     def test_test_and_verify_runs_pass_a_free_http_port(self):
         prefix = f'odoo {self.source / "odoo-bin"} -c {self.root / "dev/odoo.conf"}'
-        tests = '-d cc_test_coffee -i coffee --without-demo --test-tags /coffee --stop-after-init'
+        # The default test database is disposable: cc_test_coffee_r<6 hex>, and its _update sibling.
+        tests = '-d cc_test_coffee_r<run> -i coffee --without-demo --test-tags /coffee --stop-after-init'
         for command, args in (('test-module', ()), ('test-module', ('--compact',)),
                               ('verify-module', ()), ('verify-module', ('--compact',))):
             with self.subTest(command=command, args=args):
                 self.commands.unlink(missing_ok=True)
                 result = self.invoke(command, *args, 'coffee')
                 self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
-                lines = [line for line in self.commands.read_text().splitlines() if line.startswith('odoo ')]
+                lines = [lifecycle.any_run_database(line) for line in self.commands.read_text().splitlines()
+                         if line.startswith('odoo ')]
                 self.assertEqual(self.assert_test_port(lines[0], prefix), tests)
                 # Install and update phases keep their command line.
                 self.assertEqual(lines[1:], [] if command == 'test-module' else [
-                    f'{prefix} -d cc_test_coffee_update -i coffee --without-demo --stop-after-init',
-                    f'{prefix} -d cc_test_coffee_update -u coffee --stop-after-init'])
+                    f'{prefix} -d cc_test_coffee_r<run>_update -i coffee --without-demo --stop-after-init',
+                    f'{prefix} -d cc_test_coffee_r<run>_update -u coffee --stop-after-init'])
 
 
 if __name__ == '__main__':

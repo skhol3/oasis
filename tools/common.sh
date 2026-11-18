@@ -255,6 +255,56 @@ ensure_database() {
   ' sh "$database"
 }
 
+# Disposable test databases (test-module and verify-module without an explicit or configured
+# database): <test_prefix>[<slug>_]<module>_r<6 hex>, at most 56 bytes, new for every run and
+# dropped at its end (tools/test_temp.py); `gc` drops the ones an interrupted run left behind.
+new_disposable_database_name() {
+  runtime_state run-name "$(checkout_database_name "$TEST_PREFIX" '')" "$1"
+}
+
+require_disposable_database_name() {
+  local database=${1:-}
+  require_managed_database_name "$database"
+  if [[ "$database" != "$TEST_PREFIX"* || ! "$database" =~ _r[0-9a-f]{6}(_update)?$ ]]; then
+    printf 'Not a disposable test database: %s\n' "$database" >&2
+    return 2
+  fi
+}
+
+# A disposable database is always new: an existing database of that name is never reused.
+require_free_disposable_database() {
+  local database=$1
+  require_disposable_database_name "$database"
+  # Outside the condition, so an unavailable service fails instead of looking free.
+  wait_for_database >/dev/null
+  if database_exists "$database"; then
+    printf 'Disposable test database already exists: %s\n' "$database" >&2
+    return 2
+  fi
+}
+
+create_disposable_database() {
+  local database=$1
+  require_disposable_database_name "$database"
+  compose exec -T "$DB_SERVICE" sh -c '
+    set -eu
+    export PGPASSWORD="$ODOO_DB_PASSWORD"
+    exec createdb -U "$ODOO_DB_USER" "$1"
+  ' sh "$database"
+}
+
+# Closes the database's sessions and drops it (a missing database is fine); prints nothing.
+drop_disposable_database() {
+  local database=$1
+  require_disposable_database_name "$database"
+  terminate_managed_database_sessions "$database"
+  compose exec -T "$DB_SERVICE" sh -c '
+    set -eu
+    export PGPASSWORD="$ODOO_DB_PASSWORD"
+    exec dropdb --if-exists -U "$ODOO_DB_USER" "$1"
+  ' sh "$database"
+}
+
 reset_test_database() {
   local database=$1
   require_managed_database_name "$database"
