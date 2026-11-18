@@ -23,7 +23,7 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 
 - [x] T1 [S2 S3 S9] Checkout identity (slug) from git, profile override, shown by `/odoo19` — worker — commit: ebdbcb4
 - [x] T2 [S3 S4 S8] Per-checkout DB names, test_database + slug in linked worktrees, 63-byte check, managed-prefix guard and missing-DB refusal for update-module, odoo-shell, install-module, start -d (Risk: items 2, 3) — worker + verify — commit: d09f5b9
-- T3 [S5] Disposable test databases per run + `odoo19 gc` (Risk: item 1) — pending (v0.3.0)
+- [x] T3 [S5] Disposable test databases per run + `odoo19 gc` (Risk: item 1, drops databases) — worker + verify — commit: dfe7f18
 - [x] T4 [S6 S7] Per-checkout HTTP port with fallback, pidfile, own start/stop; test runs on a free port (Risk: item 3, `stop` contract change) — worker — commit: ab32956
 - [x] T5 [S2 S11] `odoo19 worktree-init <feature> <branch>` core command + user-run `/odoo19 worktree` in Gentle Shell (Risk: item 1, writes into the user's projects) — worker — commit: 21a7d4f
 - [x] T6 [S2 S9] Compact logs in a linked worktree whose dev/logs links to the main checkout (Risk: item 2, relaxes a path guard) — worker — commit: fb85c34, 0e51cd2
