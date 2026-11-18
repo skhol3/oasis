@@ -35,7 +35,7 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - T11 [S3] Fail closed when git detection fails inside a linked worktree (review advisory R3-git-failure-fails-open) — pending (v0.3.0)
 - [x] T12 [S2 S9] Shared odoo.conf: in a linked worktree, run Odoo with the conf's addons_path where the main checkout root is replaced by the worktree root (passed as --addons-path); worktree-init adapted to the shared config layout (copy the profile, no links, no own odoo.conf) — worker — commit: e5fafbd
 - [x] T13 [S2 S9] Optional `[tooling].logs`: compact logs and browser evidence under `<logs>/odoo19/<main|slug>/`; without the key today's dev/logs/odoo19 — worker — commit: a139a46
-- T4b [S6 S7] Harden per-checkout servers from review review-b4931e46d393a16a (Risk: item 4, concurrency) — worker — commit: pending
+- [x] T4b [S6 S7] Harden per-checkout servers from review review-b4931e46d393a16a (Risk: item 4, concurrency) — worker — commit: 04aa17c
 
 ## Log
 
