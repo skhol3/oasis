@@ -25,13 +25,14 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - [x] T2 [S3 S4 S8] Per-checkout DB names, test_database + slug in linked worktrees, 63-byte check, managed-prefix guard and missing-DB refusal for update-module, odoo-shell, install-module, start -d (Risk: items 2, 3) — worker + verify — commit: d09f5b9
 - T3 [S5] Disposable test databases per run + `odoo19 gc` (Risk: item 1) — pending (v0.3.0)
 - T4 [S6 S7] Per-checkout HTTP port with fallback, pidfile, own start/stop — pending (v0.3.0)
-- T5 [S2] `worktree-init` — pending (v0.3.0)
+- T5 [S2 S11] `odoo19 worktree-init <feature> <branch>` core command + user-run `/odoo19 worktree` in Gentle Shell (Risk: item 1, writes into the user's projects) — worker — commit: pending
 - [x] T6 [S2 S9] Compact logs in a linked worktree whose dev/logs links to the main checkout (Risk: item 2, relaxes a path guard) — worker — commit: fb85c34, 0e51cd2
 - [x] T7 [S2] Document the manual dev/.env link for linked worktrees (agents may not create .env paths) — worker — commit: fb85c34
 - [x] T8 [S9] Give subagents the odoo19_* tools, or document the CLI fallback — explore first — commit: e1f2bb5
 - [x] T9 [S9 S11] `/odoo19 setup` installs or updates the subagent overlay after confirmation; session-start notice when it is missing or outdated — worker — commit: 5fe722a
 - T5 note: `/odoo19 worktree <feature>` (user-run, creates the env-file link) is the first task of 0.3.0
 - [x] T10 [S12] Register the odoo19_* tools inactive and activate them only when the session's project has .odoo19-agent.toml — worker — commit: 05f72df
+- T11 [S3] Fail closed when git detection fails inside a linked worktree (review advisory R3-git-failure-fails-open) — pending (v0.3.0)
 
 ## Log
 
@@ -51,3 +52,5 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - L9. T8 decisions: user asked whether a global overlay conflicts with Gentle Shell updates; evidence: ~/.gentle-shell/gentle-ai holds user config (models.json, profiles.json), package updates replace gentle-pi, not that folder; agent-overlays.d/ is the third-party drop-in; a renamed agent only yields a notice. Chosen: global overlay ~/.gentle-shell/gentle-ai/agent-overlays.d/oasis.json, shipped by oasis as a template the user copies. User: verify may use odoo19_test_module ("Sí"). Overlay schema: {"<agent>": {"add": [...], "remove": [...]}}; a listed tool must be registered in the child (oasis loads there via settings packages).
 - L10. T6 evidence follow-up and T8 overlay commits (newest first): e1f2bb5 0e51cd2 ; CHANGELOG 0.2.0 date moved to 2026-11-17. Suite 149 OK.
 - L11. Evidence for T10: this oasis session (not an Odoo project) lists all six odoo19_* tools and their prompt guidelines, because pi/extensions/odoo19.ts registers them active (6 registerTool calls, no defaultActive).
+- L12. v0.2.0 released 2026-11-18: PR #2 merged (88864e5) after a full-range native review (review-51e3bdb20035fe31, approved; it first stopped on managed_assets_outdated, the user authorized `gentle-ai sync --agent pi`, which changed nothing). Tag v0.2.0, GitHub release, bundle reinstalled as 0.2.0. User: "lsito sube para continuar con la 3". Branch feat/v0.3.0.
+- L13. T5 design (owned decisions): agent-agnostic core command `worktree-init` run by the user (terminal or `/odoo19 worktree <feature> <branch>` in Gentle Shell after ctx.ui.confirm); the layer's bash guard blocks agents from running it, because it creates the environment-file link agents may not touch. Folder `<main basename>-<feature>` next to the main checkout. Branch: existing local/remote branch is checked out; otherwise created from the main checkout's HEAD (shown before confirming). Untracked/ignored entries of the main checkout's `dev/` are linked, except `odoo.conf` (copied with the main root rewritten to the worktree root in `addons_path`, and `db_name` removed) and `runtime` (own directory, per-checkout state for T4). `.odoo19-agent.toml` is copied. Content of odoo.conf and env files is never printed.
