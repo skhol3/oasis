@@ -11,6 +11,8 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Fixed
 
+- A batch `start --stop-after-init` excludes an explicit `--http-port` from the second free
+  port only when it is a valid port (1-65535); any other value still reaches Odoo as given.
 - `gc` stops (exit 2) when a linked worktree's `oasis-checkout.toml` is untrusted or
   invalid, instead of guessing that worktree's slug from its folder.
 

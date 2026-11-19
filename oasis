@@ -17,7 +17,9 @@ COMMANDS = (
     'verify-module', 'worktree-init',
 )
 PROGRAMS = ('oasis', 'odoo19')
-# The invoked file: the odoo19 alias passes its own path (runpy sets argv[0] to this file).
+# The invoked file. The odoo19 alias runs this file with runpy.run_path(..., init_globals=
+# {'ALIAS_PATH': <its own path>}), because runpy rewrites argv[0] to this file; help, usage and
+# ODOO19_ENTRYPOINT then name the program the user actually ran.
 INVOKED = Path(globals().get('ALIAS_PATH') or __file__)
 
 
