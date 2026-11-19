@@ -23,7 +23,7 @@ contract is checked up front. Existing `.odoo19-agent.toml` profiles keep workin
 - [x] T1b [S2 S3] Workspace follow-ups from review review-4d745af74f4fe048 and L9 (Risk: item 2, trusts a file above the checkout) — worker — commit: 1435e51
 - [x] T2 [S4] Location-dependent values on the command line (`--data-dir`); `lock.sha256` relative to requirements — commit: 1f02689 (capability table + named environments)
 - [x] T3 [S5] `oasis doctor` — commit: 4919a15
-- T4 [S6] `oasis migrate` + user-run `/oasis migrate` (plan, confirm, write workspace file, keep profiles as backup) and lock.sha256 relative to its directory (Risk: item 1, rewrites project files) — worker + verify — commit: pending
+- [x] T4 [S6] `oasis migrate` + user-run `/oasis migrate` (plan, confirm, write workspace file, keep profiles as backup) and lock.sha256 relative to its directory (Risk: item 1, rewrites project files) — worker + verify — commit: 68d2107, 54819f2
 - [x] T5 [S7] Control line in the test summary — commit: 51bb626
 - T6 Release v0.4.0 — pending
 
@@ -79,3 +79,4 @@ contract is checked up front. Existing `.odoo19-agent.toml` profiles keep workin
   - Verification before finishing: for every checkout, config.load results must equal the pre-migration results for every variable except WORKSPACE_ROOT, ENVIRONMENT_NAME and DATA_DIR, and the Odoo argv rendered by odoo_config_arguments must resolve to the same addons path and data dir; on any mismatch, restore every changed file and exit 1.
   - lock.sha256: verification runs from the lock file's own directory first and falls back to the project root (legacy); whatever writes lock.sha256 writes paths relative to its directory; migrate rewrites existing entries relative to the lock directory (hashes unchanged) and verifies them.
   - Agents may not run it (bash guard, like worktree-init); `/oasis migrate` shows the plan and asks before `--apply`.
+- L26. Migrate independent verify (68d2107): every L25 bullet met, no data lost in any probe (CRLF/comments/other sections, duplicate keys refused, mid-apply OSError rolled back, dry run unchanged, idempotent, guard variants). Must-fix: read-only conf/lock printed a false "could not be undone" -> fixed (undo registered after open) with the three verifier tests. Accepted: guard does not cover `cd tools && ./migrate`; in-place rewrites not atomic; SIGTERM/SIGKILL mid-apply not handled. Suite 410 OK.
