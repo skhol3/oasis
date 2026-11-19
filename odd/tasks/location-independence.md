@@ -21,7 +21,7 @@ contract is checked up front. Existing `.odoo19-agent.toml` profiles keep workin
 
 - [x] T1 [S2 S3 S6] Workspace file discovery and layered config (workspace -> optional checkout overrides); legacy profile unchanged — commit: 449d885
 - [x] T1b [S2 S3] Workspace follow-ups from review review-4d745af74f4fe048 and L9 (Risk: item 2, trusts a file above the checkout) — worker — commit: 1435e51
-- T2 [S4] Location-dependent values on the command line (`--data-dir`); `lock.sha256` relative to requirements — pending
+- [x] T2 [S4] Location-dependent values on the command line (`--data-dir`); `lock.sha256` relative to requirements — commit: 1f02689 (capability table + named environments)
 - T3 [S5] `odoo19 doctor` — pending
 - T4 [S6] `odoo19 migrate` + user-run `/odoo19 migrate` (plan, confirm, write workspace file, keep profiles as backup) — pending
 - T5 [S7] Control line in the test summary — pending
@@ -49,3 +49,4 @@ contract is checked up front. Existing `.odoo19-agent.toml` profiles keep workin
   - config.py emits, appended last: `ODOO_VERSION`, `ODOO_SECOND_PORT_OPTION`, `ODOO_DEMO_OFF_ARGS` (shell-quoted, space-joined; empty for 19), `ENVIRONMENT_NAME` (empty in legacy mode). Legacy mode: ODOO_VERSION from `version` ("19.0"); output otherwise byte-identical plus the appended lines.
   - Named environments (workspace only): `[environments.<name>]` tables with `path` (relative to the workspace, same safety rule as `environment`) and `python` ("3.12"); `[tooling].environment` may then be omitted. The selected name is `environment` in `oasis-checkout.toml` (allowed besides `checkout_slug`), else `default`. The selected environment's `python` must lie within the capability range; the legacy `python_version = '3.12'` requirement is kept for profiles. Unknown name -> clear error listing the declared names.
   - Every Odoo invocation uses the emitted values: `start` passes `$ODOO_SECOND_PORT_OPTION=<port>` instead of a literal `--gevent-port`; `test-module`/`verify-module` render `$ODOO_DEMO_OFF_ARGS` instead of a literal `--without-demo`; no other literal version-specific Odoo flag remains in tools/ (grep proves it).
+- L13. T2 done: Odoo 19 argv byte-identical (demo_off_args ["--without-demo"] kept, since a conf enabling demo is unverified); no version-specific literal option left in tools/ outside odoo_versions.py (grep test). Suite 338 OK.
