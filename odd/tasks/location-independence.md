@@ -64,3 +64,4 @@ contract is checked up front. Existing `.odoo19-agent.toml` profiles keep workin
   - Slash command `/oasis` with `/odoo19` as an alias (same handler, same subcommands `setup`, `worktree`); usage text names `/oasis`.
   - Bash guard also blocks `oasis ... worktree-init`.
   - Prompt context, README, CHANGELOG (Changed, with the alias note), project-contract, skills that name the CLI: use `oasis`; skill names `odoo19-*` stay (version-specific knowledge).
+- L19. T4 rename committed db9c273: CLI oasis (odoo19 alias via runpy, 10 edge cases byte-identical), Pi tools oasis_* active and odoo19_* inactive aliases, /oasis + /odoo19, bash guard both. Real Pi probe: six oasis_* active, six odoo19_* inactive, commands oasis and odoo19. Suite 364 OK. L17 advisory did not reproduce (ephemeral-port accepts out-of-range exclusions); explicit-valid-only rule pinned by a test.
