@@ -397,11 +397,26 @@ class SharedConfDevelopmentTests(unittest.TestCase):
         SharedConfTests.break_git_with_profile_slug(self)
         self.root = self.linked
         code, output = self.terminal('coffee', 'cc_dev_wt_coffee')
-        self.assertEqual(code, 1, output)
-        self.assertTrue(output.endswith('ERROR: Could not create a fresh development database; '
-                                        'existing data was not modified.\n'), output)
+        # Refused before any prompt or service call, like the other Odoo-starting commands.
+        self.assertEqual((code, output), (2, f'ERROR: Cannot move the addons_path of {self.conf} to this '
+                                             'worktree: git failed, so the main checkout is unknown.\n'))
+        self.assertFalse(self.commands.exists())
+        self.assertFalse(self.state.exists())
         self.assertFalse(self.parsed.exists())
-        self.assertNotIn('installs', json.loads(self.state.read_text()) if self.state.exists() else {})
+
+    def test_malformed_shared_conf_stops_a_linked_worktree_before_any_prompt(self):
+        message = f'ERROR: Cannot read addons_path from {self.conf}: invalid configuration file.\n'
+        self.root = self.linked
+        for content in SharedConfTests.MALFORMED:
+            with self.subTest(content=content):
+                self.conf.write_text(content.format(main=self.main))
+                # On a terminal: no password prompt is shown or answered.
+                code, output = self.terminal('coffee', 'cc_dev_wt_coffee')
+                self.assertEqual((code, output), (2, message))
+                self.assertNotIn(SECRET, output)
+                self.assertFalse(self.commands.exists())
+                self.assertFalse(self.state.exists())
+                self.assertFalse(self.parsed.exists())
 
     def test_main_checkout_initializes_unchanged(self):
         parsed, installs = self.initialize(self.main, 'cc_dev_coffee')

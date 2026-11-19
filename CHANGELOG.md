@@ -141,6 +141,12 @@ still change in a minor release; every such change is listed here under **Change
   gets copied) lacks `config`, `env_file`, `compose` or `requirements` or is not valid TOML,
   refuses with `<profile> does not set [tooling].<key>; prepare the worktree by hand.` or
   `Invalid tooling configuration: <profile>` instead of a message that did not name the file.
+- `init-dev-database` in a linked worktree checks the `odoo.conf` it would pass to Odoo before
+  any password prompt or database service call: an `odoo.conf` that cannot be parsed exits 2
+  with `Cannot read addons_path from <path>: invalid configuration file.` (and a shared one
+  that cannot be moved without git with `Cannot move the addons_path of <path> ...`), like
+  the other commands that start Odoo. Before, it asked for every password, started the
+  database service and then failed with exit 1 and a generic message.
 
 ### Known limitations
 
