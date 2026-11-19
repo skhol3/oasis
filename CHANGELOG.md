@@ -9,6 +9,11 @@ still change in a minor release; every such change is listed here under **Change
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-18
+
+Several checkouts of one project side by side: shared configuration, a server and port per
+checkout, disposable test databases and `/odoo19 worktree` to create a worktree.
+
 ### Added
 
 - `odoo19 --project <checkout> worktree-init <feature> <branch> [--dry-run]`: creates the
@@ -263,6 +268,7 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/skhol3/oasis/releases/tag/v0.3.0
 [0.2.0]: https://github.com/skhol3/oasis/releases/tag/v0.2.0
 [0.1.0]: https://github.com/skhol3/oasis/releases/tag/v0.1.0
