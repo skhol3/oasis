@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -155,6 +156,53 @@ class WorkspaceTests(unittest.TestCase):
         self.workspace.write_text('workspace_version = \n')
         self.assert_rejected(main, f'Invalid TOML in {self.workspace}.')
 
+    # Ownership by another user cannot be created without root, so only the mode bits are
+    # exercised here; the owner rule shares the same check and message shape.
+    def assert_writable_refused(self, main, file, targets):
+        for target in targets:
+            for bit, name in ((stat.S_IWGRP, 'g+w'), (stat.S_IWOTH, 'o+w')):
+                with self.subTest(target=str(target), bit=name):
+                    mode = stat.S_IMODE(target.stat().st_mode)
+                    target.chmod(mode | bit)
+                    try:
+                        self.assert_rejected(main, f'Refusing untrusted workspace file {file}: '
+                                                   f'{target} is writable by group or others.')
+                    finally:
+                        target.chmod(mode)
+
+    def test_group_or_other_writable_workspace_file_is_refused(self):
+        main = self.layout()
+        before = self.workspace.read_bytes()
+        self.assert_writable_refused(main, self.workspace, (self.workspace, self.project))
+        self.assertEqual(self.workspace.read_bytes(), before)
+        # Back to the owner's own modes, the same workspace is accepted again.
+        self.assertEqual(self.output(main), self.expected(main, 'main', ''))
+
+    def test_group_or_other_writable_checkout_file_is_refused(self):
+        main = self.layout()
+        checkout = main / 'oasis-checkout.toml'
+        checkout.write_text("[tooling]\ncheckout_slug = 'mrp_2'\n")
+        self.assert_writable_refused(main, checkout, (checkout, main))
+        self.assertEqual(self.output(main), self.expected(main, 'main', 'mrp_2'))
+        # Without a checkout file, the checkout directory's mode is not a workspace file's.
+        checkout.unlink()
+        mode = stat.S_IMODE(main.stat().st_mode)
+        main.chmod(mode | stat.S_IWGRP)
+        try:
+            self.assertEqual(self.output(main), self.expected(main, 'main', ''))
+        finally:
+            main.chmod(mode)
+
+    def test_writable_directories_above_the_workspace_are_not_checked(self):
+        # Only the file and its own directory: the scratch parent (like /tmp) may be shared.
+        main = self.layout()
+        mode = stat.S_IMODE(self.scratch.stat().st_mode)
+        self.scratch.chmod(mode | stat.S_IWOTH)
+        try:
+            self.assertEqual(self.output(main), self.expected(main, 'main', ''))
+        finally:
+            self.scratch.chmod(mode)
+
     def test_legacy_profile_in_the_checkout_wins(self):
         main = self.layout()
         (main / '.odoo19-agent.toml').write_text(LEGACY_PROFILE)
@@ -166,6 +214,17 @@ class WorkspaceTests(unittest.TestCase):
                       lines)
         self.assertIn('ODOO_CONFIG=' + shlex.quote(str(main / 'dev/odoo.conf')), lines)
         self.assertIn("DEV_PREFIX=cc_dev_", lines)
+
+    def test_legacy_profile_keeps_its_rules_in_a_writable_checkout(self):
+        main = self.layout()
+        (main / '.odoo19-agent.toml').write_text(LEGACY_PROFILE)
+        expected = self.output(main)
+        mode = stat.S_IMODE(main.stat().st_mode)
+        main.chmod(mode | stat.S_IWGRP)
+        try:
+            self.assertEqual(self.output(main), expected)
+        finally:
+            main.chmod(mode)
 
     def test_a_profile_on_the_way_stops_discovery(self):
         main = self.layout()

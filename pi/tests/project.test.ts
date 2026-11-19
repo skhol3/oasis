@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { findProjectRoot, findWorkspaceFile, projectContext } from "../lib/project.ts";
+import { findProjectRoot, findWorkspaceFile, projectContext, projectRootResolver } from "../lib/project.ts";
 
 function scratch(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "oasis-pi-")));
@@ -64,6 +64,77 @@ test("findProjectRoot under a workspace file falls back to the start directory",
     assert.equal(findProjectRoot(nested, () => null), nested);
     // A top level outside the workspace directory would not find the workspace file again.
     assert.equal(findProjectRoot(nested, () => tmpdir()), nested);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test("findProjectRoot resolves a symlinked session directory to the real checkout root", () => {
+  const { project, checkout, nested } = workspaceLayout();
+  const links = scratch();
+  try {
+    // The session directory is reached through a link (not resolved here); git reports real paths.
+    const link = join(links, "acme-link");
+    symlinkSync(project, link);
+    const linked = join(link, "codigo", "acme", "addons", "coffee", "models");
+    const asked: string[] = [];
+    const root = findProjectRoot(linked, (start) => {
+      asked.push(start);
+      return checkout;
+    });
+    assert.equal(root, checkout);
+    assert.deepEqual(asked, [nested]);
+    assert.equal(findProjectRoot(linked, () => null), nested);
+    // A link to the checkout itself resolves the same way.
+    const checkoutLink = join(links, "checkout-link");
+    symlinkSync(checkout, checkoutLink);
+    assert.equal(findProjectRoot(join(checkoutLink, "addons"), () => checkout), checkout);
+  } finally {
+    rmSync(links, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test("findProjectRoot treats only .. segments as outside the workspace directory", () => {
+  const { project, nested } = workspaceLayout();
+  try {
+    // A checkout directory whose name starts with two dots is still inside the workspace.
+    const dotted = join(project, "..acme");
+    mkdirSync(join(dotted, "addons"), { recursive: true });
+    assert.equal(findProjectRoot(join(dotted, "addons"), () => dotted), dotted);
+    // The workspace's parent is outside.
+    assert.equal(findProjectRoot(nested, () => join(project, "..")), nested);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test("projectRootResolver retries a failed git lookup and caches a found top level", async () => {
+  const { project, checkout, nested } = workspaceLayout();
+  try {
+    const answers: (string | null)[] = [null, checkout];
+    const asked: string[] = [];
+    const resolve = projectRootResolver(async (start) => {
+      asked.push(start);
+      assert.ok(answers.length > 0, "a found top level is cached");
+      return answers.shift() ?? null;
+    });
+    assert.equal(await resolve(nested), nested);
+    assert.equal(await resolve(nested), checkout);
+    assert.equal(await resolve(nested), checkout);
+    assert.deepEqual(asked, [nested, nested]);
+    // A profile needs no git lookup.
+    const plain = scratch();
+    const outside = scratch();
+    try {
+      writeFileSync(join(plain, ".odoo19-agent.toml"), "[tooling]\n");
+      assert.equal(await resolve(plain), plain);
+      assert.equal(await resolve(outside), null);
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+    assert.deepEqual(asked, [nested, nested]);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }

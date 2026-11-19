@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { blockedProgram, blockReason, WORKTREE_INIT } from "../lib/bash-guard.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
-import { findProjectRoot, findWorkspaceFile, projectContext } from "../lib/project.ts";
+import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
 import { nextActiveTools, ODOO19_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
@@ -44,9 +44,6 @@ function notProject(cwd: string): string {
 }
 
 export default function odoo19Layer(pi: ExtensionAPI) {
-  // Git top level of each directory under a workspace file, read once (null: git cannot tell).
-  const topLevels = new Map<string, string | null>();
-
   async function gitTopLevel(start: string): Promise<string | null> {
     try {
       const result = await pi.exec("git", ["-C", start, "rev-parse", "--show-toplevel"], {
@@ -58,18 +55,9 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     }
   }
 
-  // The checkout root of cwd (lib/project.ts); git runs only for a directory under a workspace file.
-  async function projectRoot(cwd: string): Promise<string | null> {
-    const lookup = { missing: null as string | null };
-    const root = findProjectRoot(cwd, (start) => {
-      if (topLevels.has(start)) return topLevels.get(start) ?? null;
-      lookup.missing = start;
-      return null;
-    });
-    if (lookup.missing === null) return root;
-    topLevels.set(lookup.missing, await gitTopLevel(lookup.missing));
-    return findProjectRoot(cwd, (start) => topLevels.get(start) ?? null);
-  }
+  // The checkout root of cwd (lib/project.ts); git runs only for a directory under a workspace
+  // file. A found top level is kept; a failed lookup is retried on the next call.
+  const projectRoot = projectRootResolver(gitTopLevel);
 
   async function requireRoot(cwd: string): Promise<string> {
     const root = await projectRoot(cwd);
@@ -233,8 +221,10 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   // The odoo19_* tools are registered inactive; activate them only in sessions inside an Odoo 19
   // project so other projects pay no tokens for their schemas and guidelines. Other tools are untouched.
   pi.on("session_start", async (_event, ctx) => {
+    const inProject = (await projectRoot(ctx.cwd)) !== null;
+    // Read after the await: another handler may change the active tools meanwhile.
     const active = pi.getActiveTools();
-    const next = nextActiveTools(active, (await projectRoot(ctx.cwd)) !== null, ODOO19_TOOLS);
+    const next = nextActiveTools(active, inProject, ODOO19_TOOLS);
     if (next.length !== active.length || next.some((name, index) => name !== active[index])) pi.setActiveTools(next);
   });
 

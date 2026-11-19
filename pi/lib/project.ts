@@ -1,12 +1,20 @@
 // Odoo 19 project detection. No Pi imports: tested directly with node:test.
-import { existsSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export const PROFILE_NAME = ".odoo19-agent.toml";
 export const WORKSPACE_NAME = "oasis-workspace.toml";
 
 /** Git top level of a directory, or null when git cannot tell (injected: this lib runs no commands). */
 export type GitTopLevel = (start: string) => string | null;
+
+function real(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
 
 function ancestors(start: string): string[] {
   const directories: string[] = [];
@@ -34,20 +42,48 @@ export function findWorkspaceFile(start: string): string | null {
 
 /**
  * Checkout root for `start`: the nearest directory with the profile, else, under a workspace
- * file, the git top level of `start` (`start` itself without git or when the top level is not
- * inside the workspace directory, where the workspace file would not be found again), else null.
+ * file, the real git top level of `start` (`start` itself without git or when the top level is
+ * not inside the real workspace directory, where the workspace file would not be found again),
+ * else null.
  */
 export function findProjectRoot(start: string, gitTopLevel?: GitTopLevel): string | null {
   for (const directory of ancestors(start)) {
     if (existsSync(join(directory, PROFILE_NAME))) return directory;
   }
-  const workspace = findWorkspaceFile(start);
+  // Real paths, as tools/config.py resolves the checkout and git reports its top level: a
+  // symlinked session directory still finds its workspace and resolves to the checkout root.
+  const fallback = real(start);
+  const workspace = findWorkspaceFile(fallback);
   if (!workspace) return null;
-  const fallback = resolve(start);
   const top = gitTopLevel?.(fallback);
   if (!top) return fallback;
-  const inside = relative(dirname(workspace), resolve(top));
-  return inside.startsWith("..") || isAbsolute(inside) ? fallback : resolve(top);
+  const checkout = real(top);
+  const inside = relative(real(dirname(workspace)), checkout);
+  const outside = inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside);
+  return outside ? fallback : checkout;
+}
+
+/**
+ * findProjectRoot with an asynchronous git lookup. A found top level is kept per directory;
+ * a failed lookup is not, so the next call asks git again.
+ */
+export function projectRootResolver(
+  gitTopLevel: (start: string) => Promise<string | null>,
+): (cwd: string) => Promise<string | null> {
+  const topLevels = new Map<string, string>();
+  return async (cwd) => {
+    let missing: string | null = null;
+    const root = findProjectRoot(cwd, (start) => {
+      const known = topLevels.get(start);
+      if (known === undefined) missing = start;
+      return known ?? null;
+    });
+    if (missing === null) return root;
+    const asked: string = missing;
+    const top = await gitTopLevel(asked);
+    if (top) topLevels.set(asked, top);
+    return findProjectRoot(cwd, (start) => (start === asked ? top : topLevels.get(start) ?? null));
+  };
 }
 
 /** Compact system-prompt section for a detected project; `workspace` names its workspace file. */
@@ -66,3 +102,4 @@ export function projectContext(root: string, workspace?: string | null): string 
     "framework APIs; load the matching odoo19-* skill first.",
   ].join("\n");
 }
+

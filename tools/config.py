@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import tomllib
@@ -140,6 +141,27 @@ def find_workspace(root: Path) -> Path | None:
     return None
 
 
+def trusted(path: Path) -> Path:
+    """path, refused unless it and its directory are owned by the current user or root and are
+    not group- or other-writable: a file found above the checkout must not be one someone else
+    could write. A symlinked file is checked at its target too."""
+    targets = [path.resolve(), path.resolve().parent]
+    if path.parent.resolve() not in targets:
+        targets.append(path.parent.resolve())
+    for target in targets:
+        try:
+            info = target.stat()
+        except OSError as exc:
+            raise InvalidConfig(f'Refusing untrusted workspace file {path}: cannot inspect {target}.') from exc
+        if info.st_uid not in (os.getuid(), 0):
+            raise InvalidConfig(f'Refusing untrusted workspace file {path}: '
+                                f'{target} is not owned by the current user or root.')
+        if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise InvalidConfig(f'Refusing untrusted workspace file {path}: '
+                                f'{target} is writable by group or others.')
+    return path
+
+
 def shown(value) -> str:
     """A TOML value for a message: JSON form (strings quoted), `(missing)` when absent."""
     return '(missing)' if value is MISSING else json.dumps(value, default=str)
@@ -154,8 +176,8 @@ def read_toml(path: Path) -> dict:
 
 
 def workspace_document(workspace: Path) -> dict:
-    """The workspace document, versions checked, with the derived [tooling] keys filled in."""
-    document = read_toml(workspace)
+    """The workspace document, trusted and versions checked, with the derived [tooling] keys."""
+    document = read_toml(trusted(workspace))
     version = document.get('workspace_version', MISSING)
     if type(version) is not int or version != WORKSPACE_VERSION:
         raise InvalidConfig(f'Unsupported workspace_version {shown(version)} in {workspace}.')
@@ -183,7 +205,7 @@ def checkout_overrides(root: Path) -> dict:
     path = root / CHECKOUT_NAME
     if not path.is_file():
         return {}
-    document = read_toml(path)
+    document = read_toml(trusted(path))
     for key, value in document.items():
         if key != 'tooling' or not isinstance(value, dict):
             raise InvalidConfig(f'{CHECKOUT_NAME} may only set [tooling].checkout_slug: {key}')
@@ -193,26 +215,38 @@ def checkout_overrides(root: Path) -> dict:
     return dict(document.get('tooling', {}))
 
 
-def load(root: Path) -> dict[str, str]:
-    """Legacy profile in root, read as before; otherwise the workspace file above root."""
+def configuration(root: Path) -> tuple[dict, Path, Path | None]:
+    """The document that configures root, the directory its paths resolve from, and the
+    workspace file (None for a legacy profile).
+
+    Legacy profile in root, read as before; otherwise the trusted workspace file above root
+    with the checkout's overrides. Tools that read their own sections ([development],
+    lint_rcfile) use this, so they see the same file and base as load().
+    """
     profile = root / PROFILE_NAME
     if profile.is_file():
         try:
             with profile.open('rb') as stream:
                 document = tomllib.load(stream)
         except (OSError, tomllib.TOMLDecodeError) as exc:
+            # Kept generic by design: legacy profiles keep their exact messages; only the new
+            # workspace and checkout files name the file in read_toml.
             raise InvalidConfig('Invalid tooling configuration.') from exc
-        output = resolve(document, root, root)
-        output['WORKSPACE_ROOT'] = ''
-        return output
+        return document, root, None
     workspace = find_workspace(root)
     if workspace is None:
         raise InvalidConfig(f'Missing tooling configuration: {profile}')
     document = workspace_document(workspace)
     document['tooling'].update(checkout_overrides(root))
-    output = resolve(document, root, workspace.parent)
-    # Appended last, so the previous assignments stay unchanged.
-    output['WORKSPACE_ROOT'] = str(workspace.parent)
+    return document, workspace.parent, workspace
+
+
+def load(root: Path) -> dict[str, str]:
+    """Validated assignments for root (see configuration)."""
+    document, base, workspace = configuration(root)
+    output = resolve(document, root, base)
+    # Appended last, so the previous assignments stay unchanged; empty for a profile.
+    output['WORKSPACE_ROOT'] = str(workspace.parent) if workspace is not None else ''
     return output
 
 

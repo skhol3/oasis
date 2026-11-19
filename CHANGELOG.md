@@ -26,6 +26,14 @@ still change in a minor release; every such change is listed here under **Change
 - The `odoo19` entry point, the `odoo19_*` tools, the prompt context and `/odoo19` accept a
   checkout without a profile below a workspace file.
 - Example `odoo19-environment/assets/oasis-workspace.example.toml`.
+- Workspace trust: `oasis-workspace.toml` and `oasis-checkout.toml` are read only when the
+  file and its directory are owned by the current user or root and are not group- or
+  other-writable; otherwise `Refusing untrusted workspace file <file>: <reason>.`
+- In workspace mode, `init-dev-database` reads `[development]` and `lint-module` reads
+  `lint_rcfile` (resolved from the workspace file's directory) from the workspace file, and
+  `gc` takes another worktree's slug from its `oasis-checkout.toml`.
+- Gentle Shell project detection compares real paths (a symlinked session directory resolves
+  to the checkout root) and retries a failed git top-level lookup instead of caching it.
 
 ## [0.3.0] - 2026-11-18
 

@@ -81,13 +81,15 @@ def main():
         for path in module.rglob('*'):
             if path.is_symlink() and not path.resolve().is_relative_to(module):
                 return fail('Lint module sources must stay inside its module directory.')
-        with (root / '.odoo19-agent.toml').open('rb') as stream:
-            tooling = tomllib.load(stream)['tooling']
+        # The profile's [tooling], or the workspace file's when the checkout has no profile;
+        # lint_rcfile resolves from the file's directory like the other tooling paths.
+        document, base, _workspace = config.configuration(root)
+        tooling = document['tooling']
         rcvalue = tooling.get('lint_rcfile')
         if not isinstance(rcvalue, str) or not rcvalue.strip() or any(
                 ord(char) < 32 or ord(char) == 127 for char in rcvalue):
             return fail('Declare a nonempty tooling.lint_rcfile without control characters.')
-        rcfile = (root / rcvalue).resolve()
+        rcfile = (base / rcvalue).resolve()
         if not rcfile.is_file():
             return fail('Lint rcfile not found: ' + str(rcfile))
         python = values['PYTHON']

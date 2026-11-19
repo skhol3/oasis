@@ -783,6 +783,52 @@ class GcWorktreeTests(DisposableFixture):
                          (0, f'orphan {self.main_orphan}\norphan {self.linked_orphan}\norphans=2\n', ''))
 
 
+class GcWorkspaceWorktreeTests(DisposableFixture):
+    """Workspace mode: a linked worktree's slug comes from its oasis-checkout.toml."""
+
+    WORKSPACE = '''workspace_version = 1
+odoo_version = '19.0'
+
+[tooling]
+community = 'source/odoo'
+environment = 'environments/example'
+config = 'projects/config/odoo.conf'
+env_file = 'projects/config/runtime-env'
+compose = 'projects/config/compose.yml'
+requirements = 'projects/config/requirements'
+addons_paths = ['.']
+db_service = 'db'
+dev_prefix = 'cc_dev_'
+test_prefix = 'cc_test_'
+'''
+
+    def setUp(self):
+        super().setUp()
+        shared.shared_layout(self)
+        # The workspace sits above <projects>; neither checkout keeps a profile.
+        (self.main.parent.parent / 'oasis-workspace.toml').write_text(self.WORKSPACE)
+        for checkout in (self.main, self.linked):
+            (checkout / '.odoo19-agent.toml').unlink()
+        # The folder would derive `wt`; the checkout file sets another slug.
+        (self.linked / 'oasis-checkout.toml').write_text("[tooling]\ncheckout_slug = 'shop'\n")
+        self.main_orphan, self.linked_orphan = 'cc_test_coffee_r1a2b3c', 'cc_test_shop_coffee_r4d5e6f'
+        Path(str(self.commands) + '.databases').write_text(
+            f'cc_dev_coffee\n{self.main_orphan}\ncc_test_shop_coffee\n{self.linked_orphan}\n')
+
+    gc = GcFixture.gc
+
+    def test_each_checkout_sees_only_its_own_orphans(self):
+        for root, orphan in ((self.main, self.main_orphan), (self.linked, self.linked_orphan)):
+            with self.subTest(root=root.name):
+                result = self.gc(root=root)
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (0, f'orphan {orphan}\norphans=1\n', ''))
+        result = self.gc('--all-checkouts', root=self.main)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, f'orphan {self.main_orphan}\norphan {self.linked_orphan}\norphans=2\n', ''))
+        self.assertEqual([event for event in self.events() if event[0] in ('drop', 'terminate')], [])
+
+
 class ReservedRunNameTests(DisposableFixture):
     """Names with the run suffix belong to disposable runs: normal work refuses them (S5)."""
 

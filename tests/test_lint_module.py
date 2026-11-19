@@ -158,6 +158,60 @@ raise SystemExit(int(os.environ.get('LINT_EXIT', '0')))
         self.assertIn('--rcfile=' + str(external), json.loads(self.analyzer.read_text())['argv'])
         self.assertEqual(external.read_bytes(), self.before[self.rcfile])
 
+    # Workspace mode: no profile; lint_rcfile resolves from the workspace file's directory.
+    WORKSPACE = '''workspace_version = 1
+odoo_version = '19.0'
+
+[tooling]
+community = 'source/odoo'
+environment = 'a project/.venv'
+config = 'a project/dev/odoo.conf'
+env_file = 'a project/dev/.env'
+compose = 'a project/dev/compose.yml'
+requirements = 'a project/dev/requirements'
+addons_paths = ['addons']
+db_service = 'db'
+dev_prefix = 'cc_dev_'
+test_prefix = 'cc_test_'
+'''
+
+    def use_workspace(self, declaration="lint_rcfile = 'shared lint/.pylintrc'\n"):
+        self.profile.unlink()
+        workspace = self.root.parent / 'oasis-workspace.toml'
+        workspace.write_text(self.WORKSPACE + declaration)
+        rcfile = self.root.parent / 'shared lint/.pylintrc'
+        rcfile.parent.mkdir(exist_ok=True)
+        rcfile.write_bytes(self.before[self.rcfile])
+        return workspace, rcfile
+
+    def test_workspace_whole_module_argv_uses_the_workspace_rcfile(self):
+        workspace, rcfile = self.use_workspace()
+        self.env['LINT_EXIT'] = '28'
+        result = self.invoke('coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (28, 'pylint diagnostic\n', 'pylint stderr\n'))
+        self.assertEqual(json.loads(self.analyzer.read_text()), {
+            'argv': ['-I', '-B', '-m', 'pylint', '--rcfile=' + str(rcfile),
+                     '--valid-odoo-versions=19.0', '--py-version=3.12',
+                     '--persistent=no', '--', str(self.module)], 'bytecode': '1'})
+        self.assertEqual(rcfile.read_bytes(), self.before[self.rcfile])
+        for path, original in self.before.items():
+            if path != self.profile:
+                self.assertEqual(path.read_bytes(), original)
+        self.assertFalse(self.profile.exists())
+
+    def test_workspace_missing_or_invalid_rcfile_is_local_to_lint(self):
+        for declaration in ('', 'lint_rcfile = 42\n', 'lint_rcfile = ""\n'):
+            with self.subTest(declaration=declaration):
+                if not self.profile.exists():
+                    self.profile.write_text('')
+                self.use_workspace(declaration)
+                self.rejected(('coffee',), 'Declare a nonempty tooling.lint_rcfile without control characters.')
+        self.profile.write_text('')
+        # Relative to the workspace directory, not to the checkout.
+        self.use_workspace("lint_rcfile = 'lint rules/.pylintrc'\n")
+        self.rejected(('coffee',), 'Lint rcfile not found: ' + str(self.root.parent / 'lint rules/.pylintrc'))
+
     def test_addon_and_module_symlink_escape_is_rejected(self):
         outside = self.root / 'not configured'
         outside.mkdir()

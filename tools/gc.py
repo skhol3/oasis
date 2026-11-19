@@ -16,8 +16,8 @@ Namespaces (scope `checkout`): a checkout with a slug owns `<test_prefix><slug>_
 main checkout (or a project outside git) owns `<test_prefix><rest>`. Both exclude the names
 of every other existing checkout whose namespace is longer and starts with theirs, so the main
 checkout skips `<test_prefix><linked slug>_...`. The other checkouts' slugs come from
-`git worktree list` (their profile's checkout_slug, else the slug derived from the folder
-name, as tools/config.py does). A worktree that no longer exists has no namespace, so the
+`git worktree list` (their profile's checkout_slug, or without a profile their
+oasis-checkout.toml's, else the slug derived from the folder name, as tools/config.py does). A worktree that no longer exists has no namespace, so the
 main checkout takes its leftovers. Scope `all` matches every name with the run suffix.
 """
 import os
@@ -35,9 +35,20 @@ USAGE = ('Usage: gc.py orphans <project_root> <test_prefix> <slug> <checkout|all
 
 
 def profile_slug(checkout):
-    """A checkout's own [tooling].checkout_slug, or None."""
+    """A checkout's own [tooling].checkout_slug, or None.
+
+    From its profile; a checkout without one (workspace mode) sets it in its
+    oasis-checkout.toml, read with tools/config.py's rules (an untrusted or invalid file gives
+    None, so the folder slug applies).
+    """
+    if not (checkout / config.PROFILE_NAME).is_file():
+        try:
+            value = config.checkout_overrides(checkout).get('checkout_slug')
+        except config.InvalidConfig:
+            return None
+        return value if isinstance(value, str) and config.SLUG.fullmatch(value) else None
     try:
-        with (checkout / '.odoo19-agent.toml').open('rb') as stream:
+        with (checkout / config.PROFILE_NAME).open('rb') as stream:
             tooling = tomllib.load(stream).get('tooling', {})
     except (OSError, tomllib.TOMLDecodeError):
         return None
