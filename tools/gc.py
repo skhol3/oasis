@@ -38,14 +38,15 @@ def profile_slug(checkout):
     """A checkout's own [tooling].checkout_slug, or None.
 
     From its profile; a checkout without one (workspace mode) sets it in its
-    oasis-checkout.toml, read with tools/config.py's rules (an untrusted or invalid file gives
-    None, so the folder slug applies).
+    oasis-checkout.toml, read with tools/config.py's rules. An untrusted or invalid checkout file
+    raises: falling back to the folder slug could make this checkout's databases look like
+    another checkout's orphans.
     """
     if not (checkout / config.PROFILE_NAME).is_file():
         try:
             value = config.checkout_overrides(checkout).get('checkout_slug')
-        except config.InvalidConfig:
-            return None
+        except config.InvalidConfig as exc:
+            raise config.InvalidConfig(f'Cannot read the checkout slug of {checkout}: {exc}') from exc
         return value if isinstance(value, str) and config.SLUG.fullmatch(value) else None
     try:
         with (checkout / config.PROFILE_NAME).open('rb') as stream:
@@ -112,7 +113,7 @@ def main(argv):
                 return 1
             runtime_state.discard_stale_run_locks(argv[2])
             return 0
-    except runtime_state.StateError as exc:
+    except (runtime_state.StateError, config.InvalidConfig) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 2
     print(f'ERROR: {USAGE}', file=sys.stderr)

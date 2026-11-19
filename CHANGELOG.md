@@ -9,6 +9,11 @@ still change in a minor release; every such change is listed here under **Change
 
 ## [Unreleased]
 
+### Fixed
+
+- `gc` stops (exit 2) when a linked worktree's `oasis-checkout.toml` is untrusted or
+  invalid, instead of guessing that worktree's slug from its folder.
+
 ### Added
 
 - `oasis-workspace.toml`, one per project at its root: a checkout without

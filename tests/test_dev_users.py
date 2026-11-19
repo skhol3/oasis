@@ -30,6 +30,9 @@ FAKE_ODOO = '''
 import copy, hashlib, json, os
 from pathlib import Path
 from types import SimpleNamespace
+
+# Workspace files must not be group-writable (trust rule); keep test results independent of the caller's umask.
+os.umask(0o022)
 path = Path(os.environ['FAKE_STATE'])
 def read():
     return json.loads(path.read_text()) if path.exists() else {}

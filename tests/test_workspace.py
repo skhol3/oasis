@@ -14,6 +14,9 @@ import sys
 import tempfile
 import unittest
 
+# Workspace files must not be group-writable (trust rule); keep test results independent of the caller's umask.
+os.umask(0o022)
+
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'odoo19'
 READER = ROOT / 'tools' / 'config.py'

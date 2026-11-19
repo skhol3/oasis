@@ -19,6 +19,9 @@ import unittest
 import test_lifecycle as lifecycle
 import test_shared_conf as shared
 
+# Workspace files must not be group-writable (trust rule); keep test results independent of the caller's umask.
+os.umask(0o022)
+
 STATE = lifecycle.STAGE / 'tools' / 'runtime_state.py'
 CLI = lifecycle.STAGE / 'odoo19'
 RUN = r'_r[0-9a-f]{6}'
@@ -826,6 +829,20 @@ test_prefix = 'cc_test_'
         result = self.gc('--all-checkouts', root=self.main)
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, f'orphan {self.main_orphan}\norphan {self.linked_orphan}\norphans=2\n', ''))
+        self.assertEqual([event for event in self.events() if event[0] in ('drop', 'terminate')], [])
+
+    def test_an_untrusted_checkout_file_stops_gc_instead_of_guessing_the_slug(self):
+        # Falling back to the folder slug `wt` would list `shop` databases as the main
+        # checkout's orphans; gc must stop and drop nothing.
+        checkout_file = self.linked / 'oasis-checkout.toml'
+        checkout_file.chmod(0o664)
+        for args in ((), ('--apply',)):
+            with self.subTest(args=args):
+                result = self.gc(*args, root=self.main)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, '')
+                self.assertIn(f'Cannot read the checkout slug of {self.linked.resolve()}', result.stderr)
+                self.assertIn('Refusing untrusted workspace file', result.stderr)
         self.assertEqual([event for event in self.events() if event[0] in ('drop', 'terminate')], [])
 
 

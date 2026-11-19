@@ -36,6 +36,9 @@ class LintModuleTests(unittest.TestCase):
         self.python.parent.mkdir(parents=True)
         self.python.write_text(f'#!{sys.executable}\n' + '''import json, os, sys
 from pathlib import Path
+
+# Workspace files must not be group-writable (trust rule); keep test results independent of the caller's umask.
+os.umask(0o022)
 args = sys.argv[1:]
 if '-c' in args:
     Path(os.environ['PROBE_CALL']).write_text(json.dumps(args))
