@@ -67,9 +67,26 @@ names) may still change in a minor release; every such change is listed here und
   the env file, the logs and data directories, the HTTP port). It prints one
   `PASS|WARN|FAIL <check>[=<value>]` line per check and `doctor_failures=<n>`, exits 1 when
   `n > 0`, never starts services, connects to a database or prints file contents.
+- New public command `oasis migrate [--workspace <dir>] [--apply]` (also `odoo19 migrate`), user-run:
+  converts the agreeing `.odoo19-agent.toml` of every checkout of the repository into one
+  `oasis-workspace.toml` (0600; paths relative to it, `addons_paths` per checkout) and an
+  `oasis-checkout.toml` for each `checkout_slug`, removes `addons_path` and `data_dir` from
+  `odoo.conf` (`data_dir` moves to `[tooling].data_dir`; the original is kept as
+  `odoo.conf.bak-<stamp>`, 0600), rewrites `lock.sha256` relative to its directory with the same
+  hashes, and renames each profile to `.odoo19-agent.toml.bak-<stamp>`. Without `--apply` it only
+  prints the plan. With it, every checkout must load the same configuration and Odoo addons path
+  and data directory as before; otherwise every change is undone (exit 1). Disagreeing profiles,
+  a `--workspace` that is not above every checkout and an existing workspace file are refused
+  (exit 2). A second run prints `nothing to migrate: <checkout> has no .odoo19-agent.toml`.
+- `/oasis migrate` (and `/odoo19 migrate`) in Gentle Shell: shows the plan and runs
+  `migrate --apply` after confirmation. The bash guard blocks agents from running `migrate`
+  through `oasis` or `odoo19` or its tool script, the dry run included.
 
 ### Changed
 
+- `check-environment` (`dependency_locks`) and `bootstrap` check `lock.sha256` from its own
+  directory first, then from the project root as before, so a lock whose entries are relative to
+  its directory passes; a legacy lock keeps passing.
 - Test runs (`test-module`, the tests phase of `verify-module`) and `start --stop-after-init`
   also get a free second port (`--gevent-port=<port>` on 19.0, distinct from the free
   `--http-port`), so HttpCase tests never collide with a running server's second port; an

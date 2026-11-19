@@ -6,7 +6,10 @@ const BLOCKED = new Set(["odoo-bin", "dropdb", "psql"]);
 // User-run only: it links environment files that agents may not create or read.
 export const WORKTREE_INIT = "worktree-init";
 const WORKTREE_INIT_SCRIPTS = new Set([WORKTREE_INIT, "worktree_init.py"]);
-// The entry point and its alias: worktree-init is blocked through either.
+// User-run only: it rewrites the project's configuration files (profiles, odoo.conf, lock.sha256).
+export const MIGRATE = "migrate";
+const MIGRATE_SCRIPTS = new Set([MIGRATE, "migrate.py"]);
+// The entry point and its alias: worktree-init and migrate are blocked through either.
 const ENTRY_POINTS = new Set(["oasis", "odoo19"]);
 const SHELLS = new Set(["bash", "sh", "zsh", "dash"]);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -113,12 +116,23 @@ function skipOptions(words: string[], index: number, valueOptions: Set<string>):
   return index;
 }
 
-/** worktree-init when words[index] runs it: its tool script, or an entry point with that command. */
-function worktreeInitScript(words: string[], index: number): string | null {
-  const name = basename(words[index]);
+/** The entry point's command: the first word after its options (`--project <dir>` takes a value). */
+function entryPointCommand(words: string[], index: number): string | undefined {
+  let i = index + 1;
+  while (i < words.length && words[i].startsWith("-")) i += words[i] === "--project" ? 2 : 1;
+  return words[i];
+}
+
+/** A user-run tool when words[index] runs it: its tool script, or an entry point with that command.
+ * migrate's scripts count only inside a `tools` directory, since the name is common. */
+function userRunTool(words: string[], index: number): string | null {
+  const word = words[index];
+  const name = basename(word);
   if (WORKTREE_INIT_SCRIPTS.has(name)) return WORKTREE_INIT;
-  if (ENTRY_POINTS.has(name) && words.slice(index + 1).includes(WORKTREE_INIT)) return WORKTREE_INIT;
-  return null;
+  if (MIGRATE_SCRIPTS.has(name) && /(^|\/)tools\/[^/]+$/.test(word)) return MIGRATE;
+  if (!ENTRY_POINTS.has(name)) return null;
+  if (words.slice(index + 1).includes(WORKTREE_INIT)) return WORKTREE_INIT;
+  return entryPointCommand(words, index) === MIGRATE ? MIGRATE : null;
 }
 
 function classifySegment(words: string[]): string | null {
@@ -152,20 +166,20 @@ function classifySegment(words: string[]): string | null {
       continue;
     }
     if (BLOCKED.has(name)) return name;
-    const worktreeInit = worktreeInitScript(words, i);
-    if (worktreeInit) return worktreeInit;
+    const userRun = userRunTool(words, i);
+    if (userRun) return userRun;
     if (/^python[\d.]*$/.test(name)) {
       const target = skipOptions(words, i + 1, PYTHON_VALUE_OPTIONS);
       if (words.slice(i + 1, target).some((w) => w === "-c" || w === "-m")) return null;
       if (target >= words.length) return null;
       if (basename(words[target]) === "odoo-bin") return "odoo-bin";
-      return worktreeInitScript(words, target);
+      return userRunTool(words, target);
     }
     if (SHELLS.has(name)) {
       const flag = words.findIndex((w, k) => k > i && SHELL_COMMAND_FLAG.test(w));
       if (flag > 0) return flag + 1 < words.length ? blockedProgram(words[flag + 1]) : null;
       const script = skipOptions(words, i + 1, new Set());
-      return script < words.length ? worktreeInitScript(words, script) : null;
+      return script < words.length ? userRunTool(words, script) : null;
     }
     return null;
   }
@@ -186,6 +200,12 @@ export function blockedProgram(command: string): string | null {
 }
 
 export function blockReason(program: string, root: string): string {
+  if (program === MIGRATE) {
+    return (
+      "migrate rewrites the project's configuration files; ask the user to run /oasis migrate in Gentle Shell " +
+      "or the command in a terminal."
+    );
+  }
   if (program === WORKTREE_INIT) {
     return (
       "worktree-init creates links to environment files; ask the user to run /oasis worktree <feature> " +

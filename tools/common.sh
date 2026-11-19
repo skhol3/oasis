@@ -240,6 +240,17 @@ lock_fingerprint_arg() {
   printf '%s\n' "$fingerprint"
 }
 
+# Whether lock.sha256 matches the dependency inputs and locks. Its entries are relative to its
+# own directory (as oasis migrate writes them, or `sha256sum ... > lock.sha256` run there); a
+# legacy lock lists them relative to the project root, so that is checked next.
+dependency_locks_current() {
+  [[ -f "$REQUIREMENTS_DIR/lock.sha256" ]] || return 1
+  if (cd "$REQUIREMENTS_DIR" && sha256sum --check --strict lock.sha256 >/dev/null 2>&1); then
+    return 0
+  fi
+  (cd "$PROJECT_ROOT" && sha256sum --check --strict "$(lock_fingerprint_arg)" >/dev/null 2>&1)
+}
+
 run_audit() {
   local root
   local args=(--project-root "$PROJECT_ROOT" --requirements-dir "$REQUIREMENTS_DIR")

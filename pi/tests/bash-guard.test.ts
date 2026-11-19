@@ -120,6 +120,55 @@ test("blockReason for worktree-init sends the user to /oasis worktree", () => {
   );
 });
 
+test("blocks agents from running migrate through the entry points or its tool, dry run included", () => {
+  const blocked = [
+    "oasis --project /p migrate",
+    "oasis --project /p migrate --apply",
+    "oasis --project=/p migrate --workspace /w",
+    "~/.agents/skills/odoo19/oasis --project /p migrate --apply",
+    "~/.agents/skills/odoo19/odoo19 --project /p migrate",
+    "python3 -B /opt/oasis/oasis --project /p migrate --apply",
+    "python3 -B /opt/oasis/odoo19 --project /p migrate",
+    "cd /p && odoo19 --project /p migrate --apply",
+    "env A=1 python3 oasis --project /p migrate",
+    "bash -c 'oasis --project /p migrate --apply'",
+    "echo $(odoo19 --project /p migrate)",
+    "timeout 60 oasis --project /p migrate --apply",
+    "tools/migrate --apply",
+    "bash ~/.agents/skills/odoo19/tools/migrate --apply",
+    "python3 -I -B ~/.agents/skills/odoo19/tools/migrate.py --apply",
+  ];
+  for (const command of blocked) {
+    assert.equal(blockedProgram(command), "migrate", command);
+  }
+});
+
+test("allows other commands that only mention migrate", () => {
+  const allowed = [
+    "oasis --project /p test-module migrate_tools",
+    "oasis --project /p model-info x.y --field migrate",
+    "odoo19 --project /p status",
+    "python3 manage.py migrate",
+    "npx prisma migrate dev",
+    "./migrate.sh",
+    "grep -n migrate tools/migrate.py",
+    "cat tools/migrate.py",
+    "python3 -B -m unittest tests.test_migrate",
+    "git log --grep=migrate",
+  ];
+  for (const command of allowed) {
+    assert.equal(blockedProgram(command), null, command);
+  }
+});
+
+test("blockReason for migrate sends the user to /oasis migrate", () => {
+  assert.equal(
+    blockReason("migrate", "/work/coffee"),
+    "migrate rewrites the project's configuration files; ask the user to run /oasis migrate in Gentle Shell " +
+      "or the command in a terminal.",
+  );
+});
+
 test("command -v / -V and which only look up the program", () => {
   for (const command of ["command -v psql", "command -V odoo-bin", "which dropdb", "type psql"]) {
     assert.equal(blockedProgram(command), null, command);

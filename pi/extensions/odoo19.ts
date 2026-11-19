@@ -7,7 +7,7 @@ import { Type } from "typebox";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { blockedProgram, blockReason, WORKTREE_INIT } from "../lib/bash-guard.ts";
+import { blockedProgram, blockReason, MIGRATE, WORKTREE_INIT } from "../lib/bash-guard.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
@@ -187,6 +187,38 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     }
   }
 
+  // User-run only (agents are blocked from migrate): show the dry-run plan, then `migrate --apply` on yes.
+  async function migrate(ctx: { cwd: string; ui: { notify: (message: string, level?: "info" | "warning" | "error") => void;
+    confirm: (title: string, message: string) => Promise<boolean> } }): Promise<void> {
+    const root = await projectRoot(ctx.cwd);
+    if (!root) {
+      ctx.ui.notify(`Not an Odoo 19 project: ${notProject(ctx.cwd)}`, "warning");
+      return;
+    }
+    try {
+      const plan = await run(root, ["migrate"], undefined, TOOL_TIMEOUT_MS);
+      if (plan.code !== 0) {
+        ctx.ui.notify(`oasis migrate: ${plan.stderr.trim() || `exit ${plan.code}`}`, "error");
+        return;
+      }
+      const output = plan.stdout.trim();
+      if (output.startsWith("nothing to migrate")) {
+        ctx.ui.notify(`oasis migrate: ${output}`, "info");
+        return;
+      }
+      const steps = output.split("\n").filter((line) => !line.startsWith("dry run: "));
+      if (!(await ctx.ui.confirm("oasis migrate", `${steps.join("\n")}\n\nMigrate to this workspace file?`))) {
+        ctx.ui.notify("oasis migrate: nothing changed.", "info");
+        return;
+      }
+      const result = await run(root, ["migrate", "--apply"], undefined, TOOL_TIMEOUT_MS);
+      const shown = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
+      ctx.ui.notify(`oasis migrate:\n${shown || `exit ${result.code}`}`, result.code === 0 ? "info" : "error");
+    } catch (error) {
+      ctx.ui.notify(`oasis migrate failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+  }
+
   // User-run only (no agent tool): `oasis doctor`, read-only, shown like the status.
   async function doctor(ctx: { cwd: string; ui: { notify: (message: string, level?: "info" | "warning" | "error") => void } }):
     Promise<void> {
@@ -204,10 +236,11 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     }
   }
 
-  const USAGE = "Usage: /oasis [setup | doctor | worktree <feature> <branch>]";
+  const USAGE = "Usage: /oasis [setup | doctor | migrate | worktree <feature> <branch>]";
   const COMMAND_DESCRIPTION =
     "Odoo 19 project status: profile, addon modules, databases, git worktree and this checkout's server; " +
     "`setup` installs the subagent overlay; `doctor` checks the environment contract (read-only); " +
+    "`migrate` converts the checkouts' profiles into one oasis-workspace.toml after confirmation; " +
     "`worktree <feature> <branch>` creates a prepared linked worktree";
 
   // `/oasis`, and `/odoo19` as its alias: one handler, the same subcommands.
@@ -221,6 +254,10 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       }
       if (argument === "doctor") {
         await doctor(ctx);
+        return;
+      }
+      if (argument === "migrate") {
+        await migrate(ctx);
         return;
       }
       const words = argument.split(/\s+/);
@@ -289,14 +326,15 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   });
 
   // Agent bash only: direct odoo-bin/dropdb/psql bypass the core's database guards (Odoo projects);
-  // worktree-init links environment files, so it is user-run in every session.
+  // worktree-init links environment files and migrate rewrites configuration files, so both are
+  // user-run in every session.
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName !== "bash") return;
     const command = (event.input as { command?: unknown }).command;
     if (typeof command !== "string") return;
     const program = blockedProgram(command);
     if (!program) return;
-    if (program === WORKTREE_INIT) return { block: true, reason: blockReason(program, "") };
+    if (program === WORKTREE_INIT || program === MIGRATE) return { block: true, reason: blockReason(program, "") };
     const root = await projectRoot(ctx.cwd);
     if (root) return { block: true, reason: blockReason(program, root) };
   });

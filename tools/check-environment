@@ -38,9 +38,7 @@ odoo_version=$("$PYTHON" "$ODOO_BIN" --version 2>/dev/null || true)
 if [[ "$odoo_version" == *"19.0"* ]]; then pass "odoo_version=19.0"
 else fail "odoo_version=${odoo_version:-unavailable} expected=19.0"
 fi
-fingerprint=$(lock_fingerprint_arg)
-if [[ -f "$requirements_dir/lock.sha256" ]] &&
-   (cd "$PROJECT_ROOT"; sha256sum --check --strict "$fingerprint" >/dev/null 2>&1); then
+if dependency_locks_current; then
   pass "dependency_locks=current"
 else fail "dependency_locks=stale_or_modified"
 fi
