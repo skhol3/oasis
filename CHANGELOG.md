@@ -9,6 +9,12 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-19
+
+Location and version independence: one `oasis-workspace.toml` per project instead of a
+profile per checkout, a path-free `odoo.conf`, a per-version capability table, the neutral
+`oasis` name (with `odoo19` aliases), `oasis doctor` and `oasis migrate`.
+
 ### Fixed
 
 - `oasis migrate --apply` undoes its changes on SIGTERM or SIGHUP, and rewrites `odoo.conf`
@@ -374,7 +380,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/skhol3/oasis/releases/tag/v0.4.0
 [0.3.0]: https://github.com/skhol3/oasis/releases/tag/v0.3.0
 [0.2.0]: https://github.com/skhol3/oasis/releases/tag/v0.2.0
 [0.1.0]: https://github.com/skhol3/oasis/releases/tag/v0.1.0
