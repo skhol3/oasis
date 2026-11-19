@@ -232,6 +232,16 @@ class DoctorTests(unittest.TestCase):
         (self.root / 'dev/.env').unlink()
         self.assert_report(self.expected('FAIL env_file=missing'))
 
+    def test_non_numeric_http_port_fails_without_a_traceback(self):
+        for value in ('abc', '70000'):
+            with self.subTest(value=value):
+                self.conf.write_text(lifecycle.conf_text(f'http_port = {value}\n'))
+                result = self.doctor()
+                self.assertEqual(result.returncode, 1)
+                self.assertNotIn('Traceback', result.stderr)
+                self.assertIn('FAIL http_port=invalid\n', result.stdout)
+                self.assertTrue(result.stdout.endswith('doctor_failures=1\n'))
+
     def test_busy_http_port_warns(self):
         with socket.socket() as listener:
             listener.bind(('127.0.0.1', self.port))
