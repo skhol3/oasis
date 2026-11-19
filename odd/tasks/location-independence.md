@@ -26,3 +26,8 @@ contract is checked up front. Existing `.odoo19-agent.toml` profiles keep workin
 ## Log
 
 - L1. User request: see S1. Proposal accepted with S3 correction ("si me parece bien" for the 0.4.0 scope and the four principles).
+- L2. T1 design (owned):
+  - File `oasis-workspace.toml` at the project root, same `[tooling]` keys as today's profile (plus the advisory sections the profile carries). Every path is relative to the workspace file's directory, except `addons_paths`, which stays relative to the checkout root (`'.'` = the checkout), because modules live in each checkout.
+  - Checkout root: the `--project` directory (CLI) or, in Gentle Shell, the git top level of the session directory when it is inside a workspace. Discovery walks up from the checkout root to the nearest `oasis-workspace.toml`; it never crosses a directory that holds `.odoo19-agent.toml`.
+  - Precedence: a checkout with `.odoo19-agent.toml` is legacy mode, read exactly as today (workspace ignored). Otherwise the workspace applies, and an optional `oasis-checkout.toml` in the checkout may set only `checkout_slug` (any other key is refused with a clear message).
+  - `config.py` emits the same variables as today plus `WORKSPACE_ROOT` (empty in legacy mode), appended last. The `odoo19` entry point and the Pi layer's project detection accept a checkout that has no profile when a workspace file is found above it.
