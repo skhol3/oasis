@@ -20,6 +20,7 @@ contract is checked up front. Existing `.odoo19-agent.toml` profiles keep workin
 ## Tasks
 
 - [x] T1 [S2 S3 S6] Workspace file discovery and layered config (workspace -> optional checkout overrides); legacy profile unchanged — commit: 449d885
+- T1b [S2 S3] Workspace follow-ups from review review-4d745af74f4fe048 and L9 (Risk: item 2, trusts a file above the checkout) — worker — commit: pending
 - T2 [S4] Location-dependent values on the command line (`--data-dir`); `lock.sha256` relative to requirements — pending
 - T3 [S5] `odoo19 doctor` — pending
 - T4 [S6] `odoo19 migrate` + user-run `/odoo19 migrate` (plan, confirm, write workspace file, keep profiles as backup) — pending
@@ -41,3 +42,4 @@ contract is checked up front. Existing `.odoo19-agent.toml` profiles keep workin
 - L7. Findings that affect the current 19 code: (a) HttpCase tests on 19 start Odoo's test server on `gevent_port` (default 8072), and test runs only get a free --http-port, so tests can still collide with a running dev server's gevent port when it uses workers; test runs must also get a free second port. (b) `test-module` passes bare `--without-demo`, which on 12/15 would swallow the next option; adapter must render demo flags per version.
 - L8. Worktree ~/Projects/oasis-v0.4.0 created on feat/v0.4.0; ~/Projects/oasis back on main (95f1d33). Implementation happens only in the worktree; real-Pi probes load it explicitly with -e, never through the user's Gentle Shell settings.
 - L9. T1 done: suite 310 OK; real Pi probe loading the worktree extension with -e: checkout without profile under oasis-workspace.toml -> six odoo19_* tools active; plain dir -> none. Open follow-ups: dev_users.py and lint_module.py do not read the workspace yet (fail closed); gc.py profile_slug ignores oasis-checkout.toml.
+- L10. T1 native review review-4d745af74f4fe048 approved (untracked .atl/ tooling cache excluded). T1b scope: (a) trust: accept a workspace file only if owned by the current user (or root) and not group/other-writable, same for its directory, else refuse with a clear message; (b) Pi: do not cache failed git top-level lookups; compare realpaths so a symlinked session directory resolves to the checkout root; read pi.getActiveTools() after awaiting projectRoot in session_start; (c) dev_users.py ([development]) and lint_module.py (lint_rcfile) read the workspace like config.py; gc.py reads oasis-checkout.toml slugs; (d) a short comment on why the legacy branch keeps its own parse error.
