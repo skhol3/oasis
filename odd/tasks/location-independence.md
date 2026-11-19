@@ -57,3 +57,10 @@ contract is checked up front. Existing `.odoo19-agent.toml` profiles keep workin
   - Test runs (test-module, verify-module test phase, batch `start --stop-after-init`) pass `$ODOO_SECOND_PORT_OPTION=<free port>` besides the free --http-port, so HttpCase tests never collide with a running server's second port (L7).
   - corpus-cafe migration (T6) will then remove addons_path and data_dir from config/odoo.conf.
 - L16. T3 committed 55538c7 (first attempt stopped on provider quota before any change; relaunched unchanged). Suite 361 OK. Test fixture conf now carries addons_path so existing argv tests keep pinning the with-path behaviour; path-free behaviour pinned in tests/test_path_free_conf.py.
+- L17. T3 review review-728eab0f54049588 approved; advisory: a numeric but out-of-range explicit --http-port in a batch start run is range-checked by the ephemeral-port exclusion and exits 2 (folded into T4).
+- L18. T4 design (owned; S8 naming decision "Ahora, en la 0.4.0", S10 `/odoo19` -> `/oasis`):
+  - CLI: new entry point `oasis` (same dispatcher; its help/usage name the program it was invoked as); `odoo19` stays as an alias with identical behaviour. install.sh installs both; commands, options and output unchanged.
+  - Pi tools: active names become `oasis_test_module`, `oasis_find_module`, `oasis_model_info`, `oasis_module_status`, `oasis_check_environment`, `oasis_lint_module`. The `odoo19_*` names stay registered as inactive aliases (defaultActive false, never activated by the layer) so existing overlays or allowlists still work without paying their prompt tokens; the overlay template and `/oasis setup` move to the `oasis_*` names (an old overlay is reported as outdated).
+  - Slash command `/oasis` with `/odoo19` as an alias (same handler, same subcommands `setup`, `worktree`); usage text names `/oasis`.
+  - Bash guard also blocks `oasis ... worktree-init`.
+  - Prompt context, README, CHANGELOG (Changed, with the alias note), project-contract, skills that name the CLI: use `oasis`; skill names `odoo19-*` stay (version-specific knowledge).
