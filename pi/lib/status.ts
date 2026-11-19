@@ -1,4 +1,4 @@
-// /odoo19 status: parse the core's profile output and format a compact report. No Pi imports.
+// /oasis status: parse the core's profile output and format a compact report. No Pi imports.
 import { existsSync, readdirSync, type Dirent } from "node:fs";
 import { join, resolve } from "node:path";
 

@@ -19,11 +19,7 @@ if ! command -v uv >/dev/null 2>&1; then
   printf 'uv is required to bootstrap this environment.\n' >&2
   exit 2
 fi
-fingerprint=$(lock_fingerprint_arg)
-if [[ ! -f "$REQUIREMENTS_DIR/lock.sha256" ]] || ! (
-  cd "$PROJECT_ROOT"
-  sha256sum --check --strict "$fingerprint" >/dev/null 2>&1
-); then
+if ! dependency_locks_current; then
   printf 'Refusing bootstrap because dependency inputs or locks do not match lock.sha256.\n' >&2
   printf 'Regenerate the locks and fingerprint before preview or apply.\n' >&2
   exit 2

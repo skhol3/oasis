@@ -62,7 +62,7 @@ class SluggedCheckoutTests(IsolationBase):
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertRegex(self.commands.read_text(), r'sh cc_test_wt_1_coffee_r[0-9a-f]{6}\n')
         self.assertEqual(self.odoo_lines(), [self.odoo_call(
-            '--http-port=<free>', '-d', 'cc_test_wt_1_coffee_r<run>', '-i', 'coffee', '--without-demo', '--test-tags',
+            '--http-port=<free>', '--gevent-port=<free>', '-d', 'cc_test_wt_1_coffee_r<run>', '-i', 'coffee', '--without-demo', '--test-tags',
             '/coffee', '--stop-after-init')])
 
     def test_configured_test_database_gets_the_slug_after_the_prefix(self):
@@ -70,7 +70,7 @@ class SluggedCheckoutTests(IsolationBase):
         result = self.invoke('test-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertEqual(self.odoo_lines(), [self.odoo_call(
-            '--http-port=<free>', '-d', 'cc_test_wt_1_shared', '-i', 'coffee', '--without-demo', '--test-tags', '/coffee',
+            '--http-port=<free>', '--gevent-port=<free>', '-d', 'cc_test_wt_1_shared', '-i', 'coffee', '--without-demo', '--test-tags', '/coffee',
             '--stop-after-init')])
         self.assertNotIn(' cc_test_shared', self.commands.read_text())
 
@@ -87,7 +87,7 @@ class SluggedCheckoutTests(IsolationBase):
                     re.escape('<run>'), '[0-9a-f]{6}')
                 self.assertRegex(result.stdout, pattern)
                 self.assertEqual(self.odoo_lines(), [
-                    self.odoo_call('--http-port=<free>', '-d', test, '-i', 'coffee', '--without-demo', '--test-tags', '/coffee',
+                    self.odoo_call('--http-port=<free>', '--gevent-port=<free>', '-d', test, '-i', 'coffee', '--without-demo', '--test-tags', '/coffee',
                                    '--stop-after-init'),
                     self.odoo_call('-d', update, '-i', 'coffee', '--without-demo', '--stop-after-init'),
                     self.odoo_call('-d', update, '-u', 'coffee', '--stop-after-init')])
@@ -138,7 +138,7 @@ class SluggedCheckoutTests(IsolationBase):
             ' '.join(['odoo', str(self.source / 'odoo-bin'), 'shell', '-c',
                       str(self.root / 'dev/odoo.conf'), '-d', 'cc_test_wt_1_coffee']),
             self.odoo_call('-d', 'cc_test_wt_1_demo', '-i', 'coffee', '--with-demo', '--stop-after-init'),
-            self.odoo_call('--http-port=<free>', '-d', 'cc_test_wt_1_other', '-i', 'coffee', '--without-demo', '--test-tags',
+            self.odoo_call('--http-port=<free>', '--gevent-port=<free>', '-d', 'cc_test_wt_1_other', '-i', 'coffee', '--without-demo', '--test-tags',
                            '/coffee', '--stop-after-init')])
 
     def test_update_and_shell_refuse_a_missing_database(self):
@@ -157,7 +157,7 @@ class SluggedCheckoutTests(IsolationBase):
     def test_start_guards_every_database_option_form(self):
         self.env['FAKE_EXISTS'] = '1'
         port = lifecycle.free_port()
-        (self.root / 'dev/odoo.conf').write_text(f'[options]\nhttp_port = {port}\n')
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text(f'http_port = {port}\n'))
         forms = (lambda name: ('-d', name), lambda name: ('-d' + name,),
                  lambda name: ('--database', name), lambda name: ('--database=' + name,),
                  lambda name: ('--datab', name), lambda name: ('--databas=' + name,))
@@ -272,7 +272,7 @@ class MainCheckoutTests(IsolationBase):
     def test_main_names_are_accepted_and_start_without_database_is_unchanged(self):
         self.env['FAKE_EXISTS'] = '1'
         port = lifecycle.free_port()
-        (self.root / 'dev/odoo.conf').write_text(f'[options]\nhttp_port = {port}\n')
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text(f'http_port = {port}\n'))
         for command, args, expected in (
                 ('update-module', ('coffee', 'cc_test_coffee'), self.odoo_call(
                     '-d', 'cc_test_coffee', '-u', 'coffee', '--stop-after-init')),

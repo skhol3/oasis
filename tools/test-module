@@ -13,7 +13,8 @@ if [[ ${1:-} == --help ]]; then
   printf -- '--compact retains stdout/stderr under odoo19/ of the profile'\''s logs directory (default\n'
   printf 'dev/logs); with [tooling].logs, in odoo19/<slug or main>.\n'
   printf 'Tests use private short scratch; browser diagnostics remain under the same directory.\n'
-  printf 'The test server gets its own free --http-port, so it never collides with a running server.\n'
+  printf 'The test server gets its own free --http-port and a free second (gevent) port, so it never\n'
+  printf 'collides with a running server.\n'
   exit 0
 fi
 source "$(dirname "$0")/common.sh"
@@ -79,10 +80,12 @@ if "$compact"; then
   exit "$status"
 fi
 odoo_config_arguments
-# The test server binds its own free port, so a test run never collides with a dev server.
+# The test server binds its own free ports (HTTP, and the second port HttpCase tests use), so a
+# test run never collides with a dev server.
 http_port=$(runtime_state ephemeral-port)
+second_port=$(runtime_state ephemeral-port "$http_port")
 odoo_command=("$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "--http-port=$http_port"
-  -d "$database" -i "$module" --without-demo --test-tags "/$module" --stop-after-init)
+  "$ODOO_SECOND_PORT_OPTION=$second_port" -d "$database" -i "$module" "${ODOO_DEMO_OFF_ARGUMENTS[@]}" --test-tags "/$module" --stop-after-init)
 if "$disposable"; then
   # test_temp.py owns the whole disposable lifecycle and the signals; exec keeps this pid.
   # ODOO19_RUN_RESULT, when set, comes from the --compact parent above (internal).

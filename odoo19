@@ -1,56 +1,10 @@
 #!/usr/bin/env python3
-"""Explicit-project entry point for the installed Odoo 19 tool bundle."""
-import argparse
-import os
+"""Compatibility alias of the `oasis` entry point: it runs the same file, so every command,
+option, exit code and output is identical; help and usage name `odoo19`."""
 from pathlib import Path
+import runpy
 import sys
 
-COMMANDS = (
-    'audit-dependencies', 'bootstrap', 'check-environment', 'create-database',
-    'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases', 'model-info',
-    'module-status', 'odoo-shell', 'start', 'status', 'stop', 'test-module', 'update-module',
-    'verify-module', 'worktree-init',
-)
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        prog='odoo19',
-        description='Run an installed Odoo 19 tool for an explicitly selected project.',
-        epilog=('Commands: ' + ', '.join(COMMANDS) + '\n'
-                'Example: odoo19 --project /absolute/project check-environment --quick'),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument('--project', metavar='/absolute/project',
-                        help='absolute path to an existing project with .odoo19-agent.toml')
-    parser.add_argument('command', nargs='?', help='public command to run')
-    parser.add_argument('arguments', nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
-    args = parser.parse_args()
-    if args.command not in COMMANDS:
-        print(f'ERROR: Unsupported Odoo 19 command: {args.command}', file=sys.stderr)
-        return 2
-    if not args.project or not Path(args.project).is_absolute() or not Path(args.project).is_dir():
-        print('ERROR: --project requires an absolute existing project directory.', file=sys.stderr)
-        return 2
-    root = Path(args.project).resolve()
-    profile = root / '.odoo19-agent.toml'
-    if not profile.is_file():
-        print(f'ERROR: Missing tooling configuration: {profile}', file=sys.stderr)
-        return 2
-    tools = Path(__file__).resolve().parent / 'tools'
-    tool = tools / args.command
-    if not tool.is_file() or not tool.resolve().is_relative_to(tools):
-        print(f'Odoo 19 tools are not installed: {tool}', file=sys.stderr)
-        return 2
-    env = os.environ.copy()
-    env['ODOO19_PROJECT_ROOT'] = str(root)
-    env['ODOO19_ENTRYPOINT'] = str(Path(__file__).resolve())
-    env.pop('ODOO19_TOOLS_DIR', None)
-    # argparse consumes a separator after the command; tool arguments must stay byte-for-byte.
-    arguments = sys.argv[sys.argv.index(args.command, 1) + 1:]
-    os.execve('/bin/bash', ['bash', str(tool), *arguments], env)
-    return 0  # pragma: no cover - execve replaces this process
-
-
-if __name__ == '__main__':
-    raise SystemExit(main())
+sys.dont_write_bytecode = True
+runpy.run_path(str(Path(__file__).resolve().parent / 'oasis'), init_globals={'ALIAS_PATH': __file__},
+               run_name='__main__')

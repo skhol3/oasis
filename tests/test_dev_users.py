@@ -30,6 +30,9 @@ FAKE_ODOO = '''
 import copy, hashlib, json, os
 from pathlib import Path
 from types import SimpleNamespace
+
+# Workspace files must not be group-writable (trust rule); keep test results independent of the caller's umask.
+os.umask(0o022)
 path = Path(os.environ['FAKE_STATE'])
 def read():
     return json.loads(path.read_text()) if path.exists() else {}
@@ -297,6 +300,60 @@ class DevelopmentUsersTests(unittest.TestCase):
                 (2, '', 'ERROR: Invalid development user configuration.\n'))
             self.assertFalse(self.state.exists())
             self.assertFalse(self.commands.exists())
+
+    # Workspace mode: the checkout has no profile; [development] lives in the workspace file.
+    WORKSPACE = '''workspace_version = 1
+odoo_version = '19.0'
+
+[tooling]
+community = 'source/odoo'
+environment = 'environments/example'
+config = 'projects/a project/dev/odoo.conf'
+env_file = 'projects/a project/dev/.env'
+compose = 'projects/a project/dev/compose.yml'
+requirements = 'projects/a project/dev/requirements'
+addons_paths = ['.']
+db_service = 'db'
+dev_prefix = 'cc_dev_'
+test_prefix = 'cc_test_'
+'''
+
+    def use_workspace(self, development=PROFILE):
+        self.profile.unlink()
+        workspace = self.root.parent.parent / 'oasis-workspace.toml'
+        workspace.write_text(self.WORKSPACE + development)
+        return workspace
+
+    def test_workspace_requires_hidden_terminal_without_database_creation(self):
+        self.use_workspace()
+        result = self.invoke('coffee', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+            (2, '', 'ERROR: Password entry requires an interactive terminal.\n'))
+        self.assertFalse(self.state.exists())
+        self.assertFalse(self.commands.exists())
+
+    def test_workspace_rejects_invalid_or_secret_declaration_before_runtime(self):
+        for development in ('', PROFILE + "password = 'not-a-real-secret'\n",
+                            PROFILE.replace('example.group_manager', 'not-an-xml-id')):
+            with self.subTest(development=development):
+                if not self.profile.exists():
+                    self.profile.write_text('')
+                self.use_workspace(development)
+                result = self.invoke('coffee', 'cc_dev_coffee')
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (2, '', 'ERROR: Invalid development user configuration.\n'))
+                self.assertFalse(self.state.exists())
+                self.assertFalse(self.commands.exists())
+
+    def test_workspace_initializes_declared_accounts(self):
+        self.use_workspace()
+        code, output = self.terminal('coffee', 'cc_dev_coffee')
+        self.assertEqual(code, 0, output)
+        self.assertTrue(output.endswith('Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'))
+        state = json.loads(self.state.read_text())
+        self.assertFalse(state['demo'])
+        self.assertEqual(set(state['users']), {'local_admin', 'planner', 'manager'})
+        self.assertEqual(state['users']['manager']['groups'], [1, 4])
 
     def test_missing_group_retains_new_database_without_partial_role_accounts(self):
         self.profile.write_text(self.profile.read_text().replace('example.group_manager', 'example.missing'))

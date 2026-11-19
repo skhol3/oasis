@@ -4,9 +4,11 @@ set -Eeuo pipefail
 # Each checkout runs at most one server, recorded with its pid and HTTP port by
 # tools/runtime_state.py: the main checkout (or a project outside git) uses the odoo.conf
 # http_port (8069 when absent), a linked worktree the first free port after it; an explicit
-# -p/--http-port wins. A linked worktree also gets a free --gevent-port.
+# -p/--http-port wins. A linked worktree also gets a free second (gevent) port, passed with the
+# Odoo series' option ($ODOO_SECOND_PORT_OPTION from config.py) unless one is given.
 # A batch run (--stop-after-init) serves nothing: no server check, no port check, no record;
-# it gets a free ephemeral --http-port like test runs (an explicit port is passed as given).
+# like test runs it gets a free ephemeral --http-port and a distinct free second port (explicit
+# ones are passed as given).
 source "$(dirname "$0")/common.sh"
 require_runtime
 # Guard every database odoo-bin would receive, including optparse's unambiguous
@@ -30,8 +32,8 @@ for (( index = 0; index < ${#arguments[@]}; index++ )); do
       (( index += 1 )) ;;
     -p*) explicit_port=${arguments[index]#-p} ;;
     --http-port=*) explicit_port=${arguments[index]#*=} ;;
-    --gevent-port) explicit_gevent=true; (( index += 1 )) ;;
-    --gevent-port=*) explicit_gevent=true ;;
+    "$ODOO_SECOND_PORT_OPTION") explicit_gevent=true; (( index += 1 )) ;;
+    "$ODOO_SECOND_PORT_OPTION"=*) explicit_gevent=true ;;
     -h|--help|--version) informational=true ;;
     --stop-after-init) batch=true ;;
   esac
@@ -44,8 +46,21 @@ if "$informational"; then
 fi
 if "$batch"; then
   port_arguments=()
+  batch_port=$explicit_port
   if [[ -z "$explicit_port" ]]; then
-    port_arguments+=("--http-port=$(runtime_state ephemeral-port)")
+    batch_port=$(runtime_state ephemeral-port)
+    port_arguments+=("--http-port=$batch_port")
+  fi
+  if ! "$explicit_gevent"; then
+    # Distinct from the HTTP port; an explicit one that is not a valid port (1-65535) excludes
+    # nothing and still reaches Odoo as given.
+    if [[ ! "$batch_port" =~ ^[0-9]{1,5}$ ]] || (( 10#$batch_port < 1 || 10#$batch_port > 65535 )); then
+      batch_port=''
+    else
+      batch_port=$(( 10#$batch_port ))
+    fi
+    second_port=$(runtime_state ephemeral-port ${batch_port:+"$batch_port"})
+    port_arguments+=("$ODOO_SECOND_PORT_OPTION=$second_port")
   fi
   wait_for_database
   exec "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" "$@"
@@ -100,12 +115,12 @@ if [[ "${CHECKOUT_KIND:-}" == linked ]] && ! "$explicit_gevent"; then
   gevent_port=$(odoo_conf_option gevent_port)
   gevent_port=${gevent_port:-8072}
   if ! probe $(( gevent_port + 1 )) $(( gevent_port + 50 )) "$port"; then
-    printf 'No free gevent port from %s to %s; pass --gevent-port or stop another server.\n' \
-      $(( gevent_port + 1 )) $(( gevent_port + 50 )) >&2
+    printf 'No free gevent port from %s to %s; pass %s or stop another server.\n' \
+      $(( gevent_port + 1 )) $(( gevent_port + 50 )) "$ODOO_SECOND_PORT_OPTION" >&2
     exit 2
   fi
   gevent=$found
-  port_arguments+=("--gevent-port=$gevent")
+  port_arguments+=("$ODOO_SECOND_PORT_OPTION=$gevent")
 fi
 wait_for_database
 # $$ survives exec: the record names the Odoo process itself.

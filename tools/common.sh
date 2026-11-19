@@ -7,11 +7,16 @@ if [[ -z ${ODOO19_PROJECT_ROOT:-} || ! -d ${ODOO19_PROJECT_ROOT:-} ]]; then
   return 2
 fi
 _config_output=$(python3 -B "$(dirname "${BASH_SOURCE[0]}")/config.py" "$ODOO19_PROJECT_ROOT") || return $?
+# config.py sets ENTERPRISE_SOURCE only when it is configured: never inherit the caller's.
+unset ENTERPRISE_SOURCE
 eval "$_config_output"
 unset _config_output
+# The Odoo series' demo-off options (tools/odoo_versions.py) as words; config.py shell-quoted them.
+eval "ODOO_DEMO_OFF_ARGUMENTS=($ODOO_DEMO_OFF_ARGS)"
 # Child helpers (test_temp.py -> compact_log_directory) need the checkout to apply the
-# linked-worktree log rule and the [tooling].logs directory.
-export CHECKOUT_KIND CHECKOUT_SLUG CHECKOUT_MAIN_ROOT LOGS_DIR
+# linked-worktree log rule and the [tooling].logs directory; test_temp.py (also through gc.py)
+# removes filestores under DATA_DIR when [tooling].data_dir is set.
+export CHECKOUT_KIND CHECKOUT_SLUG CHECKOUT_MAIN_ROOT LOGS_DIR DATA_DIR
 
 # The single derivation of a checkout's managed database name: the checkout slug goes right
 # after the managed prefix (acme_dev_shop_feature_coffee); the main checkout keeps <prefix><rest>.
@@ -54,8 +59,9 @@ require_python_version() {
     return 1
   fi
   python_version=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")') || return $?
-  if [[ "$python_version" != 3.12 ]]; then
-    printf 'Python 3.12 is required; found %s.\n' "$python_version" >&2
+  # 3.12 for a profile; a workspace's named environment declares its own (config.py).
+  if [[ "$python_version" != "$PYTHON_VERSION" ]]; then
+    printf 'Python %s is required; found %s.\n' "$PYTHON_VERSION" "$python_version" >&2
     return 2
   fi
 }
@@ -79,29 +85,23 @@ require_runtime() {
 
 # The single source of the configuration options of every Odoo command line, set right before
 # Odoo starts: "$PYTHON" "$ODOO_BIN" [shell] "${ODOO_CONFIG_ARGUMENTS[@]}" ...
-# A linked worktree that shares the main checkout's odoo.conf gets that file's addons_path
-# with the main checkout's root replaced by its own root, as --addons-path after -c. The main
-# checkout and a project outside git never read the file: their command line stays -c only.
-# dev_users_runtime.py makes the same decision through odoo_addons_path.linked_addons_path.
-# When git failed in a linked worktree whose profile sets checkout_slug, config.py reports no
-# main checkout: an odoo.conf inside the worktree is used as it is, a shared one is refused.
+# -c <odoo.conf>, then --addons-path and --data-dir when they apply; the decision is
+# odoo_addons_path.config_arguments, which dev_users_runtime.py imports for its in-process
+# Odoo configuration. An odoo.conf without addons_path gets one composed from the Enterprise
+# source, the checkout's addon roots and the Community addons (every kind of checkout). With
+# one, a linked worktree that shares the main checkout's odoo.conf gets that addons_path with
+# the main checkout's root replaced by its own root; the main checkout and a project outside
+# git keep -c alone. [tooling].data_dir adds --data-dir=<DATA_DIR>. When git failed in a linked
+# worktree whose profile sets checkout_slug, config.py reports no main checkout: an odoo.conf
+# inside the worktree is used as it is, a shared one with an addons_path is refused.
 odoo_config_arguments() {
-  ODOO_CONFIG_ARGUMENTS=(-c "$ODOO_CONFIG")
-  if [[ "${CHECKOUT_KIND:-}" != linked ]]; then return 0; fi
-  if [[ -z "${CHECKOUT_MAIN_ROOT:-}" ]]; then
-    if [[ "$ODOO_CONFIG" == "$PROJECT_ROOT/"* ]]; then return 0; fi
-    printf 'ERROR: Cannot move the addons_path of %s to this worktree: git failed, so the main checkout is unknown.\n' \
-      "$ODOO_CONFIG" >&2
-    return 2
-  fi
-  local helper rewritten unchanged
-  helper="$(dirname "${BASH_SOURCE[0]}")/odoo_addons_path.py"
-  rewritten=$(python3 -I -B "$helper" "$ODOO_CONFIG" "$CHECKOUT_MAIN_ROOT" "$PROJECT_ROOT") || return $?
-  # The same normalization without the move: a conf that already names this checkout adds nothing.
-  unchanged=$(python3 -I -B "$helper" "$ODOO_CONFIG" "$PROJECT_ROOT" "$PROJECT_ROOT") || return $?
-  if [[ -n "$rewritten" && "$rewritten" != "$unchanged" ]]; then
-    ODOO_CONFIG_ARGUMENTS+=("--addons-path=$rewritten")
-  fi
+  local output root roots=()
+  while IFS= read -r root; do roots+=("$root"); done <<< "$ADDON_ROOTS"
+  output=$(python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/odoo_addons_path.py" --arguments \
+    "$ODOO_CONFIG" "${CHECKOUT_KIND:-}" "${CHECKOUT_MAIN_ROOT:-}" "$PROJECT_ROOT" "$ODOO_SOURCE" \
+    "${ENTERPRISE_SOURCE:-}" "${DATA_DIR:-}" "${roots[@]}") || return $?
+  # odoo_addons_path.py shell-quoted every word.
+  eval "ODOO_CONFIG_ARGUMENTS=($output)"
 }
 
 # One option of the configured odoo.conf (http_port, gevent_port or http_interface), or nothing.
@@ -238,6 +238,17 @@ lock_fingerprint_arg() {
     fingerprint=${fingerprint#"$PROJECT_ROOT/"}
   fi
   printf '%s\n' "$fingerprint"
+}
+
+# Whether lock.sha256 matches the dependency inputs and locks. Its entries are relative to its
+# own directory (as oasis migrate writes them, or `sha256sum ... > lock.sha256` run there); a
+# legacy lock lists them relative to the project root, so that is checked next.
+dependency_locks_current() {
+  [[ -f "$REQUIREMENTS_DIR/lock.sha256" ]] || return 1
+  if (cd "$REQUIREMENTS_DIR" && sha256sum --check --strict lock.sha256 >/dev/null 2>&1); then
+    return 0
+  fi
+  (cd "$PROJECT_ROOT" && sha256sum --check --strict "$(lock_fingerprint_arg)" >/dev/null 2>&1)
 }
 
 run_audit() {

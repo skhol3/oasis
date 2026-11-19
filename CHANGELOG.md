@@ -3,11 +3,123 @@
 All notable changes to oasis are recorded here. The format follows Keep a Changelog
 (`keepachangelog.com`) and versions follow Semantic Versioning (`semver.org`).
 
-While the version is `0.x`, the contract (the `odoo19` command names and options, the
-`.odoo19-agent.toml` `[tooling]` keys, the database prefix guards and the skill names) may
-still change in a minor release; every such change is listed here under **Changed**.
+While the version is `0.x`, the contract (the `oasis` and `odoo19` command names and
+options, the `.odoo19-agent.toml` `[tooling]` keys, the database prefix guards and the skill
+names) may still change in a minor release; every such change is listed here under **Changed**.
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-11-19
+
+Location and version independence: one `oasis-workspace.toml` per project instead of a
+profile per checkout, a path-free `odoo.conf`, a per-version capability table, the neutral
+`oasis` name (with `odoo19` aliases), `oasis doctor` and `oasis migrate`.
+
+### Fixed
+
+- `oasis migrate --apply` undoes its changes on SIGTERM or SIGHUP, and rewrites `odoo.conf`
+  last, so a process killed earlier leaves a conf that still names its paths.
+- A batch `start --stop-after-init` excludes an explicit `--http-port` from the second free
+  port only when it is a valid port (1-65535); any other value still reaches Odoo as given.
+- `gc` stops (exit 2) when a linked worktree's `oasis-checkout.toml` is untrusted or
+  invalid, instead of guessing that worktree's slug from its folder.
+
+### Added
+
+- Test summary control line `log: <lines> lines, <errors> errors, <warnings> warnings`, with
+  uncapped counts for checking the summary against the full logs.
+- `oasis-workspace.toml`, one per project at its root: a checkout without
+  `.odoo19-agent.toml` (`--project`, or the git top level of the Gentle Shell session
+  directory) reads the nearest one above it, at any depth; a directory with a profile on the
+  way ends the search. It requires `workspace_version = 1` and `odoo_version = '19.0'`, and its
+  `[tooling]` table takes the profile's keys and guards except the derived `version` and
+  `python_version`. Paths resolve from the workspace file's directory, `addons_paths` from each
+  checkout. A checkout with its own profile is read exactly as before.
+- Optional `oasis-checkout.toml` in a workspace checkout: it may set only
+  `[tooling].checkout_slug` and `[tooling].environment`; any other key is refused.
+- `tools/config.py` appends `WORKSPACE_ROOT` (empty for a profile) after `LOGS_DIR`.
+- `worktree-init` in a workspace (main checkout without a profile) only runs
+  `git worktree add` and prints `workspace: <dir>`.
+- The `odoo19` entry point, the `odoo19_*` tools, the prompt context and `/odoo19` accept a
+  checkout without a profile below a workspace file.
+- Example `odoo19-environment/assets/oasis-workspace.example.toml`.
+- `tools/odoo_versions.py`: one capability table per Odoo series (only `19.0`: Python 3.10 to
+  3.14, PostgreSQL 13, `--gevent-port`, demo-off `--without-demo`, `--test-tags` implies
+  `--stop-after-init`); the supported `odoo_version` values come from it.
+- `tools/config.py` appends `ODOO_VERSION`, `ODOO_SECOND_PORT_OPTION`, `ODOO_DEMO_OFF_ARGS`,
+  `ENVIRONMENT_NAME` and `PYTHON_VERSION` after `WORKSPACE_ROOT`, for a profile too; the
+  previous assignments are unchanged.
+- Named environments in a workspace: `[environments.<name>]` with `path` and `python` (within
+  the series' range) instead of `[tooling].environment`; a checkout uses `default` unless its
+  `oasis-checkout.toml` sets `[tooling].environment` to another name.
+- Workspace trust: `oasis-workspace.toml` and `oasis-checkout.toml` are read only when the
+  file and its directory are owned by the current user or root and are not group- or
+  other-writable; otherwise `Refusing untrusted workspace file <file>: <reason>.`
+- In workspace mode, `init-dev-database` reads `[development]` and `lint-module` reads
+  `lint_rcfile` (resolved from the workspace file's directory) from the workspace file, and
+  `gc` takes another worktree's slug from its `oasis-checkout.toml`.
+- Gentle Shell project detection compares real paths (a symlinked session directory resolves
+  to the checkout root) and retries a failed git top-level lookup instead of caching it.
+- Optional `[tooling].data_dir` (profile and workspace): every Odoo launch gets
+  `--data-dir=<path>`, and disposable runs and `gc --apply` remove filestores under it instead
+  of the `odoo.conf` `data_dir`. `tools/config.py` appends `DATA_DIR` (empty when absent) after
+  `PYTHON_VERSION`.
+- Path-free `odoo.conf`: without an `addons_path`, every Odoo launch of the main checkout and
+  linked worktrees gets `--addons-path=<enterprise>,<addon roots>,<community>/addons`;
+  `Cannot compose --addons-path: <path> contains a comma.` stops a root with a comma.
+- `runtime_state.py ephemeral-port` accepts ports to exclude.
+- New public command `oasis doctor` (also `odoo19 doctor`, and `/oasis doctor` or `/odoo19
+  doctor` in Gentle Shell, with no agent tool): a read-only check of the environment contract
+  (configuration, git 2.31 or newer, docker and `docker compose version`, flock, `/proc`, the
+  environment's Python, the Odoo source release, odoo.conf, the compose file's top-level `name:`,
+  the env file, the logs and data directories, the HTTP port). It prints one
+  `PASS|WARN|FAIL <check>[=<value>]` line per check and `doctor_failures=<n>`, exits 1 when
+  `n > 0`, never starts services, connects to a database or prints file contents.
+- New public command `oasis migrate [--workspace <dir>] [--apply]` (also `odoo19 migrate`), user-run:
+  converts the agreeing `.odoo19-agent.toml` of every checkout of the repository into one
+  `oasis-workspace.toml` (0600; paths relative to it, `addons_paths` per checkout) and an
+  `oasis-checkout.toml` for each `checkout_slug`, removes `addons_path` and `data_dir` from
+  `odoo.conf` (`data_dir` moves to `[tooling].data_dir`; the original is kept as
+  `odoo.conf.bak-<stamp>`, 0600), rewrites `lock.sha256` relative to its directory with the same
+  hashes, and renames each profile to `.odoo19-agent.toml.bak-<stamp>`. Without `--apply` it only
+  prints the plan. With it, every checkout must load the same configuration and Odoo addons path
+  and data directory as before; otherwise every change is undone (exit 1). Disagreeing profiles,
+  a `--workspace` that is not above every checkout and an existing workspace file are refused
+  (exit 2). A second run prints `nothing to migrate: <checkout> has no .odoo19-agent.toml`.
+- `/oasis migrate` (and `/odoo19 migrate`) in Gentle Shell: shows the plan and runs
+  `migrate --apply` after confirmation. The bash guard blocks agents from running `migrate`
+  through `oasis` or `odoo19` or its tool script, the dry run included.
+
+### Changed
+
+- `check-environment` (`dependency_locks`) and `bootstrap` check `lock.sha256` from its own
+  directory first, then from the project root as before, so a lock whose entries are relative to
+  its directory passes; a legacy lock keeps passing.
+- Test runs (`test-module`, the tests phase of `verify-module`) and `start --stop-after-init`
+  also get a free second port (`--gevent-port=<port>` on 19.0, distinct from the free
+  `--http-port`), so HttpCase tests never collide with a running server's second port; an
+  explicit one is passed to `start` as given.
+- An `odoo.conf` without `addons_path` used to give `-c <odoo.conf>` alone (Odoo's default
+  addons path); it now gets the composed `--addons-path`. With an `addons_path` and without
+  `[tooling].data_dir`, command lines are unchanged.
+
+- The demo-off option of `test-module`, `install-module` (and so `verify-module`) and
+  `init-dev-database` now comes from the capability table (`ODOO_DEMO_OFF_ARGS`); it is
+  unchanged on 19.0 (`--without-demo`).
+- `start` passes and recognizes the second server port through `ODOO_SECOND_PORT_OPTION`
+  (`--gevent-port` on 19.0); its command lines are unchanged.
+- `require_runtime` compares the interpreter with `PYTHON_VERSION` (3.12 for a profile).
+- Renamed to oasis: the entry point is `oasis` (installed next to `odoo19`), the Gentle Shell
+  tools are `oasis_test_module`, `oasis_find_module`, `oasis_model_info`,
+  `oasis_module_status`, `oasis_check_environment` and `oasis_lint_module`, and the command
+  is `/oasis` (`setup`, `worktree <feature> <branch>`). Aliases are kept: `odoo19` runs the
+  same dispatcher (identical commands, options, exit codes and output; help and usage name
+  the program invoked), `/odoo19` runs the same handler, and the `odoo19_*` tools stay
+  registered with the same implementation but are never activated by the layer. The overlay
+  template names the `oasis_*` tools, so an installed overlay is reported as outdated until
+  `/oasis setup` runs again. The prompt context and the bash guard's messages name `oasis`;
+  the guard also blocks `oasis ... worktree-init`. The install directory and the `odoo19-*`
+  skill names are unchanged.
 
 ## [0.3.0] - 2026-11-18
 
@@ -268,7 +380,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/skhol3/oasis/releases/tag/v0.4.0
 [0.3.0]: https://github.com/skhol3/oasis/releases/tag/v0.3.0
 [0.2.0]: https://github.com/skhol3/oasis/releases/tag/v0.2.0
 [0.1.0]: https://github.com/skhol3/oasis/releases/tag/v0.1.0

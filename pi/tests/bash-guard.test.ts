@@ -28,6 +28,7 @@ test("blocks odoo-bin, dropdb and psql in command position", () => {
 test("allows guarded tools, reading and searching that only mention the names", () => {
   const allowed = [
     "~/.agents/skills/odoo19/odoo19 --project /p test-module coffee",
+    "~/.agents/skills/odoo19/oasis --project /p test-module coffee",
     "dev/scripts/test-module coffee",
     "grep -rn psql tools/",
     "rg odoo-bin README.md",
@@ -46,8 +47,9 @@ test("allows guarded tools, reading and searching that only mention the names", 
 test("blockReason names the program and redirects to the guarded commands", () => {
   const reason = blockReason("psql", "/work/coffee");
   assert.match(reason, /psql/);
-  assert.match(reason, /odoo19 --project \/work\/coffee/);
-  assert.match(reason, /odoo19_test_module/);
+  assert.match(reason, /`oasis --project \/work\/coffee <command>`/);
+  assert.match(reason, /oasis_test_module/);
+  assert.ok(!reason.includes("odoo19"), reason);
 });
 
 test("blocks combined shell flags, control keywords, eval and launchers", () => {
@@ -79,16 +81,26 @@ test("blocks agents from running worktree-init through any launcher, dry run inc
     "python3 -I -B tools/worktree_init.py feat x",
     "bash -c 'odoo19 --project /p worktree-init feat x'",
     "echo $(odoo19 --project /p worktree-init feat x --dry-run)",
+    "~/.agents/skills/odoo19/oasis --project /p worktree-init feat feature/x",
+    "python3 -B /opt/oasis/oasis --project /p worktree-init feat feature/x --dry-run",
+    "cd /p && oasis --project /p worktree-init feat x",
+    "env A=1 python3 oasis --project /p worktree-init feat x",
+    "bash -c 'oasis --project /p worktree-init feat x'",
+    "echo $(oasis --project /p worktree-init feat x --dry-run)",
+    "timeout 60 oasis --project /p worktree-init feat x",
   ];
   for (const command of blocked) {
     assert.equal(blockedProgram(command), "worktree-init", command);
   }
 });
 
-test("allows other odoo19 commands and reading or testing worktree-init", () => {
+test("allows other oasis and odoo19 commands and reading or testing worktree-init", () => {
   const allowed = [
     "odoo19 --project /p status",
     "python3 -B odoo19 --project /p test-module coffee",
+    "oasis --project /p status",
+    "python3 -B oasis --project /p test-module coffee",
+    "grep -n worktree-init oasis",
     "grep -n worktree-init README.md",
     "cat tools/worktree_init.py",
     "python3 -B -m unittest tests.test_worktree_init",
@@ -100,11 +112,60 @@ test("allows other odoo19 commands and reading or testing worktree-init", () => 
   }
 });
 
-test("blockReason for worktree-init sends the user to /odoo19 worktree", () => {
+test("blockReason for worktree-init sends the user to /oasis worktree", () => {
   assert.equal(
     blockReason("worktree-init", "/work/coffee"),
-    "worktree-init creates links to environment files; ask the user to run /odoo19 worktree <feature> " +
+    "worktree-init creates links to environment files; ask the user to run /oasis worktree <feature> " +
       "<branch> in Gentle Shell or the command in a terminal.",
+  );
+});
+
+test("blocks agents from running migrate through the entry points or its tool, dry run included", () => {
+  const blocked = [
+    "oasis --project /p migrate",
+    "oasis --project /p migrate --apply",
+    "oasis --project=/p migrate --workspace /w",
+    "~/.agents/skills/odoo19/oasis --project /p migrate --apply",
+    "~/.agents/skills/odoo19/odoo19 --project /p migrate",
+    "python3 -B /opt/oasis/oasis --project /p migrate --apply",
+    "python3 -B /opt/oasis/odoo19 --project /p migrate",
+    "cd /p && odoo19 --project /p migrate --apply",
+    "env A=1 python3 oasis --project /p migrate",
+    "bash -c 'oasis --project /p migrate --apply'",
+    "echo $(odoo19 --project /p migrate)",
+    "timeout 60 oasis --project /p migrate --apply",
+    "tools/migrate --apply",
+    "bash ~/.agents/skills/odoo19/tools/migrate --apply",
+    "python3 -I -B ~/.agents/skills/odoo19/tools/migrate.py --apply",
+  ];
+  for (const command of blocked) {
+    assert.equal(blockedProgram(command), "migrate", command);
+  }
+});
+
+test("allows other commands that only mention migrate", () => {
+  const allowed = [
+    "oasis --project /p test-module migrate_tools",
+    "oasis --project /p model-info x.y --field migrate",
+    "odoo19 --project /p status",
+    "python3 manage.py migrate",
+    "npx prisma migrate dev",
+    "./migrate.sh",
+    "grep -n migrate tools/migrate.py",
+    "cat tools/migrate.py",
+    "python3 -B -m unittest tests.test_migrate",
+    "git log --grep=migrate",
+  ];
+  for (const command of allowed) {
+    assert.equal(blockedProgram(command), null, command);
+  }
+});
+
+test("blockReason for migrate sends the user to /oasis migrate", () => {
+  assert.equal(
+    blockReason("migrate", "/work/coffee"),
+    "migrate rewrites the project's configuration files; ask the user to run /oasis migrate in Gentle Shell " +
+      "or the command in a terminal.",
   );
 });
 

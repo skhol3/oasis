@@ -6,18 +6,17 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tomllib
 import warnings
 
-from config import InvalidConfig, load
+from config import InvalidConfig, configuration, load
 
 INVALID = 'ERROR: Invalid development user configuration.'
 TERMINAL = 'ERROR: Password entry requires an interactive terminal.'
 
 
 def declaration(root):
-    with (root / '.odoo19-agent.toml').open('rb') as stream:
-        section = tomllib.load(stream).get('development')
+    # [development] of the profile, or of the workspace file when the checkout has none.
+    section = configuration(root)[0].get('development')
     if (not isinstance(section, dict) or set(section) - {'administrator_login', 'users', 'demo_modules'}
             or 'administrator_login' not in section):
         raise ValueError

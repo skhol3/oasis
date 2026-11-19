@@ -1,18 +1,32 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { nextActiveTools, ODOO19_TOOLS } from "../lib/activation.ts";
+import { aliasOf, nextActiveTools, OASIS_TOOLS, TOOL_ALIASES } from "../lib/activation.ts";
 
 const OURS = ["odoo19_a", "odoo19_b"];
 
-test("ODOO19_TOOLS lists the six layer tools once each", () => {
-  assert.deepEqual([...ODOO19_TOOLS].sort(), [
-    "odoo19_check_environment",
-    "odoo19_find_module",
-    "odoo19_lint_module",
-    "odoo19_model_info",
-    "odoo19_module_status",
-    "odoo19_test_module",
+test("OASIS_TOOLS lists the six layer tools once each", () => {
+  assert.deepEqual([...OASIS_TOOLS].sort(), [
+    "oasis_check_environment",
+    "oasis_find_module",
+    "oasis_lint_module",
+    "oasis_model_info",
+    "oasis_module_status",
+    "oasis_test_module",
   ]);
+});
+
+test("each oasis tool has one odoo19 alias, outside the activation table", () => {
+  assert.equal(aliasOf("oasis_test_module"), "odoo19_test_module");
+  assert.deepEqual(TOOL_ALIASES, OASIS_TOOLS.map((name) => name.replace(/^oasis_/, "odoo19_")));
+  assert.ok(TOOL_ALIASES.every((alias) => !OASIS_TOOLS.includes(alias)));
+});
+
+test("the layer never activates or removes the odoo19 aliases", () => {
+  assert.deepEqual(nextActiveTools(["read"], true, OASIS_TOOLS), ["read", ...OASIS_TOOLS]);
+  assert.deepEqual(
+    nextActiveTools(["odoo19_test_module", "oasis_test_module", "read"], false, OASIS_TOOLS),
+    ["odoo19_test_module", "read"],
+  );
 });
 
 test("an Odoo project adds ours once after the other tools, keeping their order", () => {

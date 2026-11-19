@@ -34,6 +34,9 @@ ignored entry of the main checkout's dev/ is linked, except dev/odoo.conf (copie
 dev/runtime (a new empty 0700 directory); the profile's env_file is linked to the main
 checkout's file.
 
+Workspace mode: when the main checkout has no .odoo19-agent.toml and an oasis-workspace.toml
+is found above it, only `git worktree add` runs; the new worktree reads the same workspace.
+
 Existing paths are never replaced. --dry-run prints the same plan and changes nothing.
 --resume accepts an existing folder that is a worktree of this repository on <branch> and
 adds only the missing items.
@@ -213,6 +216,24 @@ def shared_config(config, main, root, new, values):
     return Path(values['ODOO_CONFIG']).parent
 
 
+def workspace_dir(config, main, new):
+    """The workspace directory in workspace mode, or None.
+
+    Workspace mode: the main checkout has no profile and a workspace file is found above it.
+    The new worktree then needs nothing but `git worktree add`, provided it finds the same
+    workspace file, so that file must be in a directory above the new folder.
+    """
+    if (main / PROFILE).is_file():
+        return None
+    workspace = config.find_workspace(main)
+    if workspace is None:
+        return None
+    if not new.is_relative_to(workspace.parent):
+        raise Refused(f'The new worktree {new} would not be under the workspace {workspace.parent}; '
+                      'prepare the worktree by hand.')
+    return workspace.parent
+
+
 def profile_items(main, commit):
     """The profile copy, when the main checkout's profile is untracked and not in the commit."""
     profile = main / PROFILE
@@ -390,12 +411,17 @@ def main():
         add = ['worktree', 'add', '-b', branch, str(new), commit]
         branch_line = f'{branch} (created from HEAD {commit[:12]})'
 
+    shared = workspace = None
     try:
-        shared = shared_config(config, main_root, root, new, values)
-        if shared is None:
-            items = plan_items(main_root, new, commit, env_path(root))
+        workspace = workspace_dir(config, main_root, new)
+        if workspace is not None:
+            items = []
         else:
-            items = profile_items(main_root, commit)
+            shared = shared_config(config, main_root, root, new, values)
+            if shared is None:
+                items = plan_items(main_root, new, commit, env_path(root))
+            else:
+                items = profile_items(main_root, commit)
     except (Refused, config.InvalidConfig) as exc:
         return fail(str(exc))
     except OSError as exc:
@@ -404,6 +430,8 @@ def main():
     header = [f'worktree: {new}', f'branch: {branch_line}', f'slug: {feature}']
     if shared is not None:
         header.append(f'shared config: {shared}')
+    if workspace is not None:
+        header.append(f'workspace: {workspace}')
     if dry_run:
         for line in header:
             print(line)

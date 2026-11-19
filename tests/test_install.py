@@ -93,6 +93,30 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(result.stdout, '')
         self.assertEqual((self.target / 'keep.txt').read_text(), 'old')
 
+    def test_installs_both_entry_points_executable(self):
+        # A fixture repository committing the working-tree entry points: `oasis` and its alias `odoo19`.
+        repo = self.scratch / 'repo'
+        repo.mkdir()
+        for name in ('install.sh', 'package.json', 'oasis', 'odoo19'):
+            (repo / name).write_bytes((ROOT / name).read_bytes())
+            (repo / name).chmod(0o755 if name != 'package.json' else 0o644)
+        git = ['git', '-C', str(repo), '-c', 'user.name=t', '-c', 'user.email=t@example.invalid']
+        subprocess.run([*git, 'init', '-q'], check=True)
+        subprocess.run([*git, 'add', '.'], check=True)
+        subprocess.run([*git, 'commit', '-qm', 'fixture'], check=True)
+        result = subprocess.run([str(repo / 'install.sh'), '--target', str(self.target)],
+                                capture_output=True, text=True, env=self.env, cwd=self.scratch)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for program in ('oasis', 'odoo19'):
+            with self.subTest(program=program):
+                self.assertTrue(os.access(self.target / program, os.X_OK))
+                shown = subprocess.run([str(self.target / program), '--help'], capture_output=True, text=True,
+                                       env=dict(self.env, PYTHONDONTWRITEBYTECODE='1'), cwd=self.scratch)
+                self.assertEqual((shown.returncode, shown.stderr), (0, ''))
+                self.assertTrue(shown.stdout.startswith(f'usage: {program} '), shown.stdout)
+        self.assertEqual(sorted(p.name for p in self.target.iterdir()),
+                         ['.oasis-install.json', 'oasis', 'odoo19', 'package.json'])
+
     def test_refuses_target_inside_repository(self):
         inside = ROOT / 'tmp-install-target'
         result = self.run_install('--target', str(inside))

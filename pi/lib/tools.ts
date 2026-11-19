@@ -1,4 +1,4 @@
-// Argument building and result formatting for the odoo19 tools. No Pi imports.
+// Argument building and result formatting for the oasis tools. No Pi imports.
 import { limitLines, summarizeTestLog, type SummaryOptions } from "./output.ts";
 
 export interface CoreResult {

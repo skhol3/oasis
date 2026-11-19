@@ -10,7 +10,9 @@ Usage:
                                              first port in [first, last] free on the interface
                                              (exit 1 when none; exit 2 and `Cannot bind port
                                              <p>: <reason>.` when a bind fails otherwise)
-  runtime_state.py ephemeral-port            a free ephemeral port on 127.0.0.1
+  runtime_state.py ephemeral-port [<excluded>...]
+                                             a free ephemeral port on 127.0.0.1, none of the
+                                             excluded ones (a test run's second port)
   runtime_state.py run-name <namespace> <module>
                                              a new disposable test database name (see below)
   runtime_state.py run-lock <project_root> <database> <pid>
@@ -545,10 +547,15 @@ def free_port(interface, first, last, excluded):
     return None
 
 
-def ephemeral_port():
-    with socket.socket() as probe:
-        probe.bind(('127.0.0.1', 0))
-        return probe.getsockname()[1]
+def ephemeral_port(excluded=()):
+    # The system may hand out an excluded port again; ask until it does not.
+    for _ in range(100):
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', 0))
+            port = probe.getsockname()[1]
+        if port not in excluded:
+            return port
+    raise PortError('Cannot find a free ephemeral port.')
 
 
 def integer(value):
@@ -580,8 +587,8 @@ def main(argv):
                 return 1
             print(port)
             return 0
-        if command == 'ephemeral-port' and not args:
-            print(ephemeral_port())
+        if command == 'ephemeral-port':
+            print(ephemeral_port({integer(a) for a in args}))
             return 0
         if command == 'run-name' and len(args) == 2:
             print(run_database_name(args[0], args[1]))

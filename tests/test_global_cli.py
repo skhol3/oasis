@@ -9,11 +9,13 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / 'odoo19'
-PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database',
-          'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases', 'model-info',
-          'module-status', 'odoo-shell', 'start', 'status', 'stop', 'test-module', 'update-module',
-          'verify-module', 'worktree-init')
+CLI = ROOT / 'oasis'
+# Entry points sharing one dispatcher: `oasis`, and `odoo19` kept as an alias.
+PROGRAMS = ('oasis', 'odoo19')
+PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
+          'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases',
+          'migrate', 'model-info', 'module-status', 'odoo-shell', 'start', 'status', 'stop', 'test-module',
+          'update-module', 'verify-module', 'worktree-init')
 
 
 class GlobalCliTests(unittest.TestCase):
@@ -27,7 +29,8 @@ class GlobalCliTests(unittest.TestCase):
         self.bundle = self.temp / 'bundle'
         tools = self.bundle / 'tools'
         tools.mkdir(parents=True)
-        shutil.copyfile(CLI, self.bundle / 'odoo19')
+        for program in PROGRAMS:
+            shutil.copyfile(ROOT / program, self.bundle / program)
         self.project = self.temp / 'a project'
         self.project.mkdir()
         (self.project / '.odoo19-agent.toml').write_text('[tooling]\nversion = "19.0"\n')
@@ -43,11 +46,11 @@ class GlobalCliTests(unittest.TestCase):
         for name in PUBLIC:
             (tools / name).write_text(self.fake)
 
-    def invoke(self, *args, input=''):
+    def invoke(self, *args, input='', program='oasis'):
         env = {**os.environ, 'FAKE_LOG': str(self.log), 'PYTHONDONTWRITEBYTECODE': '1',
                'ODOO19_PROJECT_ROOT': str(self.temp / 'wrong'),
                'ODOO19_TOOLS_DIR': str(self.temp / 'wrong')}
-        return subprocess.run([sys.executable, '-B', str(self.bundle / 'odoo19'), *args],
+        return subprocess.run([sys.executable, '-B', str(self.bundle / program), *args],
                               input=input, text=True, capture_output=True, cwd=self.temp, env=env)
 
     def assert_no_calls(self, result, stderr):
@@ -66,6 +69,37 @@ class GlobalCliTests(unittest.TestCase):
         [listed] = [line for line in result.stdout.splitlines() if line.startswith('Commands: ')]
         self.assertEqual(listed.removeprefix('Commands: ').split(', '), list(PUBLIC))
         self.assertFalse(self.log.exists())
+
+    def test_both_entry_points_dispatch_identically(self):
+        # Every command, option, exit code and output is the same; help names the invoked program.
+        observed = {}
+        for program in PROGRAMS:
+            with self.subTest(program=program):
+                self.log.unlink(missing_ok=True)
+                help_text = self.invoke('--help', program=program)
+                self.assertEqual((help_text.returncode, help_text.stderr), (0, ''))
+                self.assertTrue(help_text.stdout.startswith(f'usage: {program} [-h] [--project /absolute/project]'),
+                                help_text.stdout)
+                self.assertIn(f'Example: {program} --project /absolute/project check-environment --quick',
+                              help_text.stdout)
+                usage = self.invoke('--bogus', program=program)
+                self.assertEqual(usage.returncode, 2)
+                self.assertTrue(usage.stderr.startswith(f'usage: {program} '), usage.stderr)
+                runs = [self.invoke('--project', str(self.project), 'odoo-shell', '--', 'two words',
+                                    input='print(42)\n', program=program),
+                        self.invoke('--project', str(self.project), 'unknown', program=program),
+                        self.invoke('status', program=program)]
+                observed[program] = (
+                    help_text.stdout.replace(f'usage: {program} ', 'usage: PROG ', 1)
+                    .replace(f'Example: {program} ', 'Example: PROG '),
+                    usage.stderr.replace(program, 'PROG'),
+                    [(run.returncode, run.stdout, run.stderr) for run in runs],
+                    json.loads(self.log.read_text()))
+        self.assertEqual(observed['oasis'], observed['odoo19'])
+        self.assertEqual(observed['oasis'][2], [
+            (17, 'delegated\n', 'delegated error\n'),
+            (2, '', 'ERROR: Unsupported Odoo 19 command: unknown\n'),
+            (2, '', 'ERROR: --project requires an absolute existing project directory.\n')])
 
     def test_dispatch_preserves_argv_stdin_exit_and_explicit_root(self):
         result = self.invoke('--project', str(self.project), 'odoo-shell', '--', '--project',
@@ -103,6 +137,23 @@ class GlobalCliTests(unittest.TestCase):
         self.assert_no_calls(self.invoke('--project', str(self.project), 'status'),
                              f'ERROR: Missing tooling configuration: {self.project / ".odoo19-agent.toml"}\n')
 
+    def test_checkout_below_a_workspace_file_dispatches_without_profile(self):
+        shutil.copyfile(ROOT / 'tools' / 'config.py', self.bundle / 'tools' / 'config.py')
+        (self.project / '.odoo19-agent.toml').unlink()
+        checkout = self.project / 'codigo' / 'shop'
+        checkout.mkdir(parents=True)
+        (self.project / 'oasis-workspace.toml').write_text('workspace_version = 1\n')
+        result = self.invoke('--project', str(checkout), 'status', '--quick')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (17, 'delegated\n', 'delegated error\n'))
+        self.assertEqual(json.loads(self.log.read_text()), {
+            'argv': ['--quick'], 'root': str(checkout), 'stdin': '', 'tool': 'status'})
+        self.log.unlink()
+        # A profile on the way up ends the search: the checkout is neither legacy nor in a workspace.
+        (self.project / 'codigo' / '.odoo19-agent.toml').write_text('[tooling]\n')
+        self.assert_no_calls(self.invoke('--project', str(checkout), 'status'),
+                             f'ERROR: Missing tooling configuration: {checkout / ".odoo19-agent.toml"}\n')
+
     def test_rejects_unknown_internal_and_pathlike_before_dispatch(self):
         for name in ('unknown', 'config.py', 'common.sh', 'audit_dependencies.py',
                      '../tools/status', '/bin/bash', 'status/../start'):
@@ -118,7 +169,7 @@ class GlobalCliTests(unittest.TestCase):
         readme = (ROOT / 'README.md').read_text()
         environment = (ROOT / 'odoo19-environment/SKILL.md').read_text()
         lifecycle = (ROOT / 'odoo19-module-lifecycle/SKILL.md').read_text()
-        example = ('~/.agents/skills/odoo19/odoo19 --project /absolute/project '
+        example = ('~/.agents/skills/odoo19/oasis --project /absolute/project '
                    'check-environment --quick')
         self.assertIn(example, readme)
         self.assertIn(example, environment)

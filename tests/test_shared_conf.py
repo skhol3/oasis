@@ -134,7 +134,7 @@ class SharedConfTests(unittest.TestCase):
 
     def expected(self, dev, test, ports, **kwargs):
         return {
-            'test-module': [self.odoo_call('--http-port=<free>', '-d', test, '-i', 'coffee', '--without-demo',
+            'test-module': [self.odoo_call('--http-port=<free>', '--gevent-port=<free>', '-d', test, '-i', 'coffee', '--without-demo',
                                            '--test-tags', '/coffee', '--stop-after-init', **kwargs)],
             'install-module': [self.odoo_call('-d', dev, '-i', 'coffee', '--without-demo',
                                               '--stop-after-init', **kwargs)],
@@ -157,7 +157,7 @@ class SharedConfTests(unittest.TestCase):
     def test_compact_and_verify_runs_of_a_linked_worktree_pass_the_addons_path(self):
         addons = f'{self.enterprise},{self.linked},{self.odoo_addons}'
         test = 'cc_test_wt_coffee_r<run>'
-        tests = self.odoo_call('--http-port=<free>', '-d', test, '-i', 'coffee', '--without-demo', '--test-tags',
+        tests = self.odoo_call('--http-port=<free>', '--gevent-port=<free>', '-d', test, '-i', 'coffee', '--without-demo', '--test-tags',
                                '/coffee', '--stop-after-init', addons=addons)
         result = self.invoke(self.linked, 'test-module', '--compact', 'coffee')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
@@ -182,15 +182,24 @@ class SharedConfTests(unittest.TestCase):
             '-d', 'cc_dev_wt_coffee', '-i', 'coffee', '--without-demo', '--stop-after-init',
             addons=addons)])
 
-    def test_no_main_checkout_item_or_no_addons_path_adds_no_flag(self):
-        for content in (f'[options]\naddons_path = {self.enterprise},/srv/oca\n',
-                        '[options]\ndb_host = db\n', '[other]\naddons_path = /x\n'):
+    def test_no_main_checkout_item_adds_no_flag(self):
+        self.conf.write_text(f'[options]\naddons_path = {self.enterprise},/srv/oca\n')
+        result = self.invoke(self.linked, 'install-module', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(self.odoo_lines(), [self.odoo_call(
+            '-d', 'cc_dev_wt_coffee', '-i', 'coffee', '--without-demo', '--stop-after-init')])
+
+    def test_no_addons_path_gets_the_composed_one_instead_of_a_rewrite(self):
+        # A conf without an [options] addons_path is path-free: oasis composes the option
+        # (test_path_free_conf).
+        for content in ('[options]\ndb_host = db\n', '[other]\naddons_path = /x\n'):
             with self.subTest(content=content):
                 self.conf.write_text(content)
                 result = self.invoke(self.linked, 'install-module', 'coffee')
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
                 self.assertEqual(self.odoo_lines(), [self.odoo_call(
-                    '-d', 'cc_dev_wt_coffee', '-i', 'coffee', '--without-demo', '--stop-after-init')])
+                    '-d', 'cc_dev_wt_coffee', '-i', 'coffee', '--without-demo', '--stop-after-init',
+                    addons=f'{self.linked},{self.odoo_addons}')])
 
     def test_linked_worktree_with_its_own_conf_adds_no_flag(self):
         profile = self.linked / '.odoo19-agent.toml'
