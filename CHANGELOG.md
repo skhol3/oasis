@@ -18,6 +18,8 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Added
 
+- Test summary control line `log: <lines> lines, <errors> errors, <warnings> warnings`, with
+  uncapped counts for checking the summary against the full logs.
 - `oasis-workspace.toml`, one per project at its root: a checkout without
   `.odoo19-agent.toml` (`--project`, or the git top level of the Gentle Shell session
   directory) reads the nearest one above it, at any depth; a directory with a profile on the
@@ -58,6 +60,13 @@ names) may still change in a minor release; every such change is listed here und
   linked worktrees gets `--addons-path=<enterprise>,<addon roots>,<community>/addons`;
   `Cannot compose --addons-path: <path> contains a comma.` stops a root with a comma.
 - `runtime_state.py ephemeral-port` accepts ports to exclude.
+- New public command `oasis doctor` (also `odoo19 doctor`, and `/oasis doctor` or `/odoo19
+  doctor` in Gentle Shell, with no agent tool): a read-only check of the environment contract
+  (configuration, git 2.31 or newer, docker and `docker compose version`, flock, `/proc`, the
+  environment's Python, the Odoo source release, odoo.conf, the compose file's top-level `name:`,
+  the env file, the logs and data directories, the HTTP port). It prints one
+  `PASS|WARN|FAIL <check>[=<value>]` line per check and `doctor_failures=<n>`, exits 1 when
+  `n > 0`, never starts services, connects to a database or prints file contents.
 
 ### Changed
 

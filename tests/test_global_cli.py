@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'oasis'
 # Entry points sharing one dispatcher: `oasis`, and `odoo19` kept as an alias.
 PROGRAMS = ('oasis', 'odoo19')
-PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database',
+PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
           'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases', 'model-info',
           'module-status', 'odoo-shell', 'start', 'status', 'stop', 'test-module', 'update-module',
           'verify-module', 'worktree-init')

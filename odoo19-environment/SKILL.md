@@ -32,7 +32,7 @@ A checkout without `.odoo19-agent.toml` may read the nearest `oasis-workspace.to
 
 ## Execution Steps
 
-1. Read project instructions and the capability contract; identify authorized paths and wrappers or the explicit global entry point (`~/.agents/skills/odoo19/oasis --project /absolute/project check-environment --quick`). Do not assume a quick check is strictly read-only: a shimmed uv version probe can trigger mise installation.
+1. Read project instructions and the capability contract; identify authorized paths and wrappers or the explicit global entry point (`~/.agents/skills/odoo19/oasis --project /absolute/project check-environment --quick`). Run the read-only `doctor` command first. Do not assume a quick check is strictly read-only: a shimmed uv version probe can trigger mise installation.
 2. Inspect permitted dependency declarations without printing credentials or runtime configuration.
 3. Run only authorized diagnostics; report drift, missing capabilities, and actions not taken.
 

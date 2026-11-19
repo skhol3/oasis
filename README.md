@@ -31,12 +31,12 @@ gentle-shell install git:github.com/skhol3/oasis
 
 Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shell and Pi already scan. The layer adds:
 
-- Tools `oasis_test_module`, `oasis_module_status`, `oasis_check_environment` and `oasis_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`, or `<logs>/odoo19/<main|slug>/` with `[tooling].logs`. Other output is capped at 60 lines (head and tail kept). Test summaries also carry up to five `stats:` lines (tests, time, queries per module) and one `warnings:` line grouping repeated warnings by logger and message.
+- Tools `oasis_test_module`, `oasis_module_status`, `oasis_check_environment` and `oasis_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`, or `<logs>/odoo19/<main|slug>/` with `[tooling].logs`. Other output is capped at 60 lines (head and tail kept). Test summaries also carry up to five `stats:` lines (tests, time, queries per module) and one `warnings:` line grouping repeated warnings by logger and message. They always end with a control line, `log: <lines> lines, <errors> errors, <warnings> warnings`, counted over the full stdout and stderr logs and never capped: lines match `cat stdout.log stderr.log | wc -l`, errors are ERROR/CRITICAL lines except `odoo.tests.result`, and warnings are WARNING lines except `odoo.tests.*`, so the summary can be checked against the logs.
 - Tool `oasis_find_module`: maps a functional name to technical module names by matching the query words against the technical name and the manifest `name`, `summary` and `category` in the profile's addon roots, so the agent needs no `ls` or `grep`.
 - Tool `oasis_model_info`: wraps `oasis model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
 - Prompt context naming the `oasis_*` tools when `.odoo19-agent.toml` is found at or above the working directory, or, without one, an `oasis-workspace.toml` (see *Workspace file*; the project root is then the git top level of the working directory).
 - A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. In every session it also blocks the agent from running `worktree-init` (through `oasis` or `odoo19`, `tools/worktree-init` or `worktree_init.py`, `--dry-run` included), which only the user runs. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package.
-- `/oasis`: a quick status with the profile, addon modules, configured databases, git worktree, checkout identity and this checkout's server (`server: running on port <port> (pid <pid>)` or `server: stopped`, read from the runtime record). It never starts services or queries databases. `/oasis setup` installs the subagent overlay (see Subagents). `/oasis worktree <feature> <branch>` creates a prepared linked worktree after confirmation (see *Preparing a linked worktree*).
+- `/oasis`: a quick status with the profile, addon modules, configured databases, git worktree, checkout identity and this checkout's server (`server: running on port <port> (pid <pid>)` or `server: stopped`, read from the runtime record). It never starts services or queries databases. `/oasis setup` installs the subagent overlay (see Subagents). `/oasis doctor` shows the `oasis doctor` report (see *Checking the environment*); there is no agent tool for it. `/oasis worktree <feature> <branch>` creates a prepared linked worktree after confirmation (see *Preparing a linked worktree*).
 
 The `oasis_*` tools are active only in sessions started inside an Odoo 19 project (a directory with `.odoo19-agent.toml` or `oasis-workspace.toml` at or above it), so other projects pay no tokens for them; `/oasis` is available everywhere.
 
@@ -60,6 +60,33 @@ Gentle Shell subagents (for example `gentle-ai-worker` and `gentle-ai-verify`) r
 2. For direct invocation, install the bundle's `oasis` executable at `~/.agents/skills/odoo19/oasis` (owner makes it executable). `odoo19`, next to it, is a compatibility alias: the same dispatcher, with every command, option, exit code and output identical; only help and usage name the program invoked. Supply the absolute project directory explicitly; no project wrapper, PATH link, or shell configuration change is required. For example: `~/.agents/skills/odoo19/oasis --project /absolute/project check-environment --quick`. Run `~/.agents/skills/odoo19/oasis --help` without a project to see the fixed public commands. The entry point selects only packaged `tools/` commands; it does not replace the profile guards or grant operational consent.
 3. Alternatively, if the project wants legacy local CLI entrypoints and explicitly authorizes them, review the 18 [project wrapper templates](project-wrappers/common.sh) and copy **only** the selected wrappers to its approved `dev/scripts/` directory. The tested templates derive the project root from that directory depth; another layout requires an explicitly validated adaptation. Do not overwrite existing scripts without separate approval. The wrappers locate global tools at `~/.agents/skills/odoo19/tools`; `ODOO19_TOOLS_DIR` is an explicit test/development override for wrappers, not a global entry point override. Missing installed tools fail clearly. Installing this package does not install wrappers into any project.
 4. Keep project configuration, dependency inputs/locks, Compose files, environment variables, data, and runtime/virtualenv **local to the project**. This bundle does not create an environment, start services, install dependencies, access external source trees, or grant permission to operate on databases. `bootstrap --apply`, full diagnostics, and database lifecycle commands need separate explicit consent; no profile or skill discovery implies it.
+
+## Checking the environment
+
+Two commands, for two questions:
+
+- `oasis --project /absolute/project doctor` asks *can oasis work here at all?* It checks the environment contract up front and is read-only: it never starts a service, never connects to a database and never prints file contents. In Gentle Shell, `/oasis doctor` (or `/odoo19 doctor`) shows the same report.
+- `check-environment [--quick|--full]` asks *does the project environment match its locks?* It checks the requirement files and their fingerprint, the virtualenv, uv and `compose config`; `--full` also checks installed packages, audits dependencies and queries PostgreSQL.
+
+`doctor` prints one `PASS|WARN|FAIL <check>[=<value>]` line per check, then `doctor_failures=<n>`, and exits 1 when `n > 0` (a `WARN` does not count), else 0. A check that needs another one is left out when that one failed.
+
+| Check | Passes when | Otherwise |
+| --- | --- | --- |
+| `configuration` | the profile or workspace file loads; the value is `legacy` or `workspace` | `FAIL configuration=<error>`; the checks after `proc` are left out |
+| `odoo_version` | always, when the configuration loads (only supported series load) | |
+| `git` | `git --version` reports 2.31 or newer | `FAIL git=missing`, `FAIL git=<version> minimum=2.31` |
+| `docker`, `docker_compose` | `docker` is on PATH and `docker compose version` succeeds | `FAIL docker=missing` (no `docker_compose` line), `FAIL docker_compose=unavailable` |
+| `flock` | `flock` is on PATH | `WARN flock=missing`: the database service starts without the cross-checkout lock |
+| `proc` | `/proc` is mounted | `WARN proc=missing`: server records cannot tell a live server |
+| `python` | the environment's Python exists and reports the expected version (3.12, or the named environment's) | `FAIL python=missing`, `FAIL python=<found> expected=<version>` |
+| `odoo_release` | `odoo/release.py` of the Odoo source declares `odoo_version` | `FAIL odoo_release=<found> expected=<version>` |
+| `odoo_conf` | odoo.conf exists and parses | `FAIL odoo_conf=missing\|unreadable\|invalid`; in a workspace checkout, `WARN odoo_conf=addons_path,data_dir` (the options it still holds that oasis passes on the command line) |
+| `compose` | the compose file declares a top-level `name:` | `FAIL compose=missing`, `FAIL compose=missing_top_level_name` |
+| `env_file` | the env file exists (never opened) | `FAIL env_file=missing` |
+| `logs_dir`, `data_dir` | the directory, or its nearest existing parent, is writable; `data_dir` only with `[tooling].data_dir` | `FAIL logs_dir=not_writable` |
+| `http_port` | the port `start` would use is free, or is this checkout's running server (`server=this_checkout`) | `WARN http_port=<port> in_use` |
+
+Tools are found on PATH, as `command -v` finds them, never through a tool manager; the only programs doctor runs are `git --version`, `docker compose version` and the environment's Python (for its version). A tool-manager shim on PATH can still install on first use (see *Tool-manager side effects*). No agent tool runs doctor.
 
 ## Workspace file
 

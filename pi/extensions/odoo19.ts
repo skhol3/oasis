@@ -25,6 +25,8 @@ const MAX_LINES = 60;
 const MODEL_INFO_MAX_LINES = 200;
 const TEST_TIMEOUT_MS = 60 * 60 * 1000;
 const TOOL_TIMEOUT_MS = 10 * 60 * 1000;
+// doctor's probes (git, docker compose, the environment's Python) each stop after 20 s.
+const DOCTOR_TIMEOUT_MS = 2 * 60 * 1000;
 
 type Result = { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
 type ToolDefinition = Parameters<ExtensionAPI["registerTool"]>[0];
@@ -185,10 +187,28 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     }
   }
 
-  const USAGE = "Usage: /oasis [setup | worktree <feature> <branch>]";
+  // User-run only (no agent tool): `oasis doctor`, read-only, shown like the status.
+  async function doctor(ctx: { cwd: string; ui: { notify: (message: string, level?: "info" | "warning" | "error") => void } }):
+    Promise<void> {
+    const root = await projectRoot(ctx.cwd);
+    if (!root) {
+      ctx.ui.notify(`Not an Odoo 19 project: ${notProject(ctx.cwd)}`, "warning");
+      return;
+    }
+    try {
+      const result = await run(root, ["doctor"], undefined, DOCTOR_TIMEOUT_MS);
+      const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
+      pi.sendMessage({ customType: "oasis-doctor", content: output || `exit ${result.code}`, display: true });
+    } catch (error) {
+      ctx.ui.notify(`oasis doctor failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+  }
+
+  const USAGE = "Usage: /oasis [setup | doctor | worktree <feature> <branch>]";
   const COMMAND_DESCRIPTION =
     "Odoo 19 project status: profile, addon modules, databases, git worktree and this checkout's server; " +
-    "`setup` installs the subagent overlay; `worktree <feature> <branch>` creates a prepared linked worktree";
+    "`setup` installs the subagent overlay; `doctor` checks the environment contract (read-only); " +
+    "`worktree <feature> <branch>` creates a prepared linked worktree";
 
   // `/oasis`, and `/odoo19` as its alias: one handler, the same subcommands.
   const command: Parameters<ExtensionAPI["registerCommand"]>[1] = {
@@ -197,6 +217,10 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       const argument = (args ?? "").trim();
       if (argument === "setup") {
         await setup(ctx);
+        return;
+      }
+      if (argument === "doctor") {
+        await doctor(ctx);
         return;
       }
       const words = argument.split(/\s+/);
