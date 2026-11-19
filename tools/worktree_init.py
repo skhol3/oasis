@@ -183,13 +183,23 @@ def shared_config(config, main, root, new, values):
     copied profile must then resolve them to the same absolute paths from the new folder.
     """
     source = main if (main / PROFILE).is_file() else root
+    profile = source / PROFILE
+    # The profile that gets copied, read once; a missing key names that file, not a KeyError.
+    try:
+        with profile.open('rb') as stream:
+            tooling = tomllib.load(stream).get('tooling')
+    except tomllib.TOMLDecodeError as exc:
+        raise Refused(f'Invalid tooling configuration: {profile}') from exc
+    if not isinstance(tooling, dict):
+        raise Refused(f'Invalid tooling configuration: {profile}')
+    for key in SHARED_KEYS:
+        if not isinstance(tooling.get(key), str) or not tooling[key]:
+            raise Refused(f'{profile} does not set [tooling].{key}; prepare the worktree by hand.')
     if source != root:
         values = config.load(source)
     paths = [Path(values[config.PATHS[key]]) for key in SHARED_KEYS]
     if any(path.is_relative_to(checkout) for path in paths for checkout in (main, root)):
         return None
-    with (source / PROFILE).open('rb') as stream:
-        tooling = tomllib.load(stream)['tooling']
     checked = list(zip(SHARED_KEYS, paths))
     if 'logs' in tooling:
         # The copied profile keeps [tooling].logs: every checkout must share that directory.

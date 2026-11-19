@@ -253,6 +253,39 @@ class SharedConfTests(unittest.TestCase):
                 self.assertEqual(self.odoo_lines(), [self.odoo_call(
                     '-d', 'cc_dev_x', '--stop-after-init', addons=addons)])
 
+    def break_git_with_profile_slug(self):
+        """git fails in the linked worktree, whose profile sets checkout_slug (main checkout unknown)."""
+        profile = self.linked / '.odoo19-agent.toml'
+        profile.write_text(profile.read_text().replace(
+            "test_prefix = 'cc_test_'\n", "test_prefix = 'cc_test_'\ncheckout_slug = 'wt'\n"))
+        fake = self.bindir / 'git'
+        fake.write_text('#!/bin/sh\necho "fatal: broken" >&2\nexit 1\n')
+        fake.chmod(0o755)
+
+    def test_without_git_a_shared_conf_is_not_used_with_the_main_checkout_addons(self):
+        self.break_git_with_profile_slug()
+        message = (f'ERROR: Cannot move the addons_path of {self.conf} to this worktree: git failed, '
+                   'so the main checkout is unknown.\n')
+        for command, args in (('test-module', ('coffee',)), ('start', ()),
+                              ('odoo-shell', ('cc_dev_wt_coffee',)), ('install-module', ('coffee',))):
+            with self.subTest(command=command):
+                self.env['FAKE_EXISTS'] = '1'
+                result = self.invoke(self.linked, command, *args, input='')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', message))
+                self.assertEqual(self.odoo_lines(), [])
+
+    def test_without_git_an_own_conf_runs_unchanged(self):
+        self.break_git_with_profile_slug()
+        profile = self.linked / '.odoo19-agent.toml'
+        profile.write_text(profile.read_text().replace("'../config/odoo.conf'", "'dev/odoo.conf'"))
+        own = self.linked / 'dev/odoo.conf'
+        own.parent.mkdir()
+        own.write_text(f'[options]\naddons_path = {self.linked}\n')
+        result = self.invoke(self.linked, 'install-module', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(self.odoo_lines(), [self.odoo_call(
+            '-d', 'cc_dev_wt_coffee', '-i', 'coffee', '--without-demo', '--stop-after-init', conf=own)])
+
     def test_malformed_conf_leaves_the_main_checkout_unchanged(self):
         self.conf.write_text(f'addons_path = {self.main}\n')
         result = self.invoke(self.main, 'install-module', 'coffee')
@@ -359,6 +392,16 @@ class SharedConfDevelopmentTests(unittest.TestCase):
         self.assertEqual(installs, [[str(self.source / 'odoo-bin'), '-c', str(self.conf), flag,
                                      '-d', 'cc_dev_wt_coffee', '-i', 'coffee', '--without-demo',
                                      '--stop-after-init', '--no-http', '--log-level=critical']])
+
+    def test_without_git_a_shared_conf_is_not_initialized_with_the_main_checkout_addons(self):
+        SharedConfTests.break_git_with_profile_slug(self)
+        self.root = self.linked
+        code, output = self.terminal('coffee', 'cc_dev_wt_coffee')
+        self.assertEqual(code, 1, output)
+        self.assertTrue(output.endswith('ERROR: Could not create a fresh development database; '
+                                        'existing data was not modified.\n'), output)
+        self.assertFalse(self.parsed.exists())
+        self.assertNotIn('installs', json.loads(self.state.read_text()) if self.state.exists() else {})
 
     def test_main_checkout_initializes_unchanged(self):
         parsed, installs = self.initialize(self.main, 'cc_dev_coffee')

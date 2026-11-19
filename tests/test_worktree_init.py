@@ -340,6 +340,38 @@ class WorktreeInitTests(unittest.TestCase):
                             f'ERROR: The copied profile would resolve logs to {new}/own-logs instead of '
                             f'{main}/own-logs; prepare the worktree by hand.\n')
 
+    def test_shared_layout_refuses_a_path_that_resolves_differently_from_the_new_folder(self):
+        # The main checkout reaches the shared config through an untracked symlink of its own:
+        # from the new folder (no such link) the same relative path names another file.
+        elsewhere = self.scratch / 'elsewhere' / 'deep' / 'dir'
+        elsewhere.mkdir(parents=True)
+        config = self.scratch / 'elsewhere' / 'config'
+        config.mkdir()
+        (config / 'odoo.conf').write_text(CONF.format(main=self.main))
+        profile = SHARED_PROFILE.replace("config = '../config/odoo.conf'", "config = 'link/../../config/odoo.conf'")
+        main = self.shared_repository(profile)
+        (main / 'link').symlink_to(elsewhere, target_is_directory=True)
+        new = self.scratch / 'proj-moved'
+        self.assert_refused(main, ('moved', 'moved'),
+                            f'ERROR: The copied profile would resolve config to {self.scratch}/config/odoo.conf '
+                            f'instead of {config}/odoo.conf; prepare the worktree by hand.\n')
+        self.assertFalse(new.exists())
+
+    def test_shared_layout_refuses_a_main_profile_without_a_shared_key(self):
+        main = self.shared_repository()
+        self.assertEqual(self.invoke(main, 'one', 'one').returncode, 0)
+        for key in ('config', 'env_file', 'compose', 'requirements'):
+            with self.subTest(key=key):
+                (main / '.odoo19-agent.toml').write_text(
+                    ''.join(line for line in SHARED_PROFILE.splitlines(keepends=True)
+                            if not line.startswith(f'{key} = ')))
+                self.assert_refused(self.scratch / 'proj-one', ('two', 'two'),
+                                    f'ERROR: {main / ".odoo19-agent.toml"} does not set [tooling].{key}; '
+                                    'prepare the worktree by hand.\n')
+        (main / '.odoo19-agent.toml').write_text('[tooling\n')
+        self.assert_refused(self.scratch / 'proj-one', ('two', 'two'),
+                            f'ERROR: Invalid tooling configuration: {main / ".odoo19-agent.toml"}\n')
+
     # -- resume -----------------------------------------------------------------------------
 
     def test_resume_completes_missing_items_and_keeps_existing_ones(self):

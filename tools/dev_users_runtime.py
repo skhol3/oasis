@@ -23,8 +23,14 @@ def main():
         with_demo = payload['with_demo']
         demo_flag = '--with-demo' if with_demo else '--without-demo'
         # The options of common.sh's odoo_config_arguments: a linked worktree that shares the
-        # main checkout's odoo.conf gets its own root in addons_path.
-        addons = linked_addons_path(values)
+        # main checkout's odoo.conf gets its own root in addons_path. Without a main checkout
+        # (git failed, profile slug) only an odoo.conf inside the worktree is used.
+        if values['CHECKOUT_KIND'] == 'linked' and not values['CHECKOUT_MAIN_ROOT']:
+            if not Path(values['ODOO_CONFIG']).is_relative_to(values['PROJECT_ROOT']):
+                raise ValueError('The main checkout is unknown; the shared addons_path cannot move.')
+            addons = ''
+        else:
+            addons = linked_addons_path(values)
         config_args = ['-c', values['ODOO_CONFIG'], *([f'--addons-path={addons}'] if addons else [])]
         sys.path.insert(0, values['ODOO_SOURCE'])
         import odoo

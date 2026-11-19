@@ -27,7 +27,8 @@ RESERVED = 'Database names ending in _r<6 hex> are reserved for disposable runs:
 DOCKER_CASES = '''case "$*" in
   *"exec createdb"*)
     if [ "${FAKE_CREATE_FAILS:-0}" = 1 ]; then echo "create failed" >&2; exit 1; fi
-    printf "%s\\n" "$last" >> "$FAKE_LOG.databases" ;;
+    printf "%s\\n" "$last" >> "$FAKE_LOG.databases"
+    if [ "${FAKE_CREATE_THEN_FAILS:-0}" = 1 ]; then echo "create failed late" >&2; exit 1; fi ;;
   *"exec dropdb --if-exists"*)
     if [ "${FAKE_DROP_FAILS:-0}" = 1 ] || [ "${FAKE_DROP_FAILS_FOR:-}" = "$last" ]; then
       echo "drop failed" >&2; exit 1
@@ -310,19 +311,68 @@ class DisposableTestModuleTests(DisposableFixture):
         self.assertEqual(self.run_locks(), [])
 
     def test_a_failed_create_never_drops_the_name_and_removes_only_its_lock(self):
-        # createdb fails when the name was taken in the meantime: that database is not the run's.
+        # createdb fails without creating the database: the run checks the name again, finds
+        # nothing of its own and drops nothing.
         self.env['FAKE_CREATE_FAILS'] = '1'
         result = self.invoke('test-module', 'coffee')
         database = self.events()[0][1]
         self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', (
             f'create failed\nCannot create disposable test database {database}; it was not dropped.\n')))
-        self.assertEqual(self.events(), [('exists', database), ('create', database)])
+        self.assertEqual(self.events(), [('exists', database), ('create', database), ('exists', database)])
         self.assertEqual(self.run_locks(), [])
         self.commands.unlink()
         result = self.invoke('test-module', '--compact', 'coffee')
         self.assertEqual((result.returncode, result.stderr), (1, ''))
         self.assertEqual(result.stdout.splitlines()[1], 'database_lifecycle=disposable dropped=yes')
-        self.assertEqual([kind for kind, _ in self.events()], ['exists', 'create'])
+        self.assertEqual([kind for kind, _ in self.events()], ['exists', 'create', 'exists'])
+
+    def databases(self):
+        path = Path(str(self.commands) + '.databases')
+        return path.read_text().split() if path.exists() else []
+
+    def test_a_create_that_fails_after_creating_drops_what_it_created(self):
+        # createdb created the database, then exited non-zero: no other run holds the name, so
+        # the database is this run's own and is dropped with its lock.
+        self.env['FAKE_CREATE_THEN_FAILS'] = '1'
+        for compact in (False, True):
+            with self.subTest(compact=compact):
+                self.commands.unlink(missing_ok=True)
+                result = self.invoke('test-module', *(['--compact'] if compact else []), 'coffee')
+                database = self.events()[0][1]
+                self.assertEqual(self.events(), [('exists', database), ('create', database),
+                                                  ('exists', database), ('terminate', database),
+                                                  ('drop', database)])
+                message = ('create failed late\n'
+                           f'Cannot create disposable test database {database}; '
+                           'it was created anyway and is dropped.\n')
+                if compact:
+                    self.assertEqual((result.returncode, result.stderr), (1, ''))
+                    lines = result.stdout.splitlines()
+                    self.assertEqual(lines[:2], [f'phase=tests database={database} exit=1',
+                                                 'database_lifecycle=disposable dropped=yes'])
+                    self.assertEqual(Path(lines[3].split('=', 1)[1]).read_text(), message)
+                else:
+                    self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', message))
+                self.assertEqual(self.databases(), [])
+                self.assertEqual(self.run_locks(), [])
+
+    def test_a_create_that_fails_keeps_a_database_another_run_holds(self):
+        # Another checkout's live run holds a lock of that name: the database is not this run's.
+        database = 'cc_test_coffee_r123456'
+        other = self.root.parent / 'other checkout'
+        other.mkdir()
+        sleeper = self.spawn_sleeper()
+        self.assertEqual(self.state('run-lock', str(other), database, str(sleeper.pid)).returncode, 0)
+        before = self.lock_path(database, other).read_bytes()
+        self.env['FAKE_CREATE_THEN_FAILS'] = '1'
+        result = self.invoke('test-module', '--disposable-run', database, 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', (
+            f'create failed late\nCannot create disposable test database {database}; it was not dropped.\n')))
+        self.assertEqual(self.events(), [('exists', database), ('create', database), ('exists', database)])
+        self.assertEqual(self.databases(), [database])
+        self.assertEqual(self.lock_path(database, other).read_bytes(), before)
+        self.assertFalse(self.lock_path(database).exists())
+        self.assertEqual(self.run_locks(), [f'{database}.json'])
 
     def test_a_locked_name_is_refused_and_neither_lock_nor_database_is_touched(self):
         database = 'cc_test_coffee_r123456'
@@ -490,6 +540,61 @@ class DisposableVerifyModuleTests(DisposableFixture):
                     ('terminate', database + '_update'), ('drop', database + '_update')])
                 self.assertNotIn(('install', database + '_update'), self.events())
                 self.assertEqual(self.run_locks(), [])
+
+    def fake_state_python(self):
+        """A python3 first on PATH: FAKE_RUN_NAME fixes the disposable name; with
+        FAKE_SIGNAL_AFTER_LOCK each run-lock sends that signal to its pid (verify-module) right
+        after the lock was written, before verify-module can record it. Otherwise the real one."""
+        fake = self.bindir / 'python3'
+        fake.write_text(f'''#!/bin/sh
+case "$3" in
+  */runtime_state.py)
+    case "$4" in
+      run-name) if [ -n "${{FAKE_RUN_NAME:-}}" ]; then echo "$FAKE_RUN_NAME"; exit 0; fi ;;
+      run-lock) if [ -n "${{FAKE_SIGNAL_AFTER_LOCK:-}}" ]; then
+          status=0; "{sys.executable}" "$@" || status=$?
+          kill -"$FAKE_SIGNAL_AFTER_LOCK" "$7"; exit $status
+        fi ;;
+    esac ;;
+esac
+exec "{sys.executable}" "$@"
+''')
+        fake.chmod(0o755)
+
+    def test_a_name_another_live_run_holds_is_refused_and_left_alone(self):
+        self.fake_state_python()
+        database = 'cc_test_coffee_r123456'
+        self.env['FAKE_RUN_NAME'] = database
+        sleeper = self.spawn_sleeper()
+        for held in (database, database + '_update'):
+            with self.subTest(held=held):
+                self.assertEqual(self.state('run-lock', str(self.root), held, str(sleeper.pid)).returncode, 0)
+                before = self.lock_path(held).read_bytes()
+                path = Path(str(self.commands) + '.databases')
+                path.write_text(f'{held}\n')
+                result = self.invoke('verify-module', 'coffee')
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (2, '', f'Disposable test database is locked: {held}\n'))
+                # The other run's lock and database are untouched; no lock of this run is left.
+                self.assertEqual(self.lock_path(held).read_bytes(), before)
+                self.assertEqual(self.run_locks(), [f'{held}.json'])
+                self.assertEqual(path.read_text(), f'{held}\n')
+                self.assertEqual(self.events(), [])
+                self.lock_path(held).unlink()
+                path.unlink()
+
+    def test_a_signal_while_taking_the_locks_leaves_no_lock(self):
+        # The signal arrives after run-lock wrote the lock and before verify-module recorded it:
+        # verify-module defers it until the lock is recorded, then removes its locks and exits.
+        self.fake_state_python()
+        for signum, status in ((signal.SIGTERM, 143), (signal.SIGINT, 130)):
+            with self.subTest(signal=signum.name):
+                self.commands.unlink(missing_ok=True)
+                self.env['FAKE_SIGNAL_AFTER_LOCK'] = signum.name[3:]
+                result = self.invoke('verify-module', 'coffee')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (status, '', ''))
+                self.assertEqual(self.run_locks(), [])
+                self.assertEqual(self.events(), [])
 
     def test_explicit_verify_databases_are_not_dropped(self):
         result = self.invoke('verify-module', 'coffee', 'cc_test_isolated')

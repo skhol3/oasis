@@ -88,12 +88,20 @@ discard_disposable_pair() {
 }
 if "$disposable"; then
   trap discard_disposable_pair EXIT
+  # A signal between writing a lock and recording it in `locked` would leak that lock: while
+  # locking, the signal only sets `pending` and run-lock runs with INT/TERM ignored (a subshell
+  # that dies before ignoring them has not written anything); once the lock is recorded, a
+  # pending signal ends the run, and the EXIT trap removes the recorded locks.
+  pending=''
+  trap 'pending=130' INT
+  trap 'pending=143' TERM
+  for database in "$test_database" "$update_database"; do
+    ( trap '' INT TERM; runtime_state run-lock "$PROJECT_ROOT" "$database" "$$" )
+    locked+=("$database")
+    if [[ -n "$pending" ]]; then exit "$pending"; fi
+  done
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  for database in "$test_database" "$update_database"; do
-    runtime_state run-lock "$PROJECT_ROOT" "$database" "$$"
-    locked+=("$database")
-  done
   require_free_disposable_database "$test_database"
   require_free_disposable_database "$update_database"
   owned=("$test_database" "$update_database")

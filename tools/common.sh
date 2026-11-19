@@ -14,7 +14,7 @@ unset _config_output
 export CHECKOUT_KIND CHECKOUT_SLUG CHECKOUT_MAIN_ROOT LOGS_DIR
 
 # The single derivation of a checkout's managed database name: the checkout slug goes right
-# after the managed prefix (cc_dev_07_1_coffee); the main checkout keeps <prefix><rest>.
+# after the managed prefix (acme_dev_shop_feature_coffee); the main checkout keeps <prefix><rest>.
 checkout_database_name() {
   local prefix=$1 rest=$2
   if [[ -n "${CHECKOUT_SLUG:-}" ]]; then
@@ -83,9 +83,17 @@ require_runtime() {
 # with the main checkout's root replaced by its own root, as --addons-path after -c. The main
 # checkout and a project outside git never read the file: their command line stays -c only.
 # dev_users_runtime.py makes the same decision through odoo_addons_path.linked_addons_path.
+# When git failed in a linked worktree whose profile sets checkout_slug, config.py reports no
+# main checkout: an odoo.conf inside the worktree is used as it is, a shared one is refused.
 odoo_config_arguments() {
   ODOO_CONFIG_ARGUMENTS=(-c "$ODOO_CONFIG")
   if [[ "${CHECKOUT_KIND:-}" != linked ]]; then return 0; fi
+  if [[ -z "${CHECKOUT_MAIN_ROOT:-}" ]]; then
+    if [[ "$ODOO_CONFIG" == "$PROJECT_ROOT/"* ]]; then return 0; fi
+    printf 'ERROR: Cannot move the addons_path of %s to this worktree: git failed, so the main checkout is unknown.\n' \
+      "$ODOO_CONFIG" >&2
+    return 2
+  fi
   local helper rewritten unchanged
   helper="$(dirname "${BASH_SOURCE[0]}")/odoo_addons_path.py"
   rewritten=$(python3 -I -B "$helper" "$ODOO_CONFIG" "$CHECKOUT_MAIN_ROOT" "$PROJECT_ROOT") || return $?

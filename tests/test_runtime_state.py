@@ -570,6 +570,31 @@ class ServerLifecycleTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, 'server: unknown (broken state)\n', ''))
 
+    @unittest.skipIf(os.geteuid() == 0, 'root can write a 0500 directory')
+    def test_status_without_a_writable_temp_directory(self):
+        process = self.serve(self.root)
+        blocked = Path(self.scratch.name) / 'no-tmp'
+        blocked.mkdir(mode=0o500)
+        self.addCleanup(blocked.chmod, 0o700)
+        self.env['TMPDIR'] = str(blocked)
+        result = self.invoke(self.root, 'status')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, f'server: running pid {process.pid} port {self.port}\n', ''))
+        self.assertTrue(self.commands.read_text().endswith(' ps\n'))
+        self.commands.unlink()
+        # A failing read still gives its reason, and a successful read's warnings stay on stderr.
+        for source, stdout, stderr in (
+                ('import sys\nprint("ERROR: broken state", file=sys.stderr)\nsys.exit(2)\n',
+                 'server: unknown (broken state)\n', ''),
+                ('import sys\nprint("warning: note", file=sys.stderr)\n', 'server: stopped\n',
+                 'warning: note\n')):
+            with self.subTest(stdout=stdout):
+                self.staged_tools_with_state_helper(source)
+                result = self.invoke(self.root, 'status')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, stdout, stderr))
+                self.assertTrue(self.commands.read_text().endswith(' ps\n'))
+                self.commands.unlink()
+
     def test_status_degrades_when_runtime_state_fails(self):
         target = self.xdg / 'elsewhere'
         target.mkdir(mode=0o700)

@@ -29,11 +29,16 @@ SLUG = re.compile(r'[a-z0-9][a-z0-9_]{0,19}')
 GIT_TIMEOUT_SECONDS = 5
 
 
-def git_checkout(root: Path) -> tuple[str, Path | None, Path | None]:
+class GitFailed(Exception):
+    """git could not report the checkout; the message is the reason."""
+
+
+def git_checkout(root: Path) -> tuple[str, Path, Path]:
     """Return the checkout kind with its top-level and main directories, read-only.
 
-    The kind is `main`, `linked` (git dir differs from the common dir) or `none` when the
-    root is not inside a git work tree or git is unavailable.
+    The kind is `main` or `linked` (git dir differs from the common dir). Raises GitFailed
+    when git cannot run, times out, exits non-zero (for example outside a work tree) or
+    prints something unexpected; checkout_identity decides what that means.
     """
     env = {key: value for key, value in os.environ.items()
            if key not in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR')}
@@ -42,15 +47,58 @@ def git_checkout(root: Path) -> tuple[str, Path | None, Path | None]:
             ['git', '-C', str(root), 'rev-parse', '--path-format=absolute',
              '--git-dir', '--git-common-dir', '--show-toplevel'],
             capture_output=True, text=True, env=env, timeout=GIT_TIMEOUT_SECONDS)
-    except (OSError, subprocess.SubprocessError):
-        return 'none', None, None
+    except subprocess.TimeoutExpired as exc:
+        raise GitFailed(f'timed out after {GIT_TIMEOUT_SECONDS} s') from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise GitFailed(f'cannot run git: {getattr(exc, "strerror", None) or exc}') from exc
     lines = result.stdout.splitlines()
-    if result.returncode != 0 or len(lines) != 3 or not all(lines):
-        return 'none', None, None
+    if result.returncode != 0:
+        errors = [line.strip() for line in result.stderr.splitlines() if line.strip()]
+        raise GitFailed(f'exit {result.returncode}' + (f': {errors[-1][:200]}' if errors else ''))
+    if len(lines) != 3 or not all(lines):
+        raise GitFailed('unexpected output')
     git_dir, common_dir, top = (Path(line).resolve() for line in lines)
     if git_dir == common_dir:
         return 'main', top, top
     return 'linked', top, common_dir.parent
+
+
+def dot_git(root: Path) -> Path | None:
+    """The first `.git` entry at or above root, searched like git does, or None.
+
+    Ancestors listed in GIT_CEILING_DIRECTORIES are not entered, as git does not enter them.
+    """
+    ceilings = {Path(entry).resolve() for entry in os.environ.get('GIT_CEILING_DIRECTORIES', '').split(':')
+                if entry and os.path.isabs(entry)}
+    for directory in (root, *root.parents):
+        if directory != root and directory in ceilings:
+            return None
+        candidate = directory / '.git'
+        if os.path.lexists(candidate):
+            return candidate
+    return None
+
+
+def checkout_identity(root: Path, override: str | None) -> tuple[str, Path | None, Path | None]:
+    """git_checkout, failing closed when git fails inside a repository.
+
+    Without any `.git` at or above root the project is outside git (kind `none`). A `.git`
+    file is a linked worktree's gitfile: its slug and namespace guard must not be lost, so
+    only a profile slug lets it continue (kind `linked`, main checkout unknown). A `.git`
+    directory (or anything else) stops with the reason.
+    """
+    try:
+        return git_checkout(root)
+    except GitFailed as exc:
+        entry = dot_git(root)
+        if entry is None:
+            return 'none', None, None
+        if entry.is_file():
+            if override is None:
+                raise InvalidConfig('Cannot determine the checkout identity: git failed in a linked '
+                                    'worktree; check git or set [tooling].checkout_slug.') from exc
+            return 'linked', None, None
+        raise InvalidConfig(f'Cannot determine the checkout identity: git failed ({exc}).') from exc
 
 
 def derived_slug(top: Path, main: Path) -> str:
@@ -149,13 +197,14 @@ def load(root: Path) -> dict[str, str]:
     if 'checkout_slug' in tooling and (not isinstance(override, str)
                                        or not SLUG.fullmatch(override)):
         raise InvalidConfig('Invalid tooling checkout slug.')
-    kind, top, main = git_checkout(root)
+    kind, top, main = checkout_identity(root, override)
     # A profile slug wins for every kind; only a linked worktree derives one.
     output['CHECKOUT_KIND'] = kind
     output['CHECKOUT_SLUG'] = (override if override is not None
                                else derived_slug(top, main) if kind == 'linked' else '')
     # The main checkout's work tree: a linked worktree may keep its dev/logs linked there.
-    output['CHECKOUT_MAIN_ROOT'] = (str(main) if kind == 'linked'
+    # Empty when git failed in a linked worktree with a profile slug (main checkout unknown).
+    output['CHECKOUT_MAIN_ROOT'] = (str(main) if kind == 'linked' and main is not None
                                     else str(root) if kind == 'main' else '')
     slug = output['CHECKOUT_SLUG']
     # common.sh inserts '<slug>_' after test_prefix; the result must still leave room for

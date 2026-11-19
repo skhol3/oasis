@@ -89,9 +89,12 @@ still change in a minor release; every such change is listed here under **Change
   state directory exclusively (`O_EXCL`, 0600, fsynced) before creating the database: an
   existing lock of that name, live or stale, exits 2 with
   `Disposable test database is locked: <name>` and touches neither the lock nor the
-  database. It refuses a name that already exists, treats the database as its own only after
-  `createdb` succeeded (a failed `createdb` drops nothing, removes only the run's lock and
-  exits non-zero with `Cannot create disposable test database <name>; it was not dropped.`),
+  database. It refuses a name that already exists, treats the database as its own once
+  `createdb` succeeded (after a failed `createdb`, a database of that name that exists now
+  and that no other live run of the user holds a lock of is the run's own and is dropped,
+  `Cannot create disposable test database <name>; it was created anyway and is dropped.`;
+  otherwise it drops nothing, removes only the run's lock and reports
+  `Cannot create disposable test database <name>; it was not dropped.`; both exit non-zero),
   and always drops the database, its `<data_dir>/filestore/<name>` directory and the lock at
   the end: on success, failure, SIGINT and SIGTERM. With `--compact` only, both commands print
   `database_lifecycle=disposable dropped=<yes|no>` (`test-module` after `phase=tests ...`,
@@ -105,6 +108,17 @@ still change in a minor release; every such change is listed here under **Change
   and `init-dev-database` refuse them with exit 2 and
   `Database names ending in _r<6 hex> are reserved for disposable runs: <name>` before
   anything runs. `drop-database`, `module-status` and `gc` still accept them.
+- Checkout identity fails closed when git fails inside a repository (git missing, a 5 s
+  timeout, a non-zero exit or unexpected output): with a `.git` file at or above the project
+  root (a linked worktree) every command exits 2 with
+  `Cannot determine the checkout identity: git failed in a linked worktree; check git or set [tooling].checkout_slug.`
+  unless `checkout_slug` is set (then kind `linked` with that slug and an empty
+  `CHECKOUT_MAIN_ROOT`; commands that start Odoo refuse a shared `odoo.conf` they cannot move
+  to the worktree); with a `.git` directory every command exits 2 with
+  `Cannot determine the checkout identity: git failed (<reason>).` Before, both were treated
+  as a project outside git (kind `none`), which dropped a linked worktree's slug and
+  namespace guard. Without any `.git` (searched like git, honouring
+  `GIT_CEILING_DIRECTORIES`) the kind is still `none`.
 - `start` in the main checkout refuses a busy `http_port` with
   `Port <port> is in use; pass --http-port or stop the other server.` before anything runs,
   and reads `http_port`, `gevent_port` and `http_interface` (only those) from `odoo.conf`.
@@ -115,6 +129,18 @@ still change in a minor release; every such change is listed here under **Change
   writes no `odoo.conf` or `dev/`. Other layouts keep the previous behaviour. The README
   recommends the shared layout (`<project>/codigo/<checkouts>`, `<project>/config/`,
   `<project>/data/`).
+
+### Fixed
+
+- `status` no longer stops before the server line and `compose ps` when `TMPDIR` is missing
+  or not writable: it captures the runtime state read without a temporary file.
+- `verify-module` no longer leaks a run lock when SIGINT or SIGTERM arrives between writing a
+  lock and recording it: the signal is deferred until the lock is recorded, then the run
+  removes its locks and exits 130 or 143.
+- `worktree-init` from a linked worktree, when the main checkout's profile (the one that
+  gets copied) lacks `config`, `env_file`, `compose` or `requirements` or is not valid TOML,
+  refuses with `<profile> does not set [tooling].<key>; prepare the worktree by hand.` or
+  `Invalid tooling configuration: <profile>` instead of a message that did not name the file.
 
 ### Known limitations
 

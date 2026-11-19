@@ -7,7 +7,9 @@ Usage:
       existing lock, live or not, exits 2 and touches nothing), check that the name is free,
       create it, run the tests, then drop it, remove its filestore and the lock (success,
       failure, SIGINT and SIGTERM alike). Only a database this run created is dropped: when
-      createdb fails (the name was taken in the meantime) nothing is dropped. A database that
+      createdb fails, the name is dropped only if it exists now and no other live run of this
+      user holds a lock of it (createdb created it, then failed); otherwise (the name was
+      taken in the meantime) nothing is dropped. A database that
       cannot be dropped keeps its lock and is reported; `odoo19 gc --apply` removes it later.
       With ODOO19_RUN_RESULT set (test-module --compact), the run writes `yes` (it left no
       database behind: dropped, or never created) or `no` to that new file at the end.
@@ -76,6 +78,12 @@ def discard(conf, database):
         return False
     remove_filestore(conf, database)
     return True
+
+
+def held_by_another_run(database):
+    """True when a live run lock of database belongs to another process (any checkout)."""
+    return any(live and record['database'] == database and record['pid'] != os.getpid()
+               for _path, _seen, record, live in runtime_state.run_locks())
 
 
 def unlock(root, database, pid=None):
@@ -204,6 +212,13 @@ def main():
                 if status == 0:
                     # Only now is the database this run's own: from here on it is dropped.
                     created = True
+                elif (database_step('database_exists', disposable) == 0
+                      and not held_by_another_run(disposable)):
+                    # The name was free and this run holds its lock: createdb created it, then
+                    # failed. It is this run's own and is dropped at the end.
+                    created = True
+                    print(f'Cannot create disposable test database {disposable}; '
+                          'it was created anyway and is dropped.', file=sys.stderr)
                 else:
                     print(f'Cannot create disposable test database {disposable}; it was not dropped.',
                           file=sys.stderr)
