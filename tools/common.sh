@@ -9,6 +9,8 @@ fi
 _config_output=$(python3 -B "$(dirname "${BASH_SOURCE[0]}")/config.py" "$ODOO19_PROJECT_ROOT") || return $?
 eval "$_config_output"
 unset _config_output
+# The Odoo series' demo-off options (tools/odoo_versions.py) as words; config.py shell-quoted them.
+eval "ODOO_DEMO_OFF_ARGUMENTS=($ODOO_DEMO_OFF_ARGS)"
 # Child helpers (test_temp.py -> compact_log_directory) need the checkout to apply the
 # linked-worktree log rule and the [tooling].logs directory.
 export CHECKOUT_KIND CHECKOUT_SLUG CHECKOUT_MAIN_ROOT LOGS_DIR
@@ -54,8 +56,9 @@ require_python_version() {
     return 1
   fi
   python_version=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")') || return $?
-  if [[ "$python_version" != 3.12 ]]; then
-    printf 'Python 3.12 is required; found %s.\n' "$python_version" >&2
+  # 3.12 for a profile; a workspace's named environment declares its own (config.py).
+  if [[ "$python_version" != "$PYTHON_VERSION" ]]; then
+    printf 'Python %s is required; found %s.\n' "$PYTHON_VERSION" "$python_version" >&2
     return 2
   fi
 }

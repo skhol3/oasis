@@ -13,7 +13,8 @@
 # with its own .odoo19-agent.toml (legacy profile) is read as before and ignores this file,
 # and a directory with a profile on the way up ends the search.
 workspace_version = 1
-# Odoo series of every checkout; the tooling version and Python 3.12 derive from it.
+# Odoo series of every checkout; the tooling version derives from it, and Python is 3.12
+# unless a named environment below declares another one that the series supports.
 odoo_version = '19.0'
 
 # Same keys and guards as the profile's [tooling], without version and python_version.
@@ -23,6 +24,7 @@ odoo_version = '19.0'
 community = 'source/odoo'
 # Optional Enterprise source.
 # enterprise = 'source/enterprise'
+# Either this one environment (Python 3.12), or named [environments] below, not both.
 environment = 'environments/acme'
 config = 'config/odoo.conf'
 env_file = 'config/.env'
@@ -38,6 +40,18 @@ test_prefix = 'acme_test_'
 # logs = 'logs'
 #
 # A checkout slug is per checkout, never set here: an optional oasis-checkout.toml in the
-# checkout may set only that key (any other key is refused):
+# checkout may set only that key and the named environment it uses (any other key is refused):
 #   [tooling]
 #   checkout_slug = 'acme_07_1'
+#   environment = 'next'
+
+# Optional named environments, instead of [tooling].environment: a checkout uses `default`
+# unless its oasis-checkout.toml names another. path follows the [tooling].environment rules
+# (relative to this file); python must lie within the range of odoo_version (19.0: 3.10 to 3.14).
+# [environments.default]
+# path = 'environments/acme'
+# python = '3.12'
+#
+# [environments.next]
+# path = 'environments/acme-next'
+# python = '3.13'

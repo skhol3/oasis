@@ -15,6 +15,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 READER = ROOT / 'tools' / 'config.py'
 PROFILE = (ROOT / 'tests' / 'fixture-profile.toml').read_text()
+# Appended after WORKSPACE_ROOT for a profile: the Odoo 19.0 options, no named environment.
+APPENDED = ['ODOO_VERSION=19.0', 'ODOO_SECOND_PORT_OPTION=--gevent-port', 'ODOO_DEMO_OFF_ARGS=--without-demo',
+            "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12']
 GIT = ['git', '-c', 'user.name=oasis tests', '-c', 'user.email=tests@example.invalid',
        '-c', 'init.defaultBranch=main', '-c', 'commit.gpgsign=false']
 
@@ -170,14 +173,14 @@ class CheckoutIdentityTests(unittest.TestCase):
         linked = self.worktree(main, 'proj-07.1')
         outside = self.project('outside')
         main_line = 'CHECKOUT_MAIN_ROOT=' + shlex.quote(str(main.resolve()))
-        # Only LOGS_DIR (empty without [tooling].logs) and WORKSPACE_ROOT (empty for a profile)
-        # follow the identity.
+        # Only LOGS_DIR (empty without [tooling].logs), WORKSPACE_ROOT (empty for a profile) and
+        # the Odoo series options and environment (APPENDED) follow the identity.
         for root, identity in ((main, ["CHECKOUT_KIND=main", "CHECKOUT_SLUG=''", main_line,
-                                       "LOGS_DIR=''", "WORKSPACE_ROOT=''"]),
+                                       "LOGS_DIR=''", "WORKSPACE_ROOT=''", *APPENDED]),
                                (linked, ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=07_1', main_line,
-                                         "LOGS_DIR=''", "WORKSPACE_ROOT=''"]),
+                                         "LOGS_DIR=''", "WORKSPACE_ROOT=''", *APPENDED]),
                                (outside, ["CHECKOUT_KIND=none", "CHECKOUT_SLUG=''",
-                                          "CHECKOUT_MAIN_ROOT=''", "LOGS_DIR=''", "WORKSPACE_ROOT=''"])):
+                                          "CHECKOUT_MAIN_ROOT=''", "LOGS_DIR=''", "WORKSPACE_ROOT=''", *APPENDED])):
             with self.subTest(root=root.name):
                 self.assertEqual(self.assignments(root), self.previous_assignments(root) + identity)
 
@@ -220,9 +223,9 @@ class CheckoutIdentityTests(unittest.TestCase):
                 self.assertEqual((result.returncode, result.stderr), (0, ''))
                 lines = result.stdout.splitlines()
                 # The main checkout is unknown without git: CHECKOUT_MAIN_ROOT stays empty.
-                self.assertEqual(lines[-5:], ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=mrp_2',
-                                              "CHECKOUT_MAIN_ROOT=''", "LOGS_DIR=''", "WORKSPACE_ROOT=''"])
-                self.assertEqual(lines[:-5], self.previous_assignments(linked))
+                self.assertEqual(lines[-10:], ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=mrp_2',
+                                               "CHECKOUT_MAIN_ROOT=''", "LOGS_DIR=''", "WORKSPACE_ROOT=''", *APPENDED])
+                self.assertEqual(lines[:-10], self.previous_assignments(linked))
 
     def test_git_failure_in_a_main_checkout_fails_closed(self):
         main = self.repository('proj')
@@ -246,7 +249,7 @@ class CheckoutIdentityTests(unittest.TestCase):
                 self.assertEqual((result.returncode, result.stderr), (0, ''))
                 self.assertEqual(result.stdout.splitlines(), self.previous_assignments(root) + [
                     "CHECKOUT_KIND=none", "CHECKOUT_SLUG=''", "CHECKOUT_MAIN_ROOT=''", "LOGS_DIR=''",
-                    "WORKSPACE_ROOT=''"])
+                    "WORKSPACE_ROOT=''", *APPENDED])
 
     def test_a_repository_above_the_git_ceiling_is_not_searched(self):
         # Real git stops at GIT_CEILING_DIRECTORIES (the scratch directory): a .git above it

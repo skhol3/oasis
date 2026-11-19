@@ -24,13 +24,22 @@ still change in a minor release; every such change is listed here under **Change
   `python_version`. Paths resolve from the workspace file's directory, `addons_paths` from each
   checkout. A checkout with its own profile is read exactly as before.
 - Optional `oasis-checkout.toml` in a workspace checkout: it may set only
-  `[tooling].checkout_slug`; any other key is refused.
+  `[tooling].checkout_slug` and `[tooling].environment`; any other key is refused.
 - `tools/config.py` appends `WORKSPACE_ROOT` (empty for a profile) after `LOGS_DIR`.
 - `worktree-init` in a workspace (main checkout without a profile) only runs
   `git worktree add` and prints `workspace: <dir>`.
 - The `odoo19` entry point, the `odoo19_*` tools, the prompt context and `/odoo19` accept a
   checkout without a profile below a workspace file.
 - Example `odoo19-environment/assets/oasis-workspace.example.toml`.
+- `tools/odoo_versions.py`: one capability table per Odoo series (only `19.0`: Python 3.10 to
+  3.14, PostgreSQL 13, `--gevent-port`, demo-off `--without-demo`, `--test-tags` implies
+  `--stop-after-init`); the supported `odoo_version` values come from it.
+- `tools/config.py` appends `ODOO_VERSION`, `ODOO_SECOND_PORT_OPTION`, `ODOO_DEMO_OFF_ARGS`,
+  `ENVIRONMENT_NAME` and `PYTHON_VERSION` after `WORKSPACE_ROOT`, for a profile too; the
+  previous assignments are unchanged.
+- Named environments in a workspace: `[environments.<name>]` with `path` and `python` (within
+  the series' range) instead of `[tooling].environment`; a checkout uses `default` unless its
+  `oasis-checkout.toml` sets `[tooling].environment` to another name.
 - Workspace trust: `oasis-workspace.toml` and `oasis-checkout.toml` are read only when the
   file and its directory are owned by the current user or root and are not group- or
   other-writable; otherwise `Refusing untrusted workspace file <file>: <reason>.`
@@ -39,6 +48,15 @@ still change in a minor release; every such change is listed here under **Change
   `gc` takes another worktree's slug from its `oasis-checkout.toml`.
 - Gentle Shell project detection compares real paths (a symlinked session directory resolves
   to the checkout root) and retries a failed git top-level lookup instead of caching it.
+
+### Changed
+
+- The demo-off option of `test-module`, `install-module` (and so `verify-module`) and
+  `init-dev-database` now comes from the capability table (`ODOO_DEMO_OFF_ARGS`); it is
+  unchanged on 19.0 (`--without-demo`).
+- `start` passes and recognizes the second server port through `ODOO_SECOND_PORT_OPTION`
+  (`--gevent-port` on 19.0); its command lines are unchanged.
+- `require_runtime` compares the interpreter with `PYTHON_VERSION` (3.12 for a profile).
 
 ## [0.3.0] - 2026-11-18
 

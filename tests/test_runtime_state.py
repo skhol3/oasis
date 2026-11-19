@@ -654,6 +654,19 @@ class ServerLifecycleTests(unittest.TestCase):
             f'--http-port={self.port + 2}', f'--gevent-port={self.port + 3}'])])
         self.assertEqual(self.record(self.linked)['port'], self.port + 2)
 
+    def test_linked_start_passes_an_explicit_gevent_port_as_given(self):
+        # The second port option comes from config.py (ODOO_SECOND_PORT_OPTION, --gevent-port on 19.0).
+        self.linked_layout()
+        for given in (['--gevent-port', '9999'], ['--gevent-port=9999']):
+            with self.subTest(given=given):
+                result = self.invoke(self.linked, 'start', *given)
+                self.assertEqual((result.returncode, result.stdout), (0, ''), result.stderr)
+                self.assertEqual(self.odoo_lines(), [' '.join([
+                    'odoo', str(self.source / 'odoo-bin'), '-c', str(self.conf), self.addons,
+                    f'--http-port={self.port + 1}', *given])])
+                self.commands.unlink()
+                (state_dir(self.xdg, self.linked) / 'server.json').unlink(missing_ok=True)
+
     def test_stop_terminates_only_this_checkout_and_database_waits_for_others(self):
         self.linked_layout()
         main = self.serve(self.main)

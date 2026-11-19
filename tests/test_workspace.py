@@ -6,6 +6,7 @@ writes the user's configuration or a real project.
 """
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import stat
@@ -40,7 +41,19 @@ dev_prefix = 'acme_dev_'
 test_prefix = 'acme_test_'
 logs = 'logs'
 '''
-CHECKOUT_ONLY = 'oasis-checkout.toml may only set [tooling].checkout_slug: '
+LEGACY_TAIL = ["WORKSPACE_ROOT=''", 'ODOO_VERSION=19.0', 'ODOO_SECOND_PORT_OPTION=--gevent-port',
+               'ODOO_DEMO_OFF_ARGS=--without-demo', "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12']
+CHECKOUT_ONLY = 'oasis-checkout.toml may only set [tooling].checkout_slug and [tooling].environment: '
+# The same workspace with named environments instead of [tooling].environment.
+NAMED = WORKSPACE.replace("environment = 'environments/acme'\n", '') + '''
+[environments.default]
+path = 'environments/acme'
+python = '3.12'
+
+[environments.next]
+path = 'environments/acme-next'
+python = '3.13'
+'''
 
 
 @unittest.skipUnless(shutil.which('git'), 'git is required')
@@ -94,23 +107,26 @@ class WorkspaceTests(unittest.TestCase):
         result = self.run_reader(root)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', f'ERROR: {message}\n'))
 
-    def expected(self, checkout, kind, slug):
+    def expected(self, checkout, kind, slug, environment='', python='3.12', path='environments/acme'):
         project = self.project
         values = {
             'PROJECT_ROOT': str(checkout), 'PROJECT_NAME': checkout.name,
             'DEV_PREFIX': 'acme_dev_', 'TEST_PREFIX': 'acme_test_', 'TEST_DATABASE': '',
             'ODOO_SOURCE': str(project / 'source/odoo'),
-            'PROJECT_ENVIRONMENT': str(project / 'environments/acme'),
+            'PROJECT_ENVIRONMENT': str(project / path),
             'ODOO_CONFIG': str(project / 'config/odoo.conf'), 'ENV_FILE': str(project / 'config/.env'),
             'COMPOSE_FILE': str(project / 'config/compose.yml'),
             'REQUIREMENTS_DIR': str(project / 'config/requirements'),
             'ADDON_ROOTS': f'{checkout}\n{checkout / "addons"}',
             'DB_SERVICE': 'db',
-            'PYTHON': str(project / 'environments/acme/bin/python'),
+            'PYTHON': str(project / path / 'bin/python'),
             'ODOO_BIN': str(project / 'source/odoo/odoo-bin'),
             'ENVIRONMENTS_DIR': str(project / 'environments'),
             'CHECKOUT_KIND': kind, 'CHECKOUT_SLUG': slug, 'CHECKOUT_MAIN_ROOT': str(self.main),
             'LOGS_DIR': str(project / 'logs'), 'WORKSPACE_ROOT': str(project),
+            # Appended after WORKSPACE_ROOT: the series' Odoo options and the environment.
+            'ODOO_VERSION': '19.0', 'ODOO_SECOND_PORT_OPTION': '--gevent-port', 'ODOO_DEMO_OFF_ARGS': '--without-demo',
+            'ENVIRONMENT_NAME': environment, 'PYTHON_VERSION': python,
         }
         # ADDON_ROOTS spans two lines (a newline-separated list inside one quoted value).
         return ''.join(f'{name}={shlex.quote(value)}\n' for name, value in values.items())
@@ -212,7 +228,7 @@ class WorkspaceTests(unittest.TestCase):
         # A checkout file is not read in legacy mode.
         (main / 'oasis-checkout.toml').write_text("[odoo]\nversion = '18.0'\n")
         lines = self.assignments(main)
-        self.assertEqual(lines[-1], "WORKSPACE_ROOT=''")
+        self.assertEqual(lines[-6:], LEGACY_TAIL)
         self.assertIn('PROJECT_ENVIRONMENT=' + shlex.quote(str((main / '../../environments/example').resolve())),
                       lines)
         self.assertIn('ODOO_CONFIG=' + shlex.quote(str(main / 'dev/odoo.conf')), lines)
@@ -280,9 +296,101 @@ class WorkspaceTests(unittest.TestCase):
         example = ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml'
         main = self.layout(example.read_text())
         lines = self.output(main).splitlines()
-        self.assertEqual(lines[-1], 'WORKSPACE_ROOT=' + shlex.quote(str(self.project)))
+        self.assertEqual(lines[-6:], ['WORKSPACE_ROOT=' + shlex.quote(str(self.project)), 'ODOO_VERSION=19.0',
+                                      'ODOO_SECOND_PORT_OPTION=--gevent-port', 'ODOO_DEMO_OFF_ARGS=--without-demo',
+                                      "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12'])
         self.assertIn('ODOO_CONFIG=' + shlex.quote(str(self.project / 'config/odoo.conf')), lines)
         self.assertIn('ADDON_ROOTS=' + shlex.quote(str(main)), lines)
+
+    def test_shipped_example_documents_named_environments(self):
+        # Uncommenting the documented [environments.default] block in place of
+        # [tooling].environment gives a working workspace that selects it.
+        raw = (ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml').read_text()
+        block = re.search(r'^# \[environments\.default\]\n(?:# [a-z]+ = .*\n)+', raw, re.MULTILINE)
+        self.assertIsNotNone(block, raw)
+        self.assertIn("environment = 'environments/acme'\n", raw)
+        named = (raw.replace("environment = 'environments/acme'\n", '')
+                 + re.sub(r'^# ', '', block.group(0), flags=re.MULTILINE))
+        main = self.layout(named)
+        lines = self.output(main).splitlines()
+        self.assertEqual(lines[-2:], ['ENVIRONMENT_NAME=default', 'PYTHON_VERSION=3.12'])
+        self.assertIn('PROJECT_ENVIRONMENT=' + shlex.quote(str(self.project / 'environments/acme')), lines)
+        self.assertRegex(raw, r"(?m)^#\s+environment = '[a-z_]+'$")
+
+    # -- named environments -----------------------------------------------------------------
+
+    def test_named_environments_use_default_without_a_selection(self):
+        main = self.layout(NAMED)
+        self.assertEqual(self.output(main), self.expected(main, 'main', '', 'default'))
+        linked = self.linked()
+        self.assertEqual(self.output(linked), self.expected(linked, 'linked', 'feat', 'default'))
+
+    def test_checkout_file_selects_a_named_environment(self):
+        main = self.layout(NAMED)
+        checkout = main / 'oasis-checkout.toml'
+        checkout.write_text("[tooling]\nenvironment = 'next'\n")
+        self.assertEqual(self.output(main), self.expected(main, 'main', '', 'next', '3.13', 'environments/acme-next'))
+        checkout.write_text("[tooling]\ncheckout_slug = 'mrp_2'\nenvironment = 'next'\n")
+        self.assertEqual(self.output(main), self.expected(main, 'main', 'mrp_2', 'next', '3.13',
+                                                          'environments/acme-next'))
+        # Only this checkout: a worktree without its own selection keeps the default.
+        linked = self.linked()
+        self.assertEqual(self.output(linked), self.expected(linked, 'linked', 'feat', 'default'))
+
+    def test_unknown_environment_lists_the_declared_names(self):
+        main = self.layout(NAMED)
+        checkout = main / 'oasis-checkout.toml'
+        for value, shown in (("'nope'", '"nope"'), ("'Default'", '"Default"'), ('7', '7')):
+            with self.subTest(value=value):
+                checkout.write_text(f'[tooling]\nenvironment = {value}\n')
+                self.assert_rejected(main, f'Unknown environment {shown}; {self.workspace} declares: default, next.')
+        checkout.unlink()
+        # Without a selection the default must exist.
+        self.workspace.write_text(NAMED.replace('[environments.default]', '[environments.old]'))
+        self.assert_rejected(main, f'Unknown environment "default"; {self.workspace} declares: old, next.')
+        # A selection needs [environments]; [tooling].environment has no name.
+        self.workspace.write_text(WORKSPACE)
+        checkout.write_text("[tooling]\nenvironment = 'default'\n")
+        self.assert_rejected(main, f'Unknown environment "default"; {self.workspace} declares: (none).')
+
+    def test_environment_python_must_be_in_the_odoo_range(self):
+        main = self.layout(NAMED)
+        for value, shown in (("'3.9'", '"3.9"'), ("'3.15'", '"3.15"'), ("'3.12.1'", '"3.12.1"'),
+                             ('3.12', '3.12'), (None, '(missing)')):
+            with self.subTest(value=value):
+                line = f'python = {value}\n' if value is not None else ''
+                self.workspace.write_text(NAMED.replace("python = '3.12'\n", line))
+                self.assert_rejected(main, f'Unsupported python {shown} for environment "default" in '
+                                           f'{self.workspace}; Odoo 19.0 supports 3.10 to 3.14.')
+        for python in ('3.10', '3.14'):
+            with self.subTest(python=python):
+                self.workspace.write_text(NAMED.replace("python = '3.12'", f"python = '{python}'"))
+                self.assertEqual(self.output(main), self.expected(main, 'main', '', 'default', python))
+
+    def test_environment_path_keeps_the_environment_rules(self):
+        main = self.layout(NAMED)
+        for path in ('.', 'codigo', 'codigo/acme', '/', 'source/odoo', 'source', 'other/acme'):
+            with self.subTest(path=path):
+                self.workspace.write_text(NAMED.replace("path = 'environments/acme'\n", f"path = '{path}'\n"))
+                self.assert_rejected(main, 'Unsafe tooling environment target.')
+        for line in ("path = ''\n", 'path = 7\n', 'path = "a\\u0000b"\n', ''):
+            with self.subTest(line=line):
+                self.workspace.write_text(NAMED.replace("path = 'environments/acme'\n", line))
+                self.assert_rejected(main, 'Invalid tooling path: environment.')
+        # The advisory [environment].python still has to agree with the selected path.
+        self.workspace.write_text(NAMED + "[environment]\npython = 'environments/other/bin/python'\n")
+        self.assert_rejected(main, 'Conflicting advisory and tooling values: environment.python.')
+
+    def test_environments_table_shape_is_checked(self):
+        main = self.layout(NAMED)
+        self.workspace.write_text('environments = 1\n' + WORKSPACE.replace("environment = 'environments/acme'\n", ''))
+        self.assert_rejected(main, f'Invalid [environments] in {self.workspace}.')
+        self.workspace.write_text(WORKSPACE.replace("environment = 'environments/acme'\n", '')
+                                  + "[environments]\ndefault = 'environments/acme'\n")
+        self.assert_rejected(main, f'Invalid environment "default" in {self.workspace}.')
+        self.workspace.write_text(NAMED.replace("[tooling]\n", "[tooling]\nenvironment = 'environments/acme'\n"))
+        self.assert_rejected(main, f'Set either [tooling].environment or [environments] in {self.workspace}, '
+                                   'not both.')
 
     # -- odoo19 entry point -----------------------------------------------------------------
 

@@ -3,6 +3,7 @@
 import json
 import logging
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
@@ -21,7 +22,8 @@ def main():
         declaration = payload['declaration']
         passwords = payload['passwords']
         with_demo = payload['with_demo']
-        demo_flag = '--with-demo' if with_demo else '--without-demo'
+        # The demo-off options of the Odoo series come from config.py (tools/odoo_versions.py).
+        demo_flags = ['--with-demo'] if with_demo else shlex.split(values['ODOO_DEMO_OFF_ARGS'])
         # The options of common.sh's odoo_config_arguments: a linked worktree that shares the
         # main checkout's odoo.conf gets its own root in addons_path. Without a main checkout
         # (git failed, profile slug) only an odoo.conf inside the worktree is used.
@@ -39,7 +41,7 @@ def main():
         from odoo.modules.registry import Registry
 
         odoo.tools.config.parse_config([*config_args, '--no-http',
-                                       demo_flag, '--log-level=critical'])
+                                       *demo_flags, '--log-level=critical'])
         # Odoo creates the DB itself: an existing name or a concurrent CREATE fails,
         # never the ensure_database behavior that might reuse another caller's DB.
         odoo.service.db.exp_create_database(
@@ -55,7 +57,7 @@ def main():
         for install_module in dict.fromkeys([*modules, module]):
             install = subprocess.run(
                 [values['PYTHON'], values['ODOO_BIN'], *config_args,
-                 '-d', database, '-i', install_module, demo_flag, '--stop-after-init',
+                 '-d', database, '-i', install_module, *demo_flags, '--stop-after-init',
                  '--no-http', '--log-level=critical'], capture_output=True)
             if install.returncode:
                 raise ValueError('Module installation failed.')

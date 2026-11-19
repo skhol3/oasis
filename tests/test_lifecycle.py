@@ -388,6 +388,31 @@ exit 0
                                   if entry.startswith('odoo ')], [line])
                 self.commands.unlink()
 
+    def test_demo_off_argv_on_odoo_19_is_byte_identical_to_before(self):
+        # The demo-off options now come from the capability table (ODOO_DEMO_OFF_ARGS); for
+        # 19.0 it keeps the previous explicit --without-demo, so these argv are unchanged.
+        odoo = 'odoo ' + str(self.source / 'odoo-bin')
+        conf = str(self.root / 'dev/odoo.conf')
+        (self.root / 'dev/odoo.conf').write_text('[options]\n')
+        for command, before in (
+                ('test-module', [odoo, '-c', conf, '--http-port=<free>', '-d', 'cc_test_coffee_r<run>', '-i',
+                                 'coffee', '--without-demo', '--test-tags', '/coffee', '--stop-after-init']),
+                ('install-module', [odoo, '-c', conf, '-d', 'cc_dev_coffee', '-i', 'coffee', '--without-demo',
+                                    '--stop-after-init'])):
+            with self.subTest(command=command):
+                self.env['FAKE_EXISTS'] = '0'
+                result = self.invoke(command, 'coffee', input='')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+                self.assertEqual([any_run_database(any_test_port(entry))
+                                  for entry in self.commands.read_text().splitlines() if entry.startswith('odoo ')],
+                                 [' '.join(before)])
+                self.commands.unlink()
+        # The install-module help names the same default as before.
+        result = self.invoke('install-module', '--help')
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.splitlines()[1], 'Default: --without-demo. The database must be managed '
+                                                        '(cc_dev_/cc_test_) and defaults to cc_dev_<module>.')
+
     def test_start_status_stop_create_list_and_module_status(self):
         port = free_port()
         (self.root / 'dev/odoo.conf').write_text(f'[options]\nhttp_port = {port}\n')
