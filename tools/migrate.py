@@ -16,6 +16,7 @@ import errno
 import hashlib
 import importlib.util
 import os
+import signal
 from pathlib import Path
 import re
 import subprocess
@@ -429,7 +430,10 @@ def make_plan(root: Path, workspace_argument, config, reader, stamp: str) -> dic
         actions.append(('create', target, checkout_text.encode('utf-8'), 0o600))
 
     lines += conf_lines
-    actions += conf_actions
+    # The conf backup is written first; the conf rewrite itself runs last (below), so a process
+    # killed before it leaves a conf that still names its paths and still works.
+    conf_rewrite = [action for action in conf_actions if action[0] == 'replace']
+    actions += [action for action in conf_actions if action[0] != 'replace']
 
     # lock.sha256: entries relative to its directory, the same hashes.
     lock = Path(values['REQUIREMENTS_DIR']) / 'lock.sha256'
@@ -447,6 +451,7 @@ def make_plan(root: Path, workspace_argument, config, reader, stamp: str) -> dic
             raise Refused(f'{target} already exists.')
         lines.append(f'rename {path / PROFILE} to {target.name}')
         actions.append(('rename', path / PROFILE, target))
+    actions += conf_rewrite
     advisory = [f'[{key}]' if isinstance(value, dict) else key
                 for key, value in document.items() if key not in MIGRATED]
     if advisory:
@@ -574,8 +579,18 @@ def verify(plan: dict, config, reader) -> list[str]:
     return problems
 
 
+class Terminated(BaseException):
+    """SIGTERM or SIGHUP during --apply: raised so the changes made so far are undone."""
+
+
+def _terminated(signum, _frame):
+    raise Terminated(signum)
+
+
 def apply_plan(plan: dict, config, reader) -> int:
     changes = Changes()
+    for signum in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signum, _terminated)
     try:
         for action in plan['actions']:
             changes.apply(action)
@@ -583,6 +598,9 @@ def apply_plan(plan: dict, config, reader) -> int:
     except OSError as exc:
         failed = changes.rollback()
         return undone(f'Could not migrate: {exc.strerror or exc}', [], failed)
+    except Terminated as exc:
+        undone(f'Interrupted by signal {exc.args[0]}', [], changes.rollback())
+        return 128 + exc.args[0]
     except BaseException:
         changes.rollback()
         raise

@@ -407,6 +407,52 @@ class MigrateTests(unittest.TestCase):
         self.assertEqual(self.tree(), before)
 
 
+    def test_sigterm_during_apply_undoes_every_change(self):
+        # A kill from a timeout must not leave a half-migrated project (review advisory).
+        script = (
+            "import importlib.util, os, signal, sys\n"
+            "spec = importlib.util.spec_from_file_location('migrate', sys.argv[1])\n"
+            "migrate = importlib.util.module_from_spec(spec); spec.loader.exec_module(migrate)\n"
+            "original = migrate.Changes.apply\n"
+            "count = {'n': 0}\n"
+            "def apply(self, action):\n"
+            "    original(self, action)\n"
+            "    count['n'] += 1\n"
+            "    if count['n'] == 3:\n"
+            "        os.kill(os.getpid(), signal.SIGTERM)\n"
+            "migrate.Changes.apply = apply\n"
+            "sys.exit(migrate.main(['--apply']))\n")
+        before = self.tree()
+        env = dict(self.env, ODOO19_PROJECT_ROOT=str(self.main))
+        result = subprocess.run([sys.executable, '-B', '-c', script, str(ROOT / 'tools' / 'migrate.py')],
+                                capture_output=True, text=True, env=env, cwd=self.scratch)
+        self.assertEqual(result.returncode, 128 + 15, result.stderr)
+        self.assertIn('every change was undone', result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+        self.assertEqual(self.tree(), before)
+
+    def test_conf_rewrite_is_the_last_change(self):
+        # Killed before the conf rewrite, the project still runs: the conf still names its paths
+        # while the profiles are already renamed and the workspace file supplies the rest.
+        script = (
+            "import importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('migrate', sys.argv[1])\n"
+            "migrate = importlib.util.module_from_spec(spec); spec.loader.exec_module(migrate)\n"
+            "original = migrate.Changes.apply\n"
+            "def apply(self, action):\n"
+            "    print(action[0], getattr(action[1], 'name', action[1]), file=sys.stderr)\n"
+            "    original(self, action)\n"
+            "migrate.Changes.apply = apply\n"
+            "sys.exit(migrate.main(['--apply']))\n")
+        env = dict(self.env, ODOO19_PROJECT_ROOT=str(self.main))
+        result = subprocess.run([sys.executable, '-B', '-c', script, str(ROOT / 'tools' / 'migrate.py')],
+                                capture_output=True, text=True, env=env, cwd=self.scratch)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        steps = [line for line in result.stderr.splitlines() if line.split(' ')[0] in ('create', 'replace', 'rename')]
+        self.assertEqual(steps[-1], 'replace odoo.conf')
+        self.assertLess(max(i for i, step in enumerate(steps) if step.startswith('rename')), len(steps) - 1)
+
+
 class MigrateSurfaceTests(unittest.TestCase):
     def test_entry_point_lists_migrate(self):
         self.assertIn("'migrate'", (ROOT / 'oasis').read_text())
