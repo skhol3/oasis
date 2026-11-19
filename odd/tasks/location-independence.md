@@ -23,7 +23,7 @@ contract is checked up front. Existing `.odoo19-agent.toml` profiles keep workin
 - [x] T1b [S2 S3] Workspace follow-ups from review review-4d745af74f4fe048 and L9 (Risk: item 2, trusts a file above the checkout) — worker — commit: 1435e51
 - [x] T2 [S4] Location-dependent values on the command line (`--data-dir`); `lock.sha256` relative to requirements — commit: 1f02689 (capability table + named environments)
 - [x] T3 [S5] `oasis doctor` — commit: 4919a15
-- T4 [S6] `odoo19 migrate` + user-run `/odoo19 migrate` (plan, confirm, write workspace file, keep profiles as backup) — pending
+- T4 [S6] `oasis migrate` + user-run `/oasis migrate` (plan, confirm, write workspace file, keep profiles as backup) and lock.sha256 relative to its directory (Risk: item 1, rewrites project files) — worker + verify — commit: pending
 - [x] T5 [S7] Control line in the test summary — commit: 51bb626
 - T6 Release v0.4.0 — pending
 
@@ -70,3 +70,12 @@ contract is checked up front. Existing `.odoo19-agent.toml` profiles keep workin
 - L22. T7 design (owned): the compact test summary adds one control line `log: <lines> lines, <errors> errors, <warnings> warnings` where errors counts ERROR/CRITICAL log lines except odoo.tests.result and warnings counts WARNING lines except odoo.tests.*, computed over stdout+stderr exactly like the manual grep validation, placed after the warnings line (always present).
 - L23. doctor and control line committed; suite 387 OK; node 69 OK. Field run (read-only) of oasis doctor on corpus-cafe main and worktree: all PASS, doctor_failures=0 (worktree http_port 8020 held by its own live server).
 - L24. doctor/control-line review review-8df19112412d8700 approved; advisory "non-numeric http_port traceback" did not reproduce (option_value raises ConfError); pinned by a test. Other advisories (Pi handler, linked port range, undocumented FAIL values) left as follow-ups.
+- L25. Migrate design (owned):
+  - `oasis migrate [--workspace <dir>] [--apply]`, run from any checkout with a legacy profile. Without `--apply` it only prints the plan and changes nothing. Default workspace dir: the deepest common ancestor of every checkout of the repository (`git worktree list`) and of the profile's `config` file (corpus-cafe: `projects/corpus-cafe`); `--workspace` must be an ancestor of every checkout.
+  - Every checkout's profile must agree on all `[tooling]` and `[development]` values once resolved to absolute paths, except `checkout_slug`; otherwise refuse and list the differing keys (no values printed for env_file/config).
+  - Writes `<dir>/oasis-workspace.toml` (0600-equivalent trust: owned by the user, not group/other-writable): `workspace_version = 1`, `odoo_version` from the profile, `[tooling]` with every path re-expressed relative to the workspace dir (addons_paths stays checkout-relative), `[development]` copied. Advisory sections are not migrated (listed in the plan; they stay in the backups). A checkout with `checkout_slug` gets `oasis-checkout.toml`.
+  - Path-free conf: if odoo.conf has `data_dir`, it moves to `[tooling].data_dir`; `addons_path` and `data_dir` lines are removed from odoo.conf (only those lines; the original is kept as `odoo.conf.bak-<stamp>`, mode 0600, never printed).
+  - Each `.odoo19-agent.toml` is renamed to `.odoo19-agent.toml.bak-<stamp>` (the profile wins over the workspace, so it must go).
+  - Verification before finishing: for every checkout, config.load results must equal the pre-migration results for every variable except WORKSPACE_ROOT, ENVIRONMENT_NAME and DATA_DIR, and the Odoo argv rendered by odoo_config_arguments must resolve to the same addons path and data dir; on any mismatch, restore every changed file and exit 1.
+  - lock.sha256: verification runs from the lock file's own directory first and falls back to the project root (legacy); whatever writes lock.sha256 writes paths relative to its directory; migrate rewrites existing entries relative to the lock directory (hashes unchanged) and verifies them.
+  - Agents may not run it (bash guard, like worktree-init); `/oasis migrate` shows the plan and asks before `--apply`.
