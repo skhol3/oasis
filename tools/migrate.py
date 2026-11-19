@@ -429,11 +429,8 @@ def make_plan(root: Path, workspace_argument, config, reader, stamp: str) -> dic
         lines += [f'  {line}' for line in checkout_text.splitlines()]
         actions.append(('create', target, checkout_text.encode('utf-8'), 0o600))
 
-    lines += conf_lines
-    # The conf backup is written first; the conf rewrite itself runs last (below), so a process
-    # killed before it leaves a conf that still names its paths and still works.
-    conf_rewrite = [action for action in conf_actions if action[0] == 'replace']
-    actions += [action for action in conf_actions if action[0] != 'replace']
+    # The conf backup and rewrite run last (below), in the order the plan shows them, so a process
+    # killed before them leaves a conf that still names its paths and still works.
 
     # lock.sha256: entries relative to its directory, the same hashes.
     lock = Path(values['REQUIREMENTS_DIR']) / 'lock.sha256'
@@ -451,7 +448,8 @@ def make_plan(root: Path, workspace_argument, config, reader, stamp: str) -> dic
             raise Refused(f'{target} already exists.')
         lines.append(f'rename {path / PROFILE} to {target.name}')
         actions.append(('rename', path / PROFILE, target))
-    actions += conf_rewrite
+    lines += conf_lines
+    actions += conf_actions
     advisory = [f'[{key}]' if isinstance(value, dict) else key
                 for key, value in document.items() if key not in MIGRATED]
     if advisory:
@@ -579,38 +577,61 @@ def verify(plan: dict, config, reader) -> list[str]:
     return problems
 
 
-class Terminated(BaseException):
-    """SIGTERM or SIGHUP during --apply: raised so the changes made so far are undone."""
-
-
-def _terminated(signum, _frame):
-    raise Terminated(signum)
+SIGNALS = (signal.SIGTERM, signal.SIGHUP)
 
 
 def apply_plan(plan: dict, config, reader) -> int:
+    """Apply every action, verify, and undo everything on an error, a mismatch or a signal.
+
+    SIGTERM and SIGHUP are recorded, not raised: the current action always finishes (so its undo
+    step is registered), the run stops before the next one and rolls back. Both signals are
+    ignored while rolling back, so a repeated signal cannot leave a half-migrated project.
+    """
     changes = Changes()
-    for signum in (signal.SIGTERM, signal.SIGHUP):
-        signal.signal(signum, _terminated)
+    pending = []
+    previous = {signum: signal.signal(signum, lambda signum, _frame: pending.append(signum))
+                for signum in SIGNALS}
+
+    def rollback():
+        for signum in SIGNALS:
+            signal.signal(signum, signal.SIG_IGN)
+        try:
+            return changes.rollback()
+        finally:
+            for signum, handler in previous.items():
+                signal.signal(signum, handler)
+
     try:
         for action in plan['actions']:
+            if pending:
+                break
             changes.apply(action)
-        problems = verify(plan, config, reader)
+        problems = [] if pending else verify(plan, config, reader)
     except OSError as exc:
-        failed = changes.rollback()
-        return undone(f'Could not migrate: {exc.strerror or exc}', [], failed)
-    except Terminated as exc:
-        undone(f'Interrupted by signal {exc.args[0]}', [], changes.rollback())
-        return 128 + exc.args[0]
+        return undone(f'Could not migrate: {exc.strerror or exc}', [], rollback())
     except BaseException:
-        changes.rollback()
+        rollback()
         raise
+    if pending:
+        undone(f'Interrupted by signal {pending[0]}', [], rollback())
+        return 128 + pending[0]
     if problems:
-        return undone('Verification failed', problems, changes.rollback())
+        return undone('Verification failed', problems, rollback())
+    for signum, handler in previous.items():
+        signal.signal(signum, handler)
     print(f'verified: {len(plan["paths"])} checkouts load the same configuration from {plan["workspace"]}')
     return 0
 
 
 def undone(message: str, problems: list[str], failed: list[str]) -> int:
+    try:
+        report_undone(message, problems, failed)
+    except OSError:
+        pass  # SIGHUP: the terminal may be gone; the rollback itself already finished.
+    return 1
+
+
+def report_undone(message: str, problems: list[str], failed: list[str]):
     if failed:
         print(f'ERROR: {message}; these changes could not be undone:', file=sys.stderr)
         problems = problems + failed

@@ -204,11 +204,11 @@ class MigrateTests(unittest.TestCase):
                 f'write {feature}/oasis-checkout.toml\n'
                 "  [tooling]\n"
                 "  checkout_slug = 'feature_2'\n"
-                f'back up {self.conf} as odoo.conf.bak-<stamp>\n'
-                f'remove addons_path and data_dir from {self.conf}; data_dir moves to [tooling].data_dir\n'
                 f'rewrite {self.lock}: 4 entries relative to its directory, hashes unchanged\n'
                 f'rename {main}/.odoo19-agent.toml to .odoo19-agent.toml.bak-<stamp>\n'
                 f'rename {feature}/.odoo19-agent.toml to .odoo19-agent.toml.bak-<stamp>\n'
+                f'back up {self.conf} as odoo.conf.bak-<stamp>\n'
+                f'remove addons_path and data_dir from {self.conf}; data_dir moves to [tooling].data_dir\n'
                 'not migrated: [commands] (kept in the profile backups)\n'
                 f'{last}\n')
 
@@ -407,29 +407,31 @@ class MigrateTests(unittest.TestCase):
         self.assertEqual(self.tree(), before)
 
 
-    def test_sigterm_during_apply_undoes_every_change(self):
-        # A kill from a timeout must not leave a half-migrated project (review advisory).
-        script = (
-            "import importlib.util, os, signal, sys\n"
-            "spec = importlib.util.spec_from_file_location('migrate', sys.argv[1])\n"
-            "migrate = importlib.util.module_from_spec(spec); spec.loader.exec_module(migrate)\n"
-            "original = migrate.Changes.apply\n"
-            "count = {'n': 0}\n"
-            "def apply(self, action):\n"
-            "    original(self, action)\n"
-            "    count['n'] += 1\n"
-            "    if count['n'] == 3:\n"
-            "        os.kill(os.getpid(), signal.SIGTERM)\n"
-            "migrate.Changes.apply = apply\n"
-            "sys.exit(migrate.main(['--apply']))\n")
+    def test_a_signal_during_apply_undoes_every_change(self):
+        # A kill from a timeout or a closed terminal must not leave a half-migrated project.
         before = self.tree()
         env = dict(self.env, ODOO19_PROJECT_ROOT=str(self.main))
-        result = subprocess.run([sys.executable, '-B', '-c', script, str(ROOT / 'tools' / 'migrate.py')],
-                                capture_output=True, text=True, env=env, cwd=self.scratch)
-        self.assertEqual(result.returncode, 128 + 15, result.stderr)
-        self.assertIn('every change was undone', result.stderr)
-        self.assertNotIn('Traceback', result.stderr)
-        self.assertEqual(self.tree(), before)
+        for name, number in (('SIGTERM', 15), ('SIGHUP', 1)):
+            with self.subTest(signal=name):
+                script = (
+                    "import importlib.util, os, signal, sys\n"
+                    "spec = importlib.util.spec_from_file_location('migrate', sys.argv[1])\n"
+                    "migrate = importlib.util.module_from_spec(spec); spec.loader.exec_module(migrate)\n"
+                    "original = migrate.Changes.apply\n"
+                    "count = {'n': 0}\n"
+                    "def apply(self, action):\n"
+                    "    original(self, action)\n"
+                    "    count['n'] += 1\n"
+                    "    if count['n'] == 3:\n"
+                    f"        os.kill(os.getpid(), signal.{name}); os.kill(os.getpid(), signal.{name})\n"
+                    "migrate.Changes.apply = apply\n"
+                    "sys.exit(migrate.main(['--apply']))\n")
+                result = subprocess.run([sys.executable, '-B', '-c', script, str(ROOT / 'tools' / 'migrate.py')],
+                                        capture_output=True, text=True, env=env, cwd=self.scratch)
+                self.assertEqual(result.returncode, 128 + number, result.stderr)
+                self.assertIn('every change was undone', result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
+                self.assertEqual(self.tree(), before)
 
     def test_conf_rewrite_is_the_last_change(self):
         # Killed before the conf rewrite, the project still runs: the conf still names its paths
