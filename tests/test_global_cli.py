@@ -103,6 +103,23 @@ class GlobalCliTests(unittest.TestCase):
         self.assert_no_calls(self.invoke('--project', str(self.project), 'status'),
                              f'ERROR: Missing tooling configuration: {self.project / ".odoo19-agent.toml"}\n')
 
+    def test_checkout_below_a_workspace_file_dispatches_without_profile(self):
+        shutil.copyfile(ROOT / 'tools' / 'config.py', self.bundle / 'tools' / 'config.py')
+        (self.project / '.odoo19-agent.toml').unlink()
+        checkout = self.project / 'codigo' / 'shop'
+        checkout.mkdir(parents=True)
+        (self.project / 'oasis-workspace.toml').write_text('workspace_version = 1\n')
+        result = self.invoke('--project', str(checkout), 'status', '--quick')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (17, 'delegated\n', 'delegated error\n'))
+        self.assertEqual(json.loads(self.log.read_text()), {
+            'argv': ['--quick'], 'root': str(checkout), 'stdin': '', 'tool': 'status'})
+        self.log.unlink()
+        # A profile on the way up ends the search: the checkout is neither legacy nor in a workspace.
+        (self.project / 'codigo' / '.odoo19-agent.toml').write_text('[tooling]\n')
+        self.assert_no_calls(self.invoke('--project', str(checkout), 'status'),
+                             f'ERROR: Missing tooling configuration: {checkout / ".odoo19-agent.toml"}\n')
+
     def test_rejects_unknown_internal_and_pathlike_before_dispatch(self):
         for name in ('unknown', 'config.py', 'common.sh', 'audit_dependencies.py',
                      '../tools/status', '/bin/bash', 'status/../start'):

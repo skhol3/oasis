@@ -11,6 +11,8 @@ metadata:
 
 Use for Odoo 19 runtime/dependency discovery and diagnostics. A project's instructions may supply the complete contract without the optional template.
 
+A checkout without `.odoo19-agent.toml` may read the nearest `oasis-workspace.toml` above it ([example](assets/oasis-workspace.example.toml)): paths from that file, `addons_paths` from the checkout. A checkout's own profile always wins.
+
 ## Hard Rules
 
 - Treat `[odoo]`, `[environment]`, `[database]`, `[commands]` in `.odoo19-agent.toml` as advisory. Only installed `~/.agents/skills/odoo19/tools` consume optional `[tooling]`; it is path/guard input, never access consent or automatic setup.

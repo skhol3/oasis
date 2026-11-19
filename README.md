@@ -34,11 +34,11 @@ Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shel
 - Tools `odoo19_test_module`, `odoo19_module_status`, `odoo19_check_environment` and `odoo19_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`, or `<logs>/odoo19/<main|slug>/` with `[tooling].logs`. Other output is capped at 60 lines (head and tail kept). Test summaries also carry up to five `stats:` lines (tests, time, queries per module) and one `warnings:` line grouping repeated warnings by logger and message.
 - Tool `odoo19_find_module`: maps a functional name to technical module names by matching the query words against the technical name and the manifest `name`, `summary` and `category` in the profile's addon roots, so the agent needs no `ls` or `grep`.
 - Tool `odoo19_model_info`: wraps `odoo19 model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
-- Prompt context naming the `odoo19` tools when `.odoo19-agent.toml` is found at or above the working directory.
+- Prompt context naming the `odoo19` tools when `.odoo19-agent.toml` is found at or above the working directory, or, without one, an `oasis-workspace.toml` (see *Workspace file*; the project root is then the git top level of the working directory).
 - A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. In every session it also blocks the agent from running `worktree-init` (through `odoo19`, `tools/worktree-init` or `worktree_init.py`, `--dry-run` included), which only the user runs. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package.
 - `/odoo19`: a quick status with the profile, addon modules, configured databases, git worktree, checkout identity and this checkout's server (`server: running on port <port> (pid <pid>)` or `server: stopped`, read from the runtime record). It never starts services or queries databases. `/odoo19 setup` installs the subagent overlay (see Subagents). `/odoo19 worktree <feature> <branch>` creates a prepared linked worktree after confirmation (see *Preparing a linked worktree*).
 
-The `odoo19_*` tools are active only in sessions started inside an Odoo 19 project (a directory with `.odoo19-agent.toml` at or above it), so other projects pay no tokens for them; `/odoo19` is available everywhere.
+The `odoo19_*` tools are active only in sessions started inside an Odoo 19 project (a directory with `.odoo19-agent.toml` or `oasis-workspace.toml` at or above it), so other projects pay no tokens for them; `/odoo19` is available everywhere.
 
 Other agents keep using the core (`odoo19` CLI and skills) unchanged.
 
@@ -58,6 +58,54 @@ Gentle Shell subagents (for example `gentle-ai-worker` and `gentle-ai-verify`) r
 2. For direct invocation, install the bundle's `odoo19` executable at `~/.agents/skills/odoo19/odoo19` (owner makes it executable). Supply the absolute project directory explicitly; no project wrapper, PATH link, or shell configuration change is required. For example: `~/.agents/skills/odoo19/odoo19 --project /absolute/project check-environment --quick`. Run `~/.agents/skills/odoo19/odoo19 --help` without a project to see the fixed public commands. The entry point selects only packaged `tools/` commands; it does not replace the profile guards or grant operational consent.
 3. Alternatively, if the project wants legacy local CLI entrypoints and explicitly authorizes them, review the 18 [project wrapper templates](project-wrappers/common.sh) and copy **only** the selected wrappers to its approved `dev/scripts/` directory. The tested templates derive the project root from that directory depth; another layout requires an explicitly validated adaptation. Do not overwrite existing scripts without separate approval. The wrappers locate global tools at `~/.agents/skills/odoo19/tools`; `ODOO19_TOOLS_DIR` is an explicit test/development override for wrappers, not a global entry point override. Missing installed tools fail clearly. Installing this package does not install wrappers into any project.
 4. Keep project configuration, dependency inputs/locks, Compose files, environment variables, data, and runtime/virtualenv **local to the project**. This bundle does not create an environment, start services, install dependencies, access external source trees, or grant permission to operate on databases. `bootstrap --apply`, full diagnostics, and database lifecycle commands need separate explicit consent; no profile or skill discovery implies it.
+
+## Workspace file
+
+One `oasis-workspace.toml` at the project root can replace the profile of every checkout: checkouts and linked worktrees at any depth below it read the same file, so a worktree needs no profile copy. Review the [example workspace file](odoo19-environment/assets/oasis-workspace.example.toml).
+
+```text
+<project>/oasis-workspace.toml                the workspace file
+<project>/codigo/<main checkout>              checkouts and linked worktrees, at any depth
+<project>/codigo/<main checkout>-<feature>
+<project>/config/                             odoo.conf, environment file, compose file, requirements/
+<project>/data/                               Odoo data_dir (set data_dir in the shared odoo.conf)
+<project>/logs/                               compact runs and browser evidence (logs = 'logs')
+```
+
+```toml
+# Example only.
+workspace_version = 1
+odoo_version = '19.0'
+
+[tooling]
+community = 'source/odoo'
+environment = 'environments/acme'
+config = 'config/odoo.conf'
+env_file = 'config/.env'
+compose = 'config/compose.yml'
+requirements = 'config/requirements'
+addons_paths = ['.']
+db_service = 'db'
+dev_prefix = 'acme_dev_'
+test_prefix = 'acme_test_'
+logs = 'logs'
+```
+
+- Discovery: the checkout root is the `--project` directory (in Gentle Shell, the git top level of the session directory). When it has no `.odoo19-agent.toml`, oasis walks up from it to the nearest `oasis-workspace.toml`, as git finds `.git`, up to the filesystem root. A directory with a `.odoo19-agent.toml` on the way ends the search. Without either file every command keeps the error `Missing tooling configuration: <checkout>/.odoo19-agent.toml`.
+- Precedence: a checkout with its own `.odoo19-agent.toml` is read exactly as before and ignores the workspace file. Legacy profiles keep working; nothing has to move.
+- Versions: the top level must set `workspace_version = 1` and `odoo_version = '19.0'`. Any other value stops every command with `Unsupported workspace_version <v> in <file>.` or `Unsupported odoo_version <v> in <file>; supported: 19.0.` (`<v>` in JSON form: strings in quotes, `(missing)` when absent). A file that is not valid TOML gives `Invalid TOML in <file>.`
+- `[tooling]` takes the profile's keys and guards (prefixes, `test_database`, `logs`, `enterprise`, and the advisory sections such as `[odoo].version`), except `version` and `python_version`: they derive from `odoo_version` (Python stays 3.12) and are refused when set (`[tooling].<key> is derived in a workspace; remove it from <file>.`). Every path resolves from the workspace file's directory, except `addons_paths`, which resolves from each checkout (`'.'` is the checkout itself), because the modules live in every checkout. The environment target keeps the profile rule: inside the checkout, or in a directory whose name ends in `environments`.
+- `checkout_slug` is per checkout, so the workspace file refuses it. An optional `oasis-checkout.toml` in the checkout may set only that key; any other key or table is refused with `oasis-checkout.toml may only set [tooling].checkout_slug: <key>` (`tooling.logs`, `odoo`, ...). In a checkout with a profile it is not read.
+
+```toml
+# <checkout>/oasis-checkout.toml, example only.
+[tooling]
+checkout_slug = 'mrp_2'
+```
+
+- `tools/config.py` emits the same assignments as for a profile, plus `WORKSPACE_ROOT` (the workspace directory, empty for a profile), appended last. Checkout identity, slugs and database names are unchanged.
+- `worktree-init`, when the main checkout has no profile and finds a workspace file, only runs `git worktree add` and prints `workspace: <dir>` after the slug line: nothing is copied or linked. The new folder must be below the workspace directory (`The new worktree <path> would not be under the workspace <dir>; prepare the worktree by hand.` otherwise). A main checkout with a profile keeps the shared or legacy layout.
+- Not read from a workspace yet: the `[development]` accounts of `init-dev-database` and the `lint_rcfile` of `lint-module` (both refuse to run in a checkout without a profile), and the `checkout_slug` of other worktrees that `gc` looks up (it reads profiles only and falls back to the slug of the folder name).
 
 ## Lint one module without starting Odoo
 

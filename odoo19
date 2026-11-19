@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Explicit-project entry point for the installed Odoo 19 tool bundle."""
 import argparse
+import importlib.util
 import os
 from pathlib import Path
 import sys
@@ -13,6 +14,18 @@ COMMANDS = (
 )
 
 
+def below_workspace(tools: Path, root: Path) -> bool:
+    """Whether tools/config.py finds a workspace file for root (its finder, not a copy)."""
+    reader = tools / 'config.py'
+    if not reader.is_file():
+        return False
+    sys.dont_write_bytecode = True  # never leave __pycache__ in the installed bundle
+    spec = importlib.util.spec_from_file_location('odoo19_config', reader)
+    config = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config)
+    return config.find_workspace(root) is not None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog='odoo19',
@@ -22,7 +35,8 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('--project', metavar='/absolute/project',
-                        help='absolute path to an existing project with .odoo19-agent.toml')
+                        help=('absolute path to an existing checkout with .odoo19-agent.toml '
+                              'or below an oasis-workspace.toml'))
     parser.add_argument('command', nargs='?', help='public command to run')
     parser.add_argument('arguments', nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -33,11 +47,11 @@ def main() -> int:
         print('ERROR: --project requires an absolute existing project directory.', file=sys.stderr)
         return 2
     root = Path(args.project).resolve()
+    tools = Path(__file__).resolve().parent / 'tools'
     profile = root / '.odoo19-agent.toml'
-    if not profile.is_file():
+    if not profile.is_file() and not below_workspace(tools, root):
         print(f'ERROR: Missing tooling configuration: {profile}', file=sys.stderr)
         return 2
-    tools = Path(__file__).resolve().parent / 'tools'
     tool = tools / args.command
     if not tool.is_file() or not tool.resolve().is_relative_to(tools):
         print(f'Odoo 19 tools are not installed: {tool}', file=sys.stderr)

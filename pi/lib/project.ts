@@ -1,24 +1,60 @@
 // Odoo 19 project detection. No Pi imports: tested directly with node:test.
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export const PROFILE_NAME = ".odoo19-agent.toml";
+export const WORKSPACE_NAME = "oasis-workspace.toml";
 
-/** Nearest directory at or above `start` that holds the project profile, else null. */
-export function findProjectRoot(start: string): string | null {
+/** Git top level of a directory, or null when git cannot tell (injected: this lib runs no commands). */
+export type GitTopLevel = (start: string) => string | null;
+
+function ancestors(start: string): string[] {
+  const directories: string[] = [];
   let current = resolve(start);
   for (;;) {
-    if (existsSync(join(current, PROFILE_NAME))) return current;
+    directories.push(current);
     const parent = dirname(current);
-    if (parent === current) return null;
+    if (parent === current) return directories;
     current = parent;
   }
 }
 
-/** Compact system-prompt section for a detected project. */
-export function projectContext(root: string): string {
+/**
+ * Nearest `oasis-workspace.toml` at or above `start`, else null. Like tools/config.py, the
+ * search ends at a directory that holds the profile: that checkout owns the tree.
+ */
+export function findWorkspaceFile(start: string): string | null {
+  for (const directory of ancestors(start)) {
+    if (existsSync(join(directory, PROFILE_NAME))) return null;
+    const candidate = join(directory, WORKSPACE_NAME);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Checkout root for `start`: the nearest directory with the profile, else, under a workspace
+ * file, the git top level of `start` (`start` itself without git or when the top level is not
+ * inside the workspace directory, where the workspace file would not be found again), else null.
+ */
+export function findProjectRoot(start: string, gitTopLevel?: GitTopLevel): string | null {
+  for (const directory of ancestors(start)) {
+    if (existsSync(join(directory, PROFILE_NAME))) return directory;
+  }
+  const workspace = findWorkspaceFile(start);
+  if (!workspace) return null;
+  const fallback = resolve(start);
+  const top = gitTopLevel?.(fallback);
+  if (!top) return fallback;
+  const inside = relative(dirname(workspace), resolve(top));
+  return inside.startsWith("..") || isAbsolute(inside) ? fallback : resolve(top);
+}
+
+/** Compact system-prompt section for a detected project; `workspace` names its workspace file. */
+export function projectContext(root: string, workspace?: string | null): string {
+  const source = workspace ? `workspace ${workspace}` : `profile ${PROFILE_NAME}`;
   return [
-    `Odoo 19 project root: ${root} (profile ${PROFILE_NAME}).`,
+    `Odoo 19 project root: ${root} (${source}).`,
     "Prefer the odoo19 tools over raw shell; they apply the profile guards and return compact output:",
     "- odoo19_test_module: run one module's tests; returns the result line and failures only, full logs stay on disk.",
     "- odoo19_module_status: database and module state for a module.",

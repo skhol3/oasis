@@ -9,6 +9,24 @@ still change in a minor release; every such change is listed here under **Change
 
 ## [Unreleased]
 
+### Added
+
+- `oasis-workspace.toml`, one per project at its root: a checkout without
+  `.odoo19-agent.toml` (`--project`, or the git top level of the Gentle Shell session
+  directory) reads the nearest one above it, at any depth; a directory with a profile on the
+  way ends the search. It requires `workspace_version = 1` and `odoo_version = '19.0'`, and its
+  `[tooling]` table takes the profile's keys and guards except the derived `version` and
+  `python_version`. Paths resolve from the workspace file's directory, `addons_paths` from each
+  checkout. A checkout with its own profile is read exactly as before.
+- Optional `oasis-checkout.toml` in a workspace checkout: it may set only
+  `[tooling].checkout_slug`; any other key is refused.
+- `tools/config.py` appends `WORKSPACE_ROOT` (empty for a profile) after `LOGS_DIR`.
+- `worktree-init` in a workspace (main checkout without a profile) only runs
+  `git worktree add` and prints `workspace: <dir>`.
+- The `odoo19` entry point, the `odoo19_*` tools, the prompt context and `/odoo19` accept a
+  checkout without a profile below a workspace file.
+- Example `odoo19-environment/assets/oasis-workspace.example.toml`.
+
 ## [0.3.0] - 2026-11-18
 
 Several checkouts of one project side by side: shared configuration, a server and port per

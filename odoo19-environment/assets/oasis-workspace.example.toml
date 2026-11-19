@@ -1,0 +1,43 @@
+# Optional project workspace file for an explicitly authorized project: one per project,
+# at the project root. Values are placeholders, not defaults, discovery, access consent or
+# executable checks. Never add credentials or read/log runtime config or env-file contents.
+#
+#   acme/oasis-workspace.toml        this file
+#   acme/codigo/acme                 main checkout
+#   acme/codigo/acme-shop-feature    linked worktree (any depth below acme/ works)
+#   acme/config/                     odoo.conf, environment file, compose file, requirements/
+#   acme/data/                       Odoo data_dir (set data_dir in the shared odoo.conf)
+#   acme/logs/                       compact runs and browser evidence
+#
+# oasis finds this file by walking up from the checkout, as git finds .git. A checkout
+# with its own .odoo19-agent.toml (legacy profile) is read as before and ignores this file,
+# and a directory with a profile on the way up ends the search.
+workspace_version = 1
+# Odoo series of every checkout; the tooling version and Python 3.12 derive from it.
+odoo_version = '19.0'
+
+# Same keys and guards as the profile's [tooling], without version and python_version.
+# Paths are relative to this file's directory, except addons_paths, which is relative to
+# each checkout ('.' is the checkout itself), because the modules live in every checkout.
+[tooling]
+community = 'source/odoo'
+# Optional Enterprise source.
+# enterprise = 'source/enterprise'
+environment = 'environments/acme'
+config = 'config/odoo.conf'
+env_file = 'config/.env'
+compose = 'config/compose.yml'
+requirements = 'config/requirements'
+addons_paths = ['.']
+db_service = 'db'
+dev_prefix = 'acme_dev_'
+test_prefix = 'acme_test_'
+# Optional reusable sequential test target; never implies reset permission.
+# test_database = 'acme_test_suite'
+# Optional logs directory: runs go to <logs>/odoo19/<slug, or main for the main checkout>/.
+# logs = 'logs'
+#
+# A checkout slug is per checkout, never set here: an optional oasis-checkout.toml in the
+# checkout may set only that key (any other key is refused):
+#   [tooling]
+#   checkout_slug = 'acme_07_1'

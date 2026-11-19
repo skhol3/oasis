@@ -65,6 +65,36 @@ def check_example(raw):
     return data
 
 
+WORKSPACE = ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml'
+WORKSPACE_TOOLING = {key: kind for key, kind in TOOLING.items()
+                     if key not in ('version', 'python_version')}
+
+
+def check_workspace_example(raw):
+    """Static roles of the shipped workspace example: versions on top, [tooling] without derived keys."""
+    data = tomllib.loads(raw)
+    if set(data) != {'workspace_version', 'odoo_version', 'tooling'}:
+        raise ValueError('sections')
+    if (type(data['workspace_version']) is not int or data['workspace_version'] != 1
+            or data['odoo_version'] != '19.0'):
+        raise ValueError('versions')
+    tooling = data['tooling']
+    if set(tooling) != set(WORKSPACE_TOOLING) or any(
+        not isinstance(tooling[key], kind) or not tooling[key] for key, kind in WORKSPACE_TOOLING.items()
+    ):
+        raise ValueError('tooling')
+    if (not tooling['dev_prefix'].endswith('_dev_')
+            or tooling['test_prefix'] != tooling['dev_prefix'][:-4] + 'test_'):
+        raise ValueError('tooling agreement')
+    paths = [tooling[key] for key in WORKSPACE_TOOLING if isinstance(tooling[key], str)
+             and key not in ('db_service', 'dev_prefix', 'test_prefix')]
+    if any(path.startswith(('/', '~')) or '..' in Path(path).parts for path in paths):
+        raise ValueError('workspace path')
+    if re.search(r'corpus.cafe|cc_(?:test|dev)_|password|secret|token|credential', repr(data), re.I):
+        raise ValueError('customer path or credential')
+    return data
+
+
 class BundleTests(unittest.TestCase):
     def test_six_unique_skill_contracts(self):
         skills = sorted(ROOT.glob('*/SKILL.md'))
@@ -127,6 +157,31 @@ class BundleTests(unittest.TestCase):
         contract = (ROOT / 'odoo19-environment/references/project-contract.md').read_text(encoding='utf-8')
         for phrase in ('`logs`', '`LOGS_DIR`', '<logs>/odoo19/'):
             self.assertIn(phrase, contract)
+
+    def test_workspace_example_schema_and_negative_examples(self):
+        raw = WORKSPACE.read_text(encoding='utf-8')
+        data = check_workspace_example(raw)
+        self.assertEqual(data['tooling']['addons_paths'][0], '.')
+        self.assertTrue(data['tooling']['dev_prefix'].startswith('acme_'))
+        for broken in (raw.replace('workspace_version = 1', 'workspace_version = 2'),
+                       raw.replace("odoo_version = '19.0'", "odoo_version = '18.0'"),
+                       raw.replace("[tooling]", "[tooling]\nversion = '19.0'"),
+                       raw.replace("[tooling]", "[tooling]\ncheckout_slug = 'acme_07_1'"),
+                       raw.replace("config = 'config/odoo.conf'", "config = '/etc/odoo.conf'"),
+                       raw.replace("environment = 'environments/acme'", ''),
+                       raw + "\n[database_extra]\npassword = 'example'\n"):
+            with self.assertRaises(ValueError):
+                check_workspace_example(broken)
+        # Documented but not set: logs and optional keys; the slug lives in oasis-checkout.toml.
+        self.assertEqual(re.findall(r"^# logs = '([^']*)'$", raw, re.MULTILINE), ['logs'])
+        self.assertEqual(re.findall(r"^#\s+checkout_slug = '([^']*)'$", raw, re.MULTILINE), ['acme_07_1'])
+        for phrase in ('oasis-checkout.toml', 'addons_paths', '.odoo19-agent.toml'):
+            self.assertIn(phrase, raw)
+        contract = (ROOT / 'odoo19-environment/references/project-contract.md').read_text(encoding='utf-8')
+        for phrase in ('`oasis-workspace.toml`', '`oasis-checkout.toml`', '`WORKSPACE_ROOT`'):
+            self.assertIn(phrase, contract)
+        skill = (ROOT / 'odoo19-environment/SKILL.md').read_text(encoding='utf-8')
+        self.assertIn('assets/oasis-workspace.example.toml', skill)
 
     def test_reference_and_package_docs(self):
         reference = ROOT / 'odoo19-environment/references/project-contract.md'

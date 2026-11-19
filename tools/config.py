@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Parse project-owned tooling paths into literal shell assignments, not shell code.
 
-The caller must supply the project root; this module never discovers it from its own
-(global installation) location. Path declarations do not grant access consent.
+The caller must supply the project (checkout) root; this module never discovers it from its
+own (global installation) location. A checkout without `.odoo19-agent.toml` reads the nearest
+`oasis-workspace.toml` above it. Path declarations do not grant access consent.
 """
 import ast
+import json
 import os
 from pathlib import Path
 import re
@@ -19,6 +21,15 @@ PATHS = {
     'env_file': 'ENV_FILE', 'compose': 'COMPOSE_FILE',
     'requirements': 'REQUIREMENTS_DIR',
 }
+
+
+PROFILE_NAME = '.odoo19-agent.toml'
+WORKSPACE_NAME = 'oasis-workspace.toml'
+CHECKOUT_NAME = 'oasis-checkout.toml'
+WORKSPACE_VERSION = 1
+# Supported odoo_version values of a workspace and the Python each one requires.
+ODOO_VERSIONS = {'19.0': '3.12'}
+MISSING = object()
 
 
 class InvalidConfig(ValueError):
@@ -114,15 +125,106 @@ def derived_slug(top: Path, main: Path) -> str:
     return slug
 
 
-def load(root: Path) -> dict[str, str]:
-    profile = root / '.odoo19-agent.toml'
-    if not profile.is_file():
-        raise InvalidConfig(f'Missing tooling configuration: {profile}')
+def find_workspace(root: Path) -> Path | None:
+    """The nearest workspace file at or above root, or None.
+
+    Searched like git searches `.git`, up to the filesystem root. A directory that holds a
+    legacy profile (root included) ends the search: that profile's checkout owns the tree.
+    """
+    for directory in (root, *root.parents):
+        if (directory / PROFILE_NAME).is_file():
+            return None
+        candidate = directory / WORKSPACE_NAME
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def shown(value) -> str:
+    """A TOML value for a message: JSON form (strings quoted), `(missing)` when absent."""
+    return '(missing)' if value is MISSING else json.dumps(value, default=str)
+
+
+def read_toml(path: Path) -> dict:
     try:
-        with profile.open('rb') as stream:
-            document = tomllib.load(stream)
+        with path.open('rb') as stream:
+            return tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise InvalidConfig(f'Invalid TOML in {path}.') from exc
+
+
+def workspace_document(workspace: Path) -> dict:
+    """The workspace document, versions checked, with the derived [tooling] keys filled in."""
+    document = read_toml(workspace)
+    version = document.get('workspace_version', MISSING)
+    if type(version) is not int or version != WORKSPACE_VERSION:
+        raise InvalidConfig(f'Unsupported workspace_version {shown(version)} in {workspace}.')
+    odoo = document.get('odoo_version', MISSING)
+    if not isinstance(odoo, str) or odoo not in ODOO_VERSIONS:
+        raise InvalidConfig(f'Unsupported odoo_version {shown(odoo)} in {workspace}; '
+                            f'supported: {", ".join(ODOO_VERSIONS)}.')
+    tooling = document.get('tooling')
+    if not isinstance(tooling, dict):
+        raise InvalidConfig('Invalid tooling configuration.')
+    for key in ('version', 'python_version'):
+        if key in tooling:
+            raise InvalidConfig(f'[tooling].{key} is derived in a workspace; remove it from {workspace}.')
+    if 'checkout_slug' in tooling:
+        # One slug for every checkout would give them all one database namespace.
+        raise InvalidConfig("[tooling].checkout_slug belongs in a checkout's oasis-checkout.toml, "
+                            f'not in {workspace}.')
+    # Derived: the Odoo series from odoo_version; Python keeps the 19.0 requirement for now.
+    document['tooling'] = {**tooling, 'version': odoo, 'python_version': ODOO_VERSIONS[odoo]}
+    return document
+
+
+def checkout_overrides(root: Path) -> dict:
+    """[tooling] keys of the optional checkout file; only checkout_slug is accepted."""
+    path = root / CHECKOUT_NAME
+    if not path.is_file():
+        return {}
+    document = read_toml(path)
+    for key, value in document.items():
+        if key != 'tooling' or not isinstance(value, dict):
+            raise InvalidConfig(f'{CHECKOUT_NAME} may only set [tooling].checkout_slug: {key}')
+        for name in value:
+            if name != 'checkout_slug':
+                raise InvalidConfig(f'{CHECKOUT_NAME} may only set [tooling].checkout_slug: tooling.{name}')
+    return dict(document.get('tooling', {}))
+
+
+def load(root: Path) -> dict[str, str]:
+    """Legacy profile in root, read as before; otherwise the workspace file above root."""
+    profile = root / PROFILE_NAME
+    if profile.is_file():
+        try:
+            with profile.open('rb') as stream:
+                document = tomllib.load(stream)
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            raise InvalidConfig('Invalid tooling configuration.') from exc
+        output = resolve(document, root, root)
+        output['WORKSPACE_ROOT'] = ''
+        return output
+    workspace = find_workspace(root)
+    if workspace is None:
+        raise InvalidConfig(f'Missing tooling configuration: {profile}')
+    document = workspace_document(workspace)
+    document['tooling'].update(checkout_overrides(root))
+    output = resolve(document, root, workspace.parent)
+    # Appended last, so the previous assignments stay unchanged.
+    output['WORKSPACE_ROOT'] = str(workspace.parent)
+    return output
+
+
+def resolve(document: dict, root: Path, base: Path) -> dict[str, str]:
+    """Validated assignments for the checkout root.
+
+    Paths resolve from base (the profile's checkout, or the workspace directory), except
+    addons_paths, which always resolve from the checkout root.
+    """
+    try:
         tooling = document['tooling']
-    except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError) as exc:
+    except (KeyError, TypeError) as exc:
         raise InvalidConfig('Invalid tooling configuration.') from exc
     if not isinstance(tooling, dict):
         raise InvalidConfig('Invalid tooling configuration.')
@@ -165,13 +267,13 @@ def load(root: Path) -> dict[str, str]:
             continue
         if not isinstance(value, str) or not value or '\x00' in value or '\n' in value:
             raise InvalidConfig(f'Invalid tooling path: {key}.')
-        output[variable] = str((root / value).resolve())
+        output[variable] = str((base / value).resolve())
     # Optional; emitted last (empty when absent) so the previous assignments stay unchanged.
     logs = tooling.get('logs')
     if 'logs' in tooling and (not isinstance(logs, str) or not logs or '\x00' in logs
                               or '\n' in logs):
         raise InvalidConfig('Invalid tooling path: logs.')
-    logs_dir = str((root / logs).resolve()) if logs is not None else ''
+    logs_dir = str((base / logs).resolve()) if logs is not None else ''
     target = Path(output['PROJECT_ENVIRONMENT'])
     source = Path(output['ODOO_SOURCE'])
     if (target == root or target in root.parents or target == source

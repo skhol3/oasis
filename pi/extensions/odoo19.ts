@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { blockedProgram, blockReason, WORKTREE_INIT } from "../lib/bash-guard.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
-import { findProjectRoot, projectContext } from "../lib/project.ts";
+import { findProjectRoot, findWorkspaceFile, projectContext } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
 import { nextActiveTools, ODOO19_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
@@ -31,12 +31,6 @@ function text(body: string, details: Record<string, unknown> = {}): Result {
   return { content: [{ type: "text", text: body }], details };
 }
 
-function requireRoot(cwd: string): string {
-  const root = findProjectRoot(cwd);
-  if (!root) throw new Error(`No .odoo19-agent.toml at or above ${cwd}; not an Odoo 19 project.`);
-  return root;
-}
-
 function readLog(path: string): string {
   try {
     return readFileSync(path, "utf8");
@@ -45,7 +39,44 @@ function readLog(path: string): string {
   }
 }
 
+function notProject(cwd: string): string {
+  return `no .odoo19-agent.toml or oasis-workspace.toml at or above ${cwd}`;
+}
+
 export default function odoo19Layer(pi: ExtensionAPI) {
+  // Git top level of each directory under a workspace file, read once (null: git cannot tell).
+  const topLevels = new Map<string, string | null>();
+
+  async function gitTopLevel(start: string): Promise<string | null> {
+    try {
+      const result = await pi.exec("git", ["-C", start, "rev-parse", "--show-toplevel"], {
+        cwd: start, timeout: STATUS_TIMEOUT_MS,
+      });
+      return (result.code === 0 && result.stdout.trim()) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // The checkout root of cwd (lib/project.ts); git runs only for a directory under a workspace file.
+  async function projectRoot(cwd: string): Promise<string | null> {
+    const lookup = { missing: null as string | null };
+    const root = findProjectRoot(cwd, (start) => {
+      if (topLevels.has(start)) return topLevels.get(start) ?? null;
+      lookup.missing = start;
+      return null;
+    });
+    if (lookup.missing === null) return root;
+    topLevels.set(lookup.missing, await gitTopLevel(lookup.missing));
+    return findProjectRoot(cwd, (start) => topLevels.get(start) ?? null);
+  }
+
+  async function requireRoot(cwd: string): Promise<string> {
+    const root = await projectRoot(cwd);
+    if (!root) throw new Error(`Not an Odoo 19 project: ${notProject(cwd)}.`);
+    return root;
+  }
+
   async function run(root: string, args: string[], signal: AbortSignal | undefined, timeout: number) {
     return pi.exec("python3", ["-B", ODOO19, "--project", root, ...args], { cwd: root, signal, timeout });
   }
@@ -53,7 +84,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   async function plain(
     cwd: string, args: string[], signal: AbortSignal | undefined, maxLines = MAX_LINES,
   ): Promise<Result> {
-    const root = requireRoot(cwd);
+    const root = await requireRoot(cwd);
     const result = await run(root, args, signal, TOOL_TIMEOUT_MS);
     return text(formatPlain(result, maxLines), { exit: result.code });
   }
@@ -139,9 +170,9 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   // User-run only (agents are blocked from worktree-init): show the dry-run plan, then create it on yes.
   async function worktree(ctx: { cwd: string; ui: { notify: (message: string, level?: "info" | "warning" | "error") => void;
     confirm: (title: string, message: string) => Promise<boolean> } }, feature: string, branch: string): Promise<void> {
-    const root = findProjectRoot(ctx.cwd);
+    const root = await projectRoot(ctx.cwd);
     if (!root) {
-      ctx.ui.notify(`Not an Odoo 19 project: no .odoo19-agent.toml at or above ${ctx.cwd}`, "warning");
+      ctx.ui.notify(`Not an Odoo 19 project: ${notProject(ctx.cwd)}`, "warning");
       return;
     }
     const args = ["worktree-init", feature, branch];
@@ -189,9 +220,9 @@ export default function odoo19Layer(pi: ExtensionAPI) {
         ctx.ui.notify(USAGE, "warning");
         return;
       }
-      const root = findProjectRoot(ctx.cwd);
+      const root = await projectRoot(ctx.cwd);
       if (!root) {
-        ctx.ui.notify(`Not an Odoo 19 project: no .odoo19-agent.toml at or above ${ctx.cwd}`, "warning");
+        ctx.ui.notify(`Not an Odoo 19 project: ${notProject(ctx.cwd)}`, "warning");
         return;
       }
       const content = formatStatus(await projectStatus(root));
@@ -203,7 +234,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   // project so other projects pay no tokens for their schemas and guidelines. Other tools are untouched.
   pi.on("session_start", async (_event, ctx) => {
     const active = pi.getActiveTools();
-    const next = nextActiveTools(active, findProjectRoot(ctx.cwd) !== null, ODOO19_TOOLS);
+    const next = nextActiveTools(active, (await projectRoot(ctx.cwd)) !== null, ODOO19_TOOLS);
     if (next.length !== active.length || next.some((name, index) => name !== active[index])) pi.setActiveTools(next);
   });
 
@@ -212,7 +243,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     if (overlayNoticeShown) return;
     try {
-      if (!findProjectRoot(ctx.cwd)) return;
+      if (!(await projectRoot(ctx.cwd))) return;
       const state = overlayState(OVERLAY_TEMPLATE, currentOverlayTarget());
       if (state === "current") return;
       overlayNoticeShown = true;
@@ -224,14 +255,16 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
-    const root = findProjectRoot(ctx.cwd);
+    const root = await projectRoot(ctx.cwd);
     if (!root) return;
+    // A checkout without profile names its workspace file (null when the root holds the profile).
+    const context = projectContext(root, findWorkspaceFile(root));
     const sections = event.systemPromptOptions?.sections;
     if (sections) {
-      sections.odoo19 = projectContext(root);
+      sections.odoo19 = context;
       return;
     }
-    return { systemPrompt: `${event.systemPrompt}\n\n<odoo19>\n${projectContext(root)}\n</odoo19>` };
+    return { systemPrompt: `${event.systemPrompt}\n\n<odoo19>\n${context}\n</odoo19>` };
   });
 
   // Agent bash only: direct odoo-bin/dropdb/psql bypass the core's database guards (Odoo projects);
@@ -243,7 +276,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     const program = blockedProgram(command);
     if (!program) return;
     if (program === WORKTREE_INIT) return { block: true, reason: blockReason(program, "") };
-    const root = findProjectRoot(ctx.cwd);
+    const root = await projectRoot(ctx.cwd);
     if (root) return { block: true, reason: blockReason(program, root) };
   });
 
@@ -266,7 +299,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       traceLines: Type.Optional(Type.Integer({ minimum: 0, maximum: 40, default: 6 })),
     }),
     async execute(_id, params, signal, _onUpdate, ctx) {
-      const root = requireRoot(ctx.cwd);
+      const root = await requireRoot(ctx.cwd);
       const result = await run(root, testModuleArgs(params), signal, TEST_TIMEOUT_MS);
       const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };
       return text(formatTestRun(params.module, result, readLog, options, MAX_LINES), { exit: result.code });
@@ -289,7 +322,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 30, default: DEFAULT_LIMIT })),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
-      const root = requireRoot(ctx.cwd);
+      const root = await requireRoot(ctx.cwd);
       const { config, error } = await profileConfig(root);
       if (!config) throw new Error(`Cannot read the project profile: ${error}`);
       const { matches, total } = findModules(loadModules(addonRoots(config)), params.query, params.limit ?? DEFAULT_LIMIT);
