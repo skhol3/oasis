@@ -48,15 +48,26 @@ function formatWarnings(groups: WarningGroup[]): string {
   return `warnings: ${total} (${shown.join("; ")})`;
 }
 
+/** Newline characters in a text: what `wc -l` reports for it, so an unterminated last line is not counted. */
+function countNewlines(text: string): number {
+  return text.split("\n").length - 1;
+}
+
 /**
  * Reduce an Odoo test run log to its result line, up to MAX_STATS stats lines, the ERROR/CRITICAL
- * entries and one line of grouped warnings (omitted when there are none).
+ * entries, one line of grouped warnings (omitted when there are none) and, always last, the control
+ * line `log: <lines> lines, <errors> errors, <warnings> warnings`. Its counts are never capped, so
+ * a reader can check the summary against the full logs: lines as `cat stdout stderr | wc -l`,
+ * errors as ERROR/CRITICAL log lines except odoo.tests.result, warnings as WARNING log lines except
+ * odoo.tests.* loggers.
  */
 export function summarizeTestLog(stdout: string, stderr: string, options: SummaryOptions): string {
   let result = "not reported";
   const problems: Problem[] = [];
   const stats: string[] = [];
   const warnings = new Map<string, WarningGroup>();
+  let errorCount = 0;
+  let warningCount = 0;
   let current: Problem | null = null;
   for (const line of `${stdout}\n${stderr}`.split("\n")) {
     const match = LOG_LINE.exec(line);
@@ -66,6 +77,8 @@ export function summarizeTestLog(stdout: string, stderr: string, options: Summar
     }
     const [, level, logger, message] = match;
     current = null;
+    if ((level === "ERROR" || level === "CRITICAL") && logger !== RESULT_LOGGER) errorCount++;
+    if (level === "WARNING" && !logger.startsWith("odoo.tests.")) warningCount++;
     if (logger === RESULT_LOGGER) {
       result = message;
     } else if (logger === STATS_LOGGER) {
@@ -95,6 +108,8 @@ export function summarizeTestLog(stdout: string, stderr: string, options: Summar
     }
   }
   if (warnings.size) lines.push(formatWarnings([...warnings.values()]));
+  const logLines = countNewlines(stdout) + countNewlines(stderr);
+  lines.push(`log: ${logLines} lines, ${errorCount} errors, ${warningCount} warnings`);
   return lines.join("\n");
 }
 

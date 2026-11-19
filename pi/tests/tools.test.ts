@@ -29,6 +29,7 @@ test("formatTestRun summarizes the logs the core reported", () => {
       "module=coffee database=cc_test_coffee exit=0",
       "result: 0 failed, 0 error(s) of 3 tests",
       "problems: 0",
+      "log: 0 lines, 0 errors, 0 warnings",
       "logs: /p/dev/logs/odoo19/run-1/stdout.log /p/dev/logs/odoo19/run-1/stderr.log",
     ].join("\n"),
   );
