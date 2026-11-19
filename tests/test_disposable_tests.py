@@ -27,6 +27,10 @@ RESERVED = 'Database names ending in _r<6 hex> are reserved for disposable runs:
 DOCKER_CASES = '''case "$*" in
   *"exec createdb"*)
     if [ "${FAKE_CREATE_FAILS:-0}" = 1 ]; then echo "create failed" >&2; exit 1; fi
+    if [ "${FAKE_CREATE_ALREADY_EXISTS:-0}" = 1 ]; then
+      printf "%s\\n" "$last" >> "$FAKE_LOG.databases"
+      printf 'createdb: error: database creation failed: ERROR:  database "%s" already exists\\n' "$last" >&2; exit 1
+    fi
     printf "%s\\n" "$last" >> "$FAKE_LOG.databases"
     if [ "${FAKE_CREATE_THEN_FAILS:-0}" = 1 ]; then echo "create failed late" >&2; exit 1; fi ;;
   *"exec dropdb --if-exists"*)
@@ -329,6 +333,20 @@ class DisposableTestModuleTests(DisposableFixture):
     def databases(self):
         path = Path(str(self.commands) + '.databases')
         return path.read_text().split() if path.exists() else []
+
+    def test_a_create_that_finds_the_name_taken_never_drops_it(self):
+        # Something without a run lock created the name between the free check and createdb:
+        # createdb reports "already exists", so the database is not this run's and stays.
+        self.env['FAKE_CREATE_ALREADY_EXISTS'] = '1'
+        result = self.invoke('test-module', 'coffee')
+        database = self.events()[0][1]
+        self.assertEqual(self.events(), [('exists', database), ('create', database)])
+        self.assertEqual((result.returncode, result.stdout), (1, ''))
+        self.assertEqual(result.stderr, (
+            f'createdb: error: database creation failed: ERROR:  database "{database}" already exists\n'
+            f'Cannot create disposable test database {database}; it was not dropped.\n'))
+        self.assertEqual(self.databases(), [database])
+        self.assertEqual(self.run_locks(), [])
 
     def test_a_create_that_fails_after_creating_drops_what_it_created(self):
         # createdb created the database, then exited non-zero: no other run holds the name, so

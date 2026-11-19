@@ -132,6 +132,9 @@ still change in a minor release; every such change is listed here under **Change
 
 ### Fixed
 
+- A disposable run never drops a database when `createdb` reports that the name already
+  exists (created by something without a run lock); `verify-module` no longer loses a signal
+  that arrives right after its locks are taken.
 - `status` no longer stops before the server line and `compose ps` when `TMPDIR` is missing
   or not writable: it captures the runtime state read without a temporary file.
 - `verify-module` no longer leaks a run lock when SIGINT or SIGTERM arrives between writing a

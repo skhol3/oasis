@@ -44,6 +44,20 @@ def database_step(function, database):
                            str(TOOLS / 'common.sh'), function, database]).returncode
 
 
+def create_step(database):
+    """Run create_disposable_database; its exit status and whether createdb found the name taken.
+
+    stderr is relayed unchanged. "already exists" means another creator won the name, so the
+    database is never this run's own.
+    """
+    result = subprocess.run(['bash', '-c', 'source "$1"; "$2" "$3"', 'test-temp',
+                             str(TOOLS / 'common.sh'), 'create_disposable_database', database],
+                            stderr=subprocess.PIPE, text=True, errors='replace')
+    sys.stderr.write(result.stderr)
+    sys.stderr.flush()
+    return result.returncode, 'already exists' in result.stderr
+
+
 def remove_filestore(conf, database):
     """Remove <data_dir>/filestore/<database>; only the conf's data_dir is read.
 
@@ -208,11 +222,11 @@ def main():
             if locked:
                 status = database_step('require_free_disposable_database', disposable)
             if locked and status == 0 and received is None:
-                status = database_step('create_disposable_database', disposable)
+                status, taken = create_step(disposable)
                 if status == 0:
                     # Only now is the database this run's own: from here on it is dropped.
                     created = True
-                elif (database_step('database_exists', disposable) == 0
+                elif (not taken and database_step('database_exists', disposable) == 0
                       and not held_by_another_run(disposable)):
                     # The name was free and this run holds its lock: createdb created it, then
                     # failed. It is this run's own and is dropped at the end.

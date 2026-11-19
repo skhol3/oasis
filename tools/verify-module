@@ -102,6 +102,8 @@ if "$disposable"; then
   done
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  # A signal that arrived after the last check above was only recorded: act on it now.
+  if [[ -n "$pending" ]]; then exit "$pending"; fi
   require_free_disposable_database "$test_database"
   require_free_disposable_database "$update_database"
   owned=("$test_database" "$update_database")
