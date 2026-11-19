@@ -380,6 +380,33 @@ class MigrateTests(unittest.TestCase):
         self.assertEqual(self.tree(), before)
 
 
+    def test_read_only_conf_fails_cleanly_and_changes_nothing(self):
+        self.conf.chmod(0o440)
+        self.addCleanup(self.conf.chmod, 0o600)
+        before = self.tree()
+        result = self.migrate('--apply')
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn('could not be undone', result.stderr)
+        self.assertEqual(self.tree(), before)
+
+    def test_conf_keeps_comments_crlf_and_other_sections(self):
+        self.conf.write_bytes((f"# c\r\n[options]\r\n; x\r\nADDONS_PATH = {self.main},\r\n    {self.project}/source/odoo/addons\r\n"
+            f"admin_passwd = S  \r\ndata_dir = {self.project}/data\r\nhttp_port = {self.port}\n[other]\naddons_path = keep\n").encode())
+        original = self.conf.read_bytes()
+        self.assertEqual(self.migrate('--apply').returncode, 0)
+        self.assertEqual(self.conf.read_bytes(), b"# c\r\n[options]\r\n; x\r\nadmin_passwd = S  \r\n"
+                         + f"http_port = {self.port}\n[other]\naddons_path = keep\n".encode())
+        [backup] = self.backups(self.config, 'odoo.conf')
+        self.assertEqual(backup.read_bytes(), original)
+
+    def test_group_writable_workspace_dir_is_refused(self):
+        os.chmod(self.project, 0o775)
+        self.addCleanup(os.chmod, self.project, 0o755)
+        before = self.tree()
+        self.assertEqual(self.migrate('--apply').returncode, 2)
+        self.assertEqual(self.tree(), before)
+
+
 class MigrateSurfaceTests(unittest.TestCase):
     def test_entry_point_lists_migrate(self):
         self.assertIn("'migrate'", (ROOT / 'oasis').read_text())

@@ -481,9 +481,15 @@ def effective(reader, values: dict):
 
 # -- apply -----------------------------------------------------------------------------------------
 
-def write_in_place(path: Path, data: bytes):
-    """Replace a file's content, keeping its inode, mode and owner."""
+def write_in_place(path: Path, data: bytes, opened=None):
+    """Replace a file's content, keeping its inode, mode and owner.
+
+    `opened` is called once the file is open for writing and before anything is written, so a
+    caller can register its undo step only for a file that may actually change.
+    """
     with path.open('r+b') as stream:
+        if opened is not None:
+            opened()
         stream.write(data)
         stream.truncate()
         stream.flush()
@@ -508,8 +514,9 @@ class Changes:
         elif kind == 'replace':
             _kind, path, data = action
             original = path.read_bytes()
-            self.undo.append(('restore', path, original))
-            write_in_place(path, data)
+            # Registered only once the file opened for writing: a read-only file is never
+            # touched, so there is nothing to undo and no false "could not be undone".
+            write_in_place(path, data, lambda: self.undo.append(('restore', path, original)))
         else:
             _kind, source, target = action
             if os.path.lexists(target):
