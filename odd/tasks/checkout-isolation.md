@@ -38,7 +38,7 @@ step on each other. Gentle Shell keeps owning sessions, worktrees, ODD, review a
 - [x] T4b [S6 S7] Harden per-checkout servers from review review-b4931e46d393a16a (Risk: item 4, concurrency) — worker — commit: 04aa17c
 - [x] T3b [S5] Harden disposable runs and gc from verify + review (Risk: item 1) — worker — commit: ec5f661
 - [x] T14 [S2 S9] Pre-release cleanup: open review tests and advisories (L21, L30) and neutral documentation examples (L31) — worker — commit: bec541c, e8771d8, 707a06f
-- T15 [S6 S7] Serialize `docker compose up` of the shared database service between checkouts (field-test defect) — worker — commit: pending
+- [x] T15 [S6 S7] Serialize `docker compose up` of the shared database service between checkouts (field-test defect) — worker — commit: 4cbc108
 
 ## Log
 
