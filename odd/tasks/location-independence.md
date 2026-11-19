@@ -22,9 +22,9 @@ contract is checked up front. Existing `.odoo19-agent.toml` profiles keep workin
 - [x] T1 [S2 S3 S6] Workspace file discovery and layered config (workspace -> optional checkout overrides); legacy profile unchanged — commit: 449d885
 - [x] T1b [S2 S3] Workspace follow-ups from review review-4d745af74f4fe048 and L9 (Risk: item 2, trusts a file above the checkout) — worker — commit: 1435e51
 - [x] T2 [S4] Location-dependent values on the command line (`--data-dir`); `lock.sha256` relative to requirements — commit: 1f02689 (capability table + named environments)
-- T3 [S5] `odoo19 doctor` — pending
+- [x] T3 [S5] `oasis doctor` — commit: 4919a15
 - T4 [S6] `odoo19 migrate` + user-run `/odoo19 migrate` (plan, confirm, write workspace file, keep profiles as backup) — pending
-- T5 [S7] Control line in the test summary — pending
+- [x] T5 [S7] Control line in the test summary — commit: 51bb626
 - T6 Release v0.4.0 — pending
 
 ## Log
@@ -68,3 +68,4 @@ contract is checked up front. Existing `.odoo19-agent.toml` profiles keep workin
 - L20. T4 review review-b4b7f3fb6c655042 approved; readability notes fixed (ALIAS_PATH comment in oasis, CHANGELOG entry for the batch port rule). TOOL_ALIASES kept: it is the tested list of inactive alias names.
 - L21. T5 design (owned): `oasis doctor` (new public command, read-only, never starts services, never connects to a database, never prints file contents) prints one `PASS|WARN|FAIL <check>[=<value>]` line per check and `doctor_failures=<n>`, exit 1 when n>0. Checks: configuration loads (mode legacy|workspace, odoo_version supported); git >= 2.31; docker and `docker compose version`; flock (WARN if missing); /proc (WARN if missing); environment python exists, reports a version inside the capability range and equal to PYTHON_VERSION; Odoo source release matches odoo_version; odoo.conf exists and parses (WARN in workspace mode when it still holds addons_path or data_dir); compose file exists and declares a top-level `name:` (FAIL without it, research L4); env_file exists (existence only); logs/data_dir parent writable; configured http_port free or owned by this checkout's server (WARN otherwise). Tools are found with `command -v` only (no tool-manager shims, L4). `/oasis doctor` in Gentle Shell shows the same output.
 - L22. T7 design (owned): the compact test summary adds one control line `log: <lines> lines, <errors> errors, <warnings> warnings` where errors counts ERROR/CRITICAL log lines except odoo.tests.result and warnings counts WARNING lines except odoo.tests.*, computed over stdout+stderr exactly like the manual grep validation, placed after the warnings line (always present).
+- L23. doctor and control line committed; suite 387 OK; node 69 OK. Field run (read-only) of oasis doctor on corpus-cafe main and worktree: all PASS, doctor_failures=0 (worktree http_port 8020 held by its own live server).
