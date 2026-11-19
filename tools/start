@@ -7,7 +7,8 @@ set -Eeuo pipefail
 # -p/--http-port wins. A linked worktree also gets a free second (gevent) port, passed with the
 # Odoo series' option ($ODOO_SECOND_PORT_OPTION from config.py) unless one is given.
 # A batch run (--stop-after-init) serves nothing: no server check, no port check, no record;
-# it gets a free ephemeral --http-port like test runs (an explicit port is passed as given).
+# like test runs it gets a free ephemeral --http-port and a distinct free second port (explicit
+# ones are passed as given).
 source "$(dirname "$0")/common.sh"
 require_runtime
 # Guard every database odoo-bin would receive, including optparse's unambiguous
@@ -45,8 +46,16 @@ if "$informational"; then
 fi
 if "$batch"; then
   port_arguments=()
+  batch_port=$explicit_port
   if [[ -z "$explicit_port" ]]; then
-    port_arguments+=("--http-port=$(runtime_state ephemeral-port)")
+    batch_port=$(runtime_state ephemeral-port)
+    port_arguments+=("--http-port=$batch_port")
+  fi
+  if ! "$explicit_gevent"; then
+    # Distinct from the HTTP port; an explicit one that is not a number excludes nothing.
+    if [[ ! "$batch_port" =~ ^[0-9]{1,5}$ ]]; then batch_port=''; fi
+    second_port=$(runtime_state ephemeral-port ${batch_port:+"$batch_port"})
+    port_arguments+=("$ODOO_SECOND_PORT_OPTION=$second_port")
   fi
   wait_for_database
   exec "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" "$@"

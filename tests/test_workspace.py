@@ -42,7 +42,7 @@ test_prefix = 'acme_test_'
 logs = 'logs'
 '''
 LEGACY_TAIL = ["WORKSPACE_ROOT=''", 'ODOO_VERSION=19.0', 'ODOO_SECOND_PORT_OPTION=--gevent-port',
-               'ODOO_DEMO_OFF_ARGS=--without-demo', "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12']
+               'ODOO_DEMO_OFF_ARGS=--without-demo', "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12', "DATA_DIR=''"]
 CHECKOUT_ONLY = 'oasis-checkout.toml may only set [tooling].checkout_slug and [tooling].environment: '
 # The same workspace with named environments instead of [tooling].environment.
 NAMED = WORKSPACE.replace("environment = 'environments/acme'\n", '') + '''
@@ -107,7 +107,8 @@ class WorkspaceTests(unittest.TestCase):
         result = self.run_reader(root)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', f'ERROR: {message}\n'))
 
-    def expected(self, checkout, kind, slug, environment='', python='3.12', path='environments/acme'):
+    def expected(self, checkout, kind, slug, environment='', python='3.12', path='environments/acme',
+                 data_dir=''):
         project = self.project
         values = {
             'PROJECT_ROOT': str(checkout), 'PROJECT_NAME': checkout.name,
@@ -127,6 +128,8 @@ class WorkspaceTests(unittest.TestCase):
             # Appended after WORKSPACE_ROOT: the series' Odoo options and the environment.
             'ODOO_VERSION': '19.0', 'ODOO_SECOND_PORT_OPTION': '--gevent-port', 'ODOO_DEMO_OFF_ARGS': '--without-demo',
             'ENVIRONMENT_NAME': environment, 'PYTHON_VERSION': python,
+            # Appended after them: [tooling].data_dir, empty when absent.
+            'DATA_DIR': data_dir,
         }
         # ADDON_ROOTS spans two lines (a newline-separated list inside one quoted value).
         return ''.join(f'{name}={shlex.quote(value)}\n' for name, value in values.items())
@@ -136,6 +139,15 @@ class WorkspaceTests(unittest.TestCase):
     def test_main_checkout_reads_the_workspace_at_the_project_root(self):
         main = self.layout()
         self.assertEqual(self.output(main), self.expected(main, 'main', ''))
+
+    def test_data_dir_resolves_from_the_workspace_for_every_checkout(self):
+        main = self.layout(WORKSPACE + "data_dir = 'data'\n")
+        linked = self.linked()
+        data = str(self.project / 'data')
+        self.assertEqual(self.output(main), self.expected(main, 'main', '', data_dir=data))
+        self.assertEqual(self.output(linked), self.expected(linked, 'linked', 'feat', data_dir=data))
+        self.workspace.write_text(WORKSPACE + 'data_dir = ""\n')
+        self.assert_rejected(main, 'Invalid tooling path: data_dir.')
 
     def test_linked_worktree_needs_no_profile_copy(self):
         self.layout()
@@ -228,7 +240,7 @@ class WorkspaceTests(unittest.TestCase):
         # A checkout file is not read in legacy mode.
         (main / 'oasis-checkout.toml').write_text("[odoo]\nversion = '18.0'\n")
         lines = self.assignments(main)
-        self.assertEqual(lines[-6:], LEGACY_TAIL)
+        self.assertEqual(lines[-7:], LEGACY_TAIL)
         self.assertIn('PROJECT_ENVIRONMENT=' + shlex.quote(str((main / '../../environments/example').resolve())),
                       lines)
         self.assertIn('ODOO_CONFIG=' + shlex.quote(str(main / 'dev/odoo.conf')), lines)
@@ -296,9 +308,9 @@ class WorkspaceTests(unittest.TestCase):
         example = ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml'
         main = self.layout(example.read_text())
         lines = self.output(main).splitlines()
-        self.assertEqual(lines[-6:], ['WORKSPACE_ROOT=' + shlex.quote(str(self.project)), 'ODOO_VERSION=19.0',
+        self.assertEqual(lines[-7:], ['WORKSPACE_ROOT=' + shlex.quote(str(self.project)), 'ODOO_VERSION=19.0',
                                       'ODOO_SECOND_PORT_OPTION=--gevent-port', 'ODOO_DEMO_OFF_ARGS=--without-demo',
-                                      "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12'])
+                                      "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12', "DATA_DIR=''"])
         self.assertIn('ODOO_CONFIG=' + shlex.quote(str(self.project / 'config/odoo.conf')), lines)
         self.assertIn('ADDON_ROOTS=' + shlex.quote(str(main)), lines)
 
@@ -313,7 +325,7 @@ class WorkspaceTests(unittest.TestCase):
                  + re.sub(r'^# ', '', block.group(0), flags=re.MULTILINE))
         main = self.layout(named)
         lines = self.output(main).splitlines()
-        self.assertEqual(lines[-2:], ['ENVIRONMENT_NAME=default', 'PYTHON_VERSION=3.12'])
+        self.assertEqual(lines[-3:], ['ENVIRONMENT_NAME=default', 'PYTHON_VERSION=3.12', "DATA_DIR=''"])
         self.assertIn('PROJECT_ENVIRONMENT=' + shlex.quote(str(self.project / 'environments/acme')), lines)
         self.assertRegex(raw, r"(?m)^#\s+environment = '[a-z_]+'$")
 

@@ -20,17 +20,28 @@ def free_port():
 
 
 def any_test_port(line):
-    """The Odoo test process gets a fresh free --http-port; compare the rest exactly.
+    """The Odoo test process gets a fresh free --http-port and second (gevent) port; compare
+    the rest exactly.
 
     Only the test process (a --test-tags line) and a valid port (1-65535) are replaced;
-    start's ports stay exact. test_runtime_state checks that the test port was free.
+    start's ports stay exact. test_runtime_state checks that the test ports were free.
     """
     if ' --test-tags ' not in line:
         return line
 
     def replace(match):
-        return ' --http-port=<free> ' if 1 <= int(match.group(1)) <= 65535 else match.group(0)
-    return re.sub(r' --http-port=(\d{1,5}) ', replace, line)
+        return f' --{match.group(1)}=<free>' if 1 <= int(match.group(2)) <= 65535 else match.group(0)
+    return re.sub(r' --(http-port|gevent-port)=(\d{1,5})(?= )', replace, line)
+
+
+# The fixture's odoo.conf names an addons_path, as a project's did before oasis composed one,
+# so the Odoo command lines keep -c alone; test_path_free_conf covers a conf without it.
+CONF_ADDONS = 'addons_path = /srv/oasis-fixture/addons\n'
+
+
+def conf_text(options=''):
+    """The text of a fixture odoo.conf with these [options] lines."""
+    return '[options]\n' + CONF_ADDONS + options
 
 
 RUN_DATABASE = r'_r[0-9a-f]{6}'
@@ -63,6 +74,7 @@ class LifecycleTests(unittest.TestCase):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.touch()
+        (self.root / 'dev/odoo.conf').write_text(conf_text())
         (self.source / 'odoo-bin').touch()
         (self.source / 'odoo').mkdir(exist_ok=True)
         (self.source / 'odoo/release.py').write_text('version_info = (19, 0, 0, "final", 0)\n')
@@ -365,9 +377,9 @@ exit 0
         odoo = 'odoo ' + str(self.source / 'odoo-bin')
         conf = str(self.root / 'dev/odoo.conf')
         port = free_port()
-        (self.root / 'dev/odoo.conf').write_text(f'[options]\nhttp_port = {port}\n')
+        (self.root / 'dev/odoo.conf').write_text(conf_text(f'http_port = {port}\n'))
         for command, args, exists, line in (
-                ('test-module', ('coffee',), '0', f'{odoo} -c {conf} --http-port=<free> -d cc_test_coffee_r<run> '
+                ('test-module', ('coffee',), '0', f'{odoo} -c {conf} --http-port=<free> --gevent-port=<free> -d cc_test_coffee_r<run> '
                  '-i coffee --without-demo --test-tags /coffee --stop-after-init'),
                 ('install-module', ('coffee',), '0',
                  f'{odoo} -c {conf} -d cc_dev_coffee -i coffee --without-demo --stop-after-init'),
@@ -393,9 +405,9 @@ exit 0
         # 19.0 it keeps the previous explicit --without-demo, so these argv are unchanged.
         odoo = 'odoo ' + str(self.source / 'odoo-bin')
         conf = str(self.root / 'dev/odoo.conf')
-        (self.root / 'dev/odoo.conf').write_text('[options]\n')
+        (self.root / 'dev/odoo.conf').write_text(conf_text())
         for command, before in (
-                ('test-module', [odoo, '-c', conf, '--http-port=<free>', '-d', 'cc_test_coffee_r<run>', '-i',
+                ('test-module', [odoo, '-c', conf, '--http-port=<free>', '--gevent-port=<free>', '-d', 'cc_test_coffee_r<run>', '-i',
                                  'coffee', '--without-demo', '--test-tags', '/coffee', '--stop-after-init']),
                 ('install-module', [odoo, '-c', conf, '-d', 'cc_dev_coffee', '-i', 'coffee', '--without-demo',
                                     '--stop-after-init'])):
@@ -415,7 +427,7 @@ exit 0
 
     def test_start_status_stop_create_list_and_module_status(self):
         port = free_port()
-        (self.root / 'dev/odoo.conf').write_text(f'[options]\nhttp_port = {port}\n')
+        (self.root / 'dev/odoo.conf').write_text(conf_text(f'http_port = {port}\n'))
         result = self.invoke('start')
         self.assertEqual((result.returncode, result.stdout), (0, ''))
         self.assertRegex(result.stderr, rf'^odoo19 start: http://localhost:{port} \(pid \d+\)\n$')

@@ -360,6 +360,15 @@ class RuntimeStateHelperTests(unittest.TestCase):
         result = self.helper('ephemeral-port')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertTrue(bindable(int(result.stdout)))
+        # Excluded ports (a test run's HTTP port) are never handed out as its second port.
+        first = int(result.stdout)
+        result = self.helper('ephemeral-port', str(first))
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertNotEqual(int(result.stdout), first)
+        self.assertTrue(bindable(int(result.stdout)))
+        result = self.helper('ephemeral-port', 'http')
+        self.assertEqual((result.returncode, result.stdout), (2, ''))
+        self.assertTrue(result.stderr.startswith('ERROR: Usage: runtime_state.py '), result.stderr)
 
 
 class ServerLifecycleTests(unittest.TestCase):
@@ -376,7 +385,7 @@ class ServerLifecycleTests(unittest.TestCase):
         self.write_conf(self.root / 'dev/odoo.conf')
 
     def write_conf(self, path, extra=''):
-        path.write_text(f'[options]\nhttp_port = {self.port}\n{extra}')
+        path.write_text(lifecycle.conf_text(f'http_port = {self.port}\n{extra}'))
 
     def invoke(self, root, command, *args, input=None):
         path = root / 'dev/scripts' / command
@@ -438,7 +447,7 @@ class ServerLifecycleTests(unittest.TestCase):
                          (pid, self.port, str(self.root.resolve())))
 
     def test_main_start_without_conf_port_defaults_to_8069(self):
-        (self.root / 'dev/odoo.conf').write_text('[options]\n')
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text())
         if not bindable(8069):
             self.skipTest('8069 is in use on this host')
         result = self.invoke(self.root, 'start')
@@ -505,12 +514,16 @@ class ServerLifecycleTests(unittest.TestCase):
                          (0, f'pid={process.pid} port={self.port}\n', ''))
 
     def assert_batch_port(self, line, prefix, suffix):
-        match = re.fullmatch(re.escape(prefix) + r' --http-port=(\d+) ' + re.escape(suffix), line)
+        # A free HTTP port and a distinct free second (gevent) port, like test runs.
+        match = re.fullmatch(re.escape(prefix) + r' --http-port=(\d+) --gevent-port=(\d+) ' + re.escape(suffix),
+                             line)
         self.assertIsNotNone(match, line)
-        port = int(match.group(1))
-        self.assertGreaterEqual(port, 1024)
-        self.assertNotEqual(port, self.port)
-        self.assertTrue(bindable(port))
+        ports = [int(match.group(1)), int(match.group(2))]
+        self.assertNotEqual(ports[0], ports[1])
+        for port in ports:
+            self.assertGreaterEqual(port, 1024)
+            self.assertNotEqual(port, self.port)
+            self.assertTrue(bindable(port))
 
     def test_batch_start_ignores_the_live_server_and_the_busy_port(self):
         process = self.serve(self.root)
@@ -531,8 +544,11 @@ class ServerLifecycleTests(unittest.TestCase):
         with busy(self.port):
             result = self.invoke(self.root, 'start', '--stop-after-init', f'--http-port={self.port}')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
-        self.assertEqual(self.odoo_lines()[2:], [self.odoo_call(self.root, '--stop-after-init',
-                                                                f'--http-port={self.port}')])
+        [line] = self.odoo_lines()[2:]
+        match = re.fullmatch(re.escape(self.odoo_call(self.root)) + r' --gevent-port=(\d+) '
+                             + re.escape(f'--stop-after-init --http-port={self.port}'), line)
+        self.assertIsNotNone(match, line)
+        self.assertNotEqual(int(match.group(1)), self.port)
         self.assertEqual(path.read_bytes(), before)
         # The database guards still apply to batch runs.
         result = self.invoke(self.root, 'start', '--stop-after-init', '-d', 'other_db')
@@ -540,7 +556,7 @@ class ServerLifecycleTests(unittest.TestCase):
                          (2, '', 'Managed databases must use cc_dev_<name> or cc_test_<name>: other_db\n'))
         self.assertEqual(len(self.odoo_lines()), 3)
 
-    def test_batch_start_in_a_linked_worktree_gets_only_a_free_http_port(self):
+    def test_batch_start_in_a_linked_worktree_gets_only_free_ephemeral_ports(self):
         self.linked_layout()
         result = self.invoke(self.linked, 'start', '--stop-after-init', '-u', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
@@ -551,7 +567,7 @@ class ServerLifecycleTests(unittest.TestCase):
 
     @unittest.skipUnless(privileged_port_is_refused(), 'port 1 is bindable here (root or sysctl)')
     def test_start_relays_an_unbindable_port(self):
-        for args, conf in ((('-p', '1'), None), (('--http-port=1',), None), ((), '[options]\nhttp_port = 1\n')):
+        for args, conf in ((('-p', '1'), None), (('--http-port=1',), None), ((), lifecycle.conf_text('http_port = 1\n'))):
             with self.subTest(args=args, conf=conf):
                 if conf:
                     (self.root / 'dev/odoo.conf').write_text(conf)
@@ -714,12 +730,15 @@ class TestRunPortTests(unittest.TestCase):
     invoke = lifecycle.LifecycleTests.invoke
 
     def assert_test_port(self, line, prefix):
-        match = re.fullmatch(re.escape(prefix) + r' --http-port=(\d+) (.*)', line)
+        # A free HTTP port and a distinct free second (gevent) port.
+        match = re.fullmatch(re.escape(prefix) + r' --http-port=(\d+) --gevent-port=(\d+) (.*)', line)
         self.assertIsNotNone(match, line)
-        port = int(match.group(1))
-        self.assertGreaterEqual(port, 1024)
-        self.assertTrue(bindable(port))
-        return match.group(2)
+        ports = [int(match.group(1)), int(match.group(2))]
+        self.assertNotEqual(ports[0], ports[1])
+        for port in ports:
+            self.assertGreaterEqual(port, 1024)
+            self.assertTrue(bindable(port))
+        return match.group(3)
 
     def test_test_and_verify_runs_pass_a_free_http_port(self):
         prefix = f'odoo {self.source / "odoo-bin"} -c {self.root / "dev/odoo.conf"}'

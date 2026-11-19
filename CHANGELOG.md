@@ -48,8 +48,24 @@ still change in a minor release; every such change is listed here under **Change
   `gc` takes another worktree's slug from its `oasis-checkout.toml`.
 - Gentle Shell project detection compares real paths (a symlinked session directory resolves
   to the checkout root) and retries a failed git top-level lookup instead of caching it.
+- Optional `[tooling].data_dir` (profile and workspace): every Odoo launch gets
+  `--data-dir=<path>`, and disposable runs and `gc --apply` remove filestores under it instead
+  of the `odoo.conf` `data_dir`. `tools/config.py` appends `DATA_DIR` (empty when absent) after
+  `PYTHON_VERSION`.
+- Path-free `odoo.conf`: without an `addons_path`, every Odoo launch of the main checkout and
+  linked worktrees gets `--addons-path=<enterprise>,<addon roots>,<community>/addons`;
+  `Cannot compose --addons-path: <path> contains a comma.` stops a root with a comma.
+- `runtime_state.py ephemeral-port` accepts ports to exclude.
 
 ### Changed
+
+- Test runs (`test-module`, the tests phase of `verify-module`) and `start --stop-after-init`
+  also get a free second port (`--gevent-port=<port>` on 19.0, distinct from the free
+  `--http-port`), so HttpCase tests never collide with a running server's second port; an
+  explicit one is passed to `start` as given.
+- An `odoo.conf` without `addons_path` used to give `-c <odoo.conf>` alone (Odoo's default
+  addons path); it now gets the composed `--addons-path`. With an `addons_path` and without
+  `[tooling].data_dir`, command lines are unchanged.
 
 - The demo-off option of `test-module`, `install-module` (and so `verify-module`) and
   `init-dev-database` now comes from the capability table (`ODOO_DEMO_OFF_ARGS`); it is

@@ -22,9 +22,10 @@ db_service = "db"
 dev_prefix = "cc_dev_"
 test_prefix = "cc_test_"
 '''
-# Appended after WORKSPACE_ROOT for a profile: the Odoo 19.0 options, no named environment.
+# Appended after WORKSPACE_ROOT for a profile: the Odoo 19.0 options, no named environment,
+# then DATA_DIR (empty without [tooling].data_dir).
 APPENDED = ['ODOO_VERSION=19.0', 'ODOO_SECOND_PORT_OPTION=--gevent-port', 'ODOO_DEMO_OFF_ARGS=--without-demo',
-            "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12']
+            "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12', "DATA_DIR=''"]
 
 
 class ConfigCliTests(unittest.TestCase):
@@ -105,8 +106,8 @@ class ConfigCliTests(unittest.TestCase):
         (self.root / '.odoo19-agent.toml').write_text(PROFILE + "logs = '../shared logs'\n")
         result = self.run_reader()
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertEqual(result.stdout.splitlines()[-6:], ["WORKSPACE_ROOT=''", *APPENDED])
-        self.assertEqual(result.stdout.splitlines()[-7],
+        self.assertEqual(result.stdout.splitlines()[-7:], ["WORKSPACE_ROOT=''", *APPENDED])
+        self.assertEqual(result.stdout.splitlines()[-8],
                          "LOGS_DIR='" + str((self.root / '../shared logs').resolve()) + "'")
         self.assertEqual(result.stdout.count('LOGS_DIR='), 1)
 
@@ -114,7 +115,7 @@ class ConfigCliTests(unittest.TestCase):
         (self.root / '.odoo19-agent.toml').write_text(PROFILE)
         result = self.run_reader()
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertEqual(result.stdout.splitlines()[-7:], ["LOGS_DIR=''", "WORKSPACE_ROOT=''", *APPENDED])
+        self.assertEqual(result.stdout.splitlines()[-8:], ["LOGS_DIR=''", "WORKSPACE_ROOT=''", *APPENDED])
 
     def test_profile_output_keeps_every_previous_assignment_and_appends_the_series_options(self):
         (self.root / '.odoo19-agent.toml').write_text(PROFILE)
@@ -127,8 +128,8 @@ class ConfigCliTests(unittest.TestCase):
             'REQUIREMENTS_DIR', 'ADDON_ROOTS', 'DB_SERVICE', 'PYTHON', 'ODOO_BIN', 'ENVIRONMENTS_DIR',
             'CHECKOUT_KIND', 'CHECKOUT_SLUG', 'CHECKOUT_MAIN_ROOT', 'LOGS_DIR', 'WORKSPACE_ROOT',
             'ODOO_VERSION', 'ODOO_SECOND_PORT_OPTION', 'ODOO_DEMO_OFF_ARGS', 'ENVIRONMENT_NAME',
-            'PYTHON_VERSION'])
-        self.assertEqual(lines[-5:], APPENDED)
+            'PYTHON_VERSION', 'DATA_DIR'])
+        self.assertEqual(lines[-6:], APPENDED)
         # A profile keeps Python 3.12 although Odoo 19.0 supports 3.10 to 3.14.
         (self.root / '.odoo19-agent.toml').write_text(PROFILE.replace('"3.12"', '"3.13"'))
         result = self.run_reader()

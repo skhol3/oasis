@@ -324,7 +324,20 @@ def load(root: Path) -> dict[str, str]:
     output['ODOO_DEMO_OFF_ARGS'] = shlex.join(versions().capability(version, 'demo_off_args'))
     output['ENVIRONMENT_NAME'] = name
     output['PYTHON_VERSION'] = document['tooling']['python_version']
+    # Appended after them: Odoo's data directory, passed as --data-dir (empty when absent:
+    # the odoo.conf data_dir, if any, applies as before).
+    output['DATA_DIR'] = optional_path(document['tooling'], 'data_dir', base)
     return output
+
+
+def optional_path(tooling: dict, key: str, base: Path) -> str:
+    """An optional tooling path resolved from base, or '' when absent."""
+    if key not in tooling:
+        return ''
+    value = tooling[key]
+    if not isinstance(value, str) or not value or '\x00' in value or '\n' in value:
+        raise InvalidConfig(f'Invalid tooling path: {key}.')
+    return str((base / value).resolve())
 
 
 def resolve(document: dict, root: Path, base: Path, legacy: bool = True) -> dict[str, str]:
@@ -381,11 +394,7 @@ def resolve(document: dict, root: Path, base: Path, legacy: bool = True) -> dict
             raise InvalidConfig(f'Invalid tooling path: {key}.')
         output[variable] = str((base / value).resolve())
     # Optional; emitted last (empty when absent) so the previous assignments stay unchanged.
-    logs = tooling.get('logs')
-    if 'logs' in tooling and (not isinstance(logs, str) or not logs or '\x00' in logs
-                              or '\n' in logs):
-        raise InvalidConfig('Invalid tooling path: logs.')
-    logs_dir = str((base / logs).resolve()) if logs is not None else ''
+    logs_dir = optional_path(tooling, 'logs', base)
     target = Path(output['PROJECT_ENVIRONMENT'])
     source = Path(output['ODOO_SOURCE'])
     if (target == root or target in root.parents or target == source

@@ -6,7 +6,7 @@
 #   acme/codigo/acme                 main checkout
 #   acme/codigo/acme-shop-feature    linked worktree (any depth below acme/ works)
 #   acme/config/                     odoo.conf, environment file, compose file, requirements/
-#   acme/data/                       Odoo data_dir (set data_dir in the shared odoo.conf)
+#   acme/data/                       Odoo data directory (data_dir below; passed as --data-dir)
 #   acme/logs/                       compact runs and browser evidence
 #
 # oasis finds this file by walking up from the checkout, as git finds .git. A checkout
@@ -38,6 +38,12 @@ test_prefix = 'acme_test_'
 # test_database = 'acme_test_suite'
 # Optional logs directory: runs go to <logs>/odoo19/<slug, or main for the main checkout>/.
 # logs = 'logs'
+# Optional Odoo data directory: every Odoo launch gets --data-dir=<it>, and disposable test
+# runs remove their filestores there. Without it, the data_dir of odoo.conf applies.
+# data_dir = 'data'
+#
+# An odoo.conf without addons_path needs no paths at all: every Odoo launch then gets
+# --addons-path=<enterprise>,<each addons_paths root of the checkout>,<community>/addons.
 #
 # A checkout slug is per checkout, never set here: an optional oasis-checkout.toml in the
 # checkout may set only that key and the named environment it uses (any other key is refused):

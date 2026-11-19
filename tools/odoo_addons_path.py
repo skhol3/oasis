@@ -3,6 +3,8 @@
 
 Usage: odoo_addons_path.py <odoo.conf> <main_root> <project_root>
        odoo_addons_path.py --option <http_port|gevent_port|http_interface> <odoo.conf>
+       odoo_addons_path.py --arguments <odoo.conf> <checkout_kind> <main_root> <project_root>
+                           <odoo_source> <enterprise_source> <data_dir> <addon_root>...
 
 Reads only the `addons_path` option of the `[options]` section and prints nothing else from
 the file: any read or parse error exits 2 with a message that names the path, never content.
@@ -11,8 +13,9 @@ project root in its place (the relative remainder is kept); items that already l
 project root, relative items and every other item stay as written, in order. Empty items are
 dropped. Without an addons_path nothing is printed and the exit status is 0.
 
-common.sh (odoo_config_arguments) runs this file; dev_users_runtime.py imports
-linked_addons_path, the same decision for its in-process Odoo configuration.
+With --arguments it prints, shell-quoted, the configuration options of every Odoo command line
+(config_arguments): common.sh (odoo_config_arguments) evaluates them, and dev_users_runtime.py
+imports config_arguments for its in-process Odoo configuration, so both make one decision.
 
 With --option it reads only that one option (the ports and interface `start` needs) and prints
 its value, or nothing when it is absent; a port that is not 1-65535 exits 2 without the value.
@@ -20,6 +23,7 @@ its value, or nothing when it is absent; a port that is not 1-65535 exits 2 with
 import configparser
 import os
 from pathlib import Path
+import shlex
 import sys
 
 USAGE = 'Usage: odoo_addons_path.py <odoo.conf> <main_root> <project_root>'
@@ -98,7 +102,69 @@ def linked_addons_path(values):
     return rewritten if rewritten and rewritten != rewrite(value, project, project) else ''
 
 
+def composed_addons_path(values):
+    """The --addons-path of a path-free odoo.conf: Enterprise (when configured), each addon root
+    of the checkout in order, then the Community addons."""
+    items = [values['ENTERPRISE_SOURCE']] if values.get('ENTERPRISE_SOURCE') else []
+    items += [root for root in values['ADDON_ROOTS'].split('\n') if root]
+    items.append(str(Path(values['ODOO_SOURCE']) / 'addons'))
+    for item in items:
+        if ',' in item:
+            raise ConfError(f'Cannot compose --addons-path: {item} contains a comma.')
+    return ','.join(items)
+
+
+def config_arguments(values):
+    """The configuration options of every Odoo command line for a checkout (config.py values).
+
+    -c <odoo.conf>, then --addons-path: composed (composed_addons_path) when the conf has no
+    addons_path, for every kind of checkout; with one, only a linked worktree whose conf names
+    the main checkout gets it rewritten (linked_addons_path), and the main checkout and a project
+    outside git keep -c alone (a conf they cannot parse is left to Odoo, as before). Then
+    --data-dir=<DATA_DIR> when [tooling].data_dir is set. When git failed in a linked worktree
+    (no main checkout), a conf inside the worktree is used as it is and a shared conf that names
+    an addons_path is refused, since its main checkout items cannot be moved.
+    """
+    conf = values['ODOO_CONFIG']
+    linked = values.get('CHECKOUT_KIND') == 'linked'
+    main = values.get('CHECKOUT_MAIN_ROOT', '')
+    arguments = ['-c', conf]
+    try:
+        value = read_addons_path(conf)
+    except ConfError:
+        if linked and main:
+            raise
+        value = ''
+    if value is None:
+        arguments.append('--addons-path=' + composed_addons_path(values))
+    elif linked and not main:
+        if not Path(conf).is_relative_to(values['PROJECT_ROOT']):
+            raise ConfError(f'Cannot move the addons_path of {conf} to this worktree: git failed, '
+                            'so the main checkout is unknown.')
+    elif linked:
+        addons = linked_addons_path(values)
+        if addons:
+            arguments.append('--addons-path=' + addons)
+    if values.get('DATA_DIR'):
+        arguments.append('--data-dir=' + values['DATA_DIR'])
+    return arguments
+
+
+ARGUMENT_KEYS = ('ODOO_CONFIG', 'CHECKOUT_KIND', 'CHECKOUT_MAIN_ROOT', 'PROJECT_ROOT', 'ODOO_SOURCE',
+                 'ENTERPRISE_SOURCE', 'DATA_DIR')
+
+
 def main():
+    if sys.argv[1:2] == ['--arguments'] and len(sys.argv) > 2 + len(ARGUMENT_KEYS):
+        values = dict(zip(ARGUMENT_KEYS, sys.argv[2:]))
+        values['ADDON_ROOTS'] = '\n'.join(sys.argv[2 + len(ARGUMENT_KEYS):])
+        try:
+            arguments = config_arguments(values)
+        except ConfError as exc:
+            print(f'ERROR: {exc}', file=sys.stderr)
+            return 2
+        print(shlex.join(arguments))
+        return 0
     if len(sys.argv) == 4 and sys.argv[1] == '--option' and sys.argv[2] in OPTIONS:
         try:
             value = option_value(sys.argv[3], sys.argv[2])

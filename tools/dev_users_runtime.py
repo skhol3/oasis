@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 from config import load
-from odoo_addons_path import linked_addons_path
+from odoo_addons_path import config_arguments
 
 
 def main():
@@ -24,16 +24,10 @@ def main():
         with_demo = payload['with_demo']
         # The demo-off options of the Odoo series come from config.py (tools/odoo_versions.py).
         demo_flags = ['--with-demo'] if with_demo else shlex.split(values['ODOO_DEMO_OFF_ARGS'])
-        # The options of common.sh's odoo_config_arguments: a linked worktree that shares the
-        # main checkout's odoo.conf gets its own root in addons_path. Without a main checkout
-        # (git failed, profile slug) only an odoo.conf inside the worktree is used.
-        if values['CHECKOUT_KIND'] == 'linked' and not values['CHECKOUT_MAIN_ROOT']:
-            if not Path(values['ODOO_CONFIG']).is_relative_to(values['PROJECT_ROOT']):
-                raise ValueError('The main checkout is unknown; the shared addons_path cannot move.')
-            addons = ''
-        else:
-            addons = linked_addons_path(values)
-        config_args = ['-c', values['ODOO_CONFIG'], *([f'--addons-path={addons}'] if addons else [])]
+        # The options of common.sh's odoo_config_arguments, from the same decision: -c, then
+        # --addons-path (composed for a path-free odoo.conf, or a linked worktree's own root)
+        # and --data-dir ([tooling].data_dir) when they apply.
+        config_args = config_arguments(values)
         sys.path.insert(0, values['ODOO_SOURCE'])
         import odoo
         import odoo.service.common
