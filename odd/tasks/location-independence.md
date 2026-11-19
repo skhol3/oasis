@@ -20,7 +20,7 @@ contract is checked up front. Existing `.odoo19-agent.toml` profiles keep workin
 ## Tasks
 
 - [x] T1 [S2 S3 S6] Workspace file discovery and layered config (workspace -> optional checkout overrides); legacy profile unchanged — commit: 449d885
-- T1b [S2 S3] Workspace follow-ups from review review-4d745af74f4fe048 and L9 (Risk: item 2, trusts a file above the checkout) — worker — commit: pending
+- [x] T1b [S2 S3] Workspace follow-ups from review review-4d745af74f4fe048 and L9 (Risk: item 2, trusts a file above the checkout) — worker — commit: 1435e51
 - T2 [S4] Location-dependent values on the command line (`--data-dir`); `lock.sha256` relative to requirements — pending
 - T3 [S5] `odoo19 doctor` — pending
 - T4 [S6] `odoo19 migrate` + user-run `/odoo19 migrate` (plan, confirm, write workspace file, keep profiles as backup) — pending
