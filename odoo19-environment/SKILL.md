@@ -27,12 +27,12 @@ A checkout without `.odoo19-agent.toml` may read the nearest `oasis-workspace.to
 - Consult current installed help and applicable declarative profiles before selecting an operation. Prefer supported end-to-end capabilities over ad-hoc substitutes; configuration alone does not prove execution.
 - Respect target/namespace, new/existing-resource, and human-interaction preconditions. Never delete or replace resources to satisfy them without explicit authorization. If unsupported, explain the gap before proposing alternatives.
 - Before module lifecycle work, confirm Odoo 19 using matching `release.py` and permitted runtime checks; report unavailable evidence.
-- Missing project wrapper is not a blocker when the installed global `~/.agents/skills/odoo19/odoo19` entry point, its tools, an authorized explicit project root, and a project-local profile are available. If neither guarded interface is available, report unavailable; never guess substitutes. A template does not install capabilities.
+- Missing project wrapper is not a blocker when the installed global `~/.agents/skills/odoo19/oasis` entry point (`odoo19` beside it is an alias), its tools, an authorized explicit project root, and a project-local profile are available. If neither guarded interface is available, report unavailable; never guess substitutes. A template does not install capabilities.
 - Environment mutation: preview first, then seek explicit authorization for the exact isolated target and operation.
 
 ## Execution Steps
 
-1. Read project instructions and the capability contract; identify authorized paths and wrappers or the explicit global entry point (`~/.agents/skills/odoo19/odoo19 --project /absolute/project check-environment --quick`). Do not assume a quick check is strictly read-only: a shimmed uv version probe can trigger mise installation.
+1. Read project instructions and the capability contract; identify authorized paths and wrappers or the explicit global entry point (`~/.agents/skills/odoo19/oasis --project /absolute/project check-environment --quick`). Do not assume a quick check is strictly read-only: a shimmed uv version probe can trigger mise installation.
 2. Inspect permitted dependency declarations without printing credentials or runtime configuration.
 3. Run only authorized diagnostics; report drift, missing capabilities, and actions not taken.
 

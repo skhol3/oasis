@@ -18,11 +18,11 @@ python3 -B -m unittest discover -s tests
 
 The installer copies the committed HEAD only (uncommitted edits are never installed), drops repository-only files (`AGENTS.md`, `.gitignore`, `install.sh`), records the installed version (from `package.json`) and commit in `.oasis-install.json`, and moves the previous install to `${XDG_STATE_HOME:-~/.local/state}/oasis/backups/`, outside any skill discovery directory. `OASIS_STATE_DIR` overrides that state directory.
 
-The installed package contains the six `odoo19-*` directories, `tools/`, `project-wrappers/`, `tests/`, `docs/`, the `odoo19` entry point, the Gentle Shell layer (`package.json` and `pi/`), and this README. Restart the agent session or use `/reload` where supported, then check that exactly six skills are discovered. The skill entrypoints are [backend](odoo19-backend/SKILL.md), [security](odoo19-security/SKILL.md), [views/frontend](odoo19-views-frontend/SKILL.md), [testing](odoo19-testing/SKILL.md), [environment](odoo19-environment/SKILL.md), and [module lifecycle](odoo19-module-lifecycle/SKILL.md). See the [project capability contract](odoo19-environment/references/project-contract.md).
+The installed package contains the six `odoo19-*` directories, `tools/`, `project-wrappers/`, `tests/`, `docs/`, the `oasis` entry point (and its `odoo19` alias), the Gentle Shell layer (`package.json` and `pi/`), and this README. Restart the agent session or use `/reload` where supported, then check that exactly six skills are discovered. The skill entrypoints are [backend](odoo19-backend/SKILL.md), [security](odoo19-security/SKILL.md), [views/frontend](odoo19-views-frontend/SKILL.md), [testing](odoo19-testing/SKILL.md), [environment](odoo19-environment/SKILL.md), and [module lifecycle](odoo19-module-lifecycle/SKILL.md). See the [project capability contract](odoo19-environment/references/project-contract.md).
 
 ## Gentle Shell layer
 
-A thin Pi package (`package.json`, `pi/`) layered over Gentle Shell. It changes nothing in Gentle Shell or Pi; its goal is fewer tokens in Odoo work by wrapping the guarded `odoo19` core with compact output. Install it from a local checkout or from the repository:
+A thin Pi package (`package.json`, `pi/`) layered over Gentle Shell. It changes nothing in Gentle Shell or Pi; its goal is fewer tokens in Odoo work by wrapping the guarded `oasis` core with compact output. Install it from a local checkout or from the repository:
 
 ```bash
 gentle-shell install /absolute/path/to/oasis
@@ -31,31 +31,33 @@ gentle-shell install git:github.com/skhol3/oasis
 
 Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shell and Pi already scan. The layer adds:
 
-- Tools `odoo19_test_module`, `odoo19_module_status`, `odoo19_check_environment` and `odoo19_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`, or `<logs>/odoo19/<main|slug>/` with `[tooling].logs`. Other output is capped at 60 lines (head and tail kept). Test summaries also carry up to five `stats:` lines (tests, time, queries per module) and one `warnings:` line grouping repeated warnings by logger and message.
-- Tool `odoo19_find_module`: maps a functional name to technical module names by matching the query words against the technical name and the manifest `name`, `summary` and `category` in the profile's addon roots, so the agent needs no `ls` or `grep`.
-- Tool `odoo19_model_info`: wraps `odoo19 model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
-- Prompt context naming the `odoo19` tools when `.odoo19-agent.toml` is found at or above the working directory, or, without one, an `oasis-workspace.toml` (see *Workspace file*; the project root is then the git top level of the working directory).
-- A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. In every session it also blocks the agent from running `worktree-init` (through `odoo19`, `tools/worktree-init` or `worktree_init.py`, `--dry-run` included), which only the user runs. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package.
-- `/odoo19`: a quick status with the profile, addon modules, configured databases, git worktree, checkout identity and this checkout's server (`server: running on port <port> (pid <pid>)` or `server: stopped`, read from the runtime record). It never starts services or queries databases. `/odoo19 setup` installs the subagent overlay (see Subagents). `/odoo19 worktree <feature> <branch>` creates a prepared linked worktree after confirmation (see *Preparing a linked worktree*).
+- Tools `oasis_test_module`, `oasis_module_status`, `oasis_check_environment` and `oasis_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`, or `<logs>/odoo19/<main|slug>/` with `[tooling].logs`. Other output is capped at 60 lines (head and tail kept). Test summaries also carry up to five `stats:` lines (tests, time, queries per module) and one `warnings:` line grouping repeated warnings by logger and message.
+- Tool `oasis_find_module`: maps a functional name to technical module names by matching the query words against the technical name and the manifest `name`, `summary` and `category` in the profile's addon roots, so the agent needs no `ls` or `grep`.
+- Tool `oasis_model_info`: wraps `oasis model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
+- Prompt context naming the `oasis_*` tools when `.odoo19-agent.toml` is found at or above the working directory, or, without one, an `oasis-workspace.toml` (see *Workspace file*; the project root is then the git top level of the working directory).
+- A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. In every session it also blocks the agent from running `worktree-init` (through `oasis` or `odoo19`, `tools/worktree-init` or `worktree_init.py`, `--dry-run` included), which only the user runs. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package.
+- `/oasis`: a quick status with the profile, addon modules, configured databases, git worktree, checkout identity and this checkout's server (`server: running on port <port> (pid <pid>)` or `server: stopped`, read from the runtime record). It never starts services or queries databases. `/oasis setup` installs the subagent overlay (see Subagents). `/oasis worktree <feature> <branch>` creates a prepared linked worktree after confirmation (see *Preparing a linked worktree*).
 
-The `odoo19_*` tools are active only in sessions started inside an Odoo 19 project (a directory with `.odoo19-agent.toml` or `oasis-workspace.toml` at or above it), so other projects pay no tokens for them; `/odoo19` is available everywhere.
+The `oasis_*` tools are active only in sessions started inside an Odoo 19 project (a directory with `.odoo19-agent.toml` or `oasis-workspace.toml` at or above it), so other projects pay no tokens for them; `/oasis` is available everywhere.
 
-Other agents keep using the core (`odoo19` CLI and skills) unchanged.
+Aliases from before 0.4.0: `/odoo19` runs the same command as `/oasis` (same subcommands), and each `oasis_*` tool is also registered as an `odoo19_*` alias with the same parameters and implementation. The aliases are never activated by the layer, so they cost no tokens; an overlay or allowlist that still names them keeps working, and `/oasis setup` reports such an overlay as outdated.
+
+Other agents keep using the core (`oasis` CLI and skills) unchanged.
 
 ### Subagents
 
-Gentle Shell subagents (for example `gentle-ai-worker` and `gentle-ai-verify`) receive only the tools in their allowlist, so they do not see the `odoo19_*` tools by default. oasis ships an overlay template, [`pi/agent-overlays/oasis.json`](pi/agent-overlays/oasis.json), that adds the six tools to both agents. Run `/odoo19 setup` once in Gentle Shell (it asks before writing); oasis reminds you at session start when the overlay is missing or outdated.
+Gentle Shell subagents (for example `gentle-ai-worker` and `gentle-ai-verify`) receive only the tools in their allowlist, so they do not see the `oasis_*` tools by default. oasis ships an overlay template, [`pi/agent-overlays/oasis.json`](pi/agent-overlays/oasis.json), that adds the six tools to both agents. Run `/oasis setup` once in Gentle Shell (it asks before writing); oasis reminds you at session start when the overlay is missing or outdated.
 
-- `/odoo19 setup` writes only `agent-overlays.d/oasis.json` under the Gentle AI config home (`$GENTLE_PI_CONFIG_HOME` when it is an absolute path, else `~/.gentle-shell/gentle-ai`). It works outside an Odoo project, does nothing when the overlay is already up to date, and only the user can run it: no agent tool triggers it. Start a new session or `/reload` afterwards.
-- That folder is user configuration: Gentle Shell updates do not replace it. Run `/odoo19 setup` again after an oasis update that changes the template.
+- `/oasis setup` writes only `agent-overlays.d/oasis.json` under the Gentle AI config home (`$GENTLE_PI_CONFIG_HOME` when it is an absolute path, else `~/.gentle-shell/gentle-ai`). It works outside an Odoo project, does nothing when the overlay is already up to date, and only the user can run it: no agent tool triggers it. Start a new session or `/reload` afterwards.
+- That folder is user configuration: Gentle Shell updates do not replace it. Run `/oasis setup` again after an oasis update that changes the template.
 - If Gentle AI renames an agent, the overlay entry for the old name only produces a notice until an oasis update renames it.
-- `odoo19_test_module` runs each test on a new disposable database of the checkout's `<test_prefix>` namespace and drops it at the end (an explicit `database` or a configured `test_database` is reset and reused instead), so a verify subagent with the overlay can do so too. Its summary line then ends with `database_lifecycle=disposable dropped=<yes|no>`. There is no agent tool for `odoo19 gc`: removing leftovers is up to the user.
-- Without the overlay, subagents can still run the core through bash: `python3 /absolute/path/to/oasis/odoo19 --project <project root> <command>` (for example `test-module --compact <module>`).
+- `oasis_test_module` runs each test on a new disposable database of the checkout's `<test_prefix>` namespace and drops it at the end (an explicit `database` or a configured `test_database` is reset and reused instead), so a verify subagent with the overlay can do so too. Its summary line then ends with `database_lifecycle=disposable dropped=<yes|no>`. There is no agent tool for `oasis gc`: removing leftovers is up to the user.
+- Without the overlay, subagents can still run the core through bash: `python3 /absolute/path/to/oasis/oasis --project <project root> <command>` (for example `test-module --compact <module>`).
 
 ## New project: deliberate setup
 
 1. Review the [example project profile](odoo19-environment/assets/odoo19-agent.example.toml) and the actual project's permissions and layout. Only with authorization, fill a **project-local** `.odoo19-agent.toml` with its real paths and namespace; do not copy test fixture values as defaults. The `[tooling]` table is the path and namespace authority for the [tools](tools/config.py); the optional `[development]` account declaration below is consumed only by `init-dev-database`. Other sections guide agents. Do not put credentials in the profile or inspect secret-bearing runtime files.
-2. For direct invocation, install the bundle's `odoo19` executable at `~/.agents/skills/odoo19/odoo19` (owner makes it executable). Supply the absolute project directory explicitly; no project wrapper, PATH link, or shell configuration change is required. For example: `~/.agents/skills/odoo19/odoo19 --project /absolute/project check-environment --quick`. Run `~/.agents/skills/odoo19/odoo19 --help` without a project to see the fixed public commands. The entry point selects only packaged `tools/` commands; it does not replace the profile guards or grant operational consent.
+2. For direct invocation, install the bundle's `oasis` executable at `~/.agents/skills/odoo19/oasis` (owner makes it executable). `odoo19`, next to it, is a compatibility alias: the same dispatcher, with every command, option, exit code and output identical; only help and usage name the program invoked. Supply the absolute project directory explicitly; no project wrapper, PATH link, or shell configuration change is required. For example: `~/.agents/skills/odoo19/oasis --project /absolute/project check-environment --quick`. Run `~/.agents/skills/odoo19/oasis --help` without a project to see the fixed public commands. The entry point selects only packaged `tools/` commands; it does not replace the profile guards or grant operational consent.
 3. Alternatively, if the project wants legacy local CLI entrypoints and explicitly authorizes them, review the 18 [project wrapper templates](project-wrappers/common.sh) and copy **only** the selected wrappers to its approved `dev/scripts/` directory. The tested templates derive the project root from that directory depth; another layout requires an explicitly validated adaptation. Do not overwrite existing scripts without separate approval. The wrappers locate global tools at `~/.agents/skills/odoo19/tools`; `ODOO19_TOOLS_DIR` is an explicit test/development override for wrappers, not a global entry point override. Missing installed tools fail clearly. Installing this package does not install wrappers into any project.
 4. Keep project configuration, dependency inputs/locks, Compose files, environment variables, data, and runtime/virtualenv **local to the project**. This bundle does not create an environment, start services, install dependencies, access external source trees, or grant permission to operate on databases. `bootstrap --apply`, full diagnostics, and database lifecycle commands need separate explicit consent; no profile or skill discovery implies it.
 
@@ -136,7 +138,7 @@ lint_rcfile = 'dev/lint/.pylintrc'
 With authorization for the declared paths and installed plugins, run:
 
 ```bash
-~/.agents/skills/odoo19/odoo19 --project /absolute/project lint-module your_module
+~/.agents/skills/odoo19/oasis --project /absolute/project lint-module your_module
 ```
 
 The project Python must already provide Pylint and pylint-odoo supporting Odoo 19. The command selects the whole module from project-contained tooling addon roots, preserves rcfile rules/plugins, selects Odoo 19/Python 3.12 and disables bytecode/Pylint persistence. It returns raw analyzer stdout/stderr/status; it never installs dependencies, starts services, uses database credentials or automatically fixes warnings. Trusted rcfile hooks/plugins are not sandboxed. Relative rcfile paths resolve from the project root; external paths require explicit access consent. Missing lint config does not affect other commands. `lint-module --help` describes this contract; `verify-module` remains separate.
@@ -147,8 +149,8 @@ Run at a relevant baseline and after a Python/manifest work unit, not each edit.
 ## Summarize a model without starting Odoo
 
 ```bash
-~/.agents/skills/odoo19/odoo19 --project /absolute/project model-info mrp.production
-~/.agents/skills/odoo19/odoo19 --project /absolute/project model-info mrp.production --field state
+~/.agents/skills/odoo19/oasis --project /absolute/project model-info mrp.production
+~/.agents/skills/odoo19/oasis --project /absolute/project model-info mrp.production --field state
 ```
 
 `model-info <model> [--field <name>] [--module <technical>] [--methods] [--all-fields]` prints a compact summary of one model: where it is defined (with `_inherit` mixins and `_inherits` delegations), the modules that extend it, its fields with type, comodel, label and literal flags, field overrides in extensions and methods per module. It scans the profile's Odoo source (`odoo/addons`, `addons`), optional Enterprise source and `[tooling].addons_paths`, prefilters files by the quoted model name and parses them with `ast`: no Odoo or project code is imported or executed, and no environment, service or database is used. Odoo/Enterprise `test_*` modules and `tests/`, `migrations/`, `upgrades/`, `static/` directories are skipped; mixin fields are not expanded. By default the field list stops at 40 (`--all-fields` lifts it) and methods list public names with a count of private ones; `--module` restricts the details to one module and lists all its methods, `--methods` adds decorators and `super()` calls, `--field` shows one field's definition and overrides with `file:line`. An unknown model exits 1 with `model not found: <model>`; invalid arguments exit 2. `model-info --help` describes the format.
@@ -174,13 +176,13 @@ Replace the example group with an actual installed `res.groups` XML ID. Addition
 From an interactive terminal, run the full executable path with the actual module and a fresh database name under the project's `[tooling].dev_prefix`:
 
 ```bash
-~/.agents/skills/odoo19/odoo19 --project /absolute/project init-dev-database your_module project_dev_manual
+~/.agents/skills/odoo19/oasis --project /absolute/project init-dev-database your_module project_dev_manual
 ```
 
 ### Optional native demo loading
 
 ```bash
-~/.agents/skills/odoo19/odoo19 --project /absolute/project init-dev-database --with-demo your_module project_dev_training
+~/.agents/skills/odoo19/oasis --project /absolute/project init-dev-database --with-demo your_module project_dev_training
 ```
 
 This opts in to native Odoo demo loading for base, installed dependencies, and the selected module's manifest `demo` files. It does not generate product records or import custom scenario scripts. Demo data is module-owned; the global tool contains no customer catalog. Without the flag, no demo is loaded and optional demo environment modules are not installed.
@@ -217,8 +219,8 @@ The name must be longer than `test_prefix`, contain only letters/digits/undersco
 After obtaining authorization to reset the exact destinations:
 
 ```bash
-~/.agents/skills/odoo19/odoo19 --project /absolute/project test-module --compact your_module
-~/.agents/skills/odoo19/odoo19 --project /absolute/project verify-module --compact your_module
+~/.agents/skills/odoo19/oasis --project /absolute/project test-module --compact your_module
+~/.agents/skills/odoo19/oasis --project /absolute/project verify-module --compact your_module
 ```
 
 | Command | Destinations and evidence |
@@ -244,7 +246,7 @@ Without an explicit database argument and without a configured `test_database`, 
 - Name: `<test_prefix><module>_r<6 hex>` (`<test_prefix><slug>_<module>_r<6 hex>` in a checkout with a slug), random per run. When it would exceed 56 bytes, the module part becomes its first characters plus `_` and the first 4 hex of the module name's SHA-256, so the name is at most 56 bytes and `verify-module`'s `<name>_update` sibling still fits in 63. A test prefix and slug that leave no room exit 2 before anything runs.
 - Reserved names: a name ending in `_r` + 6 lowercase hex, optionally followed by `_update`, belongs to these runs. An explicit database argument or a configured `test_database` with such a name is refused with `Database names ending in _r<6 hex> are reserved for disposable runs: <name>` (exit 2, nothing runs) by `test-module`, `verify-module`, `create-database`, `install-module`, `update-module`, `odoo-shell`, `start -d`/`--database` and `init-dev-database`. `drop-database` and `module-status` accept them (cleanup and inspection), and so does `gc`. The phases of a disposable `verify-module` run use its names because that `verify-module` process holds their live run locks.
 - Before the database exists, the run creates a lock `runs/<database>.json` (`pid`, `started_at`, `database`, `project_root`, `argv`; 0600) in the checkout's private runtime state directory (see *Servers and ports per checkout*). The lock is created exclusively (`O_EXCL` on its final path, then written and fsynced): when a lock of that name already exists, live or left by a killed run, the run exits 2 with `Disposable test database is locked: <name>` and touches neither that lock nor the database. A name that already exists as a database is refused (`Disposable test database already exists: <name>`, exit 2) and never touched. The database is then created; it becomes the run's own once `createdb` succeeded. When `createdb` fails, the run checks the name again: if the database exists now and no live run of the current user (in any checkout) holds another lock of that name, `createdb` created it before failing, so it is the run's own and is dropped like any other (`Cannot create disposable test database <name>; it was created anyway and is dropped.`); otherwise (for example the name was taken by another run in the meantime) the run reports `Cannot create disposable test database <name>; it was not dropped.`, drops nothing and removes only its own lock. Either way the run exits non-zero and no tests run. When `createdb` itself reports that the name already exists, the database was created by someone else and is never dropped; only a database that `createdb` created before failing for another reason is treated as the run's own. Otherwise the tests run exactly as for a shared destination, and at the end the run always closes the database's sessions, drops it, removes its filestore directory `<data_dir>/filestore/<database>` and removes the lock: after success, after failing tests, and after SIGINT (Ctrl+C) or SIGTERM. `<data_dir>` is `[tooling].data_dir` when it is set (see *Path-free odoo.conf*); otherwise `data_dir` is the only other option read from `odoo.conf` for this, and without an absolute `data_dir` the filestore step is skipped (Odoo's default data directory is not guessed). `gc --apply` removes filestores the same way.
-- `tools/test_temp.py` owns this cleanup, because it already owns the signals: `test-module` execs it, so a SIGTERM to the `test-module` process or a Ctrl+C to its process group reaches it; it forwards the signal to Odoo and cleans up when Odoo has ended. `verify-module` takes the locks of both of its databases first (the same exclusive rule; while it takes and records each lock, SIGINT and SIGTERM are deferred and the lock helper runs with them ignored, so a signal then ends the run right after the lock is recorded and no lock is leaked), then checks that both names are free, and from then on drops both from an exit trap (before that, the trap removes only the locks it wrote); Bash runs that trap when the phase in progress returns, so a SIGTERM sent only to `verify-module` takes effect when that phase ends. SIGKILL or a lost machine cannot clean up: `odoo19 gc` finds what is left.
+- `tools/test_temp.py` owns this cleanup, because it already owns the signals: `test-module` execs it, so a SIGTERM to the `test-module` process or a Ctrl+C to its process group reaches it; it forwards the signal to Odoo and cleans up when Odoo has ended. `verify-module` takes the locks of both of its databases first (the same exclusive rule; while it takes and records each lock, SIGINT and SIGTERM are deferred and the lock helper runs with them ignored, so a signal then ends the run right after the lock is recorded and no lock is leaked), then checks that both names are free, and from then on drops both from an exit trap (before that, the trap removes only the locks it wrote); Bash runs that trap when the phase in progress returns, so a SIGTERM sent only to `verify-module` takes effect when that phase ends. SIGKILL or a lost machine cannot clean up: `oasis gc` finds what is left.
 - With `--compact`, `test-module` runs the tests in a child process: a SIGTERM sent only to the outer process ends it without the summary, while the run still finishes and drops its database; a Ctrl+C reaches both.
 - A database that cannot be dropped keeps its lock and is reported on stderr (`Cannot drop disposable test database <name>; run odoo19 gc --apply later.`); the run then exits non-zero.
 - With `--compact`, the `test-module` summary gets one line after `phase=tests database=<name> exit=<n>`: `database_lifecycle=disposable dropped=<yes|no>`. It is the run's own cleanup result, which `tools/test_temp.py` writes to the file `database_lifecycle` of the run's log directory: `yes` means the run left no database behind (dropped, or never created, for example because the name was locked); `no` means the drop failed, or the run ended without reporting (killed). `verify-module --compact` prints the same line as its last line, from its own drops of both databases. Without `--compact` neither command prints it. Shared destinations print no such line.
@@ -252,9 +254,9 @@ Without an explicit database argument and without a configured `test_database`, 
 ### Cleaning up after interrupted runs
 
 ```bash
-~/.agents/skills/odoo19/odoo19 --project /absolute/project gc            # list, change nothing
-~/.agents/skills/odoo19/odoo19 --project /absolute/project gc --apply    # drop them
-~/.agents/skills/odoo19/odoo19 --project /absolute/project gc --all-checkouts
+~/.agents/skills/odoo19/oasis --project /absolute/project gc            # list, change nothing
+~/.agents/skills/odoo19/oasis --project /absolute/project gc --apply    # drop them
+~/.agents/skills/odoo19/oasis --project /absolute/project gc --all-checkouts
 ```
 
 `gc` lists the disposable test databases of this checkout's namespace that no live run holds, one `orphan <name>` line each, then `orphans=<n>`; it changes nothing. A run is live while the pid of its lock (in any checkout of the current user) still runs the command line recorded in the lock, so a reused pid does not keep an orphan alive (Linux `/proc`, like server records). With `--apply` it closes each orphan's sessions, drops it, removes its filestore and its stale lock, printing `dropped <name>`. An orphan whose drop fails prints `failed <name>` on stderr, keeps its filestore and lock, and the next orphan is still dropped. The run ends with `dropped=<n>` and `failed=<m>` and exits 1 when `m` is not 0, otherwise 0 (also when there is nothing to do).
@@ -280,7 +282,7 @@ Each checkout of a project gets an identity derived from the folder it runs in, 
 checkout_slug = 'mrp_2'
 ```
 
-`/odoo19` shows it as `checkout: main`, `checkout: linked worktree, slug shop_feature` or `checkout: main, slug mrp_2 (profile)`. The slug selects the checkout's database names (below); the checkout's directory selects its server and port (see *Servers and ports per checkout*).
+`/oasis` shows it as `checkout: main`, `checkout: linked worktree, slug shop_feature` or `checkout: main, slug mrp_2 (profile)`. The slug selects the checkout's database names (below); the checkout's directory selects its server and port (see *Servers and ports per checkout*).
 
 ## Databases per checkout
 
@@ -339,11 +341,11 @@ Without `[tooling].data_dir` and with an `addons_path` in `odoo.conf`, every com
 `worktree-init` creates a linked worktree and prepares it. Run it yourself, in Gentle Shell or in a terminal, from the main checkout or any of its worktrees:
 
 ```text
-/odoo19 worktree <feature> <branch>
+/oasis worktree <feature> <branch>
 ```
 
 ```bash
-~/.agents/skills/odoo19/odoo19 --project /absolute/project worktree-init <feature> <branch> [--dry-run] [--resume]
+~/.agents/skills/odoo19/oasis --project /absolute/project worktree-init <feature> <branch> [--dry-run] [--resume]
 ```
 
 - The folder is `<main folder>-<feature>` next to the main checkout, so the feature becomes the checkout slug (`acme` with `shop feature` gives `acme-shop-feature`, slug `shop_feature`). An existing folder is refused, unless you pass `--resume` (below).
@@ -352,7 +354,7 @@ Without `[tooling].data_dir` and with an `addons_path` in `odoo.conf`, every com
 - Shared layout: when the profile's `config`, `env_file`, `compose` and `requirements` all resolve outside the checkouts, the profile is the only thing copied. Its relative paths, and `logs` when it is set, give the same files from the new sibling folder (checked before anything is created; otherwise it refuses). Nothing is linked, no `odoo.conf` is written and no `dev/` is created. The plan starts with `shared config: <directory of odoo.conf>`.
 - Legacy layout (any of those four paths inside the checkout): every untracked or ignored entry of the main checkout's `dev/` is linked, except `dev/odoo.conf`, which is copied with mode 0600, the main root replaced by the worktree root in `addons_path` and `db_name` removed, and `dev/runtime`, which is created as a new empty 0700 directory. The `env_file` path is linked to the main checkout's file.
 - Existing paths are never replaced. `--resume` accepts an existing folder only when it is a worktree of this repository with `<branch>` checked out. It then adds the missing items and reports the others as `kept existing <path>`. A plain folder, a symlink, another repository's worktree or a worktree on another branch is refused. Without the folder, `--resume` creates the worktree as usual.
-- It prints the plan line by line (`copied`, `linked`, `created dir`, `rewrote addons_path`, `removed db_name`, `kept existing`) and never prints the content of `odoo.conf` or the environment file. `--dry-run` prints the same plan and changes nothing; `/odoo19 worktree` shows it and asks before creating anything. A failure after the worktree exists keeps what was created and reports it; run the terminal command again with `--resume` to finish it (`/odoo19 worktree` does not pass `--resume` yet).
+- It prints the plan line by line (`copied`, `linked`, `created dir`, `rewrote addons_path`, `removed db_name`, `kept existing`) and never prints the content of `odoo.conf` or the environment file. `--dry-run` prints the same plan and changes nothing; `/oasis worktree` shows it and asks before creating anything. A failure after the worktree exists keeps what was created and reports it; run the terminal command again with `--resume` to finish it (`/oasis worktree` does not pass `--resume` yet).
 - Agents cannot run it: the bash guard blocks it because it can link the environment file, which agents may not create or read.
 
 Without `[tooling].logs`, `dev/logs` may stay a link to the main checkout's `dev/logs`: in a linked worktree, `--compact` runs accept a log directory that resolves inside the main checkout's `dev/logs/odoo19` (`CHECKOUT_MAIN_ROOT` from `tools/config.py`); any other location outside the project is still refused with `Compact logs must remain inside the project.`
@@ -375,6 +377,8 @@ Each checkout controls only its own Odoo server; the PostgreSQL service is one a
 Contract change in 0.3.0: `stop` used to stop every Compose service; use `stop --database` for PostgreSQL.
 
 Contract change in 0.3.0: `test-module` and `verify-module` without an explicit or configured test database used to reset and reuse `<test_prefix>[<slug>_]<module>` (and `..._update`); they now run on disposable databases dropped at the end of each run. Pass that name explicitly, or set `test_database`, to keep a reusable destination. Names ending in `_r<6 hex>` (optionally `_update`) are now reserved for disposable runs and refused by the commands that create or reuse a database. New public command: `gc`.
+
+Contract change in 0.4.0: the entry point is `oasis`, the Gentle Shell tools are `oasis_*` and the command is `/oasis`. `odoo19` (identical commands, options, exit codes and output), `/odoo19` and the inactive `odoo19_*` tools stay as aliases; the install directory `~/.agents/skills/odoo19` and the `odoo19-*` skill names are unchanged. Run `/oasis setup` to move the subagent overlay to the `oasis_*` names.
 
 ## Portable verification
 

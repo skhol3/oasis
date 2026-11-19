@@ -43,7 +43,7 @@ test_prefix = 'sample_test_'
 # Optional advisory command discovery, never shell strings or authorization.
 # Expand ~ for the current user; use an absolute --project root as separate args.
 # [commands]
-# entrypoint = '~/.agents/skills/odoo19/odoo19'
+# entrypoint = '~/.agents/skills/odoo19/oasis'
 # check_environment = 'check-environment'
 # bootstrap = 'bootstrap'
 # install = 'install-module'

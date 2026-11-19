@@ -1,4 +1,4 @@
-// Classify bash commands that bypass the odoo19 guards. No Pi imports.
+// Classify bash commands that bypass the oasis guards. No Pi imports.
 // Only programs in command position count, so searching or printing their
 // names stays allowed. This is a guard rail for agents, not a sandbox.
 
@@ -6,6 +6,8 @@ const BLOCKED = new Set(["odoo-bin", "dropdb", "psql"]);
 // User-run only: it links environment files that agents may not create or read.
 export const WORKTREE_INIT = "worktree-init";
 const WORKTREE_INIT_SCRIPTS = new Set([WORKTREE_INIT, "worktree_init.py"]);
+// The entry point and its alias: worktree-init is blocked through either.
+const ENTRY_POINTS = new Set(["oasis", "odoo19"]);
 const SHELLS = new Set(["bash", "sh", "zsh", "dash"]);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 // Reserved words that precede a command inside compound commands.
@@ -111,11 +113,11 @@ function skipOptions(words: string[], index: number, valueOptions: Set<string>):
   return index;
 }
 
-/** worktree-init when words[index] runs it: its tool script, or the odoo19 entry point with that command. */
+/** worktree-init when words[index] runs it: its tool script, or an entry point with that command. */
 function worktreeInitScript(words: string[], index: number): string | null {
   const name = basename(words[index]);
   if (WORKTREE_INIT_SCRIPTS.has(name)) return WORKTREE_INIT;
-  if (name === "odoo19" && words.slice(index + 1).includes(WORKTREE_INIT)) return WORKTREE_INIT;
+  if (ENTRY_POINTS.has(name) && words.slice(index + 1).includes(WORKTREE_INIT)) return WORKTREE_INIT;
   return null;
 }
 
@@ -186,14 +188,14 @@ export function blockedProgram(command: string): string | null {
 export function blockReason(program: string, root: string): string {
   if (program === WORKTREE_INIT) {
     return (
-      "worktree-init creates links to environment files; ask the user to run /odoo19 worktree <feature> " +
+      "worktree-init creates links to environment files; ask the user to run /oasis worktree <feature> " +
       "<branch> in Gentle Shell or the command in a terminal."
     );
   }
   return (
     `Direct ${program} is blocked in this Odoo 19 project: it bypasses the database prefix guards. ` +
-    `Use the odoo19 tools (odoo19_test_module, odoo19_module_status) or ` +
-    `\`odoo19 --project ${root} <command>\` (test-module, update-module, install-module, odoo-shell, ` +
+    `Use the oasis tools (oasis_test_module, oasis_module_status) or ` +
+    `\`oasis --project ${root} <command>\` (test-module, update-module, install-module, odoo-shell, ` +
     `create-database, drop-database). If the user explicitly needs raw access, ask them to run it.`
   );
 }

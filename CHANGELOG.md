@@ -3,9 +3,9 @@
 All notable changes to oasis are recorded here. The format follows Keep a Changelog
 (`keepachangelog.com`) and versions follow Semantic Versioning (`semver.org`).
 
-While the version is `0.x`, the contract (the `odoo19` command names and options, the
-`.odoo19-agent.toml` `[tooling]` keys, the database prefix guards and the skill names) may
-still change in a minor release; every such change is listed here under **Changed**.
+While the version is `0.x`, the contract (the `oasis` and `odoo19` command names and
+options, the `.odoo19-agent.toml` `[tooling]` keys, the database prefix guards and the skill
+names) may still change in a minor release; every such change is listed here under **Changed**.
 
 ## [Unreleased]
 
@@ -73,6 +73,17 @@ still change in a minor release; every such change is listed here under **Change
 - `start` passes and recognizes the second server port through `ODOO_SECOND_PORT_OPTION`
   (`--gevent-port` on 19.0); its command lines are unchanged.
 - `require_runtime` compares the interpreter with `PYTHON_VERSION` (3.12 for a profile).
+- Renamed to oasis: the entry point is `oasis` (installed next to `odoo19`), the Gentle Shell
+  tools are `oasis_test_module`, `oasis_find_module`, `oasis_model_info`,
+  `oasis_module_status`, `oasis_check_environment` and `oasis_lint_module`, and the command
+  is `/oasis` (`setup`, `worktree <feature> <branch>`). Aliases are kept: `odoo19` runs the
+  same dispatcher (identical commands, options, exit codes and output; help and usage name
+  the program invoked), `/odoo19` runs the same handler, and the `odoo19_*` tools stay
+  registered with the same implementation but are never activated by the layer. The overlay
+  template names the `oasis_*` tools, so an installed overlay is reported as outdated until
+  `/oasis setup` runs again. The prompt context and the bash guard's messages name `oasis`;
+  the guard also blocks `oasis ... worktree-init`. The install directory and the `odoo19-*`
+  skill names are unchanged.
 
 ## [0.3.0] - 2026-11-18
 

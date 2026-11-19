@@ -52,8 +52,13 @@ if "$batch"; then
     port_arguments+=("--http-port=$batch_port")
   fi
   if ! "$explicit_gevent"; then
-    # Distinct from the HTTP port; an explicit one that is not a number excludes nothing.
-    if [[ ! "$batch_port" =~ ^[0-9]{1,5}$ ]]; then batch_port=''; fi
+    # Distinct from the HTTP port; an explicit one that is not a valid port (1-65535) excludes
+    # nothing and still reaches Odoo as given.
+    if [[ ! "$batch_port" =~ ^[0-9]{1,5}$ ]] || (( 10#$batch_port < 1 || 10#$batch_port > 65535 )); then
+      batch_port=''
+    else
+      batch_port=$(( 10#$batch_port ))
+    fi
     second_port=$(runtime_state ephemeral-port ${batch_port:+"$batch_port"})
     port_arguments+=("$ODOO_SECOND_PORT_OPTION=$second_port")
   fi

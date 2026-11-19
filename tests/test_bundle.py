@@ -12,6 +12,8 @@ NAMES = {
 SECTIONS = ('Activation Contract', 'Hard Rules', 'Decision Gates',
             'Execution Steps', 'Output Contract', 'References')
 CONFIG = ROOT / 'odoo19-environment/assets/odoo19-agent.example.toml'
+# The installed entry point and its compatibility alias.
+ENTRY_POINTS = ('~/.agents/skills/odoo19/oasis', '~/.agents/skills/odoo19/odoo19')
 TOOLING = {
     'version': str, 'python_version': str, 'community': str,
     'environment': str, 'config': str, 'env_file': str, 'compose': str,
@@ -55,7 +57,7 @@ def check_example(raw):
         if key not in COMMANDS or not isinstance(value, str):
             raise ValueError('command path')
         if 'entrypoint' in commands:
-            if (key == 'entrypoint' and value != '~/.agents/skills/odoo19/odoo19') or (key != 'entrypoint' and value != operations[key]):
+            if (key == 'entrypoint' and value not in ENTRY_POINTS) or (key != 'entrypoint' and value != operations[key]):
                 raise ValueError('command path')
         elif (key == 'odoo_shell' or not re.fullmatch(r'[A-Za-z0-9_./-]+', value)
               or value.startswith('/') or '..' in Path(value).parts):
@@ -127,8 +129,11 @@ class BundleTests(unittest.TestCase):
         self.assertEqual(data['odoo']['addons_paths'][0], data['tooling']['addons_paths'][0])
         self.assertNotEqual(data['odoo']['addons_paths'], data['tooling']['addons_paths'])
         self.assertNotIn('commands', data)
-        valid = raw + "\n[commands]\nentrypoint = '~/.agents/skills/odoo19/odoo19'\ntest = 'test-module'\n"
-        self.assertEqual(check_example(valid)['commands']['test'], 'test-module')
+        for entrypoint in ENTRY_POINTS:
+            valid = raw + f"\n[commands]\nentrypoint = '{entrypoint}'\ntest = 'test-module'\n"
+            self.assertEqual(check_example(valid)['commands']['test'], 'test-module')
+        with self.assertRaisesRegex(ValueError, '^command path$'):
+            check_example(raw + "\n[commands]\nentrypoint = '~/.agents/skills/odoo19/other'\n")
         with self.assertRaises(ValueError):
             check_example(raw.replace("version = '19.0'", "version = '18.0'"))
         with self.assertRaises(ValueError):

@@ -1,6 +1,7 @@
 // Gentle Shell (Pi) layer for the Odoo 19 bundle. It wraps the agent-agnostic
-// `odoo19` entry point shipped in this repository; it changes nothing in Pi or
-// Gentle Shell and keeps every guard inside the core tools.
+// `oasis` entry point shipped in this repository; it changes nothing in Pi or
+// Gentle Shell and keeps every guard inside the core tools. The pre-0.4.0 names stay as
+// aliases: `/odoo19` and the inactive odoo19_* tools.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readFileSync } from "node:fs";
@@ -10,11 +11,11 @@ import { blockedProgram, blockReason, WORKTREE_INIT } from "../lib/bash-guard.ts
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
-import { nextActiveTools, ODOO19_TOOLS } from "../lib/activation.ts";
+import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
 import { formatPlain, formatTestRun, testModuleArgs } from "../lib/tools.ts";
 
-const ODOO19 = fileURLToPath(new URL("../../odoo19", import.meta.url));
+const OASIS = fileURLToPath(new URL("../../oasis", import.meta.url));
 const CONFIG_PY = fileURLToPath(new URL("../../tools/config.py", import.meta.url));
 const RUNTIME_STATE_PY = fileURLToPath(new URL("../../tools/runtime_state.py", import.meta.url));
 const OVERLAY_TEMPLATE = fileURLToPath(new URL("../agent-overlays/oasis.json", import.meta.url));
@@ -26,6 +27,7 @@ const TEST_TIMEOUT_MS = 60 * 60 * 1000;
 const TOOL_TIMEOUT_MS = 10 * 60 * 1000;
 
 type Result = { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
+type ToolDefinition = Parameters<ExtensionAPI["registerTool"]>[0];
 
 function text(body: string, details: Record<string, unknown> = {}): Result {
   return { content: [{ type: "text", text: body }], details };
@@ -66,7 +68,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   }
 
   async function run(root: string, args: string[], signal: AbortSignal | undefined, timeout: number) {
-    return pi.exec("python3", ["-B", ODOO19, "--project", root, ...args], { cwd: root, signal, timeout });
+    return pi.exec("python3", ["-B", OASIS, "--project", root, ...args], { cwd: root, signal, timeout });
   }
 
   async function plain(
@@ -131,27 +133,27 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       const target = currentOverlayTarget();
       const state = overlayState(OVERLAY_TEMPLATE, target);
       if (state === "current") {
-        ctx.ui.notify(`odoo19 setup: subagent overlay is up to date (${target})`, "info");
+        ctx.ui.notify(`oasis setup: subagent overlay is up to date (${target})`, "info");
         return;
       }
       const verb = state === "missing" ? "Create" : "Update";
-      const question = `${verb} ${target} so gentle-ai-worker and gentle-ai-verify get the odoo19 tools?`;
-      if (!(await ctx.ui.confirm("odoo19 setup", question))) {
-        ctx.ui.notify("odoo19 setup: nothing changed.", "info");
+      const question = `${verb} ${target} so gentle-ai-worker and gentle-ai-verify get the oasis tools?`;
+      if (!(await ctx.ui.confirm("oasis setup", question))) {
+        ctx.ui.notify("oasis setup: nothing changed.", "info");
         return;
       }
       const result = installOverlay(OVERLAY_TEMPLATE, target);
       if (result.state === "unchanged") {
-        ctx.ui.notify(`odoo19 setup: subagent overlay is up to date (${target})`, "info");
+        ctx.ui.notify(`oasis setup: subagent overlay is up to date (${target})`, "info");
         return;
       }
       ctx.ui.notify(
-        `odoo19 setup: subagent overlay ${result.state} at ${target}. ` +
+        `oasis setup: subagent overlay ${result.state} at ${target}. ` +
           "Start a new session or /reload for subagents to use it.",
         "info",
       );
     } catch (error) {
-      ctx.ui.notify(`odoo19 setup failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+      ctx.ui.notify(`oasis setup failed: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
   }
 
@@ -167,28 +169,30 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     try {
       const plan = await run(root, [...args, "--dry-run"], undefined, TOOL_TIMEOUT_MS);
       if (plan.code !== 0) {
-        ctx.ui.notify(`odoo19 worktree: ${plan.stderr.trim() || `exit ${plan.code}`}`, "error");
+        ctx.ui.notify(`oasis worktree: ${plan.stderr.trim() || `exit ${plan.code}`}`, "error");
         return;
       }
       const steps = plan.stdout.trim().split("\n").filter((line) => line !== "dry run: nothing changed");
-      if (!(await ctx.ui.confirm("odoo19 worktree", `${steps.join("\n")}\n\nCreate this worktree?`))) {
-        ctx.ui.notify("odoo19 worktree: nothing changed.", "info");
+      if (!(await ctx.ui.confirm("oasis worktree", `${steps.join("\n")}\n\nCreate this worktree?`))) {
+        ctx.ui.notify("oasis worktree: nothing changed.", "info");
         return;
       }
       const result = await run(root, args, undefined, TOOL_TIMEOUT_MS);
       const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
-      ctx.ui.notify(`odoo19 worktree:\n${output || `exit ${result.code}`}`, result.code === 0 ? "info" : "error");
+      ctx.ui.notify(`oasis worktree:\n${output || `exit ${result.code}`}`, result.code === 0 ? "info" : "error");
     } catch (error) {
-      ctx.ui.notify(`odoo19 worktree failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+      ctx.ui.notify(`oasis worktree failed: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
   }
 
-  const USAGE = "Usage: /odoo19 [setup | worktree <feature> <branch>]";
+  const USAGE = "Usage: /oasis [setup | worktree <feature> <branch>]";
+  const COMMAND_DESCRIPTION =
+    "Odoo 19 project status: profile, addon modules, databases, git worktree and this checkout's server; " +
+    "`setup` installs the subagent overlay; `worktree <feature> <branch>` creates a prepared linked worktree";
 
-  pi.registerCommand("odoo19", {
-    description:
-      "Odoo 19 project status: profile, addon modules, databases, git worktree and this checkout's server; " +
-      "`setup` installs the subagent overlay; `worktree <feature> <branch>` creates a prepared linked worktree",
+  // `/oasis`, and `/odoo19` as its alias: one handler, the same subcommands.
+  const command: Parameters<ExtensionAPI["registerCommand"]>[1] = {
+    description: COMMAND_DESCRIPTION,
     handler: async (args, ctx) => {
       const argument = (args ?? "").trim();
       if (argument === "setup") {
@@ -216,15 +220,18 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       const content = formatStatus(await projectStatus(root));
       pi.sendMessage({ customType: "odoo19-status", content, display: true });
     },
-  });
+  };
+  pi.registerCommand("oasis", command);
+  pi.registerCommand("odoo19", { ...command, description: `Alias of /oasis. ${COMMAND_DESCRIPTION}` });
 
-  // The odoo19_* tools are registered inactive; activate them only in sessions inside an Odoo 19
-  // project so other projects pay no tokens for their schemas and guidelines. Other tools are untouched.
+  // The oasis_* tools are registered inactive; activate them only in sessions inside an Odoo 19
+  // project so other projects pay no tokens for their schemas and guidelines. Other tools, the
+  // odoo19_* aliases included, are untouched.
   pi.on("session_start", async (_event, ctx) => {
     const inProject = (await projectRoot(ctx.cwd)) !== null;
     // Read after the await: another handler may change the active tools meanwhile.
     const active = pi.getActiveTools();
-    const next = nextActiveTools(active, inProject, ODOO19_TOOLS);
+    const next = nextActiveTools(active, inProject, OASIS_TOOLS);
     if (next.length !== active.length || next.some((name, index) => name !== active[index])) pi.setActiveTools(next);
   });
 
@@ -237,8 +244,8 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       const state = overlayState(OVERLAY_TEMPLATE, currentOverlayTarget());
       if (state === "current") return;
       overlayNoticeShown = true;
-      const problem = state === "missing" ? "subagents do not have the odoo19 tools yet" : "overlay is outdated";
-      ctx.ui.notify(`oasis: ${problem}; run /odoo19 setup`, "info");
+      const problem = state === "missing" ? "subagents do not have the oasis tools yet" : "overlay is outdated";
+      ctx.ui.notify(`oasis: ${problem}; run /oasis setup`, "info");
     } catch {
       // Never block startup on the overlay check.
     }
@@ -270,8 +277,26 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     if (root) return { block: true, reason: blockReason(program, root) };
   });
 
-  pi.registerTool({
-    name: "odoo19_test_module",
+  // Each tool is registered under its oasis_* name and, always inactive, under its odoo19_* alias
+  // with the same parameters and implementation, for overlays and allowlists that name the old
+  // tools; the layer activates only the oasis_* names (OASIS_TOOLS).
+  function registerWithAlias(tool: ToolDefinition): void {
+    pi.registerTool(tool);
+    const alias = aliasOf(tool.name);
+    pi.registerTool({
+      ...tool,
+      name: alias,
+      defaultActive: false,
+      label: `${tool.label} (alias of ${tool.name})`,
+      description: `Alias of ${tool.name}. ${tool.description}`,
+      ...(tool.promptGuidelines
+        ? { promptGuidelines: tool.promptGuidelines.map((line) => line.replaceAll(tool.name, alias)) }
+        : {}),
+    });
+  }
+
+  registerWithAlias({
+    name: "oasis_test_module",
     defaultActive: false,
     label: "Odoo 19 test module",
     description:
@@ -279,7 +304,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       "database is reset first instead). Returns the result line and " +
       "failures with the end of each traceback; full logs stay in the profile logs directory (default dev/logs/odoo19).",
     promptSnippet: "Run an Odoo 19 module's tests and get only the result and failures",
-    promptGuidelines: ["Use odoo19_test_module instead of running odoo-bin --test-tags through bash."],
+    promptGuidelines: ["Use oasis_test_module instead of running odoo-bin --test-tags through bash."],
     parameters: Type.Object({
       module: Type.String({ description: "Technical module name" }),
       database: Type.Optional(Type.String({
@@ -296,8 +321,8 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "odoo19_find_module",
+  registerWithAlias({
+    name: "oasis_find_module",
     defaultActive: false,
     label: "Odoo 19 find module",
     description:
@@ -305,7 +330,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       "technical name and the manifest name, summary and category. Returns `technical — manifest name` lines.",
     promptSnippet: "Map a functional module name to its technical name",
     promptGuidelines: [
-      "Use odoo19_find_module to map functional names to technical module names instead of ls/grep over addons.",
+      "Use oasis_find_module to map functional names to technical module names instead of ls/grep over addons.",
     ],
     parameters: Type.Object({
       query: Type.String({ description: "Words of the functional or technical module name" }),
@@ -320,8 +345,8 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "odoo19_model_info",
+  registerWithAlias({
+    name: "oasis_model_info",
     defaultActive: false,
     label: "Odoo 19 model info",
     description:
@@ -329,7 +354,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       "environment or database): definition, extending modules, fields, field overrides and methods.",
     promptSnippet: "Learn an Odoo model's fields, methods and inheritance without opening source files",
     promptGuidelines: [
-      "Use odoo19_model_info before reading Odoo source files to learn a model's fields, methods or inheritance.",
+      "Use oasis_model_info before reading Odoo source files to learn a model's fields, methods or inheritance.",
     ],
     parameters: Type.Object({
       model: Type.String({ description: "Model name, e.g. sale.order" }),
@@ -348,8 +373,8 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "odoo19_module_status",
+  registerWithAlias({
+    name: "oasis_module_status",
     defaultActive: false,
     label: "Odoo 19 module status",
     description: "Database and module state (missing, uninitialized, installed, version) for a managed database.",
@@ -362,8 +387,8 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "odoo19_check_environment",
+  registerWithAlias({
+    name: "oasis_check_environment",
     defaultActive: false,
     label: "Odoo 19 check environment",
     description: "Check the project's Odoo 19 environment. Quick mode by default; full mode needs the user's consent.",
@@ -375,8 +400,8 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "odoo19_lint_module",
+  registerWithAlias({
+    name: "oasis_lint_module",
     defaultActive: false,
     label: "Odoo 19 lint module",
     description: "Run Pylint with the project's declared rcfile on one module, without starting Odoo.",

@@ -1,4 +1,4 @@
-// `/odoo19 setup`: install the subagent overlay template into the Gentle AI config home.
+// `/oasis setup`: install the subagent overlay template into the Gentle AI config home.
 // Pure logic and filesystem only; the extension owns confirmation and notifications.
 import { isDeepStrictEqual } from "node:util";
 import { lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";

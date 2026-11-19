@@ -321,6 +321,16 @@ class TestRunSecondPortTests(PathFreeConfFixture):
         line = self.batch('--http-port=8100', '--gevent-port=8101')
         self.assertEqual(line, f'{self.prefix} --stop-after-init --http-port=8100 --gevent-port=8101')
 
+    def test_batch_start_passes_an_out_of_range_explicit_port_as_given(self):
+        # L17: only a valid port is excluded from the second port; Odoo judges the rest.
+        for given in (['--http-port=70000'], ['--http-port', '99999'], ['-p0'], ['-p', '00000']):
+            with self.subTest(given=given):
+                line = self.batch(*given)
+                match = re.fullmatch(re.escape(self.prefix) + r' --gevent-port=(\d+) --stop-after-init '
+                                     + re.escape(' '.join(given)), line)
+                self.assertIsNotNone(match, line)
+                self.assertTrue(bindable(int(match.group(1))))
+
     def test_a_serving_start_of_the_main_checkout_is_unchanged(self):
         result = self.invoke('start')
         self.assertEqual(result.returncode, 0, result.stderr)

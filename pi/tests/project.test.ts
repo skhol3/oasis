@@ -166,19 +166,21 @@ test("findWorkspaceFile returns the nearest workspace file at or above the start
   }
 });
 
-test("projectContext names the root and routes the agent to the odoo19 tools", () => {
+test("projectContext names the root and routes the agent to the oasis tools", () => {
   const text = projectContext("/work/coffee");
   assert.match(text, /Odoo 19 project root: \/work\/coffee \(profile \.odoo19-agent\.toml\)/);
   for (const tool of [
-    "odoo19_test_module",
-    "odoo19_module_status",
-    "odoo19_check_environment",
-    "odoo19_lint_module",
-    "odoo19_find_module",
-    "odoo19_model_info",
+    "oasis_test_module",
+    "oasis_module_status",
+    "oasis_check_environment",
+    "oasis_lint_module",
+    "oasis_find_module",
+    "oasis_model_info",
   ]) {
     assert.ok(text.includes(tool), tool);
   }
+  // The inactive odoo19_* aliases are not advertised.
+  assert.ok(!text.includes("odoo19_"), text);
   assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
 });
 
