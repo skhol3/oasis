@@ -7,6 +7,6 @@ if [[ -z "$database" ]]; then
   printf 'Usage: %s <%s*|%s*>\n' "${ODOO19_ENTRYPOINT:-$0}" "$DEV_PREFIX" "$TEST_PREFIX" >&2
   exit 2
 fi
-require_managed_database_name "$database"
+require_working_database_name "$database"
 ensure_database "$database"
 printf 'Database ready: %s\n' "$database"

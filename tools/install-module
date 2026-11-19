@@ -23,7 +23,7 @@ fi
 module=${1:-}
 database=${2:-$(checkout_database_name "$DEV_PREFIX" "$module")}
 require_module "$module"
-require_managed_database_name "$database"
+require_working_database_name "$database"
 require_runtime
 ensure_database "$database" </dev/null
 if [[ "$with_demo" == true ]]; then

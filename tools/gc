@@ -17,7 +17,9 @@ for argument in "$@"; do
       printf 'in the main checkout <test_prefix> without the namespaces of its existing linked worktrees.\n'
       printf -- '--all-checkouts lists every namespace of the test prefix. Without --apply nothing changes.\n'
       printf -- '--apply closes their sessions, drops them and removes their filestores (the odoo.conf\n'
-      printf 'data_dir). Development databases and test databases without the run suffix are never\n'
+      printf 'data_dir); a failed drop prints failed <name> on stderr, the others are still dropped,\n'
+      printf 'and the run ends with dropped=<n> failed=<m> (exit 1 when m > 0).\n'
+      printf 'Development databases and test databases without the run suffix are never\n'
       printf 'touched. A checkout with a slug may drop only its own namespace: run --apply --all-checkouts\n'
       printf 'from the main checkout.\n'
       exit 0 ;;
@@ -38,20 +40,28 @@ databases=$(list_managed_databases)
 orphans=$(gc_helper orphans "$PROJECT_ROOT" "$TEST_PREFIX" "${CHECKOUT_SLUG:-}" "$scope" "$TEST_DATABASE" \
   <<< "$databases")
 count=0
+failed=0
 mapfile -t orphan_list <<< "$orphans"
 for database in "${orphan_list[@]}"; do
   [[ -n "$database" ]] || continue
   if "$apply"; then
     # drop_disposable_database repeats the managed-name, namespace and run-suffix guards.
-    gc_helper discard "$ODOO_CONFIG" "$database" </dev/null
-    printf 'dropped %s\n' "$database"
+    # A failed drop is reported and the next orphan is still dropped.
+    if gc_helper discard "$ODOO_CONFIG" "$database" </dev/null; then
+      printf 'dropped %s\n' "$database"
+      count=$(( count + 1 ))
+    else
+      printf 'failed %s\n' "$database" >&2
+      failed=$(( failed + 1 ))
+    fi
   else
     printf 'orphan %s\n' "$database"
+    count=$(( count + 1 ))
   fi
-  count=$(( count + 1 ))
 done
 if "$apply"; then
-  printf 'dropped=%s\n' "$count"
+  printf 'dropped=%s\nfailed=%s\n' "$count" "$failed"
+  if (( failed > 0 )); then exit 1; fi
 else
   printf 'orphans=%s\n' "$count"
 fi

@@ -4,10 +4,15 @@ source "$(dirname "$0")/common.sh"
 require_runtime
 # This checkout's server first, then the shared Compose services.
 # A failing runtime state read degrades to `server: unknown (<reason>)`; compose ps still runs.
+# stdout and stderr are read separately: stderr is the reason only when the read fails;
+# after a successful read it is passed through unchanged.
+state_errors=$(mktemp)
+trap 'rm -f -- "$state_errors"' EXIT
 state_status=0
-server=$(runtime_state show "$PROJECT_ROOT" 2>&1) || state_status=$?
+server=$(runtime_state show "$PROJECT_ROOT" 2>"$state_errors") || state_status=$?
+state_error=$(<"$state_errors")
 if (( state_status != 0 )); then
-  reason=$(printf '%s\n' "$server" | sed '/^[[:space:]]*$/d' | tail -n 1)
+  reason=$(printf '%s\n' "$state_error" | sed '/^[[:space:]]*$/d' | tail -n 1)
   reason=${reason#ERROR: }
   printf 'server: unknown (%s)\n' "${reason:-runtime_state.py exited with $state_status}"
 elif [[ -n "$server" ]]; then
@@ -15,5 +20,8 @@ elif [[ -n "$server" ]]; then
   printf 'server: running pid %s port %s\n' "${server_pid#pid=}" "${server_port#port=}"
 else
   printf 'server: stopped\n'
+fi
+if (( state_status == 0 )) && [[ -n "$state_error" ]]; then
+  printf '%s\n' "$state_error" >&2
 fi
 compose ps

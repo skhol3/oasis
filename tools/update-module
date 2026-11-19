@@ -15,6 +15,6 @@ if [[ -z "$database" ]]; then
   printf 'Usage: %s <module> <database>\n' "${ODOO19_ENTRYPOINT:-$0}" >&2
   exit 2
 fi
-require_managed_database_name "$database"
+require_working_database_name "$database"
 require_existing_database "$database"
 run_odoo -d "$database" -u "$module" --stop-after-init

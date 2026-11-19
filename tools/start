@@ -20,11 +20,11 @@ for (( index = 0; index < ${#arguments[@]}; index++ )); do
   case ${arguments[index]} in
     --) break ;;
     -d|--datab|--databa|--databas|--database)
-      require_managed_database_name "${arguments[index + 1]:-}"
+      require_working_database_name "${arguments[index + 1]:-}"
       (( index += 1 )) ;;
-    -d*) require_managed_database_name "${arguments[index]#-d}" ;;
+    -d*) require_working_database_name "${arguments[index]#-d}" ;;
     --datab=*|--databa=*|--databas=*|--database=*)
-      require_managed_database_name "${arguments[index]#*=}" ;;
+      require_working_database_name "${arguments[index]#*=}" ;;
     -p|--http-port)
       explicit_port=${arguments[index + 1]:-}
       (( index += 1 )) ;;
@@ -109,6 +109,6 @@ if [[ "${CHECKOUT_KIND:-}" == linked ]] && ! "$explicit_gevent"; then
 fi
 wait_for_database
 # $$ survives exec: the record names the Odoo process itself.
-runtime_state record "$PROJECT_ROOT" "$$" "$port" "$ODOO_BIN"
+runtime_state record "$PROJECT_ROOT" "$$" "$port" "$ODOO_BIN" "$PYTHON"
 printf 'odoo19 start: http://localhost:%s (pid %s)\n' "$port" "$$" >&2
 exec "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" "$@"

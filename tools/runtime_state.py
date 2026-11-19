@@ -3,7 +3,7 @@
 
 Usage:
   runtime_state.py show <project_root>       pid=<pid> port=<port> when a live server is recorded
-  runtime_state.py record <project_root> <pid> <port> <odoo_bin>
+  runtime_state.py record <project_root> <pid> <port> <odoo_bin> [<python>]
   runtime_state.py stop <project_root>       SIGTERM this checkout's server, wait up to 20 s
   runtime_state.py others <project_root>     live servers of the other checkouts, one per line
   runtime_state.py port <interface> <first> <last> [<excluded>...]
@@ -14,25 +14,32 @@ Usage:
   runtime_state.py run-name <namespace> <module>
                                              a new disposable test database name (see below)
   runtime_state.py run-lock <project_root> <database> <pid>
+                                             create the run lock exclusively (exit 2 and
+                                             `Disposable test database is locked: <database>`
+                                             when one exists, live or not)
   runtime_state.py run-unlock <project_root> <database>
-  runtime_state.py run-held <project_root> <database>
-                                             exit 0 when the run lock file exists, 1 when not
+  runtime_state.py run-owned <project_root> <database> <pid>
+                                             exit 0 when this checkout's lock of database is
+                                             live and held by pid, 1 when not
 
 State lives in ${XDG_RUNTIME_DIR, or /tmp}/oasis-<uid>/<first 16 hex of sha256(realpath
-project_root)>/server.json ({pid, port, started_at, project_root, odoo_bin}); both directories
+project_root)>/server.json ({pid, port, started_at, project_root, odoo_bin, python}); both directories
 are 0700 and refused when they are symlinks, not directories or owned by another user. Never
 inside a repository or a shared directory. A record is live while its pid is a process of this
 user whose command line (/proc, Linux) is the Odoo launch: argv[1] is the recorded odoo-bin
-(argv[0] a python interpreter) or argv[0] is odoo-bin. Within GRACE seconds of started_at any
+and argv[0] a python interpreter (a name starting with `python`, or the recorded python, realpaths
+compared), or argv[0] is odoo-bin. Within GRACE seconds of started_at any
 process of the pid is live (start writes the record before it execs Odoo). A stale or invalid
 record is removed when read, only if the file still holds what was read.
 
 Disposable test runs: `<namespace><module>_r<6 hex>`, at most 56 bytes so verify-module's
 `_update` sibling fits PostgreSQL's 63; a longer name keeps the first N characters of the
 module plus `_` and 4 hex of sha256(module). Each run holds a lock `runs/<database>.json`
-({pid, started_at, database, project_root, argv}) in the same private state directory. A lock
-is live while its pid runs the recorded command line (argv read from /proc when it was
-written), so a reused pid does not keep an orphan alive.
+({pid, started_at, database, project_root, argv}, 0600) in the same private state directory,
+created exclusively (O_EXCL on the final path, then written and fsynced): an existing lock,
+live or stale, is never replaced, so two runs never share a name. A lock is live while its pid
+runs the recorded command line (argv read from /proc when it was written, compared exactly,
+whatever the interpreter), so a reused pid does not keep an orphan alive.
 """
 from datetime import datetime, timezone
 import errno
@@ -69,6 +76,10 @@ class PortError(Exception):
 
 class RunError(Exception):
     """A disposable run name or lock that cannot be made; the message says why."""
+
+
+class RunLocked(RunError):
+    """A run lock of that database already exists; the message names the database."""
 
 
 def user_root():
@@ -142,12 +153,16 @@ def command_line(pid):
     return [os.fsdecode(part) for part in parts] or None
 
 
-def is_odoo_launch(argv, odoo_bin):
+def is_odoo_launch(argv, odoo_bin, python=None):
     names = {odoo_bin, os.path.realpath(odoo_bin)}
     if argv[0] in names:
         return True
-    return (len(argv) > 1 and argv[1] in names
-            and os.path.basename(argv[0]).startswith('python'))
+    if len(argv) < 2 or argv[1] not in names:
+        return False
+    if os.path.basename(argv[0]).startswith('python'):
+        return True
+    # The interpreter start ran (the profile's python) may have any name, e.g. pypy3.
+    return bool(python) and (argv[0] == python or os.path.realpath(argv[0]) == os.path.realpath(python))
 
 
 def in_grace(record):
@@ -165,7 +180,7 @@ def is_live(record):
     argv = command_line(record['pid'])
     if argv is None:
         return False
-    return is_odoo_launch(argv, record['odoo_bin']) or in_grace(record)
+    return is_odoo_launch(argv, record['odoo_bin'], record.get('python')) or in_grace(record)
 
 
 def parse(raw):
@@ -175,7 +190,8 @@ def parse(raw):
     pid, port = data.get('pid'), data.get('port')
     if (not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0 or not isinstance(port, int)
             or isinstance(port, bool) or not isinstance(data.get('odoo_bin'), str)
-            or not isinstance(data.get('project_root'), str)):
+            or not isinstance(data.get('project_root'), str)
+            or not isinstance(data.get('python', ''), str)):
         raise ValueError('invalid record')
     return data
 
@@ -240,11 +256,13 @@ def live_record(project_root):
     return read_live(directory) if directory else None
 
 
-def write_record(project_root, pid, port, odoo_bin):
+def write_record(project_root, pid, port, odoo_bin, python=None):
     directory = state_dir(project_root, create=True)
     record = {'pid': pid, 'port': port,
               'started_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
               'project_root': os.path.realpath(project_root), 'odoo_bin': odoo_bin}
+    if python:
+        record['python'] = python
     descriptor, temporary = tempfile.mkstemp(prefix='.server-', dir=directory)
     try:
         with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
@@ -338,7 +356,11 @@ def runs_dir(project_root, create):
 
 
 def write_run_lock(project_root, database, pid):
-    """Record that pid runs the disposable database (atomic, 0600, private directory)."""
+    """Record that pid runs the disposable database: created exclusively, 0600, fsynced.
+
+    An existing lock of that database (live or stale, or anything else at that path) raises
+    RunLocked and is left as it is.
+    """
     name = lock_name(database)
     argv = command_line(pid)
     if argv is None:
@@ -346,31 +368,56 @@ def write_run_lock(project_root, database, pid):
     directory = runs_dir(project_root, create=True)
     record = {'pid': pid, 'started_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
               'database': database, 'project_root': os.path.realpath(project_root), 'argv': argv}
-    descriptor, temporary = tempfile.mkstemp(prefix='.run-', dir=directory)
+    path = directory / name
     try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except FileExistsError as exc:
+        raise RunLocked(f'Disposable test database is locked: {database}') from exc
+    try:
+        os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
             json.dump(record, stream)
-        os.replace(temporary, directory / name)
+            stream.flush()
+            os.fsync(stream.fileno())
     except BaseException:
-        os.unlink(temporary)
+        # Only this call created the file: a half-written lock is removed.
+        path.unlink(missing_ok=True)
         raise
 
 
-def remove_run_lock(project_root, database):
+def remove_run_lock(project_root, database, pid=None):
+    """Remove the checkout's lock of database; with pid, only a lock that pid holds."""
     name = lock_name(database)
     directory = runs_dir(project_root, create=False)
     if directory is None:
         return
+    path = directory / name
+    if pid is not None:
+        try:
+            seen = snapshot(path)
+            record = lock_record(seen, database)
+            if record is not None and record['pid'] == pid:
+                discard_stale(path, seen)
+        except OSError as exc:
+            raise StateError(f'Cannot remove run lock: {path}') from exc
+        return
     try:
-        (directory / name).unlink()
+        path.unlink()
     except FileNotFoundError:
         pass
 
 
-def run_lock_held(project_root, database):
+def run_lock_owned(project_root, database, pid):
+    """True when this checkout's lock of database is live and held by pid."""
     name = lock_name(database)
     directory = runs_dir(project_root, create=False)
-    return directory is not None and os.path.lexists(directory / name)
+    if directory is None:
+        return False
+    try:
+        record = lock_record(snapshot(directory / name), database)
+    except OSError:
+        return False
+    return record is not None and record['pid'] == pid and command_line(pid) == record['argv']
 
 
 def parse_run_lock(raw):
@@ -383,6 +430,17 @@ def parse_run_lock(raw):
             or not argv or not all(isinstance(part, str) for part in argv)):
         raise ValueError('invalid lock')
     return data
+
+
+def lock_record(seen, database):
+    """The parsed lock of a snapshot for database, or None (missing, not a file, invalid)."""
+    if seen is None or seen[0] != 'file':
+        return None
+    try:
+        record = parse_run_lock(seen[1])
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return None
+    return record if record['database'] == database else None
 
 
 def run_locks():
@@ -403,14 +461,7 @@ def run_locks():
                 seen = snapshot(path)
             except OSError:
                 continue
-            record = None
-            if seen is not None and seen[0] == 'file':
-                try:
-                    record = parse_run_lock(seen[1])
-                except (ValueError, UnicodeDecodeError, RecursionError):
-                    record = None
-            if record is not None and record['database'] != path.stem:
-                record = None
+            record = lock_record(seen, path.stem)
             live = record is not None and command_line(record['pid']) == record['argv']
             found.append((path, seen, record, live))
     return found
@@ -485,8 +536,8 @@ def main(argv):
             if record is not None:
                 print(f"pid={record['pid']} port={record['port']}")
             return 0
-        if command == 'record' and len(args) == 4:
-            write_record(args[0], integer(args[1]), integer(args[2]), args[3])
+        if command == 'record' and len(args) in (4, 5):
+            write_record(args[0], integer(args[1]), integer(args[2]), *args[3:])
             return 0
         if command == 'stop' and len(args) == 1:
             return stop(args[0])
@@ -512,8 +563,11 @@ def main(argv):
         if command == 'run-unlock' and len(args) == 2:
             remove_run_lock(args[0], args[1])
             return 0
-        if command == 'run-held' and len(args) == 2:
-            return 0 if run_lock_held(args[0], args[1]) else 1
+        if command == 'run-owned' and len(args) == 3:
+            return 0 if run_lock_owned(args[0], args[1], integer(args[2])) else 1
+    except RunLocked as exc:
+        print(exc, file=sys.stderr)
+        return 2
     except (StateError, RunError) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 2
@@ -523,7 +577,7 @@ def main(argv):
     except ValueError:
         pass
     print('ERROR: Usage: runtime_state.py show|record|stop|others|port|ephemeral-port|run-name|'
-          'run-lock|run-unlock|run-held ...', file=sys.stderr)
+          'run-lock|run-unlock|run-owned ...', file=sys.stderr)
     return 2
 
 

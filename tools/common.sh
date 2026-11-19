@@ -150,6 +150,24 @@ require_managed_database_name() {
   fi
 }
 
+# Names ending in the disposable run suffix (_r<6 hex>, optionally _update) belong to the
+# disposable runs of test-module and verify-module. The commands that create or reuse a
+# database for normal work (create-database, install-module, update-module, odoo-shell,
+# start -d, init-dev-database, and test-module/verify-module with an explicit or configured
+# database) call this guard instead of require_managed_database_name and refuse them;
+# drop-database, module-status and gc accept them. The phases of a disposable verify-module
+# run (its children) use the run's names: accepted while the parent process holds their live
+# run lock in this checkout.
+require_working_database_name() {
+  local database=${1:-}
+  require_managed_database_name "$database"
+  if [[ "$database" =~ _r[0123456789abcdef]{6}(_update)?$ ]] &&
+      ! runtime_state run-owned "$PROJECT_ROOT" "$database" "$PPID"; then
+    printf 'Database names ending in _r<6 hex> are reserved for disposable runs: %s\n' "$database" >&2
+    return 2
+  fi
+}
+
 # A database that gets an _update sibling must leave room for it within 63 bytes.
 require_update_sibling_room() {
   local database=$1

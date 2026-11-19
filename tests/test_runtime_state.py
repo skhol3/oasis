@@ -195,6 +195,65 @@ class RuntimeStateHelperTests(unittest.TestCase):
         self.assert_show(f'pid={launched.pid} port=8070\n')
         self.assertTrue(self.record_path().exists())
 
+    def test_argv0_equal_to_the_recorded_python_is_the_odoo_launch(self):
+        # An interpreter whose name does not start with `python` (pypy3, a renamed venv
+        # binary) is live when it is the python recorded by start (realpaths compared).
+        pypy = self.scratch / 'bin' / 'pypy3'
+        pypy.parent.mkdir()
+        pypy.symlink_to(sys.executable)
+        launched = self.spawn(str(pypy), str(self.odoo_bin))
+        deadline = time.monotonic() + 10
+        while Path(f'/proc/{launched.pid}/cmdline').read_bytes().split(b'\0')[1:2] != [
+                os.fsencode(self.odoo_bin)]:
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.02)
+        # Without the recorded python the basename rule alone does not accept pypy3.
+        self.write(launched.pid, ago(60))
+        self.assert_show('')
+        self.assertFalse(self.record_path().exists())
+        result = self.helper('record', str(self.root), str(launched.pid), '8070', str(self.odoo_bin), str(pypy))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        data = json.loads(self.record_path().read_text())
+        self.assertEqual(data['python'], str(pypy))
+        self.record_path().write_text(json.dumps({**data, 'started_at': ago(60)}))
+        self.assert_show(f'pid={launched.pid} port=8070\n')
+        # A recorded python that is not argv[0] does not make another interpreter live.
+        other = self.scratch / 'bin' / 'other-python-name'
+        other.write_text('')
+        self.record_path().write_text(json.dumps({**data, 'started_at': ago(60), 'python': str(other)}))
+        self.assert_show('')
+        # A wrongly typed python makes the record invalid.
+        self.write(launched.pid, ago(0))
+        data = json.loads(self.record_path().read_text())
+        self.record_path().write_text(json.dumps({**data, 'python': 3}))
+        self.assert_show('')
+        self.assertFalse(self.record_path().exists())
+
+    def test_run_locks_are_created_exclusively_and_private(self):
+        database = 'cc_test_coffee_r123456'
+        process = self.spawn()
+        result = self.helper('run-lock', str(self.root), database, str(process.pid))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        path = state_dir(self.xdg, self.root) / 'runs' / f'{database}.json'
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        before = path.read_bytes()
+        self.assertEqual(json.loads(before)['pid'], process.pid)
+        # A second lock for the same database is refused, whoever holds it, live or not.
+        other = self.spawn()
+        for pid in (other.pid, process.pid):
+            result = self.helper('run-lock', str(self.root), database, str(pid))
+            self.assertEqual((result.returncode, result.stdout, result.stderr),
+                             (2, '', f'Disposable test database is locked: {database}\n'))
+            self.assertEqual(path.read_bytes(), before)
+        process.kill()
+        process.wait()
+        result = self.helper('run-lock', str(self.root), database, str(other.pid))
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', f'Disposable test database is locked: {database}\n'))
+        self.assertEqual(path.read_bytes(), before)
+        # No temporary file is left next to the lock.
+        self.assertEqual([entry.name for entry in path.parent.iterdir()], [path.name])
+
     def test_wrongly_typed_records_are_stale_without_traceback(self):
         process = self.spawn()
         valid = {'pid': process.pid, 'port': 8070, 'started_at': ago(0),
@@ -477,6 +536,39 @@ class ServerLifecycleTests(unittest.TestCase):
                                  (2, '', 'Cannot bind port 1: permission denied.\n'))
                 self.unchanged()
                 self.assertIsNone(self.record(self.root))
+
+    def test_start_records_the_profile_python(self):
+        process = self.serve(self.root)
+        record = self.record(self.root)
+        self.assertEqual((record['pid'], record['python'], record['odoo_bin']),
+                         (process.pid, str(self.python), str(self.source / 'odoo-bin')))
+
+    def staged_tools_with_state_helper(self, source):
+        """A copy of the tools whose runtime_state.py is replaced by source."""
+        tools = Path(self.scratch.name) / 'staged-tools'
+        shutil.copytree(lifecycle.STAGE / 'tools', tools, ignore=shutil.ignore_patterns('__pycache__'),
+                        dirs_exist_ok=True)
+        (tools / 'runtime_state.py').write_text(source)
+        self.env['ODOO19_TOOLS_DIR'] = str(tools)
+
+    def test_status_ignores_stderr_of_a_successful_state_read(self):
+        for stdout, expected in (('pid=4242 port=8070', 'server: running pid 4242 port 8070\n'),
+                                 ('', 'server: stopped\n')):
+            with self.subTest(stdout=stdout):
+                self.staged_tools_with_state_helper(
+                    'import sys\n'
+                    'print("warning: something to note", file=sys.stderr)\n'
+                    f'print({stdout!r}) if {stdout!r} else None\n')
+                result = self.invoke(self.root, 'status')
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (0, expected, 'warning: something to note\n'))
+                self.assertTrue(self.commands.read_text().endswith(' ps\n'))
+        # On failure stderr is the reason, and stdout is not mistaken for it.
+        self.staged_tools_with_state_helper(
+            'import sys\nprint("pid=1 port=2")\nprint("ERROR: broken state", file=sys.stderr)\nsys.exit(2)\n')
+        result = self.invoke(self.root, 'status')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, 'server: unknown (broken state)\n', ''))
 
     def test_status_degrades_when_runtime_state_fails(self):
         target = self.xdg / 'elsewhere'

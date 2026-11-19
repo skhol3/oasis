@@ -48,12 +48,15 @@ still change in a minor release; every such change is listed here under **Change
   for another reason than being in use stops `start` with `Cannot bind port <port>: <reason>.`
   (exit 2). A record stays live for 10 s after `started_at` while its pid exists (the window
   before Odoo is exec'd), then only while the process is the Odoo launch
-  (`<python> <odoo-bin> ...`); a stale record is removed only if the file is unchanged.
+  (`<python> <odoo-bin> ...`, where `<python>` starts with `python` or is the profile's python
+  that `start` records in `server.json`, realpaths compared); a stale record is removed only
+  if the file is unchanged.
 - `start ... --stop-after-init` is a batch run: it skips the server and port checks, writes no
   record and passes a free `--http-port=<port>` (an explicit port is passed as given), so it
   runs while this checkout's server serves. Database guards still apply.
 - `status` starts with `server: running pid <pid> port <port>` or `server: stopped`
-  (`server: unknown (<reason>)` when the runtime state cannot be read; `compose ps` still runs);
+  (`server: unknown (<reason>)` when the runtime state cannot be read, the reason taken from
+  its stderr; warnings of a successful read go to stderr unchanged; `compose ps` still runs);
   `/odoo19` shows `server: running on port <port> (pid <pid>)` or `server: stopped`
   (`runtime_state.py show <checkout>`, no service or database access).
 - `test-module` and the tests phase of `verify-module` (also with `--compact`) pass
@@ -62,8 +65,10 @@ still change in a minor release; every such change is listed here under **Change
 - `odoo19 --project <checkout> gc [--apply] [--all-checkouts]` (new public command): lists
   the disposable test databases of this checkout's namespace that no live run holds
   (`orphan <name>` lines and `orphans=<n>`) and changes nothing; `--apply` closes their
-  sessions, drops them and removes their filestores and stale run locks (`dropped <name>`,
-  `dropped=<n>`). The main checkout's namespace excludes its existing linked worktrees';
+  sessions, drops them and removes their filestores and stale run locks (`dropped <name>`).
+  A failed drop prints `failed <name>` on stderr and the next orphan is still dropped; the run
+  ends with `dropped=<n>` and `failed=<m>` and exits 1 when `m` is not 0. The main checkout's
+  namespace excludes its existing linked worktrees';
   `--all-checkouts` lists every slug of the test prefix (dropping other namespaces is refused
   in a checkout with a slug). Development databases, test databases without the run suffix
   and the configured `test_database` are never touched. No agent tool runs it.
@@ -80,13 +85,26 @@ still change in a minor release; every such change is listed here under **Change
   without `[tooling].test_database` run on a new disposable database
   `<test_prefix>[<slug>_]<module>_r<6 hex>` (shortened with a hash of the module to fit 56
   bytes; `verify-module` adds its `_update` sibling) instead of resetting and reusing
-  `<test_prefix>[<slug>_]<module>`. Each run writes a run lock in the checkout's runtime
-  state directory before creating the database, refuses a name that already exists, and
-  always drops the database, its `<data_dir>/filestore/<name>` directory and the lock at the
-  end: on success, failure, SIGINT and SIGTERM. `--compact` adds the line
-  `database_lifecycle=disposable dropped=<yes|no>` after `phase=tests ...`. An explicit or
-  configured database keeps the reset-and-reuse behaviour; pass `<test_prefix><module>`
-  explicitly to keep the previous default.
+  `<test_prefix>[<slug>_]<module>`. Each run creates its run lock in the checkout's runtime
+  state directory exclusively (`O_EXCL`, 0600, fsynced) before creating the database: an
+  existing lock of that name, live or stale, exits 2 with
+  `Disposable test database is locked: <name>` and touches neither the lock nor the
+  database. It refuses a name that already exists, treats the database as its own only after
+  `createdb` succeeded (a failed `createdb` drops nothing, removes only the run's lock and
+  exits non-zero with `Cannot create disposable test database <name>; it was not dropped.`),
+  and always drops the database, its `<data_dir>/filestore/<name>` directory and the lock at
+  the end: on success, failure, SIGINT and SIGTERM. With `--compact` only, both commands print
+  `database_lifecycle=disposable dropped=<yes|no>` (`test-module` after `phase=tests ...`,
+  from the result the run itself writes to `database_lifecycle` in its log directory;
+  `verify-module` as its last line). An explicit or configured database keeps the
+  reset-and-reuse behaviour; pass `<test_prefix><module>` explicitly to keep the previous
+  default.
+- Names ending in `_r<6 hex>` (optionally `_update`) are reserved for disposable runs
+  (contract change): `test-module`, `verify-module` (explicit or configured `test_database`),
+  `create-database`, `install-module`, `update-module`, `odoo-shell`, `start -d`/`--database`
+  and `init-dev-database` refuse them with exit 2 and
+  `Database names ending in _r<6 hex> are reserved for disposable runs: <name>` before
+  anything runs. `drop-database`, `module-status` and `gc` still accept them.
 - `start` in the main checkout refuses a busy `http_port` with
   `Port <port> is in use; pass --http-port or stop the other server.` before anything runs,
   and reads `http_port`, `gevent_port` and `http_interface` (only those) from `odoo.conf`.
@@ -104,7 +122,9 @@ still change in a minor release; every such change is listed here under **Change
 - Simultaneous `start` runs may probe and pick the same free port; start them one at a time.
 - Disposable runs and `gc` read `/proc` for run-lock liveness (Linux only). SIGKILL leaves a
   disposable database behind for `gc`. A SIGTERM sent only to `verify-module` (not to its
-  process group) takes effect when the phase in progress ends. Without an absolute
+  process group) takes effect when the phase in progress ends. A run killed after taking its
+  lock but before its database existed leaves a lock that `gc` does not remove (it acts on
+  existing databases); that random name stays locked. Without an absolute
   `data_dir` in `odoo.conf` filestores are not removed. With `--compact`, a SIGTERM sent only
   to the outer `test-module` process ends it without the summary; the run it started still
   finishes and drops its database.

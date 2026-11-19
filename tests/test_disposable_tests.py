@@ -22,13 +22,16 @@ import test_shared_conf as shared
 STATE = lifecycle.STAGE / 'tools' / 'runtime_state.py'
 CLI = lifecycle.STAGE / 'odoo19'
 RUN = r'_r[0-9a-f]{6}'
+RESERVED = 'Database names ending in _r<6 hex> are reserved for disposable runs: {}\n'
 # Inserted first in the fake docker's case: single-database create/drop and the listing.
 DOCKER_CASES = '''case "$*" in
   *"exec createdb"*)
     if [ "${FAKE_CREATE_FAILS:-0}" = 1 ]; then echo "create failed" >&2; exit 1; fi
     printf "%s\\n" "$last" >> "$FAKE_LOG.databases" ;;
   *"exec dropdb --if-exists"*)
-    if [ "${FAKE_DROP_FAILS:-0}" = 1 ]; then echo "drop failed" >&2; exit 1; fi
+    if [ "${FAKE_DROP_FAILS:-0}" = 1 ] || [ "${FAKE_DROP_FAILS_FOR:-}" = "$last" ]; then
+      echo "drop failed" >&2; exit 1
+    fi
     if [ -f "$FAKE_LOG.databases" ]; then
       grep -vx "$last" "$FAKE_LOG.databases" > "$FAKE_LOG.kept" || true
       mv "$FAKE_LOG.kept" "$FAKE_LOG.databases"
@@ -36,7 +39,8 @@ DOCKER_CASES = '''case "$*" in
   *"SELECT datname FROM pg_database"*) cat "$FAKE_LOG.databases" 2>/dev/null || true ;;
 '''
 # Appended to the fake python: during an Odoo call, record the run locks and create the
-# filestore Odoo would create; FAKE_WAIT_SIGNAL keeps the test process alive until signalled.
+# filestore Odoo would create; FAKE_WAIT_SIGNAL keeps the Odoo process alive until signalled
+# (or for FAKE_WAIT_SECONDS, default 30).
 PYTHON_PROBE = '''
 database=; previous=
 for argument; do [ "$previous" = -d ] && database=$argument; previous=$argument; done
@@ -57,7 +61,7 @@ elif [ -n "${FAKE_DATA:-}" ] && [ -n "$database" ]; then
 fi
 if [ -n "${FAKE_WAIT_SIGNAL:-}" ]; then
   printf 'waiting\\n' >> "$FAKE_WAIT_SIGNAL"
-  exec sleep 30
+  exec sleep "${FAKE_WAIT_SECONDS:-30}"
 fi
 case " $* " in *" --test-tags "*) exit "${FAKE_TEST_EXIT:-0}" ;; esac
 '''
@@ -154,6 +158,27 @@ class DisposableFixture(unittest.TestCase):
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
         self.addCleanup(lambda: process.poll() is None and process.kill())
         return process
+
+    def spawn_sleeper(self):
+        process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+        self.addCleanup(process.wait)
+        self.addCleanup(process.kill)
+        return process
+
+    def state(self, *args):
+        return subprocess.run([sys.executable, '-B', str(STATE), *args], capture_output=True, text=True,
+                              env=self.env)
+
+    def lock_path(self, database, root=None):
+        digest = hashlib.sha256(str(Path(root or self.root).resolve()).encode()).hexdigest()[:16]
+        return self.xdg / f'oasis-{os.getuid()}' / digest / 'runs' / f'{database}.json'
+
+    def wait_for_odoo(self, process, waiting):
+        deadline = time.monotonic() + 20
+        while not waiting.exists():
+            self.assertIsNone(process.poll(), process.stderr.read() if process.poll() is not None else '')
+            self.assertLess(time.monotonic(), deadline, 'test process never started')
+            time.sleep(0.05)
 
 
 class DisposableTestModuleTests(DisposableFixture):
@@ -284,13 +309,57 @@ class DisposableTestModuleTests(DisposableFixture):
                          (2, '', f'Disposable test database already exists: {database}\n'))
         self.assertEqual(self.run_locks(), [])
 
-    def test_a_failed_create_is_cleaned_up_without_running_tests(self):
+    def test_a_failed_create_never_drops_the_name_and_removes_only_its_lock(self):
+        # createdb fails when the name was taken in the meantime: that database is not the run's.
         self.env['FAKE_CREATE_FAILS'] = '1'
         result = self.invoke('test-module', 'coffee')
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', 'create failed\n'))
-        kinds = [kind for kind, _ in self.events()]
-        self.assertEqual(kinds, ['exists', 'create', 'terminate', 'drop'])
+        database = self.events()[0][1]
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', (
+            f'create failed\nCannot create disposable test database {database}; it was not dropped.\n')))
+        self.assertEqual(self.events(), [('exists', database), ('create', database)])
         self.assertEqual(self.run_locks(), [])
+        self.commands.unlink()
+        result = self.invoke('test-module', '--compact', 'coffee')
+        self.assertEqual((result.returncode, result.stderr), (1, ''))
+        self.assertEqual(result.stdout.splitlines()[1], 'database_lifecycle=disposable dropped=yes')
+        self.assertEqual([kind for kind, _ in self.events()], ['exists', 'create'])
+
+    def test_a_locked_name_is_refused_and_neither_lock_nor_database_is_touched(self):
+        database = 'cc_test_coffee_r123456'
+        sleeper = self.spawn_sleeper()
+        result = self.state('run-lock', str(self.root), database, str(sleeper.pid))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        before = self.lock_path(database).read_bytes()
+        self.env['FAKE_EXISTS'] = '1'
+        result = self.invoke('test-module', '--disposable-run', database, 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', f'Disposable test database is locked: {database}\n'))
+        self.assertEqual(self.lock_path(database).read_bytes(), before)
+        self.assertEqual(self.events(), [])
+        # A stale lock (its run is gone) is not taken over either: gc removes it.
+        sleeper.kill()
+        sleeper.wait()
+        result = self.invoke('test-module', '--disposable-run', database, 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', f'Disposable test database is locked: {database}\n'))
+        self.assertEqual(self.lock_path(database).read_bytes(), before)
+        self.assertEqual(self.events(), [])
+
+    def test_compact_dropped_comes_from_the_run_not_from_the_lock(self):
+        # Another live run holds the name: this run created nothing, so it left nothing behind,
+        # although a lock of that name exists.
+        database = 'cc_test_coffee_r123456'
+        sleeper = self.spawn_sleeper()
+        self.assertEqual(self.state('run-lock', str(self.root), database, str(sleeper.pid)).returncode, 0)
+        result = self.invoke('test-module', '--compact', '--disposable-run', database, 'coffee')
+        self.assertEqual((result.returncode, result.stderr), (2, ''))
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[:2], [f'phase=tests database={database} exit=2',
+                                     'database_lifecycle=disposable dropped=yes'])
+        stderr_log = Path(lines[3].split('=', 1)[1])
+        self.assertEqual(stderr_log.read_text(), f'Disposable test database is locked: {database}\n')
+        self.assertEqual(self.events(), [])
+        self.assertTrue(self.lock_path(database).exists())
 
     def test_explicit_and_configured_databases_keep_reset_and_reuse(self):
         for extra, args, database in (('', ('coffee', 'cc_test_coffee'), 'cc_test_coffee'),
@@ -354,7 +423,8 @@ class DisposableVerifyModuleTests(DisposableFixture):
         self.assertIn(f'tests_database={database}\nupdate_database={update}\n', result.stdout)
         self.assertIn(f'database={database}\nmodule=coffee\ndatabase_state=ready\n', result.stdout)
         self.assertIn(f'database={update}\nmodule=coffee\ndatabase_state=ready\n', result.stdout)
-        self.assertTrue(result.stdout.endswith('database_lifecycle=disposable dropped=yes\n'), result.stdout)
+        # Without --compact no lifecycle line (as test-module).
+        self.assertNotIn('database_lifecycle', result.stdout)
         self.assertEqual(self.events()[:2], [('exists', database), ('exists', update)])
         flow = [event for event in self.events() if event[0] != 'exists']
         self.assertEqual(flow, [('reset', database), ('tests', database), ('reset', update),
@@ -373,8 +443,53 @@ class DisposableVerifyModuleTests(DisposableFixture):
         database = self.run_database()
         drops = [database for kind, database in self.events() if kind == 'drop']
         self.assertEqual(drops, [database, database + '_update'])
-        self.assertTrue(result.stdout.endswith('database_lifecycle=disposable dropped=yes\n'), result.stdout)
+        self.assertNotIn('database_lifecycle', result.stdout)
         self.assertEqual(self.run_locks(), [])
+
+    def test_compact_verify_reports_the_lifecycle(self):
+        for drop_fails, dropped, status in (('0', 'yes', 0), ('1', 'no', 1)):
+            with self.subTest(dropped=dropped):
+                self.commands.unlink(missing_ok=True)
+                self.env['FAKE_DROP_FAILS'] = drop_fails
+                result = self.invoke('verify-module', '--compact', 'coffee')
+                self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                self.assertTrue(result.stdout.endswith(f'database_lifecycle=disposable dropped={dropped}\n'),
+                                result.stdout)
+                self.assertEqual(result.stdout.count('database_lifecycle='), 1)
+
+    def test_existing_names_are_refused_and_nothing_is_dropped(self):
+        self.env['FAKE_EXISTS'] = '1'
+        result = self.invoke('verify-module', 'coffee')
+        [(_, database)] = self.events()
+        self.assertRegex(database, '^cc_test_coffee' + RUN + '$')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', f'Disposable test database already exists: {database}\n'))
+        self.assertEqual(self.run_locks(), [])
+
+    def test_signals_drop_both_databases_and_leave_no_locks(self):
+        # SIGTERM to verify-module only takes effect when the phase in progress returns (Bash
+        # runs the trap then): the fake Odoo ends after FAKE_WAIT_SECONDS. Ctrl+C reaches the group.
+        for signum, status, group, seconds in ((signal.SIGTERM, 143, False, '1'),
+                                               (signal.SIGINT, 130, True, '30')):
+            with self.subTest(signal=signum.name, group=group):
+                self.commands.unlink(missing_ok=True)
+                waiting = self.root.parent / f'verify-waiting-{signum}'
+                self.env.update(FAKE_WAIT_SIGNAL=str(waiting), FAKE_WAIT_SECONDS=seconds)
+                process = self.popen('verify-module', 'coffee', start_new_session=True)
+                self.wait_for_odoo(process, waiting)
+                self.assertEqual(len(self.run_locks()), 2)
+                if group:
+                    os.killpg(process.pid, signum)
+                else:
+                    os.kill(process.pid, signum)
+                stdout, stderr = process.communicate(timeout=30)
+                self.assertEqual(process.returncode, status, stdout + stderr)
+                database = self.run_database()
+                self.assertEqual([event for event in self.events() if event[0] in ('drop', 'terminate')], [
+                    ('terminate', database), ('drop', database),
+                    ('terminate', database + '_update'), ('drop', database + '_update')])
+                self.assertNotIn(('install', database + '_update'), self.events())
+                self.assertEqual(self.run_locks(), [])
 
     def test_explicit_verify_databases_are_not_dropped(self):
         result = self.invoke('verify-module', 'coffee', 'cc_test_isolated')
@@ -450,7 +565,7 @@ class GcTests(GcFixture):
     def test_apply_drops_only_the_orphans_and_their_filestores(self):
         result = self.gc('--apply')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
-            f'dropped {self.ORPHAN}\ndropped {self.ORPHAN}_update\ndropped=2\n'), ''))
+            f'dropped {self.ORPHAN}\ndropped {self.ORPHAN}_update\ndropped=2\nfailed=0\n'), ''))
         self.assertEqual([event for event in self.events() if event[0] in ('drop', 'terminate')], [
             ('terminate', self.ORPHAN), ('drop', self.ORPHAN),
             ('terminate', self.ORPHAN + '_update'), ('drop', self.ORPHAN + '_update')])
@@ -460,6 +575,20 @@ class GcTests(GcFixture):
         # The orphan's stale lock is removed; the live run keeps its lock.
         self.assertFalse(self.lock_path(self.ORPHAN).exists())
         self.assertEqual(self.lock_path(self.LIVE).read_bytes(), self.before[self.LIVE])
+
+    def test_a_failed_drop_is_reported_and_the_next_orphan_still_dropped(self):
+        self.env['FAKE_DROP_FAILS_FOR'] = self.ORPHAN
+        result = self.gc('--apply')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, (
+            f'dropped {self.ORPHAN}_update\ndropped=1\nfailed=1\n'), f'drop failed\nfailed {self.ORPHAN}\n'))
+        self.assertEqual([event for event in self.events() if event[0] in ('drop', 'terminate')], [
+            ('terminate', self.ORPHAN), ('drop', self.ORPHAN),
+            ('terminate', self.ORPHAN + '_update'), ('drop', self.ORPHAN + '_update')])
+        self.assertEqual(self.remaining(), [name for name in self.DATABASES if name != self.ORPHAN + '_update'])
+        # The failed orphan keeps its filestore and its stale lock for the next gc.
+        self.assertIn(self.ORPHAN, self.filestores())
+        self.assertNotIn(self.ORPHAN + '_update', self.filestores())
+        self.assertEqual(self.lock_path(self.ORPHAN).read_bytes(), self.before[self.ORPHAN])
 
     def test_all_checkouts_widens_to_every_slug_of_the_test_prefix(self):
         result = self.gc('--all-checkouts')
@@ -478,7 +607,7 @@ class GcTests(GcFixture):
         result = self.gc('--apply', '--all-checkouts')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertEqual(result.stdout, f'dropped {self.MAIN}\ndropped {self.ORPHAN}\ndropped {self.ORPHAN}_update\n'
-                                        f'dropped {self.OTHER_SLUG}\ndropped=4\n')
+                                        f'dropped {self.OTHER_SLUG}\ndropped=4\nfailed=0\n')
         self.assertEqual(self.remaining(), ['cc_dev_wt_1_coffee', 'cc_test_wt_1_coffee', self.LIVE,
                                             'cc_test_wt_1_coffee_r55555'])
 
@@ -491,7 +620,7 @@ class GcTests(GcFixture):
 
     def test_nothing_to_do_exits_zero(self):
         Path(str(self.commands) + '.databases').write_text('cc_dev_wt_1_coffee\n')
-        for args, stdout in (((), 'orphans=0\n'), (('--apply',), 'dropped=0\n')):
+        for args, stdout in (((), 'orphans=0\n'), (('--apply',), 'dropped=0\nfailed=0\n')):
             with self.subTest(args=args):
                 result = self.gc(*args)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, stdout, ''))
@@ -529,6 +658,78 @@ class GcWorktreeTests(DisposableFixture):
         result = self.gc('--all-checkouts', root=self.main)
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, f'orphan {self.main_orphan}\norphan {self.linked_orphan}\norphans=2\n', ''))
+
+
+class ReservedRunNameTests(DisposableFixture):
+    """Names with the run suffix belong to disposable runs: normal work refuses them (S5)."""
+
+    def cli(self, command, *args):
+        return subprocess.run([sys.executable, '-B', str(CLI), '--project', str(self.root), command, *args],
+                              cwd=self.root, env=self.env, capture_output=True, text=True, input='')
+
+    def test_commands_that_create_or_reuse_a_database_refuse_reserved_names(self):
+        for command, args, database in (
+                ('create-database', ('cc_test_coffee_r123456',), 'cc_test_coffee_r123456'),
+                ('install-module', ('coffee', 'cc_dev_coffee_r1a2b3c'), 'cc_dev_coffee_r1a2b3c'),
+                ('install-module', ('--with-demo', 'coffee', 'cc_test_coffee_r123456_update'),
+                 'cc_test_coffee_r123456_update'),
+                ('update-module', ('coffee', 'cc_test_coffee_r123456'), 'cc_test_coffee_r123456'),
+                ('odoo-shell', ('cc_test_coffee_r123456',), 'cc_test_coffee_r123456'),
+                ('start', ('-d', 'cc_dev_coffee_r1a2b3c'), 'cc_dev_coffee_r1a2b3c'),
+                ('start', ('-dcc_dev_coffee_r1a2b3c',), 'cc_dev_coffee_r1a2b3c'),
+                ('start', ('--database=cc_dev_coffee_r1a2b3c',), 'cc_dev_coffee_r1a2b3c'),
+                ('init-dev-database', ('coffee', 'cc_dev_coffee_r1a2b3c'), 'cc_dev_coffee_r1a2b3c'),
+                ('test-module', ('coffee', 'cc_test_coffee_r123456'), 'cc_test_coffee_r123456'),
+                ('test-module', ('--compact', 'coffee', 'cc_test_coffee_r123456'), 'cc_test_coffee_r123456'),
+                ('verify-module', ('coffee', 'cc_test_coffee_r123456'), 'cc_test_coffee_r123456'),
+                ('verify-module', ('coffee', 'cc_test_iso', 'cc_test_iso_r123456_update'),
+                 'cc_test_iso_r123456_update')):
+            with self.subTest(command=command, args=args):
+                result = self.cli(command, *args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (2, '', RESERVED.format(database)))
+                self.unchanged()
+                self.assertEqual(self.run_locks(), [])
+
+    def test_a_configured_reserved_test_database_is_refused(self):
+        self.write_profile("test_database = 'cc_test_shared_r1a2b3c'\n")
+        for command in ('test-module', 'verify-module'):
+            with self.subTest(command=command):
+                result = self.cli(command, 'coffee')
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (2, '', RESERVED.format('cc_test_shared_r1a2b3c')))
+                self.unchanged()
+
+    def test_a_live_run_lock_of_another_process_does_not_unlock_the_name(self):
+        database = 'cc_test_coffee_r123456'
+        sleeper = self.spawn_sleeper()
+        self.assertEqual(self.state('run-lock', str(self.root), database, str(sleeper.pid)).returncode, 0)
+        result = self.cli('update-module', 'coffee', database)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', RESERVED.format(database)))
+        self.unchanged()
+
+    def test_similar_names_without_the_exact_suffix_are_not_reserved(self):
+        self.env['FAKE_EXISTS'] = '1'
+        for database in ('cc_test_coffee_r12345', 'cc_test_coffee_rABCDEF', 'cc_test_coffee_r1234567',
+                         'cc_test_coffee_r123456_updates'):
+            with self.subTest(database=database):
+                result = self.cli('update-module', 'coffee', database)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+
+    def test_cleanup_and_inspection_still_accept_reserved_names(self):
+        database = 'cc_test_coffee_r123456'
+        result = self.cli('module-status', 'coffee', database)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
+            f'database={database}\nmodule=coffee\ndatabase_state=missing\nmodule_state=unknown\n'), ''))
+        result = self.cli('drop-database', database)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, f'Database does not exist: {database}\n', ''))
+        self.env['FAKE_EXISTS'] = '1'
+        self.commands.unlink()
+        result = self.cli('drop-database', database)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, f'Database dropped: {database}\n', ''))
+        [drop] = [entry for entry in entries(self.log()) if 'exec dropdb -U' in entry]
+        self.assertTrue(drop.endswith(f' sh {database}'), drop)
 
 
 if __name__ == '__main__':

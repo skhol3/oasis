@@ -3,10 +3,14 @@
 Usage:
   test_temp.py <project_root> <command...>
   test_temp.py --disposable <database> <odoo.conf> <project_root> <command...>
-      the same run on a new disposable test database: write its run lock, check that the name
-      is free, create it, run the tests, then always drop it, remove its filestore and the
-      lock (success, failure, SIGINT and SIGTERM alike). A database that cannot be dropped
-      keeps its lock and is reported; `odoo19 gc --apply` removes it later.
+      the same run on a new disposable test database: create its run lock exclusively (an
+      existing lock, live or not, exits 2 and touches nothing), check that the name is free,
+      create it, run the tests, then drop it, remove its filestore and the lock (success,
+      failure, SIGINT and SIGTERM alike). Only a database this run created is dropped: when
+      createdb fails (the name was taken in the meantime) nothing is dropped. A database that
+      cannot be dropped keeps its lock and is reported; `odoo19 gc --apply` removes it later.
+      With ODOO19_RUN_RESULT set (test-module --compact), the run writes `yes` (it left no
+      database behind: dropped, or never created) or `no` to that new file at the end.
   test_temp.py --discard <database> <odoo.conf> <project_root>
       drop a disposable database and its filestore, then remove its run lock (verify-module).
 
@@ -27,6 +31,7 @@ import odoo_addons_path
 import runtime_state
 
 TOOLS = Path(__file__).resolve().parent
+RESULT = 'ODOO19_RUN_RESULT'
 USAGE = ('Usage: test_temp.py [--disposable <database> <odoo.conf>] <project_root> <command...> | '
          '--discard <database> <odoo.conf> <project_root>')
 
@@ -73,9 +78,9 @@ def discard(conf, database):
     return True
 
 
-def unlock(root, database):
+def unlock(root, database, pid=None):
     try:
-        runtime_state.remove_run_lock(root, database)
+        runtime_state.remove_run_lock(root, database, pid)
     except (runtime_state.StateError, runtime_state.RunError) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return False
@@ -126,6 +131,19 @@ def retain_evidence(root, scratch):
             target.chmod(0o600)
 
 
+def report_result(dropped):
+    """Write the run's own cleanup result for test-module --compact (a new private file)."""
+    path = os.environ.get(RESULT)
+    if not path:
+        return
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+            stream.write('yes\n' if dropped else 'no\n')
+    except OSError:
+        print(f'Cannot record the disposable run result: {path}', file=sys.stderr)
+
+
 def main():
     args = sys.argv[1:]
     if args[:1] == ['--discard']:
@@ -168,22 +186,31 @@ def main():
     locked = created = False
     try:
         if disposable is not None:
-            # The lock comes first, so gc never takes the database for an orphan.
+            # The lock comes first, so gc never takes the database for an orphan, and it is
+            # exclusive, so no other run uses the name.
             try:
                 runtime_state.write_run_lock(root, disposable, os.getpid())
                 locked = True
+            except runtime_state.RunLocked as exc:
+                print(exc, file=sys.stderr)
+                status = 2
             except (runtime_state.StateError, runtime_state.RunError) as exc:
                 print(f'ERROR: {exc}', file=sys.stderr)
                 status = 2
             if locked:
                 status = database_step('require_free_disposable_database', disposable)
             if locked and status == 0 and received is None:
-                # From here on the database may exist: it is always dropped.
-                created = True
                 status = database_step('create_disposable_database', disposable)
+                if status == 0:
+                    # Only now is the database this run's own: from here on it is dropped.
+                    created = True
+                else:
+                    print(f'Cannot create disposable test database {disposable}; it was not dropped.',
+                          file=sys.stderr)
         if disposable is None or (created and status == 0 and received is None):
+            environment = {key: value for key, value in os.environ.items() if key != RESULT}
             try:
-                child = subprocess.Popen(command, env={**os.environ, 'TMPDIR': str(scratch)})
+                child = subprocess.Popen(command, env={**environment, 'TMPDIR': str(scratch)})
                 if received is not None:
                     forward(received, None)
                 code = child.wait()
@@ -206,12 +233,16 @@ def main():
                 print(f'Cannot clean owned test scratch: {scratch}. Inspect before manual removal.',
                       file=sys.stderr)
                 status = status or 1
+        dropped = True
         if created and not discard(conf, disposable):
             print(f'Cannot drop disposable test database {disposable}; run odoo19 gc --apply later.',
                   file=sys.stderr)
             status = status or 1
-        elif locked and not unlock(root, disposable):
+            dropped = False
+        elif locked and not unlock(root, disposable, os.getpid()):
             status = status or 1
+        if disposable is not None:
+            report_result(dropped)
         return status
     finally:
         for sig, handler in previous.items():
