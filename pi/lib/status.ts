@@ -41,6 +41,15 @@ export interface StatusInput {
   configError?: string;
   modules: { root: string; names: string[] }[];
   git: { branch: string; linkedWorktree: boolean; changedFiles: number } | null;
+  /** This checkout's server from `runtime_state.py show`: null when stopped, absent when unread. */
+  server?: { pid: number; port: number } | null;
+  serverError?: string;
+}
+
+/** Parse `runtime_state.py show` output (`pid=<pid> port=<port>`); empty or unexpected -> null. */
+export function parseServer(output: string): { pid: number; port: number } | null {
+  const match = /^pid=(\d+) port=(\d+)$/.exec(output.trim());
+  return match ? { pid: Number(match[1]), port: Number(match[2]) } : null;
 }
 
 /**
@@ -84,6 +93,9 @@ export function formatStatus(input: StatusInput): string {
   }
   const checkout = formatCheckout(config);
   if (checkout) lines.push(checkout);
+  if (input.serverError) lines.push(`server: unknown (${input.serverError})`);
+  else if (input.server) lines.push(`server: running on port ${input.server.port} (pid ${input.server.pid})`);
+  else if (input.server === null) lines.push("server: stopped");
   return lines.join("\n");
 }
 

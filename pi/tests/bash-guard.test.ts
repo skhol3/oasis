@@ -68,6 +68,46 @@ test("blocks combined shell flags, control keywords, eval and launchers", () => 
   }
 });
 
+test("blocks agents from running worktree-init through any launcher, dry run included", () => {
+  const blocked = [
+    "~/.agents/skills/odoo19/odoo19 --project /p worktree-init feat feature/x",
+    "python3 -B /opt/oasis/odoo19 --project /p worktree-init feat feature/x --dry-run",
+    "cd /p && odoo19 --project /p worktree-init feat x",
+    "env A=1 python3 odoo19 --project /p worktree-init feat x",
+    "tools/worktree-init feat x",
+    "bash ~/.agents/skills/odoo19/tools/worktree-init feat x",
+    "python3 -I -B tools/worktree_init.py feat x",
+    "bash -c 'odoo19 --project /p worktree-init feat x'",
+    "echo $(odoo19 --project /p worktree-init feat x --dry-run)",
+  ];
+  for (const command of blocked) {
+    assert.equal(blockedProgram(command), "worktree-init", command);
+  }
+});
+
+test("allows other odoo19 commands and reading or testing worktree-init", () => {
+  const allowed = [
+    "odoo19 --project /p status",
+    "python3 -B odoo19 --project /p test-module coffee",
+    "grep -n worktree-init README.md",
+    "cat tools/worktree_init.py",
+    "python3 -B -m unittest tests.test_worktree_init",
+    "bash tools/test-module coffee",
+    "git log --grep=worktree-init",
+  ];
+  for (const command of allowed) {
+    assert.equal(blockedProgram(command), null, command);
+  }
+});
+
+test("blockReason for worktree-init sends the user to /odoo19 worktree", () => {
+  assert.equal(
+    blockReason("worktree-init", "/work/coffee"),
+    "worktree-init creates links to environment files; ask the user to run /odoo19 worktree <feature> " +
+      "<branch> in Gentle Shell or the command in a terminal.",
+  );
+});
+
 test("command -v / -V and which only look up the program", () => {
   for (const command of ["command -v psql", "command -V odoo-bin", "which dropdb", "type psql"]) {
     assert.equal(blockedProgram(command), null, command);

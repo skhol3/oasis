@@ -3,6 +3,7 @@
 Every project is a synthetic fixture with the fake docker/python harness of test_lifecycle;
 a `[tooling].checkout_slug` stands in for a linked worktree's derived slug.
 """
+import re
 import subprocess
 import unittest
 import test_lifecycle as lifecycle
@@ -37,7 +38,8 @@ class IsolationBase(unittest.TestCase):
         (self.root / '.odoo19-agent.toml').write_text(lifecycle.PROFILE + self.profile_extra + extra)
 
     def odoo_lines(self):
-        return [line for line in self.commands.read_text().splitlines() if line.startswith('odoo ')]
+        return [lifecycle.any_run_database(lifecycle.any_test_port(line))
+                for line in self.commands.read_text().splitlines() if line.startswith('odoo ')]
 
     def odoo_call(self, *args):
         return ' '.join(['odoo', str(self.source / 'odoo-bin'), '-c', str(self.root / 'dev/odoo.conf'),
@@ -58,32 +60,34 @@ class SluggedCheckoutTests(IsolationBase):
     def test_test_module_default_gets_the_slug(self):
         result = self.invoke('test-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
-        self.assertIn('sh cc_test_wt_1_coffee\n', self.commands.read_text())
+        self.assertRegex(self.commands.read_text(), r'sh cc_test_wt_1_coffee_r[0-9a-f]{6}\n')
         self.assertEqual(self.odoo_lines(), [self.odoo_call(
-            '-d', 'cc_test_wt_1_coffee', '-i', 'coffee', '--without-demo', '--test-tags', '/coffee',
-            '--stop-after-init')])
+            '--http-port=<free>', '-d', 'cc_test_wt_1_coffee_r<run>', '-i', 'coffee', '--without-demo', '--test-tags',
+            '/coffee', '--stop-after-init')])
 
     def test_configured_test_database_gets_the_slug_after_the_prefix(self):
         self.write_profile("test_database = 'cc_test_shared'\n")
         result = self.invoke('test-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertEqual(self.odoo_lines(), [self.odoo_call(
-            '-d', 'cc_test_wt_1_shared', '-i', 'coffee', '--without-demo', '--test-tags', '/coffee',
+            '--http-port=<free>', '-d', 'cc_test_wt_1_shared', '-i', 'coffee', '--without-demo', '--test-tags', '/coffee',
             '--stop-after-init')])
         self.assertNotIn(' cc_test_shared', self.commands.read_text())
 
     def test_verify_module_defaults_get_the_slug(self):
         for extra, test, update in (
-                ('', 'cc_test_wt_1_coffee', 'cc_test_wt_1_coffee_update'),
+                ('', 'cc_test_wt_1_coffee_r<run>', 'cc_test_wt_1_coffee_r<run>_update'),
                 ("test_database = 'cc_test_shared'\n", 'cc_test_wt_1_shared', 'cc_test_wt_1_shared_update')):
             with self.subTest(test=test):
                 self.write_profile(extra)
                 self.commands.unlink(missing_ok=True)
                 result = self.invoke('verify-module', 'coffee')
                 self.assertEqual((result.returncode, result.stderr), (0, ''))
-                self.assertIn(f'tests_database={test}\nupdate_database={update}\n', result.stdout)
+                pattern = re.escape(f'tests_database={test}\nupdate_database={update}\n').replace(
+                    re.escape('<run>'), '[0-9a-f]{6}')
+                self.assertRegex(result.stdout, pattern)
                 self.assertEqual(self.odoo_lines(), [
-                    self.odoo_call('-d', test, '-i', 'coffee', '--without-demo', '--test-tags', '/coffee',
+                    self.odoo_call('--http-port=<free>', '-d', test, '-i', 'coffee', '--without-demo', '--test-tags', '/coffee',
                                    '--stop-after-init'),
                     self.odoo_call('-d', update, '-i', 'coffee', '--without-demo', '--stop-after-init'),
                     self.odoo_call('-d', update, '-u', 'coffee', '--stop-after-init')])
@@ -134,7 +138,7 @@ class SluggedCheckoutTests(IsolationBase):
             ' '.join(['odoo', str(self.source / 'odoo-bin'), 'shell', '-c',
                       str(self.root / 'dev/odoo.conf'), '-d', 'cc_test_wt_1_coffee']),
             self.odoo_call('-d', 'cc_test_wt_1_demo', '-i', 'coffee', '--with-demo', '--stop-after-init'),
-            self.odoo_call('-d', 'cc_test_wt_1_other', '-i', 'coffee', '--without-demo', '--test-tags',
+            self.odoo_call('--http-port=<free>', '-d', 'cc_test_wt_1_other', '-i', 'coffee', '--without-demo', '--test-tags',
                            '/coffee', '--stop-after-init')])
 
     def test_update_and_shell_refuse_a_missing_database(self):
@@ -152,17 +156,20 @@ class SluggedCheckoutTests(IsolationBase):
 
     def test_start_guards_every_database_option_form(self):
         self.env['FAKE_EXISTS'] = '1'
+        port = lifecycle.free_port()
+        (self.root / 'dev/odoo.conf').write_text(f'[options]\nhttp_port = {port}\n')
         forms = (lambda name: ('-d', name), lambda name: ('-d' + name,),
                  lambda name: ('--database', name), lambda name: ('--database=' + name,),
                  lambda name: ('--datab', name), lambda name: ('--databas=' + name,))
         for form in forms:
-            args = (*form('cc_dev_wt_1_coffee'), '--stop-after-init')
+            args = (*form('cc_dev_wt_1_coffee'), '--workers=0')
             with self.subTest(accepted=args):
                 self.commands.unlink(missing_ok=True)
                 result = self.invoke('start', *args)
-                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
-                self.assertEqual(self.odoo_lines(), [self.odoo_call(*args)])
-            args = ('--stop-after-init', *form('cc_dev_coffee'))
+                self.assertEqual((result.returncode, result.stdout), (0, ''))
+                self.assertRegex(result.stderr, rf'^odoo19 start: http://localhost:{port} \(pid \d+\)\n$')
+                self.assertEqual(self.odoo_lines(), [self.odoo_call(f'--http-port={port}', *args)])
+            args = ('--workers=0', *form('cc_dev_coffee'))
             with self.subTest(rejected=args):
                 self.commands.unlink(missing_ok=True)
                 self.assert_rejected(self.invoke('start', *args), NAMESPACE + 'cc_dev_coffee\n')
@@ -201,14 +208,16 @@ class SluggedCheckoutTests(IsolationBase):
         fits_module, long_module = 'm' * 43, 'm' * 44
         self.add_module(fits_module)
         self.add_module(long_module)
-        result = self.invoke('verify-module', fits_module)
+        # Disposable defaults are shortened to fit (test_disposable_tests checks the format).
+        result = self.invoke('verify-module', long_module)
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertIn(f'tests_database=cc_test_wt_1_{fits_module}\n'
-                      f'update_database=cc_test_wt_1_{fits_module}_update\n', result.stdout)
+        tests = re.search(r'^tests_database=(\S+)$', result.stdout, re.M).group(1)
+        self.assertEqual(len(tests.encode()), 56)
+        self.assertIn(f'update_database={tests}_update\n', result.stdout)
         self.commands.unlink()
         test = 'cc_test_wt_1_' + long_module
         self.assertEqual(len(test.encode()), 57)
-        for args in ((long_module,), (long_module, test), (long_module, test, test + '_update')):
+        for args in ((long_module, test), (long_module, test, test + '_update')):
             with self.subTest(args=args):
                 self.assert_rejected(self.invoke('verify-module', *args), NO_SIBLING_ROOM.format(test))
         # Without an _update sibling the test database may use the whole 63 bytes.
@@ -232,15 +241,15 @@ class MainCheckoutTests(IsolationBase):
 
     def test_defaults_keep_previous_names(self):
         for command, expected in (
-                ('test-module', '-d cc_test_coffee -i coffee --without-demo --test-tags /coffee'),
+                ('test-module', '-d cc_test_coffee_r<run> -i coffee --without-demo --test-tags /coffee'),
                 ('install-module', '-d cc_dev_coffee -i coffee --without-demo --stop-after-init')):
             with self.subTest(command=command):
                 result = self.invoke(command, 'coffee')
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
-                self.assertIn(expected, self.commands.read_text())
+                self.assertIn(expected, '\n'.join(self.odoo_lines()))
         result = self.invoke('verify-module', 'coffee')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertIn('tests_database=cc_test_coffee\nupdate_database=cc_test_coffee_update\n', result.stdout)
+        self.assertRegex(result.stdout, r'tests_database=(cc_test_coffee_r[0-9a-f]{6})\nupdate_database=\1_update\n')
         self.write_profile("test_database = 'cc_test_a'\n")
         result = self.invoke('verify-module', 'coffee')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
@@ -262,15 +271,19 @@ class MainCheckoutTests(IsolationBase):
 
     def test_main_names_are_accepted_and_start_without_database_is_unchanged(self):
         self.env['FAKE_EXISTS'] = '1'
+        port = lifecycle.free_port()
+        (self.root / 'dev/odoo.conf').write_text(f'[options]\nhttp_port = {port}\n')
         for command, args, expected in (
                 ('update-module', ('coffee', 'cc_test_coffee'), self.odoo_call(
                     '-d', 'cc_test_coffee', '-u', 'coffee', '--stop-after-init')),
-                ('start', ('-d', 'cc_dev_coffee'), self.odoo_call('-d', 'cc_dev_coffee')),
-                ('start', ('--stop-after-init',), self.odoo_call('--stop-after-init'))):
+                ('start', ('-d', 'cc_dev_coffee'), self.odoo_call(f'--http-port={port}', '-d', 'cc_dev_coffee')),
+                ('start', ('--workers=0',), self.odoo_call(f'--http-port={port}', '--workers=0'))):
             with self.subTest(command=command, args=args):
                 self.commands.unlink(missing_ok=True)
                 result = self.invoke(command, *args)
-                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+                self.assertEqual((result.returncode, result.stdout), (0, ''))
+                started = rf'^odoo19 start: http://localhost:{port} \(pid \d+\)\n$'
+                self.assertRegex(result.stderr, started if command == 'start' else '^$')
                 self.assertEqual(self.odoo_lines(), [expected])
 
     def test_update_refuses_a_missing_main_database(self):

@@ -2,4 +2,37 @@
 set -Eeuo pipefail
 source "$(dirname "$0")/common.sh"
 require_runtime
+# This checkout's server first, then the shared Compose services.
+# A failing runtime state read degrades to `server: unknown (<reason>)`; compose ps still runs.
+# stdout and stderr are read separately: stderr is the reason only when the read fails;
+# after a successful read it is passed through unchanged. They are captured without a
+# temporary file, so a missing or non-writable TMPDIR cannot hide the server line or
+# compose ps: the process substitution writes <stderr> NUL <stdout> NUL <status> NUL.
+state_error='' server='' state_status=0
+{
+  IFS=$'\n' read -r -d '' state_error || true
+  IFS=$'\n' read -r -d '' server || true
+  IFS=$'\n' read -r -d '' state_status || true
+} < <(
+  {
+    status=0
+    output=$(runtime_state show "$PROJECT_ROOT") || status=$?
+    printf '\0%s\0%s\0' "$output" "$status"
+  } 2>&1
+)
+if [[ ! "$state_status" =~ ^[0-9]+$ ]]; then state_status=1; fi
+if (( state_status != 0 )); then
+  reason=$(printf '%s\n' "$state_error" | sed '/^[[:space:]]*$/d' | tail -n 1)
+  reason=${reason#ERROR: }
+  printf 'server: unknown (%s)\n' "${reason:-runtime_state.py exited with $state_status}"
+elif [[ -n "$server" ]]; then
+  server_pid=${server%% *}
+  server_port=${server#* }
+  printf 'server: running pid %s port %s\n' "${server_pid#pid=}" "${server_port#port=}"
+else
+  printf 'server: stopped\n'
+fi
+if (( state_status == 0 )) && [[ -n "$state_error" ]]; then
+  printf '%s\n' "$state_error" >&2
+fi
 compose ps

@@ -13,7 +13,8 @@ if [[ -z "$database" ]]; then
   printf 'Usage: %s <database>\n' "${ODOO19_ENTRYPOINT:-$0}" >&2
   exit 2
 fi
-require_managed_database_name "$database"
+require_working_database_name "$database"
+odoo_config_arguments
 # Preparation must not consume commands piped to the Odoo shell.
 require_existing_database "$database" </dev/null
-exec "$PYTHON" "$ODOO_BIN" shell -c "$ODOO_CONFIG" -d "$database"
+exec "$PYTHON" "$ODOO_BIN" shell "${ODOO_CONFIG_ARGUMENTS[@]}" -d "$database"

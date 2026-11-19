@@ -1,21 +1,114 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 # Options, including --help, go to odoo-bin; only database selections are guarded.
+# Each checkout runs at most one server, recorded with its pid and HTTP port by
+# tools/runtime_state.py: the main checkout (or a project outside git) uses the odoo.conf
+# http_port (8069 when absent), a linked worktree the first free port after it; an explicit
+# -p/--http-port wins. A linked worktree also gets a free --gevent-port.
+# A batch run (--stop-after-init) serves nothing: no server check, no port check, no record;
+# it gets a free ephemeral --http-port like test runs (an explicit port is passed as given).
 source "$(dirname "$0")/common.sh"
 require_runtime
 # Guard every database odoo-bin would receive, including optparse's unambiguous
 # abbreviations of --database, before the database service is touched.
 arguments=("$@")
+explicit_port=''
+explicit_gevent=false
+informational=false
+batch=false
 for (( index = 0; index < ${#arguments[@]}; index++ )); do
   case ${arguments[index]} in
     --) break ;;
     -d|--datab|--databa|--databas|--database)
-      require_managed_database_name "${arguments[index + 1]:-}"
+      require_working_database_name "${arguments[index + 1]:-}"
       (( index += 1 )) ;;
-    -d*) require_managed_database_name "${arguments[index]#-d}" ;;
+    -d*) require_working_database_name "${arguments[index]#-d}" ;;
     --datab=*|--databa=*|--databas=*|--database=*)
-      require_managed_database_name "${arguments[index]#*=}" ;;
+      require_working_database_name "${arguments[index]#*=}" ;;
+    -p|--http-port)
+      explicit_port=${arguments[index + 1]:-}
+      (( index += 1 )) ;;
+    -p*) explicit_port=${arguments[index]#-p} ;;
+    --http-port=*) explicit_port=${arguments[index]#*=} ;;
+    --gevent-port) explicit_gevent=true; (( index += 1 )) ;;
+    --gevent-port=*) explicit_gevent=true ;;
+    -h|--help|--version) informational=true ;;
+    --stop-after-init) batch=true ;;
   esac
 done
+odoo_config_arguments
+if "$informational"; then
+  # Odoo prints and exits: no server, no port, no record.
+  wait_for_database
+  exec "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "$@"
+fi
+if "$batch"; then
+  port_arguments=()
+  if [[ -z "$explicit_port" ]]; then
+    port_arguments+=("--http-port=$(runtime_state ephemeral-port)")
+  fi
+  wait_for_database
+  exec "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" "$@"
+fi
+# probe <first> <last> [<excluded>...]: sets found to the first free port, returns 1 when none.
+# Any other bind failure exits 2 with runtime_state.py's `Cannot bind port <p>: <reason>.`.
+probe() {
+  local status=0
+  found=$(runtime_state port "$interface" "$@") || status=$?
+  if (( status == 2 )); then exit 2; fi
+  return "$status"
+}
+server=$(runtime_state show "$PROJECT_ROOT")
+if [[ -n "$server" ]]; then
+  read -r running_pid running_port <<< "$server"
+  printf 'Odoo is already running for this checkout: pid %s, port %s.\n' \
+    "${running_pid#pid=}" "${running_port#port=}" >&2
+  exit 2
+fi
+interface=$(odoo_conf_option http_interface)
+port_arguments=()
+if [[ -n "$explicit_port" ]]; then
+  if [[ ! "$explicit_port" =~ ^[0-9]{1,5}$ ]] || (( 10#$explicit_port < 1 || 10#$explicit_port > 65535 )); then
+    printf 'Invalid HTTP port: %s\n' "$explicit_port" >&2
+    exit 2
+  fi
+  port=$(( 10#$explicit_port ))
+  if ! probe "$port" "$port"; then
+    printf 'Port %s is in use; pass another --http-port or stop the other server.\n' "$port" >&2
+    exit 2
+  fi
+else
+  conf_port=$(odoo_conf_option http_port)
+  conf_port=${conf_port:-8069}
+  if [[ "${CHECKOUT_KIND:-}" == linked ]]; then
+    if ! probe $(( conf_port + 1 )) $(( conf_port + 50 )); then
+      printf 'No free HTTP port from %s to %s; pass --http-port or stop another server.\n' \
+        $(( conf_port + 1 )) $(( conf_port + 50 )) >&2
+      exit 2
+    fi
+    port=$found
+  else
+    port=$conf_port
+    if ! probe "$port" "$port"; then
+      printf 'Port %s is in use; pass --http-port or stop the other server.\n' "$port" >&2
+      exit 2
+    fi
+  fi
+  port_arguments+=("--http-port=$port")
+fi
+if [[ "${CHECKOUT_KIND:-}" == linked ]] && ! "$explicit_gevent"; then
+  gevent_port=$(odoo_conf_option gevent_port)
+  gevent_port=${gevent_port:-8072}
+  if ! probe $(( gevent_port + 1 )) $(( gevent_port + 50 )) "$port"; then
+    printf 'No free gevent port from %s to %s; pass --gevent-port or stop another server.\n' \
+      $(( gevent_port + 1 )) $(( gevent_port + 50 )) >&2
+    exit 2
+  fi
+  gevent=$found
+  port_arguments+=("--gevent-port=$gevent")
+fi
 wait_for_database
-exec "$PYTHON" "$ODOO_BIN" -c "$ODOO_CONFIG" "$@"
+# $$ survives exec: the record names the Odoo process itself.
+runtime_state record "$PROJECT_ROOT" "$$" "$port" "$ODOO_BIN" "$PYTHON"
+printf 'odoo19 start: http://localhost:%s (pid %s)\n' "$port" "$$" >&2
+exec "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" "$@"

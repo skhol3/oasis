@@ -49,9 +49,33 @@ class CheckoutIdentityTests(unittest.TestCase):
         self.git(main, 'worktree', 'add', '-q', '-b', 'wt-' + str(len(name)), '../' + name)
         return self.scratch / name
 
-    def run_reader(self, root):
+    def run_reader(self, root, env=None):
         return subprocess.run([sys.executable, '-B', str(READER), str(root)],
-                              capture_output=True, text=True, env=self.env)
+                              capture_output=True, text=True, env=env or self.env)
+
+    def failing_git(self, script):
+        """An environment whose `git` is a fake running script (sh); the fixtures keep real git."""
+        bindir = Path(tempfile.mkdtemp(prefix='fake-git-', dir=self.scratch))
+        fake = bindir / 'git'
+        fake.write_text('#!/bin/sh\n' + script)
+        fake.chmod(0o755)
+        return {**self.env, 'PATH': f'{bindir}:{self.env["PATH"]}'}
+
+    def without_git(self):
+        """An environment whose PATH has no git at all (running it raises OSError)."""
+        empty = self.scratch / 'no-git'
+        empty.mkdir(exist_ok=True)
+        return {**self.env, 'PATH': str(empty)}
+
+    def failures(self):
+        """(label, environment, reason) for each way git detection can fail."""
+        return (('exit', self.failing_git('echo "fatal: broken" >&2\nexit 1\n'), 'exit 1: fatal: broken'),
+                ('output', self.failing_git('echo /only/one/line\n'), 'unexpected output'),
+                ('missing', self.without_git(), 'cannot run git: No such file or directory'))
+
+    def assert_failure(self, root, env, message):
+        result = self.run_reader(root, env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', f'ERROR: {message}\n'))
 
     def assignments(self, root):
         result = self.run_reader(root)
@@ -146,10 +170,13 @@ class CheckoutIdentityTests(unittest.TestCase):
         linked = self.worktree(main, 'proj-07.1')
         outside = self.project('outside')
         main_line = 'CHECKOUT_MAIN_ROOT=' + shlex.quote(str(main.resolve()))
-        for root, identity in ((main, ["CHECKOUT_KIND=main", "CHECKOUT_SLUG=''", main_line]),
-                               (linked, ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=07_1', main_line]),
+        # Only LOGS_DIR follows the identity; it is empty without [tooling].logs.
+        for root, identity in ((main, ["CHECKOUT_KIND=main", "CHECKOUT_SLUG=''", main_line,
+                                       "LOGS_DIR=''"]),
+                               (linked, ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=07_1', main_line,
+                                         "LOGS_DIR=''"]),
                                (outside, ["CHECKOUT_KIND=none", "CHECKOUT_SLUG=''",
-                                          "CHECKOUT_MAIN_ROOT=''"])):
+                                          "CHECKOUT_MAIN_ROOT=''", "LOGS_DIR=''"])):
             with self.subTest(root=root.name):
                 self.assertEqual(self.assignments(root), self.previous_assignments(root) + identity)
 
@@ -168,6 +195,63 @@ class CheckoutIdentityTests(unittest.TestCase):
         (nested / '.odoo19-agent.toml').write_text(PROFILE)
         self.assertEqual(self.main_root(nested),
                          'CHECKOUT_MAIN_ROOT=' + shlex.quote(str(nested.resolve())))
+
+    LINKED_FAILURE = ('Cannot determine the checkout identity: git failed in a linked worktree; '
+                      'check git or set [tooling].checkout_slug.')
+
+    def test_git_failure_in_a_linked_worktree_fails_closed(self):
+        linked = self.worktree(self.repository('proj'), 'proj-07.1')
+        for label, env, _reason in self.failures():
+            with self.subTest(failure=label):
+                self.assert_failure(linked, env, self.LINKED_FAILURE)
+        # A project directory below the worktree's top level finds the same gitfile.
+        nested = linked / 'sub'
+        nested.mkdir()
+        (nested / '.odoo19-agent.toml').write_text(PROFILE)
+        self.assert_failure(nested, self.failures()[0][1], self.LINKED_FAILURE)
+
+    def test_git_failure_in_a_linked_worktree_uses_the_profile_slug(self):
+        linked = self.worktree(self.repository('proj'), 'proj-07.1')
+        (linked / '.odoo19-agent.toml').write_text(PROFILE + "checkout_slug = 'mrp_2'\n")
+        for label, env, _reason in self.failures():
+            with self.subTest(failure=label):
+                result = self.run_reader(linked, env)
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                lines = result.stdout.splitlines()
+                # The main checkout is unknown without git: CHECKOUT_MAIN_ROOT stays empty.
+                self.assertEqual(lines[-4:], ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=mrp_2',
+                                              "CHECKOUT_MAIN_ROOT=''", "LOGS_DIR=''"])
+                self.assertEqual(lines[:-4], self.previous_assignments(linked))
+
+    def test_git_failure_in_a_main_checkout_fails_closed(self):
+        main = self.repository('proj')
+        nested = main / 'sub'
+        nested.mkdir()
+        (nested / '.odoo19-agent.toml').write_text(PROFILE)
+        for label, env, reason in self.failures():
+            for root in (main, nested):
+                with self.subTest(failure=label, root=root.name):
+                    self.assert_failure(root, env, f'Cannot determine the checkout identity: git failed ({reason}).')
+        # A profile slug does not replace the identity there: the checkout kind is unknown.
+        (main / '.odoo19-agent.toml').write_text(PROFILE + "checkout_slug = 'base'\n")
+        self.assert_failure(main, self.failures()[0][1],
+                            'Cannot determine the checkout identity: git failed (exit 1: fatal: broken).')
+
+    def test_git_failure_outside_git_still_reports_none(self):
+        root = self.project()
+        for label, env, _reason in self.failures():
+            with self.subTest(failure=label):
+                result = self.run_reader(root, env)
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                self.assertEqual(result.stdout.splitlines(), self.previous_assignments(root) + [
+                    "CHECKOUT_KIND=none", "CHECKOUT_SLUG=''", "CHECKOUT_MAIN_ROOT=''", "LOGS_DIR=''"])
+
+    def test_a_repository_above_the_git_ceiling_is_not_searched(self):
+        # Real git stops at GIT_CEILING_DIRECTORIES (the scratch directory): a .git above it
+        # is not this project's, so its "not a git repository" failure keeps kind none.
+        self.git(self.scratch, 'init', '-q')
+        root = self.project()
+        self.assertEqual(self.identity(root), ["CHECKOUT_KIND=none", "CHECKOUT_SLUG=''"])
 
     def test_git_location_overrides_do_not_change_the_identity(self):
         main = self.repository('proj')

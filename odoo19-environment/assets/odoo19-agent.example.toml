@@ -35,6 +35,10 @@ test_prefix = 'sample_test_'
 # that, or to give the main checkout a slug. A slug changes every default database
 # name and limits database arguments to the <prefix><slug>_ namespace.
 # checkout_slug = 'sample_07_1'
+# Optional logs directory, relative to the checkout. Compact runs and browser
+# evidence go to <logs>/odoo19/<slug, or main for the main checkout>/run-*;
+# without it they stay under dev/logs/odoo19. Point every checkout at the same one.
+# logs = '../logs'
 
 # Optional advisory command discovery, never shell strings or authorization.
 # Expand ~ for the current user; use an absolute --project root as separate args.

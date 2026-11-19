@@ -10,11 +10,11 @@ _config_output=$(python3 -B "$(dirname "${BASH_SOURCE[0]}")/config.py" "$ODOO19_
 eval "$_config_output"
 unset _config_output
 # Child helpers (test_temp.py -> compact_log_directory) need the checkout to apply the
-# linked-worktree log rule.
-export CHECKOUT_KIND CHECKOUT_MAIN_ROOT
+# linked-worktree log rule and the [tooling].logs directory.
+export CHECKOUT_KIND CHECKOUT_SLUG CHECKOUT_MAIN_ROOT LOGS_DIR
 
 # The single derivation of a checkout's managed database name: the checkout slug goes right
-# after the managed prefix (cc_dev_07_1_coffee); the main checkout keeps <prefix><rest>.
+# after the managed prefix (acme_dev_shop_feature_coffee); the main checkout keeps <prefix><rest>.
 checkout_database_name() {
   local prefix=$1 rest=$2
   if [[ -n "${CHECKOUT_SLUG:-}" ]]; then
@@ -77,6 +77,43 @@ require_runtime() {
   fi
 }
 
+# The single source of the configuration options of every Odoo command line, set right before
+# Odoo starts: "$PYTHON" "$ODOO_BIN" [shell] "${ODOO_CONFIG_ARGUMENTS[@]}" ...
+# A linked worktree that shares the main checkout's odoo.conf gets that file's addons_path
+# with the main checkout's root replaced by its own root, as --addons-path after -c. The main
+# checkout and a project outside git never read the file: their command line stays -c only.
+# dev_users_runtime.py makes the same decision through odoo_addons_path.linked_addons_path.
+# When git failed in a linked worktree whose profile sets checkout_slug, config.py reports no
+# main checkout: an odoo.conf inside the worktree is used as it is, a shared one is refused.
+odoo_config_arguments() {
+  ODOO_CONFIG_ARGUMENTS=(-c "$ODOO_CONFIG")
+  if [[ "${CHECKOUT_KIND:-}" != linked ]]; then return 0; fi
+  if [[ -z "${CHECKOUT_MAIN_ROOT:-}" ]]; then
+    if [[ "$ODOO_CONFIG" == "$PROJECT_ROOT/"* ]]; then return 0; fi
+    printf 'ERROR: Cannot move the addons_path of %s to this worktree: git failed, so the main checkout is unknown.\n' \
+      "$ODOO_CONFIG" >&2
+    return 2
+  fi
+  local helper rewritten unchanged
+  helper="$(dirname "${BASH_SOURCE[0]}")/odoo_addons_path.py"
+  rewritten=$(python3 -I -B "$helper" "$ODOO_CONFIG" "$CHECKOUT_MAIN_ROOT" "$PROJECT_ROOT") || return $?
+  # The same normalization without the move: a conf that already names this checkout adds nothing.
+  unchanged=$(python3 -I -B "$helper" "$ODOO_CONFIG" "$PROJECT_ROOT" "$PROJECT_ROOT") || return $?
+  if [[ -n "$rewritten" && "$rewritten" != "$unchanged" ]]; then
+    ODOO_CONFIG_ARGUMENTS+=("--addons-path=$rewritten")
+  fi
+}
+
+# One option of the configured odoo.conf (http_port, gevent_port or http_interface), or nothing.
+odoo_conf_option() {
+  python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/odoo_addons_path.py" --option "$1" "$ODOO_CONFIG"
+}
+
+# This checkout's server record and port probes, outside the repository (tools/runtime_state.py).
+runtime_state() {
+  python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/runtime_state.py" "$@"
+}
+
 require_module() {
   local module=${1:-} root
   if [[ -z "$module" || ! "$module" =~ ^[A-Za-z0-9_]+$ ]]; then
@@ -121,6 +158,24 @@ require_managed_database_name() {
   fi
 }
 
+# Names ending in the disposable run suffix (_r<6 hex>, optionally _update) belong to the
+# disposable runs of test-module and verify-module. The commands that create or reuse a
+# database for normal work (create-database, install-module, update-module, odoo-shell,
+# start -d, init-dev-database, and test-module/verify-module with an explicit or configured
+# database) call this guard instead of require_managed_database_name and refuse them;
+# drop-database, module-status and gc accept them. The phases of a disposable verify-module
+# run (its children) use the run's names: accepted while the parent process holds their live
+# run lock in this checkout.
+require_working_database_name() {
+  local database=${1:-}
+  require_managed_database_name "$database"
+  if [[ "$database" =~ _r[0123456789abcdef]{6}(_update)?$ ]] &&
+      ! runtime_state run-owned "$PROJECT_ROOT" "$database" "$PPID"; then
+    printf 'Database names ending in _r<6 hex> are reserved for disposable runs: %s\n' "$database" >&2
+    return 2
+  fi
+}
+
 # A database that gets an _update sibling must leave room for it within 63 bytes.
 require_update_sibling_room() {
   local database=$1
@@ -141,12 +196,40 @@ require_existing_database() {
   fi
 }
 
+# Checkouts that share a compose file share its database service: two simultaneous `compose up`
+# calls race (Docker's container name conflict), so `up` runs under an exclusive flock of
+# that compose file's lock in the user's runtime root (tools/runtime_state.py compose-lock),
+# waiting at most 120 s. Once the first caller finished, the next `up` finds the service
+# running. The lock descriptor is closed before returning, so Odoo never inherits it.
+# ODOO19_COMPOSE_LOCK_TIMEOUT (seconds) exists for the tests only.
 wait_for_database() {
-  compose up -d --wait --wait-timeout 60 "$DB_SERVICE"
+  local lock lock_fd timeout=120 status=0
+  if ! command -v flock >/dev/null 2>&1; then
+    printf 'WARNING: flock not found; starting the database service without the cross-checkout lock.\n' >&2
+    compose up -d --wait --wait-timeout 60 "$DB_SERVICE"
+    return
+  fi
+  if [[ "${ODOO19_COMPOSE_LOCK_TIMEOUT:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    timeout=$ODOO19_COMPOSE_LOCK_TIMEOUT
+  fi
+  lock=$(runtime_state compose-lock "$COMPOSE_FILE") || return $?
+  exec {lock_fd}>>"$lock" || return 1
+  flock -w "$timeout" "$lock_fd" || status=$?
+  if (( status != 0 )); then
+    exec {lock_fd}>&-
+    if (( status == 1 )); then
+      printf 'Timed out waiting for another checkout to start the database service.\n' >&2
+    fi
+    return 1
+  fi
+  compose up -d --wait --wait-timeout 60 "$DB_SERVICE" || status=$?
+  exec {lock_fd}>&-
+  return "$status"
 }
 
 run_odoo() {
-  "$PYTHON" "$ODOO_BIN" -c "$ODOO_CONFIG" "$@"
+  odoo_config_arguments || return $?
+  "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "$@"
 }
 
 lock_fingerprint_arg() {
@@ -222,6 +305,56 @@ ensure_database() {
     if ! psql -U "$ODOO_DB_USER" -d "$POSTGRES_DB" -Atqc "SELECT 1 FROM pg_database WHERE datname = '\''$1'\''" | grep -qx 1; then
       createdb -U "$ODOO_DB_USER" "$1"
     fi
+  ' sh "$database"
+}
+
+# Disposable test databases (test-module and verify-module without an explicit or configured
+# database): <test_prefix>[<slug>_]<module>_r<6 hex>, at most 56 bytes, new for every run and
+# dropped at its end (tools/test_temp.py); `gc` drops the ones an interrupted run left behind.
+new_disposable_database_name() {
+  runtime_state run-name "$(checkout_database_name "$TEST_PREFIX" '')" "$1"
+}
+
+require_disposable_database_name() {
+  local database=${1:-}
+  require_managed_database_name "$database"
+  if [[ "$database" != "$TEST_PREFIX"* || ! "$database" =~ _r[0-9a-f]{6}(_update)?$ ]]; then
+    printf 'Not a disposable test database: %s\n' "$database" >&2
+    return 2
+  fi
+}
+
+# A disposable database is always new: an existing database of that name is never reused.
+require_free_disposable_database() {
+  local database=$1
+  require_disposable_database_name "$database"
+  # Outside the condition, so an unavailable service fails instead of looking free.
+  wait_for_database >/dev/null
+  if database_exists "$database"; then
+    printf 'Disposable test database already exists: %s\n' "$database" >&2
+    return 2
+  fi
+}
+
+create_disposable_database() {
+  local database=$1
+  require_disposable_database_name "$database"
+  compose exec -T "$DB_SERVICE" sh -c '
+    set -eu
+    export PGPASSWORD="$ODOO_DB_PASSWORD"
+    exec createdb -U "$ODOO_DB_USER" "$1"
+  ' sh "$database"
+}
+
+# Closes the database's sessions and drops it (a missing database is fine); prints nothing.
+drop_disposable_database() {
+  local database=$1
+  require_disposable_database_name "$database"
+  terminate_managed_database_sessions "$database"
+  compose exec -T "$DB_SERVICE" sh -c '
+    set -eu
+    export PGPASSWORD="$ODOO_DB_PASSWORD"
+    exec dropdb --if-exists -U "$ODOO_DB_USER" "$1"
   ' sh "$database"
 }
 

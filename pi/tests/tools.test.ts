@@ -34,6 +34,27 @@ test("formatTestRun summarizes the logs the core reported", () => {
   );
 });
 
+test("formatTestRun carries the disposable database lifecycle line", () => {
+  const logs: Record<string, string> = {
+    "/p/run-2/stdout.log": `${STAMP} INFO db odoo.tests.result: 1 failed, 0 error(s) of 3 tests`,
+    "/p/run-2/stderr.log": "",
+  };
+  const core = {
+    code: 1,
+    stdout:
+      "phase=tests database=cc_test_coffee_r1a2b3c exit=1\n" +
+      "database_lifecycle=disposable dropped=yes\n" +
+      "stdout_log=/p/run-2/stdout.log\nstderr_log=/p/run-2/stderr.log\n",
+    stderr: "",
+  };
+  const report = formatTestRun("coffee", core, (path) => logs[path] ?? "", { maxFailures: 10, traceLines: 6 });
+  assert.equal(
+    report.split("\n")[0],
+    "module=coffee database=cc_test_coffee_r1a2b3c exit=1 database_lifecycle=disposable dropped=yes",
+  );
+  assert.equal(report.split("\n").at(-1), "logs: /p/run-2/stdout.log /p/run-2/stderr.log");
+});
+
 test("formatTestRun relays a core refusal unchanged when no logs were produced", () => {
   const core = { code: 2, stdout: "", stderr: "Test databases must use the cc_test_ prefix.\n" };
   assert.equal(

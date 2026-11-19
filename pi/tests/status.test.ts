@@ -116,3 +116,25 @@ test("formatStatus adds the checkout identity reported by the profile", () => {
     assert.equal(formatStatus({ root: "/p", config: { ...base, ...identity }, modules: [], git }), head + tail);
   }
 });
+
+test("parseServer reads runtime_state.py show output", async () => {
+  const { parseServer } = await import("../lib/status.ts");
+  assert.deepEqual(parseServer("pid=4242 port=8020\n"), { pid: 4242, port: 8020 });
+  assert.equal(parseServer(""), null);
+  assert.equal(parseServer("pid=x port=8020\n"), null);
+});
+
+test("formatStatus adds this checkout's server line after the checkout identity", () => {
+  const base = {
+    root: "/p",
+    config: { DEV_PREFIX: "x_dev_", TEST_PREFIX: "x_test_", TEST_DATABASE: "", ODOO_SOURCE: "/o", CHECKOUT_KIND: "linked", CHECKOUT_SLUG: "07_1" },
+    modules: [],
+    git: { branch: "feat/x", linkedWorktree: true, changedFiles: 0 },
+  };
+  const head = "odoo19 project: /p\nodoo source: /o\ndatabases: dev x_dev_<module>, test x_test_<module>\n" +
+    "git: feat/x, linked worktree, clean\ncheckout: linked worktree, slug 07_1\n";
+  assert.equal(formatStatus({ ...base, server: { pid: 4242, port: 8020 } }), head + "server: running on port 8020 (pid 4242)");
+  assert.equal(formatStatus({ ...base, server: null }), head + "server: stopped");
+  assert.equal(formatStatus({ ...base, serverError: "ERROR: Runtime state directory is a symlink: /run/x" }),
+    head + "server: unknown (ERROR: Runtime state directory is a symlink: /run/x)");
+});

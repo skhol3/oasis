@@ -1,48 +1,48 @@
-# Odoo19: Chromium headless aborta por ruta de socket
+# Odoo19: headless Chromium aborts because of its socket path
 
-Fecha: 2026-11-10
+Date: 2026-11-10
 
-Los tests de navegador del bundle global `odoo19` fallan porque Chromium headless aborta al arrancar: la ruta de su socket mide 110 bytes y el máximo es 107. La solución es correr los tests con un `TMPDIR` corto.
+The browser tests of the global `odoo19` bundle fail because headless Chromium aborts at startup: the path of its socket is 110 bytes long and the maximum is 107. The fix is to run the tests with a short `TMPDIR`.
 
-## Qué pasó
+## What happened
 
-El 10 de noviembre de 2026, entre las 21:40:47 y las 21:43:46, systemd-coredump registró 18 SIGABRT idénticos de `/usr/lib/chromium/chromium`, uno cada ~10 segundos. Cada uno era un Chromium headless que lanzaba un test de navegador (tour) de Odoo.
+On 10 November 2026, between 21:40:47 and 21:43:46, systemd-coredump recorded 18 identical SIGABRTs of `/usr/lib/chromium/chromium`, one every ~10 seconds. Each one was a headless Chromium launched by an Odoo browser test (tour).
 
-| Dato | Valor |
+| Item | Value |
 | --- | --- |
-| Cadena de procesos | `verify-module` → `install-module` → `odoo-bin` (bundle `~/.agents/skills/odoo19/tools/`) |
-| Base de datos | `cc_test_corpus_cafe_update` |
+| Process chain | `verify-module` → `install-module` → `odoo-bin` (bundle `~/.agents/skills/odoo19/tools/`) |
+| Database | `acme_test_acme_update` |
 | Chromium | 155.0.8059.84-1 |
-| Ejemplo de PID | 2574356 |
-| Stack | `ChromeMain` → `abort`, hilo principal, al arrancar |
+| Example PID | 2574356 |
+| Stack | `ChromeMain` → `abort`, main thread, at startup |
 
-Impacto: todos los tests de navegador de esa corrida fallaron, así que ese resultado de `verify-module` no vale. No se perdieron datos: los perfiles eran temporales.
+Impact: every browser test of that run failed, so that `verify-module` result is not valid. No data was lost: the profiles were temporary.
 
-## Causa
+## Cause
 
-Chromium no puede crear su socket singleton porque la ruta es demasiado larga y aborta a propósito. El mensaje salió de la memoria del core:
+Chromium cannot create its singleton socket because the path is too long, and it aborts on purpose. The message came from the core's memory:
 
 ```
 FATAL:chrome/browser/process_singleton_posix.cc:313] Socket path too long:
 /tmp/gpB6f7cC/gachADTC/tmp.bumyjLXJec/tmp/tmp5uwjifu1_chrome_odoo/org.chromium.Chromium.B3vxqV/SingletonSocket
 ```
 
-- **Probado:** esa ruta mide 110 bytes. La ruta de un socket Unix (`sun_path`) admite como máximo 107 más el NUL.
-- **Inferido, sin confirmar:** Odoo arma el perfil `*_chrome_odoo` bajo `tempfile`, o sea, bajo `$TMPDIR`. La sesión que corrió los tests tenía un `TMPDIR` muy anidado (`/tmp/gpB6f7cC/gachADTC/tmp.bumyjLXJec/tmp`), probablemente el temp de un agente o sandbox. El proceso ya había terminado y no se pudo leer su entorno.
+- **Proven:** that path is 110 bytes long. The path of a Unix socket (`sun_path`) holds at most 107 plus the NUL.
+- **Inferred, not confirmed:** Odoo builds the `*_chrome_odoo` profile under `tempfile`, that is, under `$TMPDIR`. The session that ran the tests had a deeply nested `TMPDIR` (`/tmp/gpB6f7cC/gachADTC/tmp.bumyjLXJec/tmp`), probably the temp directory of an agent or sandbox. The process had already ended and its environment could not be read.
 
-## Descartado
+## Ruled out
 
-- **Falta de memoria:** la RAM estaba justa (474Mi libres, 18Gi de swap en uso), pero el journal no muestra ningún OOM kill.
-- **Flags de Omarchy** (`~/.config/chromium-flags.conf`): agregan `--ozone-platform=wayland` y `--load-extension` a esta corrida. Con los mismos flags y una ruta corta, Chromium arrancó bien.
-- **Bug de Omarchy o de Chromium:** no lo es, así que no hay nada que reportar upstream.
+- **Out of memory:** RAM was tight (474Mi free, 18Gi of swap in use), but the journal shows no OOM kill.
+- **Omarchy flags** (`~/.config/chromium-flags.conf`): they add `--ozone-platform=wayland` and `--load-extension` to this run. With the same flags and a short path, Chromium started fine.
+- **An Omarchy or Chromium bug:** it is not one, so there is nothing to report upstream.
 
-## Cómo solucionarlo
+## How to fix it
 
-No se aplicó ningún cambio todavía. Pasos sugeridos:
+No change has been applied yet. Suggested steps:
 
-- [ ] Volver a correr los tests con un temp corto: `TMPDIR=/tmp verify-module --compact <módulos>`
-- [ ] Confirmar que no aparecen nuevos cores de Chromium con `coredumpctl list --since "10 min ago"`
-- [ ] Para que no vuelva a pasar, exportar `TMPDIR=/tmp` en `~/.agents/skills/odoo19/tools/common.sh` (o acortar el `TMPDIR` del agente que lanza los tests)
-- [ ] Guardar este hallazgo en Engram, proyecto `odoo19`, topic `odoo19/browser-tests/chromium-socket-path-too-long`
+- [ ] Run the tests again with a short temp directory: `TMPDIR=/tmp verify-module --compact <modules>`
+- [ ] Confirm that no new Chromium cores appear with `coredumpctl list --since "10 min ago"`
+- [ ] To keep it from happening again, export `TMPDIR=/tmp` in `~/.agents/skills/odoo19/tools/common.sh` (or shorten the `TMPDIR` of the agent that launches the tests)
+- [ ] Save this finding in Engram, project `odoo19`, topic `odoo19/browser-tests/chromium-socket-path-too-long`
 
-Diagnóstico rápido si vuelve a pasar: `coredumpctl dump <pid> --output=<archivo>`, después `strings <archivo> | grep FATAL`, y borrar el core al terminar.
+Quick diagnosis if it happens again: `coredumpctl dump <pid> --output=<file>`, then `strings <file> | grep FATAL`, and delete the core when done.

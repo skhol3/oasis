@@ -45,8 +45,12 @@ export function formatTestRun(
   // Without logs the core refused before running tests; its message is already short.
   if (!values.stdout_log) return formatPlain(result, maxLines);
   const stderrLog = values.stderr_log ?? "";
+  // A disposable database (no explicit or configured one) is reported as dropped or not.
+  const lifecycle = values.database_lifecycle
+    ? ` database_lifecycle=${values.database_lifecycle} dropped=${values.dropped ?? ""}`
+    : "";
   return [
-    `module=${module} database=${values.database ?? ""} exit=${result.code}`,
+    `module=${module} database=${values.database ?? ""} exit=${result.code}${lifecycle}`,
     summarizeTestLog(readLog(values.stdout_log), stderrLog ? readLog(stderrLog) : "", options),
     `logs: ${values.stdout_log} ${stderrLog}`.trimEnd(),
   ].join("\n");

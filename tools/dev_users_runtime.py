@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from config import load
+from odoo_addons_path import linked_addons_path
 
 
 def main():
@@ -21,13 +22,23 @@ def main():
         passwords = payload['passwords']
         with_demo = payload['with_demo']
         demo_flag = '--with-demo' if with_demo else '--without-demo'
+        # The options of common.sh's odoo_config_arguments: a linked worktree that shares the
+        # main checkout's odoo.conf gets its own root in addons_path. Without a main checkout
+        # (git failed, profile slug) only an odoo.conf inside the worktree is used.
+        if values['CHECKOUT_KIND'] == 'linked' and not values['CHECKOUT_MAIN_ROOT']:
+            if not Path(values['ODOO_CONFIG']).is_relative_to(values['PROJECT_ROOT']):
+                raise ValueError('The main checkout is unknown; the shared addons_path cannot move.')
+            addons = ''
+        else:
+            addons = linked_addons_path(values)
+        config_args = ['-c', values['ODOO_CONFIG'], *([f'--addons-path={addons}'] if addons else [])]
         sys.path.insert(0, values['ODOO_SOURCE'])
         import odoo
         import odoo.service.common
         import odoo.service.db
         from odoo.modules.registry import Registry
 
-        odoo.tools.config.parse_config(['-c', values['ODOO_CONFIG'], '--no-http',
+        odoo.tools.config.parse_config([*config_args, '--no-http',
                                        demo_flag, '--log-level=critical'])
         # Odoo creates the DB itself: an existing name or a concurrent CREATE fails,
         # never the ensure_database behavior that might reuse another caller's DB.
@@ -43,7 +54,7 @@ def main():
         modules = declaration.get('demo_modules', []) if with_demo else []
         for install_module in dict.fromkeys([*modules, module]):
             install = subprocess.run(
-                [values['PYTHON'], values['ODOO_BIN'], '-c', values['ODOO_CONFIG'],
+                [values['PYTHON'], values['ODOO_BIN'], *config_args,
                  '-d', database, '-i', install_module, demo_flag, '--stop-after-init',
                  '--no-http', '--log-level=critical'], capture_output=True)
             if install.returncode:
