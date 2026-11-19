@@ -196,8 +196,35 @@ require_existing_database() {
   fi
 }
 
+# Checkouts that share a compose file share its database service: two simultaneous `compose up`
+# calls race (Docker's container name conflict), so `up` runs under an exclusive flock of
+# that compose file's lock in the user's runtime root (tools/runtime_state.py compose-lock),
+# waiting at most 120 s. Once the first caller finished, the next `up` finds the service
+# running. The lock descriptor is closed before returning, so Odoo never inherits it.
+# ODOO19_COMPOSE_LOCK_TIMEOUT (seconds) exists for the tests only.
 wait_for_database() {
-  compose up -d --wait --wait-timeout 60 "$DB_SERVICE"
+  local lock lock_fd timeout=120 status=0
+  if ! command -v flock >/dev/null 2>&1; then
+    printf 'WARNING: flock not found; starting the database service without the cross-checkout lock.\n' >&2
+    compose up -d --wait --wait-timeout 60 "$DB_SERVICE"
+    return
+  fi
+  if [[ "${ODOO19_COMPOSE_LOCK_TIMEOUT:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    timeout=$ODOO19_COMPOSE_LOCK_TIMEOUT
+  fi
+  lock=$(runtime_state compose-lock "$COMPOSE_FILE") || return $?
+  exec {lock_fd}>>"$lock" || return 1
+  flock -w "$timeout" "$lock_fd" || status=$?
+  if (( status != 0 )); then
+    exec {lock_fd}>&-
+    if (( status == 1 )); then
+      printf 'Timed out waiting for another checkout to start the database service.\n' >&2
+    fi
+    return 1
+  fi
+  compose up -d --wait --wait-timeout 60 "$DB_SERVICE" || status=$?
+  exec {lock_fd}>&-
+  return "$status"
 }
 
 run_odoo() {

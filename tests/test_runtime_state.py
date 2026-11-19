@@ -15,6 +15,7 @@ import re
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -323,6 +324,29 @@ class RuntimeStateHelperTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (2, '', f'ERROR: Runtime state directory is a symlink: {checkout}\n'))
         self.assertEqual(list(target.iterdir()), [])
+
+    def test_compose_lock_is_private_per_compose_file_and_never_follows_a_symlink(self):
+        compose = self.root / 'compose.yml'
+        compose.touch()
+        alias = self.scratch / 'alias.yml'
+        alias.symlink_to(compose)
+        digest = hashlib.sha256(str(compose.resolve()).encode()).hexdigest()[:16]
+        lock = self.xdg / f'oasis-{os.getuid()}' / f'compose-{digest}.lock'
+        for path in (compose, alias):
+            result = self.helper('compose-lock', str(path))
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, f'{lock}\n', ''))
+        self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(lock.parent.stat().st_mode), 0o700)
+        lock.chmod(0o644)
+        self.assertEqual(self.helper('compose-lock', str(compose)).returncode, 0)
+        self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
+        lock.unlink()
+        target = self.scratch / 'elsewhere.lock'
+        lock.symlink_to(target)
+        result = self.helper('compose-lock', str(compose))
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', f'ERROR: Cannot open the compose lock: {lock}\n'))
+        self.assertFalse(target.exists())
 
     def test_free_and_ephemeral_ports(self):
         port = free_ports(3)

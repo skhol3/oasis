@@ -132,6 +132,12 @@ still change in a minor release; every such change is listed here under **Change
 
 ### Fixed
 
+- Two checkouts that share a compose file no longer race when they start the database
+  service at the same moment (the second `compose up` failed with Docker's container name
+  conflict): `compose up` now runs under an exclusive `flock` of a per-compose-file lock in
+  the user's runtime directory, waiting at most 120 s (`Timed out waiting for another
+  checkout to start the database service.`, exit 1). Without `flock` it warns and runs
+  unlocked.
 - A disposable run never drops a database when `createdb` reports that the name already
   exists (created by something without a run lock); `verify-module` no longer loses a signal
   that arrives right after its locks are taken.

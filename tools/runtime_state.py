@@ -21,6 +21,9 @@ Usage:
   runtime_state.py run-owned <project_root> <database> <pid>
                                              exit 0 when this checkout's lock of database is
                                              live and held by pid, 1 when not
+  runtime_state.py compose-lock <compose_file>
+                                             the path of the lock file that serializes
+                                             `compose up` of that compose file (created 0600)
 
 State lives in ${XDG_RUNTIME_DIR, or /tmp}/oasis-<uid>/<first 16 hex of sha256(realpath
 project_root)>/server.json ({pid, port, started_at, project_root, odoo_bin, python}); both directories
@@ -40,6 +43,11 @@ created exclusively (O_EXCL on the final path, then written and fsynced): an exi
 live or stale, is never replaced, so two runs never share a name. A lock is live while its pid
 runs the recorded command line (argv read from /proc when it was written, compared exactly,
 whatever the interpreter), so a reused pid does not keep an orphan alive.
+
+Compose lock: `compose-<first 16 hex of sha256(realpath compose_file)>.lock` (0600) directly in
+the user root, shared by every checkout of this user whose profile names that compose file.
+This helper only creates and checks it (a regular file of the current user); common.sh holds
+it with flock(1) around `compose up`.
 """
 from datetime import datetime, timezone
 import errno
@@ -479,6 +487,27 @@ def discard_stale_run_locks(database):
             discard_stale(path, seen)
 
 
+def compose_lock(compose_file):
+    """The lock file of compose_file in the user root, created 0600 when missing."""
+    root = user_root()
+    ensure_dir(root)
+    digest = hashlib.sha256(os.path.realpath(compose_file).encode()).hexdigest()[:16]
+    path = root / f'compose-{digest}.lock'
+    try:
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    except OSError as exc:
+        raise StateError(f'Cannot open the compose lock: {path}') from exc
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise StateError(f'Compose lock is not a regular file of the current user: {path}')
+        if stat.S_IMODE(info.st_mode) != 0o600:
+            os.fchmod(descriptor, 0o600)
+    finally:
+        os.close(descriptor)
+    return path
+
+
 def bind_addresses(interface):
     """The addresses Odoo would bind (its http_interface, default all IPv4) plus loopback."""
     host = interface or '0.0.0.0'
@@ -565,6 +594,9 @@ def main(argv):
             return 0
         if command == 'run-owned' and len(args) == 3:
             return 0 if run_lock_owned(args[0], args[1], integer(args[2])) else 1
+        if command == 'compose-lock' and len(args) == 1:
+            print(compose_lock(args[0]))
+            return 0
     except RunLocked as exc:
         print(exc, file=sys.stderr)
         return 2
@@ -577,7 +609,7 @@ def main(argv):
     except ValueError:
         pass
     print('ERROR: Usage: runtime_state.py show|record|stop|others|port|ephemeral-port|run-name|'
-          'run-lock|run-unlock|run-owned ...', file=sys.stderr)
+          'run-lock|run-unlock|run-owned|compose-lock ...', file=sys.stderr)
     return 2
 
 
