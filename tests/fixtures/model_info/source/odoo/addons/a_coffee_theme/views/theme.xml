@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Scanned before coffee: writes on the coffee.order form another module defines. -->
+    <record id="coffee.view_coffee_order_form" model="ir.ui.view">
+        <field name="priority">5</field>
+    </record>
+</odoo>

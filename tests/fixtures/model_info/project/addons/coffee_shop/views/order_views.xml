@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- No model field: the model comes from the inherited view. -->
+    <record id="view_shop_order_form" model="ir.ui.view">
+        <field name="name">shop.order.form</field>
+        <field name="inherit_id" ref="coffee.view_coffee_order_form"/>
+        <field name="arch" type="xml">
+            <field name="name" position="after"><field name="shop_id"/></field>
+        </field>
+    </record>
+    <record id="view_shop_order_kanban" model="ir.ui.view">
+        <field name="name">shop.order.kanban</field>
+        <field name="model">coffee.order</field>
+        <field name="arch" type="xml">
+            <kanban><field name="name"/></kanban>
+        </field>
+    </record>
+    <record id="view_shop_orphan" model="ir.ui.view">
+        <field name="name">shop.orphan</field>
+        <field name="model">coffee.order</field>
+        <field name="inherit_id" ref="missing_module.view_gone"/>
+        <field name="arch" type="xml">
+            <field name="name" position="replace"/>
+        </field>
+    </record>
+    <menuitem id="menu_shop_orders" name="Shop orders" parent="coffee.menu_coffee_root"
+              action="coffee.action_coffee_order"/>
+    <!-- Writes on a record another module defines. -->
+    <record id="coffee.view_coffee_order_list" model="ir.ui.view">
+        <field name="priority">5</field>
+    </record>
+    <!-- Extends a view whose own parent is not in the scanned roots. -->
+    <record id="view_shop_orphan_child" model="ir.ui.view">
+        <field name="name">shop.orphan.child</field>
+        <field name="inherit_id" ref="view_shop_orphan"/>
+        <field name="arch" type="xml">
+            <field name="name" position="after"><field name="note"/></field>
+        </field>
+    </record>
+</odoo>

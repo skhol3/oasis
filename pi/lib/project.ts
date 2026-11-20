@@ -89,12 +89,14 @@ export function projectRootResolver(
 const TOOL_LINES: Record<string, string> = {
   oasis_test_module: "run one module's tests; returns the result line and failures only, full logs stay on disk.",
   oasis_test_summary: "the same summary for a compact run started in the background (pass what it printed).",
-  oasis_update_module: "update a module in an existing managed database; returns errors and warnings only.",
+  oasis_update_module: "update a module in an existing database; errors and warnings only.",
   oasis_module_status: "database and module state for a module.",
   oasis_check_environment: "environment diagnostics (quick by default).",
   oasis_lint_module: "Pylint for one module without starting Odoo.",
-  oasis_find_module: "technical module names from a functional name (manifest name/summary); no ls/grep.",
+  oasis_find_module: "technical module names from a functional name; no ls/grep.",
   oasis_model_info: "a model's definition, extensions, fields and methods from source; use it before reading Odoo files.",
+  oasis_view_info: "a model's views and their extensions; no XML search.",
+  oasis_xmlid_info: "an XML id's definition, extensions and references.",
 };
 
 /**

@@ -281,11 +281,17 @@ database_query() {
   ' sh "$database" "$@"
 }
 
+# Whether the database exists. A probe that fails ends the command: callers use this as a
+# condition, where a failure would otherwise look like a missing database.
 database_exists() {
-  local database=$1
+  local database=$1 found
   require_database_name "$database"
   wait_for_database >/dev/null
-  [[ "$(database_psql -Atqc "SELECT 1 FROM pg_database WHERE datname = '$database'")" == 1 ]]
+  if ! found=$(database_psql -Atqc "SELECT 1 FROM pg_database WHERE datname = '$database'"); then
+    printf 'Cannot check whether database %s exists.\n' "$database" >&2
+    exit 1
+  fi
+  [[ "$found" == 1 ]]
 }
 
 # The state of a module in an existing database: ir_module_module.state, `uninitialized` when

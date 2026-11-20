@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_coffee_order_form_loyalty" model="ir.ui.view">
+        <field name="name">coffee.order.form.loyalty</field>
+        <field name="model">coffee.order</field>
+        <field name="inherit_id" ref="coffee.view_coffee_order_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='name']" position="after">
+                <field name="points"/>
+            </xpath>
+            <field name="name" position="attributes">
+                <attribute name="required">1</attribute>
+            </field>
+        </field>
+    </record>
+    <record id="view_coffee_order_form_vip" model="ir.ui.view">
+        <field name="name">coffee.order.form.vip</field>
+        <field name="model">coffee.order</field>
+        <field name="inherit_id" ref="view_coffee_order_form_loyalty"/>
+        <field name="mode">primary</field>
+        <field name="arch" type="xml">
+            <field name="points" position="replace"/>
+        </field>
+    </record>
+    <template id="report_order" name="Order report">
+        <t t-call="web.html_container"/>
+    </template>
+    <template id="report_order_points" inherit_id="coffee_loyalty.report_order">
+        <xpath expr="//t" position="inside"><span/></xpath>
+    </template>
+</odoo>

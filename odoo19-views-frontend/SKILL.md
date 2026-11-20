@@ -31,7 +31,7 @@ Use for Odoo 19 views, actions, menus, templates, reports, Owl components, and a
 
 ## Execution Steps
 
-1. Search exact IDs, field names, templates, and asset keys in permitted source; confirm field names with `oasis --project <root> model-info <model> --field <name>` (Gentle Shell: `oasis_model_info`).
+1. Locate views and XML ids with `oasis --project <root> view-info <model>` and `xmlid-info <module>.<name>` (Gentle Shell: `oasis_view_info`, `oasis_xmlid_info`) before searching XML. Search field names, templates, and asset keys in permitted source; confirm field names with `oasis --project <root> model-info <model> --field <name>` (Gentle Shell: `oasis_model_info`).
 2. Make the smallest coherent change and add applicable behavior-level checks.
 3. Verify module installation/update and affected UI using authorized project tooling; report unavailable checks.
 

@@ -14,6 +14,8 @@ test("OASIS_TOOLS lists the layer tools once each", () => {
     "oasis_test_module",
     "oasis_test_summary",
     "oasis_update_module",
+    "oasis_view_info",
+    "oasis_xmlid_info",
   ]);
 });
 

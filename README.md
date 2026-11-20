@@ -6,7 +6,7 @@ Built with Gentle Shell (`github.com/Gentleman-Programming/gentle-shell`).
 
 ## Install or update
 
-Releases follow Semantic Versioning and are tagged `vX.Y.Z`; see the [changelog](CHANGELOG.md). Install a released version of the Gentle Shell layer with `gentle-shell install git:github.com/skhol3/oasis@v0.6.0`.
+Releases follow Semantic Versioning and are tagged `vX.Y.Z`; see the [changelog](CHANGELOG.md). Install a released version of the Gentle Shell layer with `gentle-shell install git:github.com/skhol3/oasis@v0.7.0`.
 
 With owner authorization, commit the change, run the test suite, then run `install.sh` from this repository:
 
@@ -25,7 +25,7 @@ The installed package contains the six `odoo19-*` directories, `tools/`, `projec
 A thin Pi package (`package.json`, `pi/`) layered over Gentle Shell. It changes nothing in Gentle Shell or Pi; its goal is fewer tokens in Odoo work by wrapping the guarded `oasis` core with compact output. Install it from a release tag, so the sessions load a fixed copy that work in a local checkout cannot change:
 
 ```bash
-gentle-shell install git:github.com/skhol3/oasis@v0.6.0
+gentle-shell install git:github.com/skhol3/oasis@v0.7.0
 ```
 
 To move to a newer release, remove the old entry and install the new tag (`gentle-shell list` shows the installed entry), then `/reload` open sessions:
@@ -43,6 +43,7 @@ Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shel
 - Tool `oasis_update_module` (module, database): `oasis update-module --compact` on an existing managed database. It returns the exit code, the ERROR/CRITICAL entries with the end of each traceback, grouped warnings, the `log:` control line and the log paths; there is no test result line, since an update runs no tests.
 - Tool `oasis_find_module`: maps a functional name to technical module names by matching the query words against the technical name and the manifest `name`, `summary` and `category` in the profile's addon roots, so the agent needs no `ls` or `grep`.
 - Tool `oasis_model_info`: wraps `oasis model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
+- Tools `oasis_view_info` (model, optional type, module) and `oasis_xmlid_info` (id): wrap `oasis view-info` and `oasis xmlid-info` (see *Views and XML ids without starting Odoo*), so the agent finds a model's views, what extends them and where an XML id is defined or referenced without opening or searching XML files; output is capped at 200 lines.
 - Prompt context naming the `oasis_*` tools the session has (a session with none, such as a subagent without the overlay, is pointed to the `oasis` CLI instead) when `.odoo19-agent.toml` is found at or above the working directory, or, without one, an `oasis-workspace.toml` (see *Workspace file*; the project root is then the git top level of the working directory).
 - A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. In every session it also blocks the agent from running `worktree-init` (through `oasis` or `odoo19`, `tools/worktree-init` or `worktree_init.py`, `--dry-run` included) and `migrate` (through `oasis` or `odoo19`, or `tools/migrate` and `tools/migrate.py`, the dry run included), which only the user runs; asking only for their help (`--help` or `-h` as the single argument) is allowed, and so is the migration plan: `migrate --plan`, optionally with `--workspace <literal absolute path>` and nothing else. `--plan` can never apply, because the tool refuses it together with `--apply`. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package. Text that bash would not run is not blocked: substitutions inside single quotes, comments, and heredoc bodies that no command runs, such as `git commit -F - <<'EOF'` or `cat > file <<'EOF'`. A heredoc body is still checked when a command on its opening line runs what it reads: a shell (`bash`, `sh`, `zsh`, `dash`, `ksh`, `mksh`, `ash`, `fish`, `csh`, `tcsh`), `source`, `.`, `eval`, `ssh`, `su` or `xargs`, also behind `sudo`, `doas`, `env`, `timeout`, `setsid`, `stdbuf`, `ionice`, `docker exec` and similar wrappers, on a continued line or after a trailing pipe.
 - `/oasis`: a quick status with the profile, addon modules, configured databases, git worktree, checkout identity and this checkout's server (`server: running on port <port> (pid <pid>)` or `server: stopped`, read from the runtime record). It never starts services or queries databases. `/oasis setup` installs the subagent overlay (see Subagents). `/oasis doctor` shows the `oasis doctor` report (see *Checking the environment*); there is no agent tool for it. `/oasis worktree <feature> <branch>` creates a prepared linked worktree after confirmation (see *Preparing a linked worktree*). `/oasis migrate` shows the `oasis migrate` plan and applies it after confirmation (see *Migrating to the workspace file*). Typing `/oasis ` offers its subcommands (`setup`, `doctor`, `migrate`, `worktree`).
@@ -218,6 +219,58 @@ Run at a relevant baseline and after a Python/manifest work unit, not each edit.
 ```
 
 `model-info <model> [--field <name>] [--module <technical>] [--methods] [--all-fields]` prints a compact summary of one model: where it is defined (with `_inherit` mixins and `_inherits` delegations), the modules that extend it, its fields with type, comodel, label and literal flags, field overrides in extensions and methods per module. It scans the profile's Odoo source (`odoo/addons`, `addons`), optional Enterprise source and `[tooling].addons_paths`, prefilters files by the quoted model name and parses them with `ast`: no Odoo or project code is imported or executed, and no environment, service or database is used. Odoo/Enterprise `test_*` modules and `tests/`, `migrations/`, `upgrades/`, `static/` directories are skipped; mixin fields are not expanded. By default the field list stops at 40 (`--all-fields` lifts it) and methods list public names with a count of private ones; `--module` restricts the details to one module and lists all its methods, `--methods` adds decorators and `super()` calls, `--field` shows one field's definition and overrides with `file:line`. An unknown model exits 1 with `model not found: <model>`; invalid arguments exit 2. `model-info --help` describes the format.
+
+## Views and XML ids without starting Odoo
+
+```bash
+~/.agents/skills/odoo19/oasis --project /absolute/project view-info sale.order
+~/.agents/skills/odoo19/oasis --project /absolute/project view-info sale.order --type form
+~/.agents/skills/odoo19/oasis --project /absolute/project xmlid-info sale.view_order_form
+```
+
+Both read XML data files from the same roots as `model-info` (Odoo source, optional Enterprise source, the profile's addon roots; first module with a name wins) and skip the same directories (`tests/`, `migrations/`, `upgrades/`, `static/`, `i18n/`, source `test_*` modules). XML is parsed with expat; Python and CSV files are only searched as text. Nothing is imported or executed and no environment, service or database is used.
+
+`view-info <model> [--type <tag>] [--module <technical>]` lists the views of one model:
+
+```text
+model: coffee.order — 3 views, 3 extensions
+form coffee.view_coffee_order_form coffee/views/coffee_order_views.xml:3
+  + coffee_loyalty.view_coffee_order_form_loyalty coffee_loyalty/views/coffee_order_views.xml:3 (2 changes)
+    + coffee_loyalty.view_coffee_order_form_vip coffee_loyalty/views/coffee_order_views.xml:16 (1 change, mode=primary)
+list coffee.view_coffee_order_list coffee/views/coffee_order_views.xml:12 priority=20
+unresolved: coffee_shop.view_shop_orphan coffee_shop/views/order_views.xml:18 inherits missing_module.view_gone
+skipped: coffee_shop/views/broken.xml (XML error at line 4)
+```
+
+- A base view shows its type (the root tag of its arch), XML id, file and line, and `priority=` or `mode=` when set. Types are ordered form, list, kanban, search, then the rest.
+- Below it, each `+` line is a view that extends it, indented once per level, with the number of changes it makes (`xpath` elements and elements with a `position` attribute).
+- A view without a `model` field takes the model of the view it inherits.
+- `--type` keeps the base views of that type with their extensions; `--module` lists only the views that module defines, each extension with `extends <XML id>`.
+- `unresolved:` is an extension whose inherited view is not in the scanned roots, followed by the views that extend it; `skipped:` is a file that is not well-formed XML.
+- Long lists end with the count of the rest: at most 40 extensions per view (`+<n> more extensions (narrow with --module)`), 10 unresolved and 5 skipped files.
+- Exit status: 0 with views, 1 with `no views found for model: <model>`, 2 for a usage error.
+
+`xmlid-info <module>.<name>` shows one XML id:
+
+```text
+xml id: coffee.action_coffee_order
+defined: coffee/views/coffee_order_views.xml:25 record ir.actions.act_window
+  name: Coffee Orders
+  res_model: coffee.order
+  view_mode: list,form
+  view_id: coffee.view_coffee_order_list
+referenced by (3):
+  coffee/views/coffee_order_views.xml:32
+  coffee_shop/controllers/main.py:2
+  coffee_shop/views/order_views.xml:27
+```
+
+- `defined:` names the file, line and kind: `record <model>`, `template` or `menuitem`. Its fields follow in document order (at most 12, values cut at 60 characters; a `ref` is shown as its full id; `arch` is left out). A base view also gets `type:`.
+- `also written in:` lists other data files that write on the same id (at most ten). The definition is the record of the module the id belongs to; without one, the first in scan order.
+- `extended by (<n>):` lists the views whose `inherit_id` is this id (at most 20).
+- `referenced by (<n>):` lists `file:line` of text references in XML, Python and CSV files (at most 20): the full id anywhere, and inside the defining module also the name alone in `ref`, `parent` and `action` attributes, in comma-separated `groups` lists, `%(name)d`, `ref('name')` and CSV cells (such as the group column of `ir.model.access.csv`). Definition and `inherit_id` lines are not repeated there.
+- `skipped:` lines name files that mention the id but are not well-formed XML; with `xml id not found: <id>` they go to stderr, since one of them may hold the definition.
+- Exit status: 0 when found, 1 with `xml id not found: <id>`, 2 for a usage error.
 
 ## Fresh development database with role accounts
 

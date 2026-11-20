@@ -9,6 +9,30 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-20
+
+Query tools for views and XML ids, read from source like `model-info`.
+
+### Added
+
+- `view-info <model> [--type <tag>] [--module <technical>]`: the views of a model with the
+  views that extend them, their type, XML id, file and line.
+- `xmlid-info <module>.<name>`: where an XML id is defined, its fields, the views that extend
+  it and the files that reference it.
+- Agent tools `oasis_view_info` and `oasis_xmlid_info`, in the overlay of both subagents: run
+  `/oasis setup` to refresh an installed overlay.
+
+### Fixed
+
+- A database existence probe that fails now ends the command with `Cannot check whether
+  database <name> exists.` instead of looking like a missing database (`module-status` reported
+  `database_state=missing`, `update-module` "does not exist", and `test-module --reuse` reset
+  the working database).
+
+### Changed
+
+- Prompt section: three tool lines are shorter so the section stays compact with two more tools.
+
 ## [0.6.0] - 2026-11-20
 
 Faster test iteration, and a harness that takes the Odoo series from the configuration. Odoo
@@ -481,7 +505,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/skhol3/oasis/releases/tag/v0.7.0
 [0.6.0]: https://github.com/skhol3/oasis/releases/tag/v0.6.0
 [0.5.0]: https://github.com/skhol3/oasis/releases/tag/v0.5.0
 [0.4.2]: https://github.com/skhol3/oasis/releases/tag/v0.4.2

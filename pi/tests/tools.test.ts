@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatPlain, formatTestRun, formatUpdateRun, testModuleArgs, updateModuleArgs } from "../lib/tools.ts";
+import {
+  formatPlain, formatTestRun, formatUpdateRun, testModuleArgs, updateModuleArgs, viewInfoArgs,
+} from "../lib/tools.ts";
 
 const STAMP = "2026-11-16 18:00:00,123 4242";
 
@@ -192,4 +194,12 @@ test("testModuleArgs and formatTestRun handle a reused test database", () => {
   const stdout = "phase=tests database=cc_test_coffee exit=0\ndatabase_lifecycle=reused mode=update\nstdout_log=/l/out\nstderr_log=/l/err\n";
   const report = formatTestRun("coffee", { code: 0, stdout, stderr: "" }, () => "", { maxFailures: 10, traceLines: 6 });
   assert.equal(report.split("\n")[0], "module=coffee database=cc_test_coffee exit=0 database_lifecycle=reused mode=update");
+});
+
+test("viewInfoArgs forwards the optional type and module filters", () => {
+  assert.deepEqual(viewInfoArgs({ model: "sale.order" }), ["view-info", "sale.order"]);
+  assert.deepEqual(viewInfoArgs({ model: "sale.order", type: "form" }), ["view-info", "sale.order", "--type", "form"]);
+  assert.deepEqual(viewInfoArgs({ model: "sale.order", module: "sale_stock", type: "list" }), [
+    "view-info", "sale.order", "--type", "list", "--module", "sale_stock",
+  ]);
 });

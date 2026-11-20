@@ -18,7 +18,7 @@ import { formatStatus, listModules, parseAssignments, parseGit, parseServer, typ
 import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
 import {
-  formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, testModuleArgs, updateModuleArgs,
+  formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, testModuleArgs, updateModuleArgs, viewInfoArgs,
 } from "../lib/tools.ts";
 
 const OASIS = fileURLToPath(new URL("../../oasis", import.meta.url));
@@ -521,6 +521,46 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       if (params.methods) args.push("--methods");
       if (params.allFields) args.push("--all-fields");
       return plain(ctx.cwd, args, signal, MODEL_INFO_MAX_LINES);
+    },
+  });
+
+  registerWithAlias({
+    name: "oasis_view_info",
+    defaultActive: false,
+    label: "Odoo view info",
+    description:
+      "The views of one Odoo model from the Odoo source and the project's addons (static XML parsing; no Odoo, " +
+      "environment or database): each base view with its type, XML id and file:line, and the views that extend it.",
+    promptSnippet: "List a model's views and their extensions without opening XML files",
+    promptGuidelines: [
+      "Use oasis_view_info before searching XML files to find a model's views or what extends a view.",
+    ],
+    parameters: Type.Object({
+      model: Type.String({ description: "Model name, e.g. sale.order" }),
+      type: Type.Optional(Type.String({ description: "Only base views of this type (form, list, kanban, search, ...)" })),
+      module: Type.Optional(Type.String({ description: "Only the views this technical module defines" })),
+    }),
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      return plain(ctx.cwd, viewInfoArgs(params), signal, MODEL_INFO_MAX_LINES);
+    },
+  });
+
+  registerWithAlias({
+    name: "oasis_xmlid_info",
+    defaultActive: false,
+    label: "Odoo XML id info",
+    description:
+      "Where one XML id (record, template or menuitem) is defined, its fields, the views that extend it and the " +
+      "files that reference it, from source (no Odoo, environment or database).",
+    promptSnippet: "Locate an XML id, its extensions and its references without grep",
+    promptGuidelines: [
+      "Use oasis_xmlid_info instead of grep to locate an XML id or to see what references it.",
+    ],
+    parameters: Type.Object({
+      id: Type.String({ description: "Full XML id: <module>.<name>, e.g. sale.view_order_form" }),
+    }),
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      return plain(ctx.cwd, ["xmlid-info", params.id], signal, MODEL_INFO_MAX_LINES);
     },
   });
 

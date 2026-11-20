@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_coffee_order_form" model="ir.ui.view">
+        <field name="name">coffee.order.form</field>
+        <field name="model">coffee.order</field>
+        <field name="arch" type="xml">
+            <form>
+                <field name="name"/>
+            </form>
+        </field>
+    </record>
+    <record id="view_coffee_order_list" model="ir.ui.view">
+        <field name="name">coffee.order.list</field>
+        <field name="model">coffee.order</field>
+        <field name="priority">20</field>
+        <field name="arch" type="xml">
+            <list><field name="name"/></list>
+        </field>
+    </record>
+    <record id="view_coffee_bean_form" model="ir.ui.view">
+        <field name="name">coffee.bean.form</field>
+        <field name="model">coffee.bean</field>
+        <field name="arch" type="xml"><form/></field>
+    </record>
+    <record id="action_coffee_order" model="ir.actions.act_window">
+        <field name="name">Coffee Orders</field>
+        <field name="res_model">coffee.order</field>
+        <field name="view_mode">list,form</field>
+        <field name="view_id" ref="view_coffee_order_list"/>
+    </record>
+    <menuitem id="menu_coffee_root" name="Coffee">
+        <menuitem id="menu_coffee_order" name="Orders" action="action_coffee_order"/>
+    </menuitem>
+    <record id="group_coffee_manager" model="res.groups">
+        <field name="name">Coffee manager</field>
+    </record>
+    <menuitem id="menu_coffee_config" name="Configuration" parent="menu_coffee_root"
+              groups="base.group_user, group_coffee_manager"/>
+</odoo>
