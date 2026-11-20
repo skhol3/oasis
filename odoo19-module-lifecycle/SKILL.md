@@ -9,7 +9,7 @@ metadata:
 
 ## Activation Contract
 
-Use for authorized local Odoo 19 module installation, updates, test runs, and state inspection. Never operate on production or unknown databases.
+Use for authorized local Odoo 19 module installation, updates, test runs, and state inspection. Not for environment diagnostics (`odoo19-environment`) or test design (`odoo19-testing`). Never operate on production or unknown databases.
 
 ## Hard Rules
 
@@ -17,15 +17,16 @@ Use for authorized local Odoo 19 module installation, updates, test runs, and st
 - Require an explicitly named local database; never guess a default or derive authorization from a template prefix.
 - Use documented project wrappers and their guards, or the installed `~/.agents/skills/odoo19/oasis --project /absolute/project <command>` entry point (alias: `odoo19`) with its packaged tools and project-local profile. Missing project wrappers alone are not a blocker for an authorized global entry point; if neither guarded interface is available, report unavailable. Never bypass guards with raw SQL or guessed commands.
 - Destructive reset requires an exact named disposable test database, a guarded installed interface enforcing the project's namespace, explicit authorization, and an active-session check. Never auto-stop or terminate sessions. Default `test-module`/`verify-module` runs create and drop their own `_r<hex>` databases; only the user runs `gc --apply` for orphans.
-- Each checkout owns its databases: with a checkout slug, names must start with `<dev_prefix><slug>_` or `<test_prefix><slug>_` and defaults include the slug. `update-module` and `odoo-shell` refuse a missing database; create it with `install-module` or `create-database` only when authorized.
-- Each checkout controls only its own Odoo server: `start` refuses a second server for the checkout and picks its port (main: `http_port` of `odoo.conf`; linked worktree: the next free one), `stop` stops only that server, and `stop --database` stops the shared PostgreSQL service only when no other checkout serves. Never stop another checkout's server or the database to free a port; pass `--http-port` instead. Test runs use their own free port.
+- Each checkout owns its databases and its Odoo server. Never use another checkout's databases, stop another checkout's server, or stop the shared database to free a port. Apply the [checkout resource rules](references/checkout-resources.md).
 - Treat fresh install, current-code update, historical migration, tests, and UI checks as distinct evidence.
 
 ## Decision Gates
 
-- Missing version proof, guard, installed interface, database name, or consent: stop that operation and report unavailable or request focused authorization.
-- Metadata/security/data/view changes: check project's fresh-install/update requirements.
-- Historical migration: prepare the required older baseline only with separately authorized tooling; current-code update is not equivalent.
+| Situation | Action |
+| --- | --- |
+| Missing version proof, guard, installed interface, database name, or consent | Stop that operation; report unavailable or request focused authorization |
+| Metadata, security, data or view change | Check the project's fresh-install and update requirements |
+| Historical migration | Prepare the required older baseline only with separately authorized tooling; a current-code update is not equivalent |
 
 ## Execution Steps
 
@@ -40,3 +41,4 @@ Report module, exact database, commands and exit codes, phase/baseline evidence,
 ## References
 
 - [Project capability contract](../odoo19-environment/references/project-contract.md).
+- [Checkout resource rules](references/checkout-resources.md).

@@ -9,6 +9,32 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-19
+
+Operational fixes from an audit of the Gentle Shell layer.
+
+### Added
+
+- `oasis_test_summary` (agent tool): the summary of a compact test run started in the
+  background, from the text `test-module --compact` printed; it reads only the run logs that
+  output names. The subagent overlay lists it: run `/oasis setup` to refresh an installed one.
+- `oasis_test_module` reports the elapsed time every 15 seconds while the suite runs.
+- `/oasis` completes its subcommands (`setup`, `doctor`, `migrate`, `worktree`).
+
+### Fixed
+
+- The bash guard no longer blocks text bash would not run: substitutions inside single
+  quotes and heredoc bodies written to a file (commit messages, pull request bodies and
+  generated scripts that mention `psql`, `dropdb`, `odoo-bin` or the user-run commands). A
+  heredoc fed to a shell and substitutions in double quotes stay blocked.
+
+### Changed
+
+- The six `odoo19-*` skills follow the Gentle Shell skill style guide more closely: decision
+  gates are tables, each skill says when not to use it and which sibling applies, and long
+  rules moved to local references (`test-targets.md`, `checkout-resources.md`,
+  `operation-selection.md`) without losing content. Skill names and triggers are unchanged.
+
 ## [0.4.0] - 2026-11-19
 
 Location and version independence: one `oasis-workspace.toml` per project instead of a
@@ -380,7 +406,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/skhol3/oasis/releases/tag/v0.4.1
 [0.4.0]: https://github.com/skhol3/oasis/releases/tag/v0.4.0
 [0.3.0]: https://github.com/skhol3/oasis/releases/tag/v0.3.0
 [0.2.0]: https://github.com/skhol3/oasis/releases/tag/v0.2.0

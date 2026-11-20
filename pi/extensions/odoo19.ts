@@ -7,13 +7,14 @@ import { Type } from "typebox";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { subcommandCompletions } from "../lib/commands.ts";
 import { blockedProgram, blockReason, MIGRATE, WORKTREE_INIT } from "../lib/bash-guard.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
 import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
-import { formatPlain, formatTestRun, testModuleArgs } from "../lib/tools.ts";
+import { formatBackgroundRun, formatPlain, formatTestRun, testModuleArgs } from "../lib/tools.ts";
 
 const OASIS = fileURLToPath(new URL("../../oasis", import.meta.url));
 const CONFIG_PY = fileURLToPath(new URL("../../tools/config.py", import.meta.url));
@@ -24,6 +25,7 @@ const MAX_LINES = 60;
 // model-info output is already compact; a larger cap keeps --methods/--all-fields useful.
 const MODEL_INFO_MAX_LINES = 200;
 const TEST_TIMEOUT_MS = 60 * 60 * 1000;
+const HEARTBEAT_MS = 15 * 1000;
 const TOOL_TIMEOUT_MS = 10 * 60 * 1000;
 // doctor's probes (git, docker compose, the environment's Python) each stop after 20 s.
 const DOCTOR_TIMEOUT_MS = 2 * 60 * 1000;
@@ -246,6 +248,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   // `/oasis`, and `/odoo19` as its alias: one handler, the same subcommands.
   const command: Parameters<ExtensionAPI["registerCommand"]>[1] = {
     description: COMMAND_DESCRIPTION,
+    getArgumentCompletions: (prefix: string) => subcommandCompletions(prefix),
     handler: async (args, ctx) => {
       const argument = (args ?? "").trim();
       if (argument === "setup") {
@@ -366,7 +369,11 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       "database is reset first instead). Returns the result line and " +
       "failures with the end of each traceback; full logs stay in the profile logs directory (default dev/logs/odoo19).",
     promptSnippet: "Run an Odoo 19 module's tests and get only the result and failures",
-    promptGuidelines: ["Use oasis_test_module instead of running odoo-bin --test-tags through bash."],
+    promptGuidelines: [
+      "Use oasis_test_module instead of running odoo-bin --test-tags through bash.",
+      "For a suite expected to take minutes, run `oasis --project <root> test-module --compact <module>` with the " +
+        "background shell tool instead of oasis_test_module, then pass what it printed to oasis_test_summary.",
+    ],
     parameters: Type.Object({
       module: Type.String({ description: "Technical module name" }),
       database: Type.Optional(Type.String({
@@ -375,11 +382,46 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       maxFailures: Type.Optional(Type.Integer({ minimum: 0, maximum: 50, default: 10 })),
       traceLines: Type.Optional(Type.Integer({ minimum: 0, maximum: 40, default: 6 })),
     }),
-    async execute(_id, params, signal, _onUpdate, ctx) {
+    async execute(_id, params, signal, onUpdate, ctx) {
       const root = await requireRoot(ctx.cwd);
-      const result = await run(root, testModuleArgs(params), signal, TEST_TIMEOUT_MS);
+      // The run is silent until it ends: report elapsed time so a long suite is not mistaken for a hang.
+      const started = Date.now();
+      const heartbeat = setInterval(() => {
+        const seconds = Math.round((Date.now() - started) / 1000);
+        onUpdate?.({
+          content: [{ type: "text", text: `running tests of ${params.module}: ${seconds} s` }],
+          details: { running: true, seconds },
+        });
+      }, HEARTBEAT_MS);
+      try {
+        const result = await run(root, testModuleArgs(params), signal, TEST_TIMEOUT_MS);
+        const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };
+        return text(formatTestRun(params.module, result, readLog, options, MAX_LINES), { exit: result.code });
+      } finally {
+        clearInterval(heartbeat);
+      }
+    },
+  });
+
+  registerWithAlias({
+    name: "oasis_test_summary",
+    defaultActive: false,
+    label: "Odoo 19 test summary",
+    description:
+      "Summarize a test run started outside oasis_test_module (for example in the background): pass the text " +
+      "that `oasis --project <root> test-module --compact <module>` printed. Reads only the run logs it names and " +
+      "returns the same summary as oasis_test_module.",
+    promptSnippet: "Summarize a compact Odoo 19 test run that finished in the background",
+    parameters: Type.Object({
+      module: Type.String({ description: "Technical module name" }),
+      output: Type.String({ description: "What test-module --compact printed (phase, stdout_log and stderr_log lines)" }),
+      maxFailures: Type.Optional(Type.Integer({ minimum: 0, maximum: 50, default: 10 })),
+      traceLines: Type.Optional(Type.Integer({ minimum: 0, maximum: 40, default: 6 })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      await requireRoot(ctx.cwd);
       const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };
-      return text(formatTestRun(params.module, result, readLog, options, MAX_LINES), { exit: result.code });
+      return text(formatBackgroundRun(params.module, params.output, readLog, options, MAX_LINES));
     },
   });
 

@@ -55,3 +55,34 @@ export function formatTestRun(
     `logs: ${values.stdout_log} ${stderrLog}`.trimEnd(),
   ].join("\n");
 }
+
+const RUN_LOG = /\/odoo19\/(?:[A-Za-z0-9_]+\/)?run-[A-Za-z0-9_]+\/(?:stdout|stderr)\.log$/;
+
+/** Whether a path is a log a compact run writes: stdout.log or stderr.log in <logs>/odoo19/[<checkout>/]run-<id>/. */
+export function isRunLog(path: string): boolean {
+  return path.startsWith("/") && !path.split("/").includes("..") && RUN_LOG.test(path);
+}
+
+/**
+ * Summary of a compact test run that was started outside the tool (for example in the
+ * background): `output` is what `oasis ... test-module --compact` printed. Only the run logs it
+ * names are read.
+ */
+export function formatBackgroundRun(
+  module: string,
+  output: string,
+  readLog: (path: string) => string,
+  options: SummaryOptions,
+  maxLines = 60,
+): string {
+  const values = keyValues(output);
+  if (!values.stdout_log || !isRunLog(values.stdout_log) || (values.stderr_log && !isRunLog(values.stderr_log))) {
+    throw new Error(
+      "Pass the output of `oasis --project <root> test-module --compact <module>`: " +
+        "it must name the run's stdout_log and stderr_log.",
+    );
+  }
+  const code = Number.parseInt(values.exit ?? "", 10);
+  const result = { code: Number.isInteger(code) ? code : 1, stdout: output, stderr: "" };
+  return formatTestRun(module, result, readLog, options, maxLines);
+}

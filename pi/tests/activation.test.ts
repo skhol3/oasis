@@ -4,7 +4,7 @@ import { aliasOf, nextActiveTools, OASIS_TOOLS, TOOL_ALIASES } from "../lib/acti
 
 const OURS = ["odoo19_a", "odoo19_b"];
 
-test("OASIS_TOOLS lists the six layer tools once each", () => {
+test("OASIS_TOOLS lists the layer tools once each", () => {
   assert.deepEqual([...OASIS_TOOLS].sort(), [
     "oasis_check_environment",
     "oasis_find_module",
@@ -12,6 +12,7 @@ test("OASIS_TOOLS lists the six layer tools once each", () => {
     "oasis_model_info",
     "oasis_module_status",
     "oasis_test_module",
+    "oasis_test_summary",
   ]);
 });
 

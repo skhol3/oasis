@@ -1,4 +1,4 @@
 {
-  "gentle-ai-worker": { "add": ["oasis_test_module", "oasis_find_module", "oasis_model_info", "oasis_module_status", "oasis_lint_module", "oasis_check_environment"] },
-  "gentle-ai-verify": { "add": ["oasis_test_module", "oasis_find_module", "oasis_model_info", "oasis_module_status", "oasis_lint_module", "oasis_check_environment"] }
+  "gentle-ai-worker": { "add": ["oasis_test_module", "oasis_test_summary", "oasis_find_module", "oasis_model_info", "oasis_module_status", "oasis_lint_module", "oasis_check_environment"] },
+  "gentle-ai-verify": { "add": ["oasis_test_module", "oasis_test_summary", "oasis_find_module", "oasis_model_info", "oasis_module_status", "oasis_lint_module", "oasis_check_environment"] }
 }
