@@ -9,6 +9,33 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-20
+
+Faster test iteration, and a harness that takes the Odoo series from the configuration. Odoo
+19.0 remains the only supported series.
+
+### Added
+
+- `test-module --reuse`: keeps a working test database between runs (the explicit database,
+  else `tooling.test_database`, else `<test_prefix>[<slug>_]<module>`). When it exists with the
+  module installed, the run updates the module and runs the tests instead of installing it in a
+  new database; `--compact` adds `database_lifecycle=reused mode=<install|update>`.
+  `oasis_test_module` takes `reuse`. Without `--reuse` nothing changes. A run that cannot read
+  the module state stops without touching the database.
+- Capability `test_class_filter`, and `python3 -I -B tools/odoo_versions.py <version> <key>` to
+  read one capability from a shell tool. `test-module --only` asks it.
+
+### Changed
+
+- The Gentle Shell layer names the project's Odoo series from its configuration: the prompt
+  section and `/oasis` status start with `Odoo <series> project` (`Odoo project` when the
+  configuration cannot be read) instead of a fixed `Odoo 19` / `odoo19 project:`; the prompt
+  names the matching `odoo<major>-*` skills; tool labels, descriptions and messages say `Odoo`.
+- Internal: the tools no longer write the series. The release and runtime checks,
+  `check-environment` and `lint-module` take it from the configuration (`ODOO_VERSION`); their
+  output for 19.0 is unchanged. A test fails when a tool names the series outside the
+  capability table.
+
 ## [0.5.0] - 2026-11-20
 
 Day-to-day operation: narrower test runs, compact updates and the migration plan for agents.
@@ -454,7 +481,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/skhol3/oasis/releases/tag/v0.6.0
 [0.5.0]: https://github.com/skhol3/oasis/releases/tag/v0.5.0
 [0.4.2]: https://github.com/skhol3/oasis/releases/tag/v0.4.2
 [0.4.1]: https://github.com/skhol3/oasis/releases/tag/v0.4.1

@@ -46,8 +46,8 @@ compose() {
 }
 
 require_source() {
-  if ! python3 -B "$(dirname "${BASH_SOURCE[0]}")/config.py" --release "$ODOO_SOURCE/odoo/release.py"; then
-    printf 'Odoo source must declare release 19.0.\n' >&2
+  if ! python3 -B "$(dirname "${BASH_SOURCE[0]}")/config.py" --release "$ODOO_SOURCE/odoo/release.py" "$ODOO_VERSION"; then
+    printf 'Odoo source must declare release %s.\n' "$ODOO_VERSION" >&2
     return 2
   fi
 }
@@ -67,7 +67,7 @@ require_python_version() {
 }
 
 require_runtime() {
-  local path odoo_version
+  local path odoo_version series
   for path in "$PYTHON" "$ODOO_BIN" "$ODOO_CONFIG" "$COMPOSE_FILE" "$ENV_FILE"; do
     if [[ ! -e "$path" ]]; then
       printf 'Missing required local path: %s\n' "$path" >&2
@@ -77,8 +77,10 @@ require_runtime() {
   require_source
   require_python_version
   odoo_version=$("$PYTHON" "$ODOO_BIN" --version 2>/dev/null) || return $?
-  if [[ ! "$odoo_version" =~ (^|[^0-9])19\.0([^0-9]|$) ]]; then
-    printf 'Odoo runtime 19.0 is required.\n' >&2
+  # The configured series as a whole number in what odoo-bin --version prints.
+  series="(^|[^0-9])${ODOO_VERSION//./\\.}([^0-9]|\$)"
+  if [[ ! "$odoo_version" =~ $series ]]; then
+    printf 'Odoo runtime %s is required.\n' "$ODOO_VERSION" >&2
     return 2
   fi
 }
@@ -284,6 +286,24 @@ database_exists() {
   require_database_name "$database"
   wait_for_database >/dev/null
   [[ "$(database_psql -Atqc "SELECT 1 FROM pg_database WHERE datname = '$database'")" == 1 ]]
+}
+
+# The state of a module in an existing database: ir_module_module.state, `uninitialized` when
+# Odoo never initialized the database, `not_found` when it has no such module. A query that
+# fails returns its status: callers run this in a command substitution, where errexit is off.
+module_state() {
+  local module=$1 database=$2 initialized row
+  initialized=$(database_query "$database" -Atqc "SELECT to_regclass('public.ir_module_module') IS NOT NULL") || return $?
+  if [[ "$initialized" != t ]]; then
+    printf 'uninitialized\n'
+    return 0
+  fi
+  row=$(database_query "$database" -AtF $'\t' -qc "SELECT state, COALESCE(latest_version, '') FROM ir_module_module WHERE name = '$module'") || return $?
+  if [[ -z "$row" ]]; then
+    printf 'not_found\n'
+    return 0
+  fi
+  printf '%s\n' "${row%%$'\t'*}"
 }
 
 list_managed_databases() {

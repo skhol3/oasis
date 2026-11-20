@@ -1,6 +1,6 @@
 {
   "name": "oasis-odoo19",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "description": "Odoo 19 layer for Gentle Shell (Pi): guarded odoo19 tools with compact, token-saving output.",
   "type": "module",

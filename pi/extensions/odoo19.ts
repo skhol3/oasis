@@ -1,4 +1,4 @@
-// Gentle Shell (Pi) layer for the Odoo 19 bundle. It wraps the agent-agnostic
+// Gentle Shell (Pi) layer for the Odoo bundle. It wraps the agent-agnostic
 // `oasis` entry point shipped in this repository; it changes nothing in Pi or
 // Gentle Shell and keeps every guard inside the core tools. The pre-0.4.0 names stay as
 // aliases: `/odoo19` and the inactive odoo19_* tools.
@@ -72,7 +72,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
 
   async function requireRoot(cwd: string): Promise<string> {
     const root = await projectRoot(cwd);
-    if (!root) throw new Error(`Not an Odoo 19 project: ${notProject(cwd)}.`);
+    if (!root) throw new Error(`Not an Odoo project: ${notProject(cwd)}.`);
     return root;
   }
 
@@ -93,6 +93,21 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     const config = await pi.exec("python3", ["-B", CONFIG_PY, root], { cwd: root, timeout: STATUS_TIMEOUT_MS });
     if (config.code === 0) return { config: parseAssignments(config.stdout) };
     return { error: config.stderr.trim() || `config.py exited with ${config.code}` };
+  }
+
+  // The project's Odoo series (ODOO_VERSION of tools/config.py), read once per root; a failed
+  // read is retried on the next call.
+  const versions = new Map<string, string>();
+  async function projectVersion(root: string): Promise<string | undefined> {
+    const known = versions.get(root);
+    if (known) return known;
+    try {
+      const version = (await profileConfig(root)).config?.ODOO_VERSION;
+      if (version) versions.set(root, version);
+      return version;
+    } catch {
+      return undefined;
+    }
   }
 
   function addonRoots(config: Record<string, string>): string[] {
@@ -171,7 +186,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     confirm: (title: string, message: string) => Promise<boolean> } }, feature: string, branch: string): Promise<void> {
     const root = await projectRoot(ctx.cwd);
     if (!root) {
-      ctx.ui.notify(`Not an Odoo 19 project: ${notProject(ctx.cwd)}`, "warning");
+      ctx.ui.notify(`Not an Odoo project: ${notProject(ctx.cwd)}`, "warning");
       return;
     }
     const args = ["worktree-init", feature, branch];
@@ -199,7 +214,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     confirm: (title: string, message: string) => Promise<boolean> } }): Promise<void> {
     const root = await projectRoot(ctx.cwd);
     if (!root) {
-      ctx.ui.notify(`Not an Odoo 19 project: ${notProject(ctx.cwd)}`, "warning");
+      ctx.ui.notify(`Not an Odoo project: ${notProject(ctx.cwd)}`, "warning");
       return;
     }
     try {
@@ -231,7 +246,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     Promise<void> {
     const root = await projectRoot(ctx.cwd);
     if (!root) {
-      ctx.ui.notify(`Not an Odoo 19 project: ${notProject(ctx.cwd)}`, "warning");
+      ctx.ui.notify(`Not an Odoo project: ${notProject(ctx.cwd)}`, "warning");
       return;
     }
     try {
@@ -244,7 +259,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   }
 
   const COMMAND_DESCRIPTION =
-    "Odoo 19 project status: profile, addon modules, databases, git worktree and this checkout's server; " +
+    "Odoo project status: profile, addon modules, databases, git worktree and this checkout's server; " +
     SUBCOMMAND_SUMMARY;
   // One entry per subcommand of the table in lib/commands.ts, which also drives completion and usage.
   type CommandContext = Parameters<Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]>[1];
@@ -271,7 +286,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       }
       const root = await projectRoot(ctx.cwd);
       if (!root) {
-        ctx.ui.notify(`Not an Odoo 19 project: ${notProject(ctx.cwd)}`, "warning");
+        ctx.ui.notify(`Not an Odoo project: ${notProject(ctx.cwd)}`, "warning");
         return;
       }
       const content = formatStatus(await projectStatus(root));
@@ -281,7 +296,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   pi.registerCommand("oasis", command);
   pi.registerCommand("odoo19", { ...command, description: `Alias of /oasis. ${COMMAND_DESCRIPTION}` });
 
-  // The oasis_* tools are registered inactive; activate them only in sessions inside an Odoo 19
+  // The oasis_* tools are registered inactive; activate them only in sessions inside an Odoo
   // project so other projects pay no tokens for their schemas and guidelines. Other tools, the
   // odoo19_* aliases included, are untouched.
   pi.on("session_start", async (_event, ctx) => {
@@ -313,7 +328,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     if (!root) return;
     // A checkout without profile names its workspace file (null when the root holds the profile).
     // Name only the oasis tools this session has: a subagent without the overlay has none.
-    const context = projectContext(root, findWorkspaceFile(root), pi.getActiveTools());
+    const context = projectContext(root, findWorkspaceFile(root), pi.getActiveTools(), await projectVersion(root));
     const sections = event.systemPromptOptions?.sections;
     if (sections) {
       sections.odoo19 = context;
@@ -357,15 +372,16 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   registerWithAlias({
     name: "oasis_test_module",
     defaultActive: false,
-    label: "Odoo 19 test module",
+    label: "Odoo test module",
     description:
-      "Run one Odoo 19 module's tests on a new disposable test database dropped afterwards (a given or configured " +
+      "Run one Odoo module's tests on a new disposable test database dropped afterwards (a given or configured " +
       "database is reset first instead). Returns the result line and " +
       "failures with the end of each traceback; full logs stay in the profile logs directory (default dev/logs/odoo19).",
-    promptSnippet: "Run an Odoo 19 module's tests and get only the result and failures",
+    promptSnippet: "Run an Odoo module's tests and get only the result and failures",
     promptGuidelines: [
       "Use oasis_test_module instead of running odoo-bin --test-tags through bash.",
-      "While fixing one failing test, pass `only` (Class or Class.method) to oasis_test_module; run the whole module before finishing.",
+      "While fixing one failing test, pass `only` (Class or Class.method) and `reuse: true` to oasis_test_module; " +
+        "before finishing, run the whole module once without `reuse`.",
       "For a suite expected to take minutes, run `oasis --project <root> test-module --compact <module>` with the " +
         "background shell tool instead of oasis_test_module, then pass what it printed to oasis_test_summary.",
     ],
@@ -377,6 +393,12 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       only: Type.Optional(Type.String({
         description: "Run one test class, or one method of it: Class or Class.method. Default: every test of the module",
         pattern: "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+      })),
+      reuse: Type.Optional(Type.Boolean({
+        description:
+          "Keep the test database between runs: the first run installs the module, later runs update it (seconds " +
+          "instead of a fresh install). Use while iterating; run once without it for the final result",
+        default: false,
       })),
       maxFailures: Type.Optional(Type.Integer({ minimum: 0, maximum: 50, default: 10 })),
       traceLines: Type.Optional(Type.Integer({ minimum: 0, maximum: 40, default: 6 })),
@@ -400,12 +422,12 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   registerWithAlias({
     name: "oasis_test_summary",
     defaultActive: false,
-    label: "Odoo 19 test summary",
+    label: "Odoo test summary",
     description:
       "Summarize a test run started outside oasis_test_module (for example in the background): pass the text " +
       "that `oasis --project <root> test-module --compact <module>` printed. Reads only the run logs it names and " +
       "returns the same summary as oasis_test_module.",
-    promptSnippet: "Summarize a compact Odoo 19 test run that finished in the background",
+    promptSnippet: "Summarize a compact Odoo test run that finished in the background",
     parameters: Type.Object({
       module: Type.String({ description: "Technical module name" }),
       output: Type.String({ description: "What test-module --compact printed (phase, stdout_log and stderr_log lines)" }),
@@ -422,7 +444,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   registerWithAlias({
     name: "oasis_update_module",
     defaultActive: false,
-    label: "Odoo 19 update module",
+    label: "Odoo update module",
     description:
       "Update one module in an existing managed database (dev or test prefix) after changing its models, views " +
       "or data. Returns errors and grouped warnings only; the full log stays on disk.",
@@ -453,7 +475,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   registerWithAlias({
     name: "oasis_find_module",
     defaultActive: false,
-    label: "Odoo 19 find module",
+    label: "Odoo find module",
     description:
       "Find technical module names in the project's addon roots from a functional name, matching words of the " +
       "technical name and the manifest name, summary and category. Returns `technical — manifest name` lines.",
@@ -477,7 +499,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   registerWithAlias({
     name: "oasis_model_info",
     defaultActive: false,
-    label: "Odoo 19 model info",
+    label: "Odoo model info",
     description:
       "Static summary of one Odoo model from the Odoo source and the project's addons (ast only; no Odoo, " +
       "environment or database): definition, extending modules, fields, field overrides and methods.",
@@ -505,7 +527,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   registerWithAlias({
     name: "oasis_module_status",
     defaultActive: false,
-    label: "Odoo 19 module status",
+    label: "Odoo module status",
     description: "Database and module state (missing, uninitialized, installed, version) for a managed database.",
     parameters: Type.Object({
       module: Type.String({ description: "Technical module name" }),
@@ -519,8 +541,8 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   registerWithAlias({
     name: "oasis_check_environment",
     defaultActive: false,
-    label: "Odoo 19 check environment",
-    description: "Check the project's Odoo 19 environment. Quick mode by default; full mode needs the user's consent.",
+    label: "Odoo check environment",
+    description: "Check the project's Odoo environment. Quick mode by default; full mode needs the user's consent.",
     parameters: Type.Object({
       full: Type.Optional(Type.Boolean({ description: "Run full diagnostics", default: false })),
     }),
@@ -532,7 +554,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
   registerWithAlias({
     name: "oasis_lint_module",
     defaultActive: false,
-    label: "Odoo 19 lint module",
+    label: "Odoo lint module",
     description: "Run Pylint with the project's declared rcfile on one module, without starting Odoo.",
     parameters: Type.Object({
       module: Type.String({ description: "Technical module name" }),

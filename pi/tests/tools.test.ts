@@ -183,3 +183,13 @@ test("formatTestRun says so when `only` matched no test", () => {
   assert.ok(!report(10, "TestNope").includes("no test matched"));
   assert.ok(!report(0).includes("no test matched"), "a module without tests is not a filter mistake");
 });
+
+test("testModuleArgs and formatTestRun handle a reused test database", () => {
+  assert.deepEqual(testModuleArgs({ module: "coffee", reuse: true, only: "TestOrder" }), [
+    "test-module", "--compact", "--reuse", "--only", "TestOrder", "coffee",
+  ]);
+  assert.deepEqual(testModuleArgs({ module: "coffee", reuse: false }), ["test-module", "--compact", "coffee"]);
+  const stdout = "phase=tests database=cc_test_coffee exit=0\ndatabase_lifecycle=reused mode=update\nstdout_log=/l/out\nstderr_log=/l/err\n";
+  const report = formatTestRun("coffee", { code: 0, stdout, stderr: "" }, () => "", { maxFailures: 10, traceLines: 6 });
+  assert.equal(report.split("\n")[0], "module=coffee database=cc_test_coffee exit=0 database_lifecycle=reused mode=update");
+});

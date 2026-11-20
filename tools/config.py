@@ -45,6 +45,7 @@ WORKSPACE_VERSION = 1
 # The Python of a profile, and of a workspace that sets [tooling].environment instead of
 # named [environments]; a named environment declares its own within the Odoo series' range.
 LEGACY_PYTHON = '3.12'
+LEGACY_VERSION = '19.0'
 DEFAULT_ENVIRONMENT = 'default'
 MISSING = object()
 
@@ -353,8 +354,8 @@ def resolve(document: dict, root: Path, base: Path, legacy: bool = True) -> dict
         raise InvalidConfig('Invalid tooling configuration.') from exc
     if not isinstance(tooling, dict):
         raise InvalidConfig('Invalid tooling configuration.')
-    if legacy and (tooling.get('version') != '19.0' or tooling.get('python_version') != LEGACY_PYTHON):
-        raise InvalidConfig('Tooling requires Odoo 19.0 and Python 3.12.')
+    if legacy and (tooling.get('version') != LEGACY_VERSION or tooling.get('python_version') != LEGACY_PYTHON):
+        raise InvalidConfig(f'Tooling requires Odoo {LEGACY_VERSION} and Python {LEGACY_PYTHON}.')
     for section, advisory, consumed in (
             ('odoo', 'version', 'version'), ('odoo', 'community', 'community'),
             ('environment', 'config', 'config'), ('database', 'test_prefix', 'test_prefix')):
@@ -439,7 +440,14 @@ def resolve(document: dict, root: Path, base: Path, legacy: bool = True) -> dict
     return output
 
 
-def release_is_19(path: Path) -> bool:
+def release_is(path: Path, version: str) -> bool:
+    """Whether the release.py at path declares the Odoo series version ("<major>.<minor>")."""
+    try:
+        series = tuple(int(part) for part in version.split('.'))
+    except ValueError:
+        return False
+    if len(series) != 2:
+        return False
     try:
         tree = ast.parse(path.read_text(encoding='utf-8'))
     except (OSError, UnicodeError, SyntaxError):
@@ -452,13 +460,14 @@ def release_is_19(path: Path) -> bool:
             if isinstance(value, (ast.Tuple, ast.List)) and len(value.elts) >= 2:
                 return all(isinstance(item, ast.Constant) and type(item.value) is int
                            and item.value == expected
-                           for item, expected in zip(value.elts[:2], (19, 0)))
+                           for item, expected in zip(value.elts[:2], series))
     return False
 
 
 def main() -> int:
-    if len(sys.argv) == 3 and sys.argv[1] == '--release':
-        return 0 if release_is_19(Path(sys.argv[2])) else 2
+    # --release <release.py> [<series>]: the series defaults to the legacy profile's.
+    if len(sys.argv) in (3, 4) and sys.argv[1] == '--release':
+        return 0 if release_is(Path(sys.argv[2]), sys.argv[3] if len(sys.argv) == 4 else LEGACY_VERSION) else 2
     if len(sys.argv) != 2 or not Path(sys.argv[1]).is_absolute():
         print('ERROR: Usage: config.py <absolute-project-root>', file=sys.stderr)
         return 2

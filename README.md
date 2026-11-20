@@ -6,7 +6,7 @@ Built with Gentle Shell (`github.com/Gentleman-Programming/gentle-shell`).
 
 ## Install or update
 
-Releases follow Semantic Versioning and are tagged `vX.Y.Z`; see the [changelog](CHANGELOG.md). Install a released version of the Gentle Shell layer with `gentle-shell install git:github.com/skhol3/oasis@v0.5.0`.
+Releases follow Semantic Versioning and are tagged `vX.Y.Z`; see the [changelog](CHANGELOG.md). Install a released version of the Gentle Shell layer with `gentle-shell install git:github.com/skhol3/oasis@v0.6.0`.
 
 With owner authorization, commit the change, run the test suite, then run `install.sh` from this repository:
 
@@ -25,7 +25,7 @@ The installed package contains the six `odoo19-*` directories, `tools/`, `projec
 A thin Pi package (`package.json`, `pi/`) layered over Gentle Shell. It changes nothing in Gentle Shell or Pi; its goal is fewer tokens in Odoo work by wrapping the guarded `oasis` core with compact output. Install it from a release tag, so the sessions load a fixed copy that work in a local checkout cannot change:
 
 ```bash
-gentle-shell install git:github.com/skhol3/oasis@v0.5.0
+gentle-shell install git:github.com/skhol3/oasis@v0.6.0
 ```
 
 To move to a newer release, remove the old entry and install the new tag (`gentle-shell list` shows the installed entry), then `/reload` open sessions:
@@ -39,7 +39,7 @@ Installing a local checkout (`gentle-shell install /absolute/path/to/oasis`) loa
 
 Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shell and Pi already scan. The layer adds:
 
-- Tools `oasis_test_module`, `oasis_module_status`, `oasis_check_environment` and `oasis_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`, or `<logs>/odoo19/<main|slug>/` with `[tooling].logs`. Other output is capped at 60 lines (head and tail kept). Test summaries also carry up to five `stats:` lines (tests, time, queries per module) and one `warnings:` line grouping repeated warnings by logger and message. They always end with a control line, `log: <lines> lines, <errors> errors, <warnings> warnings`, counted over the full stdout and stderr logs and never capped: lines match `cat stdout.log stderr.log | wc -l`, errors are ERROR/CRITICAL lines except `odoo.tests.result`, and warnings are WARNING lines except `odoo.tests.*`, so the summary can be checked against the logs. While `oasis_test_module` runs it reports the elapsed time every 15 seconds. For a suite that takes minutes, run `oasis --project <root> test-module --compact <module>` with the background shell tool and pass what it printed to `oasis_test_summary`, which returns the same summary and reads only the run logs that output names. `oasis_test_module` takes `only` (`Class` or `Class.method`) to run one test class or one method of the module instead of all of them; when the filter matches nothing, Odoo still reports success, so the summary adds `no test matched only=<value>: check the class and method names`.
+- Tools `oasis_test_module`, `oasis_module_status`, `oasis_check_environment` and `oasis_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`, or `<logs>/odoo19/<main|slug>/` with `[tooling].logs`. Other output is capped at 60 lines (head and tail kept). Test summaries also carry up to five `stats:` lines (tests, time, queries per module) and one `warnings:` line grouping repeated warnings by logger and message. They always end with a control line, `log: <lines> lines, <errors> errors, <warnings> warnings`, counted over the full stdout and stderr logs and never capped: lines match `cat stdout.log stderr.log | wc -l`, errors are ERROR/CRITICAL lines except `odoo.tests.result`, and warnings are WARNING lines except `odoo.tests.*`, so the summary can be checked against the logs. While `oasis_test_module` runs it reports the elapsed time every 15 seconds. For a suite that takes minutes, run `oasis --project <root> test-module --compact <module>` with the background shell tool and pass what it printed to `oasis_test_summary`, which returns the same summary and reads only the run logs that output names. `oasis_test_module` takes `only` (`Class` or `Class.method`) to run one test class or one method of the module instead of all of them; when the filter matches nothing, Odoo still reports success, so the summary adds `no test matched only=<value>: check the class and method names`. With `reuse: true` it keeps the test database between runs (see *Reusing the test database while iterating*); the first line then ends with `database_lifecycle=reused mode=<install|update>`.
 - Tool `oasis_update_module` (module, database): `oasis update-module --compact` on an existing managed database. It returns the exit code, the ERROR/CRITICAL entries with the end of each traceback, grouped warnings, the `log:` control line and the log paths; there is no test result line, since an update runs no tests.
 - Tool `oasis_find_module`: maps a functional name to technical module names by matching the query words against the technical name and the manifest `name`, `summary` and `category` in the profile's addon roots, so the agent needs no `ls` or `grep`.
 - Tool `oasis_model_info`: wraps `oasis model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
@@ -288,7 +288,21 @@ After obtaining authorization to reset the exact destinations:
 ~/.agents/skills/odoo19/oasis --project /absolute/project test-module --compact --only TestOrder.test_total your_module
 ```
 
-`test-module --only <Class[.method]>` runs the tests of one class of the module, or one method of it, by passing `--test-tags /<module>:<Class>[.<method>]`. The module is still installed in the test database first, so it shortens the test phase, not the install; use it while fixing one test and run the whole module before finishing. Any other value exits 2 with `--only takes a test class or Class.method.` before any effect. A class or method that does not exist is not an error for Odoo: the run ends with exit 0 and `0 failed, 0 error(s) of 0 tests`.
+`test-module --only <Class[.method]>` runs the tests of one class of the module, or one method of it, by passing `--test-tags /<module>:<Class>[.<method>]`. The module is still installed in the test database first, so it shortens the test phase, not the install; use it while fixing one test and run the whole module before finishing. Any other value exits 2 with `--only takes a test class or Class.method.` before any effect. A class or method that does not exist is not an error for Odoo: the run ends with exit 0 and `0 failed, 0 error(s) of 0 tests`. Whether the series takes a class filter comes from the capability table (`test_class_filter`); a series without it refuses with `--only is not available for Odoo <series>.`
+
+### Reusing the test database while iterating
+
+```bash
+~/.agents/skills/odoo19/oasis --project /absolute/project test-module --compact --reuse --only TestOrder.test_total your_module
+```
+
+Installing a module in a new database usually takes far longer than its tests. `test-module --reuse` keeps a working test database between runs:
+
+- Name: the explicit `test_database` argument, else `tooling.test_database`, else `<test_prefix><module>` (`<test_prefix><slug>_<module>` in a checkout with a slug). The same name rules apply as for any explicit test database.
+- When the database exists and the module is installed in it, the run updates the module (`-u <module>`) and runs the tests. Otherwise the database is reset and the module installed, exactly as without `--reuse`.
+- Nothing is dropped at the end, and `gc` does not touch it: remove it with `drop-database` when you are done. Run reuse targets sequentially.
+- With `--compact`, the line after `phase=tests ...` is `database_lifecycle=reused mode=<install|update>`.
+- A reused database carries whatever earlier runs left in it and only the tested module is updated. Use it while fixing a test, and run once without `--reuse` (a fresh database) before reporting a result.
 
 | Command | Destinations and evidence |
 | --- | --- |

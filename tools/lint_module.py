@@ -117,7 +117,7 @@ def main():
             return fail('Project environment must provide pylint and pylint-odoo.')
         versions = installed.get('odoo_versions')
         if not isinstance(versions, list) or tooling['version'] not in versions:
-            return fail('Installed pylint-odoo does not support Odoo 19.0.')
+            return fail(f"Installed pylint-odoo does not support Odoo {tooling['version']}.")
         argv = [python, '-I', '-B', '-m', 'pylint', '--rcfile=' + str(rcfile),
                 '--valid-odoo-versions=' + tooling['version'],
                 '--py-version=' + tooling['python_version'], '--persistent=no', '--', str(module)]
