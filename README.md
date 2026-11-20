@@ -265,9 +265,9 @@ referenced by (3):
 ```
 
 - `defined:` names the file, line and kind: `record <model>`, `template` or `menuitem`. Its fields follow in document order (at most 12, values cut at 60 characters; a `ref` is shown as its full id; `arch` is left out). A base view also gets `type:`.
-- `also written in:` lists other data files that write on the same id (at most ten); the first one in scan order is the definition.
+- `also written in:` lists other data files that write on the same id (at most ten). The definition is the record of the module the id belongs to; without one, the first in scan order.
 - `extended by (<n>):` lists the views whose `inherit_id` is this id.
-- `referenced by (<n>):` lists `file:line` of text references in XML, Python and CSV files (at most 20): the full id anywhere, and inside the defining module also the name alone in `ref`, `parent`, `action` and `groups` attributes, `%(name)d` and `ref('name')`. Definition and `inherit_id` lines are not repeated there.
+- `referenced by (<n>):` lists `file:line` of text references in XML, Python and CSV files (at most 20): the full id anywhere, and inside the defining module also the name alone in `ref`, `parent` and `action` attributes, in comma-separated `groups` lists, `%(name)d` and `ref('name')`. Definition and `inherit_id` lines are not repeated there.
 - Exit status: 0 when found, 1 with `xml id not found: <id>`, 2 for a usage error.
 
 ## Fresh development database with role accounts

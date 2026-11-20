@@ -119,6 +119,7 @@ class XmlInfoTests(unittest.TestCase):
                            '  name: coffee.order.form\n'
                            '  model: coffee.order\n'
                            '  type: form\n'
+                           'also written in: a_coffee_theme/views/theme.xml:4\n'
                            'extended by (2):\n'
                            f'  coffee_loyalty.view_coffee_order_form_loyalty {LOYALTY}:3\n'
                            f'  coffee_shop.view_shop_order_form {SHOP}:4\n')
@@ -148,7 +149,8 @@ class XmlInfoTests(unittest.TestCase):
                            'xml id: coffee.menu_coffee_root\n'
                            f'defined: {CORE}:31 menuitem\n'
                            '  name: Coffee\n'
-                           'referenced by (1):\n'
+                           'referenced by (2):\n'
+                           f'  {CORE}:37\n'
                            f'  {SHOP}:26\n')
         self.assert_result('xmlid-info', ('coffee_loyalty.report_order',), 0,
                            'xml id: coffee_loyalty.report_order\n'
@@ -177,6 +179,59 @@ class XmlInfoTests(unittest.TestCase):
                            f'also written in: {SHOP}:29\n'
                            'referenced by (1):\n'
                            f'  {CORE}:29\n')
+
+    def test_a_name_inside_a_groups_list_is_a_reference(self):
+        self.assert_result('xmlid-info', ('coffee.group_coffee_manager',), 0,
+                           'xml id: coffee.group_coffee_manager\n'
+                           f'defined: {CORE}:34 record res.groups\n'
+                           '  name: Coffee manager\n'
+                           'referenced by (1):\n'
+                           f'  {CORE}:38\n')
+
+    def test_long_lists_are_capped_with_the_count_of_the_rest(self):
+        scratch = self.temp / 'capped'
+        project = scratch / 'project'
+        addons = scratch / 'source/odoo/addons'
+        (scratch / 'source/odoo/odoo/addons').mkdir(parents=True)
+        (project / 'addons').mkdir(parents=True)
+        (project / '.odoo19-agent.toml').write_text((PROJECT / '.odoo19-agent.toml').read_text())
+
+        def module(name, files):
+            (addons / name).mkdir(parents=True)
+            (addons / name / '__manifest__.py').write_text("{'name': 'x'}\n")
+            for file, text in files.items():
+                (addons / name / file).write_text(text)
+
+        fields = ''.join(f'<field name="f{index:02d}">{"v" * 70}</field>' for index in range(14))
+        module('core', {'data.xml': f'<odoo>\n<record id="thing" model="x.thing">{fields}</record>\n</odoo>\n',
+                        **{f'use{index:02d}.py': "REF = 'core.thing'\n" for index in range(23)}})
+        for index in range(12):
+            module(f'writer{index:02d}', {'data.xml': '<odoo>\n<record id="core.thing" model="x.thing"/>\n</odoo>\n'})
+        module('views', {'base.xml': '<odoo><record id="v" model="ir.ui.view"><field name="model">x.thing</field>'
+                                     '<field name="arch" type="xml"><form/></field></record></odoo>',
+                         **{f'broken{index}.xml': '<odoo><!-- x.thing -->' for index in range(7)}})
+        env = {**self.env}
+
+        def run(command, *args):
+            return subprocess.run([sys.executable, '-I', '-B', str(ROOT / 'oasis'), '--project', str(project),
+                                   command, *args], cwd=self.temp, env=env, text=True, capture_output=True)
+
+        result = run('xmlid-info', 'core.thing')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[:2], ['xml id: core.thing', 'defined: core/data.xml:2 record x.thing'])
+        self.assertEqual(lines[2], '  f00: ' + 'v' * 59 + '…')
+        self.assertEqual(lines[13:15], ['  f11: ' + 'v' * 59 + '…', '  +2 more fields'])
+        self.assertEqual(lines[15:26], [f'also written in: writer{index:02d}/data.xml:2' for index in range(10)]
+                         + ['also written in: +2 more files'])
+        self.assertEqual(lines[26], 'referenced by (23):')
+        self.assertEqual(lines[27:], [f'  core/use{index:02d}.py:1' for index in range(20)] + ['  +3 more'])
+        result = run('view-info', 'x.thing')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout.splitlines(),
+                         ['model: x.thing — 1 view, 0 extensions', 'form views.v views/base.xml:1']
+                         + [f'skipped: views/broken{index}.xml (XML error at line 1)' for index in range(5)]
+                         + ['skipped: +2 more files'])
 
     def test_unknown_ids_and_usage(self):
         self.assert_result('xmlid-info', ('coffee.no_such_record',), 1, '', 'xml id not found: coffee.no_such_record\n')

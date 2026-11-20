@@ -37,7 +37,7 @@ XMLID_HELP = XMLID_USAGE + '''
 Show where one XML id is defined (record, template or menuitem) with its fields, the views
 that extend it and the files that reference it, without starting Odoo. References are found as
 text in XML, Python and CSV files: the full id anywhere, and inside the defining module also
-the name alone in ref, inherit_id, parent, action and groups attributes, %(name)d and ref('name').
+the name alone in ref, parent and action attributes, groups lists, %(name)d and ref('name').
 The same roots and skipped directories as view-info apply.
 '''
 MODEL = re.compile(r'[a-z0-9_]+(\.[a-z0-9_]+)*')
@@ -194,6 +194,12 @@ def scan(values, wanted):
     return records, skipped
 
 
+def owns(record):
+    """Whether the record is written by the module its XML id belongs to: the definition, when
+    other modules also write on the id."""
+    return record['module'] == record['id'].split('.', 1)[0]
+
+
 def is_view(record):
     return record['model'] == 'ir.ui.view'
 
@@ -241,8 +247,9 @@ def view_info(values, model, kind, module):
     records, skipped = scan(values, lambda content: encoded in content or b'inherit_id' in content)
     views = {}
     for record in records:
-        if is_view(record):
-            views.setdefault(record['id'], record)  # the first definition of an id wins
+        # The owning module's record is the view; without one, the first in scan order.
+        if is_view(record) and (record['id'] not in views or (owns(record) and not owns(views[record['id']]))):
+            views[record['id']] = record
 
     def model_of(record, seen=()):
         if record['fields'].get('model'):
@@ -315,7 +322,13 @@ def references(values, xml_id, definitions):
     model_info = sibling('model_info')
     owner, name = xml_id.split('.', 1)
     full = re.compile(r'(?<![\w.])' + re.escape(xml_id) + r'(?![\w.])')
-    short = re.compile(r'''(?:\b(?:ref|parent|action|groups)=["']|%\(|\bref\(["'])''' + re.escape(name) + r'''(?=["')])''')
+    short = re.compile(r'''(?:\b(?:ref|parent|action)=["']|%\(|\bref\(["'])''' + re.escape(name) + r'''(?=["')])''')
+    groups = re.compile(r'''\bgroups=["']([^"']*)["']''')
+
+    def in_groups(line):
+        # groups="a,b": a comma-separated list, each item optionally negated with `!`.
+        return any(item.strip().lstrip('!') == name
+                   for match in groups.finditer(line) for item in match.group(1).split(','))
     needle = name.encode()
     defined = {(record['path'], record['line']) for record in definitions}
     found = []
@@ -331,7 +344,7 @@ def references(values, xml_id, definitions):
             for number, line in enumerate(content.decode('utf-8', 'replace').splitlines(), 1):
                 if 'inherit_id' in line or (relative, number) in defined:
                     continue
-                if full.search(line) or (module == owner and short.search(line)):
+                if full.search(line) or (module == owner and (short.search(line) or in_groups(line))):
                     found.append(f'{relative}:{number}')
     return found
 
@@ -340,6 +353,8 @@ def xmlid_info(values, xml_id):
     name = xml_id.split('.', 1)[1].encode()
     records, _skipped = scan(values, lambda content: name in content)
     definitions = [record for record in records if record['id'] == xml_id]
+    # The owning module's record first (stable for the rest): the others write on it.
+    definitions.sort(key=lambda record: not owns(record))
     if not definitions:
         print(f'xml id not found: {xml_id}', file=sys.stderr)
         return 1
