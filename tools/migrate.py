@@ -53,7 +53,8 @@ relative to its directory with the same hashes, and each profile is renamed to
 .odoo19-agent.toml.bak-<stamp>. Advisory sections are not migrated.
 
 Without --apply it prints the plan and changes nothing. With --apply every checkout must load
-the same configuration afterwards; otherwise every change is undone (exit 1).
+the same configuration afterwards; otherwise every change is undone (exit 1). --plan asks for
+the plan explicitly and can never apply: together with --apply it is a usage error.
 '''
 
 
@@ -70,16 +71,18 @@ def sibling(name: str):
 
 
 def usage() -> str:
-    return f'Usage: {os.environ.get("ODOO19_ENTRYPOINT") or "oasis"} migrate [--workspace <dir>] [--apply]'
+    return f'Usage: {os.environ.get("ODOO19_ENTRYPOINT") or "oasis"} migrate [--workspace <dir>] [--apply | --plan]'
 
 
 def parse_arguments(arguments: list[str]):
-    """(apply, workspace or None), or None for a usage error."""
-    apply, workspace, index = False, None, 0
+    """(apply, workspace or None), or None for a usage error (--plan with --apply is one)."""
+    apply, plan, workspace, index = False, False, None, 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument == '--apply' and not apply:
+        if argument == '--apply' and not apply and not plan:
             apply = True
+        elif argument == '--plan' and not plan and not apply:
+            plan = True
         elif argument == '--workspace' and workspace is None and index + 1 < len(arguments):
             index += 1
             workspace = arguments[index]
