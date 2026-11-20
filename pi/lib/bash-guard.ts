@@ -13,9 +13,8 @@ const MIGRATE_SCRIPTS = new Set([MIGRATE, "migrate.py"]);
 const ENTRY_POINTS = new Set(["oasis", "odoo19"]);
 const SHELLS = new Set(["bash", "sh", "zsh", "dash"]);
 // Programs that run what they read from a heredoc; its body is then classified as commands.
-const HEREDOC_READERS = new Set([
-  ...SHELLS, "ksh", "mksh", "ash", "fish", "csh", "tcsh", "source", ".", "eval", "ssh", "su",
-]);
+const HEREDOC_SHELLS = new Set([...SHELLS, "ksh", "mksh", "ash", "fish", "csh", "tcsh"]);
+const HEREDOC_READERS = new Set([...HEREDOC_SHELLS, "source", ".", "eval", "ssh", "su"]);
 const HELP_FLAGS = new Set(["--help", "-h"]);
 const REDIRECTION = /^\d*[<>]/;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -146,13 +145,16 @@ function heredocsOpened(line: string): Heredoc[] {
 /**
  * Whether a command on the heredoc's opening line runs what it reads (`bash <<EOF`,
  * `cat <<EOF | sh`, `docker exec db sh <<EOF`). Only words in command position count, so
- * `git add . && git commit -F - <<EOF` does not. Any command on the line counts, not only the one
- * the heredoc is attached to: the check errs towards classifying the body.
+ * `git add . && git commit -F - <<EOF` does not. A shell name counts as any whole word, since
+ * wrappers this guard does not know also run it (`kubectl exec pod -- sh <<EOF`). Any command on
+ * the line counts, not only the one the heredoc is attached to: the check errs towards
+ * classifying the body.
  */
 function readsCommands(opener: string): boolean {
   return segments(opener).some((segment) => {
     // `bash<<EOF` is one word here; redirections are not part of the command.
     const words = segment.map((word) => word.split(/[<>]/)[0]).filter(Boolean);
+    if (words.some((word) => HEREDOC_SHELLS.has(basename(word)))) return true;
     let i = 0;
     for (;;) {
       while (i < words.length && (ASSIGNMENT.test(words[i]) || KEYWORDS.has(words[i]))) i++;
@@ -170,8 +172,8 @@ function readsCommands(opener: string): boolean {
 /**
  * Separate heredoc bodies from commands. A body is data unless a command on its opening line runs
  * what it reads (see readsCommands): then it stays in `text` and is classified as commands. The
- * opening line includes the lines it continues (`bash \` + newline) and, after a trailing `|`,
- * the line that follows the body. `data` holds the bodies of unquoted heredocs, where bash still
+ * opening line includes the lines it continues and the lines that continue it (`\` + newline;
+ * the body starts after them) and, after a trailing `|`, the line that follows the body. `data` holds the bodies of unquoted heredocs, where bash still
  * runs substitutions. An unterminated heredoc is left as commands.
  */
 function heredocs(command: string): { text: string; data: string[] } {
@@ -183,13 +185,19 @@ function heredocs(command: string): { text: string; data: string[] } {
     text.push(line);
     let opener = line;
     for (let k = i - 1; k >= 0 && lines[k].endsWith("\\"); k--) opener = `${lines[k].slice(0, -1)} ${opener}`;
-    for (const heredoc of heredocsOpened(line)) {
+    const opened = heredocsOpened(line);
+    // Lines that continue the opening line come before the body.
+    while (opened.length > 0 && lines[i].endsWith("\\") && i + 1 < lines.length) {
+      opener = `${opener.slice(0, -1)} ${lines[++i]}`;
+      text.push(lines[i]);
+    }
+    for (const heredoc of opened) {
       const matches = (candidate: string) =>
         (heredoc.stripTabs ? candidate.replace(/^\t+/, "") : candidate) === heredoc.delimiter;
       const end = lines.findIndex((candidate, index) => index > i && matches(candidate));
       if (end < 0) break;
       const body = lines.slice(i + 1, end);
-      const piped = /\|\s*$/.test(line) ? ` ${lines[end + 1] ?? ""}` : "";
+      const piped = /\|\s*$/.test(opener) ? ` ${lines[end + 1] ?? ""}` : "";
       if (readsCommands(opener + piped)) text.push(...body);
       else if (!heredoc.quoted) data.push(body.join("\n"));
       i = end;
