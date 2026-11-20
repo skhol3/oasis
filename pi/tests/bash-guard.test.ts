@@ -178,6 +178,9 @@ test("text that bash would not run is not a command", () => {
     "cat >> README.md <<EOF\nodoo-bin shell -d x\nEOF",
     "cat <<-'END' > notes.md\n\tdropdb x\n\tEND\necho done",
     "echo \"it's fine\" && echo 'ok'",
+    "git commit -m 'fix #12: explain `psql`'",
+    "cat > notes.md <<'EOF'\n# psql notes\ndropdb is dangerous\nEOF",
+    "sudo tee /etc/motd <<'EOF'\npsql -l\nEOF",
   ];
   for (const command of allowed) {
     assert.equal(blockedProgram(command), null, command);
@@ -193,6 +196,13 @@ test("text that bash does run stays blocked", () => {
     ["cat <<EOF\n$(psql -Atc 'select 1')\nEOF", "psql"],
     ["cat > f <<'EOF'\ntext\nEOF\npsql -l", "psql"],
     ["echo 'a' ; psql -l", "psql"],
+    ["bash<<EOF\npsql -l\nEOF", "psql"],
+    ["sh<<'EOF'\ndropdb x\nEOF", "dropdb"],
+    ["source /dev/stdin <<'EOF'\ndropdb x\nEOF", "dropdb"],
+    ["ssh host <<'EOF'\npsql -l\nEOF", "psql"],
+    ["echo hi # don't stop\necho $(psql -l)", "psql"],
+    ["true # <<EOF\npsql -l\nEOF", "psql"],
+    ["echo $'it\\'s' $(dropdb x)", "dropdb"],
   ];
   for (const [command, program] of blocked) {
     assert.equal(blockedProgram(command), program, command);
