@@ -169,6 +169,36 @@ test("blockReason for migrate sends the user to /oasis migrate", () => {
   );
 });
 
+test("text that bash would not run is not a command", () => {
+  const allowed = [
+    "git commit -m 'docs: explain `psql` usage'",
+    "gh pr create --body 'run $(dropdb x) never'",
+    "git commit -m 'docs: mention `oasis --project /p migrate`'",
+    "cat > scripts/backup.sh <<'EOF'\npsql -l\nEOF",
+    "cat >> README.md <<EOF\nodoo-bin shell -d x\nEOF",
+    "cat <<-'END' > notes.md\n\tdropdb x\n\tEND\necho done",
+    "echo \"it's fine\" && echo 'ok'",
+  ];
+  for (const command of allowed) {
+    assert.equal(blockedProgram(command), null, command);
+  }
+});
+
+test("text that bash does run stays blocked", () => {
+  const blocked: [string, string][] = [
+    ["git commit -m \"docs: `psql -l`\"", "psql"],
+    ["echo \"it's $(dropdb x)\"", "dropdb"],
+    ["bash <<'EOF'\npsql -l\nEOF", "psql"],
+    ["sudo sh <<EOF\ndropdb x\nEOF", "dropdb"],
+    ["cat <<EOF\n$(psql -Atc 'select 1')\nEOF", "psql"],
+    ["cat > f <<'EOF'\ntext\nEOF\npsql -l", "psql"],
+    ["echo 'a' ; psql -l", "psql"],
+  ];
+  for (const [command, program] of blocked) {
+    assert.equal(blockedProgram(command), program, command);
+  }
+});
+
 test("command -v / -V and which only look up the program", () => {
   for (const command of ["command -v psql", "command -V odoo-bin", "which dropdb", "type psql"]) {
     assert.equal(blockedProgram(command), null, command);

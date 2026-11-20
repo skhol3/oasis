@@ -40,12 +40,28 @@ function basename(word: string): string {
   return word.slice(word.lastIndexOf("/") + 1);
 }
 
-/** Pull out $(...) and `...` bodies so they are classified as commands too. */
-function substitutions(command: string): { outer: string; inner: string[] } {
+/**
+ * Pull out $(...) and `...` bodies so they are classified as commands too. With `quotes`, text
+ * inside single quotes is left alone, as bash does; heredoc bodies pass `quotes = false`, because
+ * quotes are literal there.
+ */
+function substitutions(command: string, quotes = true): { outer: string; inner: string[] } {
   const inner: string[] = [];
   let outer = "";
+  let inDouble = false;
   for (let i = 0; i < command.length; i++) {
-    if (command[i] === "$" && command[i + 1] === "(") {
+    const c = command[i];
+    if (quotes && c === "\\" && i + 1 < command.length) {
+      outer += c + command[++i];
+    } else if (quotes && c === '"') {
+      inDouble = !inDouble;
+      outer += c;
+    } else if (quotes && c === "'" && !inDouble) {
+      const end = command.indexOf("'", i + 1);
+      const stop = end < 0 ? command.length - 1 : end;
+      outer += command.slice(i, stop + 1);
+      i = stop;
+    } else if (c === "$" && command[i + 1] === "(") {
       let depth = 1;
       let j = i + 2;
       for (; j < command.length && depth; j++) {
@@ -55,17 +71,74 @@ function substitutions(command: string): { outer: string; inner: string[] } {
       inner.push(command.slice(i + 2, j - 1));
       outer += " _ ";
       i = j - 1;
-    } else if (command[i] === "`") {
+    } else if (c === "`") {
       const end = command.indexOf("`", i + 1);
       const stop = end < 0 ? command.length : end;
       inner.push(command.slice(i + 1, stop));
       outer += " _ ";
       i = stop;
     } else {
-      outer += command[i];
+      outer += c;
     }
   }
   return { outer, inner };
+}
+
+interface Heredoc {
+  delimiter: string;
+  stripTabs: boolean;
+  quoted: boolean;
+}
+
+/** The heredocs a line opens, ignoring `<<` inside quotes and here-strings (`<<<`). */
+function heredocsOpened(line: string): Heredoc[] {
+  const found: Heredoc[] = [];
+  let quote = "";
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quote) {
+      if (c === quote) quote = "";
+      else if (c === "\\" && quote === '"') i++;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+    } else if (c === "\\") {
+      i++;
+    } else if (c === "<" && line[i + 1] === "<" && line[i + 2] !== "<" && line[i - 1] !== "<") {
+      const match = /^<<(-?)\s*(\\?)(['"]?)([A-Za-z_][A-Za-z0-9_]*)\3/.exec(line.slice(i));
+      if (match) {
+        found.push({ delimiter: match[4], stripTabs: match[1] === "-", quoted: Boolean(match[2] || match[3]) });
+        i += match[0].length - 1;
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * Separate heredoc bodies from commands. A body is data unless a shell reads it (`bash <<EOF`):
+ * then it stays in `text` and is classified as commands. `data` holds the bodies of unquoted
+ * heredocs, where bash still runs substitutions. An unterminated heredoc is left as commands.
+ */
+function heredocs(command: string): { text: string; data: string[] } {
+  const lines = command.split("\n");
+  const text: string[] = [];
+  const data: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    text.push(line);
+    const fedToShell = line.split(/[\s;|&(){}]+/).some((word) => SHELLS.has(basename(word)));
+    for (const heredoc of heredocsOpened(line)) {
+      const matches = (candidate: string) =>
+        (heredoc.stripTabs ? candidate.replace(/^\t+/, "") : candidate) === heredoc.delimiter;
+      const end = lines.findIndex((candidate, index) => index > i && matches(candidate));
+      if (end < 0) break;
+      const body = lines.slice(i + 1, end);
+      if (fedToShell) text.push(...body);
+      else if (!heredoc.quoted) data.push(body.join("\n"));
+      i = end;
+    }
+  }
+  return { text: text.join("\n"), data };
 }
 
 /** Split into simple commands (word lists), honoring quotes and control operators. */
@@ -187,7 +260,9 @@ function classifySegment(words: string[]): string | null {
 
 /** The blocked program a bash command would run directly, or null. */
 export function blockedProgram(command: string): string | null {
-  const { outer, inner } = substitutions(command);
+  const { text, data } = heredocs(command);
+  const { outer, inner } = substitutions(text);
+  for (const body of data) inner.push(...substitutions(body, false).inner);
   for (const body of inner) {
     const found = blockedProgram(body);
     if (found) return found;
