@@ -28,8 +28,9 @@ modules and tests/, migrations/, upgrades/, static/ and i18n/ directories are sk
                         their extensions
   --module <technical>  only the views this module defines, with what each one extends
 
-`unresolved:` lists extensions whose inherited view is not in the scanned roots; `skipped:`
-lists files that are not well-formed XML.
+`unresolved:` lists extensions whose inherited view is not in the scanned roots, with the views
+that extend them; `skipped:` lists files that are not well-formed XML. Long lists are capped
+(40 extensions per view, 10 unresolved, 5 skipped files) and end with the count of the rest.
 '''
 XMLID_USAGE = 'Usage: xmlid-info <module>.<name>'
 XMLID_HELP = XMLID_USAGE + '''
@@ -37,7 +38,8 @@ XMLID_HELP = XMLID_USAGE + '''
 Show where one XML id is defined (record, template or menuitem) with its fields, the views
 that extend it and the files that reference it, without starting Odoo. References are found as
 text in XML, Python and CSV files: the full id anywhere, and inside the defining module also
-the name alone in ref, parent and action attributes, groups lists, %(name)d and ref('name').
+the name alone in ref, parent and action attributes, groups lists, %(name)d, ref('name')
+and CSV cells. Extensions and references list at most 20 entries each.
 The same roots and skipped directories as view-info apply.
 '''
 MODEL = re.compile(r'[a-z0-9_]+(\.[a-z0-9_]+)*')
@@ -51,6 +53,8 @@ FIELD_CAP = 12
 REFERENCE_CAP = 20
 SKIPPED_CAP = 5
 REWRITE_CAP = 10
+EXTENSION_CAP = 40
+UNRESOLVED_CAP = 10
 REFERENCE_SUFFIXES = ('.xml', '.py', '.csv')
 
 
@@ -242,6 +246,14 @@ def base_order(record):
     return (rank, kind, int(priority) if priority.isdigit() else 16, record['id'])
 
 
+def skipped_lines(skipped):
+    """`skipped:` lines for files that are not well-formed XML, at most SKIPPED_CAP."""
+    lines = [f'skipped: {text}' for _module, text in skipped[:SKIPPED_CAP]]
+    if len(skipped) > SKIPPED_CAP:
+        lines.append(f'skipped: +{len(skipped) - SKIPPED_CAP} more files')
+    return lines
+
+
 def view_info(values, model, kind, module):
     encoded = model.encode()
     records, skipped = scan(values, lambda content: encoded in content or b'inherit_id' in content)
@@ -282,7 +294,16 @@ def view_info(values, model, kind, module):
             yield child, depth
             yield from subtree(child, depth + 1)
 
-    extensions = [item for base in bases for item in subtree(base, 1)]
+    def tree_lines(record):
+        """The extensions below a view, at most EXTENSION_CAP, with the count of the rest."""
+        items = list(subtree(record, 1))
+        shown = [f'{"  " * depth}+ {item["id"]} {location(item)}{details(item)}' for item, depth in items[:EXTENSION_CAP]]
+        if len(items) > EXTENSION_CAP:
+            shown.append(f'  +{len(items) - EXTENSION_CAP} more extensions (narrow with --module)')
+        return shown
+
+    # Views that extend an unresolved extension hang below it, so none is dropped.
+    extensions = [item for root in bases + unresolved for item in subtree(root, 1)]
     lines = []
     if module:
         own_bases = [record for record in bases if record['module'] == module]
@@ -297,7 +318,11 @@ def view_info(values, model, kind, module):
                      f'{plural(len(own_extensions), "extension")}')
         lines += [base_line(record) for record in own_bases]
         lines += [f'+ {record["id"]} {location(record)}{details(record)} extends {record["fields"]["inherit_id"]}'
-                  for record in own_extensions]
+                  for record in own_extensions[:EXTENSION_CAP]]
+        if len(own_extensions) > EXTENSION_CAP:
+            lines.append(f'+{len(own_extensions) - EXTENSION_CAP} more extensions')
+        lines += [f'unresolved: {record["id"]} {location(record)} inherits {record["fields"]["inherit_id"]}'
+                  for record in unresolved[:UNRESOLVED_CAP]]
     else:
         if not bases and not unresolved:
             suffix = f' (type {kind})' if kind else ''
@@ -306,14 +331,13 @@ def view_info(values, model, kind, module):
         lines.append(f'model: {model} — {plural(len(bases), "view")}, {plural(len(extensions), "extension")}')
         for base in bases:
             lines.append(base_line(base))
-            lines += [f'{"  " * depth}+ {record["id"]} {location(record)}{details(record)}'
-                      for record, depth in subtree(base, 1)]
-    lines += [f'unresolved: {record["id"]} {location(record)} inherits {record["fields"]["inherit_id"]}'
-              for record in unresolved]
-    lines += [f'skipped: {text}' for _module, text in skipped[:SKIPPED_CAP]]
-    if len(skipped) > SKIPPED_CAP:
-        lines.append(f'skipped: +{len(skipped) - SKIPPED_CAP} more files')
-    print('\n'.join(lines))
+            lines += tree_lines(base)
+        for record in unresolved[:UNRESOLVED_CAP]:
+            lines.append(f'unresolved: {record["id"]} {location(record)} inherits {record["fields"]["inherit_id"]}')
+            lines += tree_lines(record)
+    if len(unresolved) > UNRESOLVED_CAP:
+        lines.append(f'unresolved: +{len(unresolved) - UNRESOLVED_CAP} more')
+    print('\n'.join(lines + skipped_lines(skipped)))
     return 0
 
 
@@ -344,19 +368,23 @@ def references(values, xml_id, definitions):
             for number, line in enumerate(content.decode('utf-8', 'replace').splitlines(), 1):
                 if 'inherit_id' in line or (relative, number) in defined:
                     continue
-                if full.search(line) or (module == owner and (short.search(line) or in_groups(line))):
+                local = module == owner and (short.search(line) or in_groups(line) or (
+                    # A CSV cell holds the bare name (ir.model.access.csv group and model columns).
+                    relative.endswith('.csv') and name in (cell.strip().strip('"') for cell in line.split(','))))
+                if full.search(line) or local:
                     found.append(f'{relative}:{number}')
     return found
 
 
 def xmlid_info(values, xml_id):
     name = xml_id.split('.', 1)[1].encode()
-    records, _skipped = scan(values, lambda content: name in content)
+    records, skipped = scan(values, lambda content: name in content)
     definitions = [record for record in records if record['id'] == xml_id]
     # The owning module's record first (stable for the rest): the others write on it.
     definitions.sort(key=lambda record: not owns(record))
     if not definitions:
-        print(f'xml id not found: {xml_id}', file=sys.stderr)
+        # A file that could not be parsed may be the one that defines it: name those files.
+        print('\n'.join([f'xml id not found: {xml_id}'] + skipped_lines(skipped)), file=sys.stderr)
         return 1
     record = definitions[0]
     kind = 'record ' + record['model'] if record['tag'] == 'record' else record['tag']
@@ -384,14 +412,16 @@ def xmlid_info(values, xml_id):
                   if is_view(other) and other['fields'].get('inherit_id') == xml_id and other['id'] != xml_id]
     if extensions:
         lines.append(f'extended by ({len(extensions)}):')
-        lines += [f'  {other["id"]} {location(other)}' for other in extensions]
+        lines += [f'  {other["id"]} {location(other)}' for other in extensions[:REFERENCE_CAP]]
+        if len(extensions) > REFERENCE_CAP:
+            lines.append(f'  +{len(extensions) - REFERENCE_CAP} more')
     found = references(values, xml_id, definitions)
     if found:
         lines.append(f'referenced by ({len(found)}):')
         lines += [f'  {item}' for item in found[:REFERENCE_CAP]]
         if len(found) > REFERENCE_CAP:
             lines.append(f'  +{len(found) - REFERENCE_CAP} more')
-    print('\n'.join(lines))
+    print('\n'.join(lines + skipped_lines(skipped)))
     return 0
 
 

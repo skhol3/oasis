@@ -14,7 +14,7 @@ LOYALTY = 'coffee_loyalty/views/coffee_order_views.xml'
 SHOP = 'coffee_shop/views/order_views.xml'
 VIEW_USAGE = 'ERROR: Usage: view-info <model> [--type <tag>] [--module <technical>]\n'
 XMLID_USAGE = 'ERROR: Usage: xmlid-info <module>.<name>\n'
-ORDER_VIEWS = f'''model: coffee.order — 3 views, 3 extensions
+ORDER_VIEWS = f'''model: coffee.order — 3 views, 4 extensions
 form coffee.view_coffee_order_form {CORE}:3
   + coffee_loyalty.view_coffee_order_form_loyalty {LOYALTY}:3 (2 changes)
     + coffee_loyalty.view_coffee_order_form_vip {LOYALTY}:16 (1 change, mode=primary)
@@ -22,6 +22,7 @@ form coffee.view_coffee_order_form {CORE}:3
 list coffee.view_coffee_order_list {CORE}:12 priority=20
 kanban coffee_shop.view_shop_order_kanban {SHOP}:11
 unresolved: coffee_shop.view_shop_orphan {SHOP}:18 inherits missing_module.view_gone
+  + coffee_shop.view_shop_orphan_child {SHOP}:33 (1 change)
 skipped: coffee_shop/views/broken.xml (XML error at line 4)
 '''
 
@@ -70,9 +71,9 @@ class XmlInfoTests(unittest.TestCase):
     def test_type_keeps_the_base_views_of_that_type_with_their_extensions(self):
         lines = ORDER_VIEWS.splitlines(keepends=True)
         self.assert_result('view-info', ('coffee.order', '--type', 'form'), 0,
-                           'model: coffee.order — 1 view, 3 extensions\n' + ''.join(lines[1:5]) + lines[8])
+                           'model: coffee.order — 1 view, 3 extensions\n' + ''.join(lines[1:5]) + lines[9])
         self.assert_result('view-info', ('coffee.order', '--type', 'kanban'), 0,
-                           'model: coffee.order — 1 view, 0 extensions\n' + lines[6] + lines[8])
+                           'model: coffee.order — 1 view, 0 extensions\n' + lines[6] + lines[9])
         self.assert_result('view-info', ('coffee.order', '--type', 'search'), 1, '',
                            'no views found for model: coffee.order (type search)\n')
 
@@ -84,10 +85,12 @@ class XmlInfoTests(unittest.TestCase):
                            f'+ coffee_loyalty.view_coffee_order_form_vip {LOYALTY}:16 (1 change, mode=primary)'
                            ' extends coffee_loyalty.view_coffee_order_form_loyalty\n')
         self.assert_result('view-info', ('coffee.order', '--module', 'coffee_shop'), 0,
-                           'model: coffee.order — module coffee_shop: 1 view, 1 extension\n'
+                           'model: coffee.order — module coffee_shop: 1 view, 2 extensions\n'
                            f'kanban coffee_shop.view_shop_order_kanban {SHOP}:11\n'
                            f'+ coffee_shop.view_shop_order_form {SHOP}:4 (1 change)'
                            ' extends coffee.view_coffee_order_form\n'
+                           f'+ coffee_shop.view_shop_orphan_child {SHOP}:33 (1 change)'
+                           ' extends coffee_shop.view_shop_orphan\n'
                            f'unresolved: coffee_shop.view_shop_orphan {SHOP}:18 inherits missing_module.view_gone\n'
                            'skipped: coffee_shop/views/broken.xml (XML error at line 4)\n')
 
@@ -185,7 +188,8 @@ class XmlInfoTests(unittest.TestCase):
                            'xml id: coffee.group_coffee_manager\n'
                            f'defined: {CORE}:34 record res.groups\n'
                            '  name: Coffee manager\n'
-                           'referenced by (1):\n'
+                           'referenced by (2):\n'
+                           '  coffee/security/ir.model.access.csv:2\n'
                            f'  {CORE}:38\n')
 
     def test_long_lists_are_capped_with_the_count_of_the_rest(self):
@@ -207,9 +211,12 @@ class XmlInfoTests(unittest.TestCase):
                         **{f'use{index:02d}.py': "REF = 'core.thing'\n" for index in range(23)}})
         for index in range(12):
             module(f'writer{index:02d}', {'data.xml': '<odoo>\n<record id="core.thing" model="x.thing"/>\n</odoo>\n'})
+        extension = ('<odoo><record id="e{0:02d}" model="ir.ui.view"><field name="inherit_id" ref="v"/>'
+                     '<field name="arch" type="xml"><xpath expr="//form" position="inside"/></field></record></odoo>')
         module('views', {'base.xml': '<odoo><record id="v" model="ir.ui.view"><field name="model">x.thing</field>'
                                      '<field name="arch" type="xml"><form/></field></record></odoo>',
-                         **{f'broken{index}.xml': '<odoo><!-- x.thing -->' for index in range(7)}})
+                         **{f'ext{index:02d}.xml': extension.format(index) for index in range(45)},
+                         **{f'broken{index}.xml': '<odoo><!-- x.thing lost_id -->' for index in range(7)}})
         env = {**self.env}
 
         def run(command, *args):
@@ -225,13 +232,27 @@ class XmlInfoTests(unittest.TestCase):
         self.assertEqual(lines[15:26], [f'also written in: writer{index:02d}/data.xml:2' for index in range(10)]
                          + ['also written in: +2 more files'])
         self.assertEqual(lines[26], 'referenced by (23):')
-        self.assertEqual(lines[27:], [f'  core/use{index:02d}.py:1' for index in range(20)] + ['  +3 more'])
-        result = run('view-info', 'x.thing')
-        self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertEqual(result.stdout.splitlines(),
-                         ['model: x.thing — 1 view, 0 extensions', 'form views.v views/base.xml:1']
+        # The broken files mention the name, so they are named after the references.
+        self.assertEqual(lines[27:], [f'  core/use{index:02d}.py:1' for index in range(20)] + ['  +3 more']
                          + [f'skipped: views/broken{index}.xml (XML error at line 1)' for index in range(5)]
                          + ['skipped: +2 more files'])
+        result = run('view-info', 'x.thing')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        skipped = ([f'skipped: views/broken{index}.xml (XML error at line 1)' for index in range(5)]
+                   + ['skipped: +2 more files'])
+        self.assertEqual(result.stdout.splitlines(),
+                         ['model: x.thing — 1 view, 45 extensions', 'form views.v views/base.xml:1']
+                         + [f'  + views.e{index:02d} views/ext{index:02d}.xml:1 (1 change)' for index in range(40)]
+                         + ['  +5 more extensions (narrow with --module)'] + skipped)
+        result = run('xmlid-info', 'views.v')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout.splitlines()[4:],
+                         ['extended by (45):']
+                         + [f'  views.e{index:02d} views/ext{index:02d}.xml:1' for index in range(20)] + ['  +25 more'])
+        # An id that may be defined in a file that could not be parsed: the files are named.
+        result = run('xmlid-info', 'views.lost_id')
+        self.assertEqual((result.returncode, result.stdout), (1, ''))
+        self.assertEqual(result.stderr.splitlines(), ['xml id not found: views.lost_id'] + skipped)
 
     def test_unknown_ids_and_usage(self):
         self.assert_result('xmlid-info', ('coffee.no_such_record',), 1, '', 'xml id not found: coffee.no_such_record\n')

@@ -29,4 +29,12 @@
     <record id="coffee.view_coffee_order_list" model="ir.ui.view">
         <field name="priority">5</field>
     </record>
+    <!-- Extends a view whose own parent is not in the scanned roots. -->
+    <record id="view_shop_orphan_child" model="ir.ui.view">
+        <field name="name">shop.orphan.child</field>
+        <field name="inherit_id" ref="view_shop_orphan"/>
+        <field name="arch" type="xml">
+            <field name="name" position="after"><field name="note"/></field>
+        </field>
+    </record>
 </odoo>

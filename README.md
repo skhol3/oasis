@@ -246,7 +246,8 @@ skipped: coffee_shop/views/broken.xml (XML error at line 4)
 - Below it, each `+` line is a view that extends it, indented once per level, with the number of changes it makes (`xpath` elements and elements with a `position` attribute).
 - A view without a `model` field takes the model of the view it inherits.
 - `--type` keeps the base views of that type with their extensions; `--module` lists only the views that module defines, each extension with `extends <XML id>`.
-- `unresolved:` is an extension whose inherited view is not in the scanned roots; `skipped:` is a file that is not well-formed XML (at most five are listed).
+- `unresolved:` is an extension whose inherited view is not in the scanned roots, followed by the views that extend it; `skipped:` is a file that is not well-formed XML.
+- Long lists end with the count of the rest: at most 40 extensions per view (`+<n> more extensions (narrow with --module)`), 10 unresolved and 5 skipped files.
 - Exit status: 0 with views, 1 with `no views found for model: <model>`, 2 for a usage error.
 
 `xmlid-info <module>.<name>` shows one XML id:
@@ -266,8 +267,9 @@ referenced by (3):
 
 - `defined:` names the file, line and kind: `record <model>`, `template` or `menuitem`. Its fields follow in document order (at most 12, values cut at 60 characters; a `ref` is shown as its full id; `arch` is left out). A base view also gets `type:`.
 - `also written in:` lists other data files that write on the same id (at most ten). The definition is the record of the module the id belongs to; without one, the first in scan order.
-- `extended by (<n>):` lists the views whose `inherit_id` is this id.
-- `referenced by (<n>):` lists `file:line` of text references in XML, Python and CSV files (at most 20): the full id anywhere, and inside the defining module also the name alone in `ref`, `parent` and `action` attributes, in comma-separated `groups` lists, `%(name)d` and `ref('name')`. Definition and `inherit_id` lines are not repeated there.
+- `extended by (<n>):` lists the views whose `inherit_id` is this id (at most 20).
+- `referenced by (<n>):` lists `file:line` of text references in XML, Python and CSV files (at most 20): the full id anywhere, and inside the defining module also the name alone in `ref`, `parent` and `action` attributes, in comma-separated `groups` lists, `%(name)d`, `ref('name')` and CSV cells (such as the group column of `ir.model.access.csv`). Definition and `inherit_id` lines are not repeated there.
+- `skipped:` lines name files that mention the id but are not well-formed XML; with `xml id not found: <id>` they go to stderr, since one of them may hold the definition.
 - Exit status: 0 when found, 1 with `xml id not found: <id>`, 2 for a usage error.
 
 ## Fresh development database with role accounts

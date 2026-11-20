@@ -26,6 +26,14 @@ export function updateModuleArgs(params: { module: string; database: string }): 
   return ["update-module", "--compact", params.module, params.database];
 }
 
+export function viewInfoArgs(params: { model: string; type?: string; module?: string }): string[] {
+  return [
+    "view-info", params.model,
+    ...(params.type ? ["--type", params.type] : []),
+    ...(params.module ? ["--module", params.module] : []),
+  ];
+}
+
 export function keyValues(output: string): Record<string, string> {
   const values: Record<string, string> = {};
   for (const line of output.split("\n")) {

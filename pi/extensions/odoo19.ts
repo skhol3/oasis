@@ -18,7 +18,7 @@ import { formatStatus, listModules, parseAssignments, parseGit, parseServer, typ
 import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
 import {
-  formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, testModuleArgs, updateModuleArgs,
+  formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, testModuleArgs, updateModuleArgs, viewInfoArgs,
 } from "../lib/tools.ts";
 
 const OASIS = fileURLToPath(new URL("../../oasis", import.meta.url));
@@ -541,10 +541,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       module: Type.Optional(Type.String({ description: "Only the views this technical module defines" })),
     }),
     async execute(_id, params, signal, _onUpdate, ctx) {
-      const args = ["view-info", params.model];
-      if (params.type) args.push("--type", params.type);
-      if (params.module) args.push("--module", params.module);
-      return plain(ctx.cwd, args, signal, MODEL_INFO_MAX_LINES);
+      return plain(ctx.cwd, viewInfoArgs(params), signal, MODEL_INFO_MAX_LINES);
     },
   });
 
