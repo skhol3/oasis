@@ -9,7 +9,7 @@ metadata:
 
 ## Activation Contract
 
-Use when Odoo 19 work touches access control, authentication, controllers, `sudo()`, company isolation, or sensitive records. Project-specific security restrictions still apply.
+Use when Odoo 19 work touches access control, authentication, controllers, `sudo()`, company isolation, or sensitive records. Not for model logic without a permission change (`odoo19-backend`) or for choosing the test layer (`odoo19-testing`). Project-specific security restrictions still apply.
 
 ## Hard Rules
 
@@ -21,14 +21,16 @@ Use when Odoo 19 work touches access control, authentication, controllers, `sudo
 
 ## Decision Gates
 
-- New model: state ACL intent explicitly, including intentionally denied access.
-- Cross-company access: cover permitted and forbidden companies.
-- Public route: verify authentication, CSRF, input, ownership, and response exposure.
-- Security data changes: require focused tests and applicable fresh install/update evidence.
+| Situation | Action |
+| --- | --- |
+| New model | State ACL intent explicitly, including intentionally denied access |
+| Cross-company access | Cover permitted and forbidden companies |
+| Public route | Verify authentication, CSRF, input, ownership, and response exposure |
+| Security data change | Require focused tests and applicable fresh install/update evidence |
 
 ## Execution Steps
 
-1. Map operations to users, groups, models, and company context.
+1. Map operations to users, groups, models, and company context; `oasis --project <root> model-info <model>` (Gentle Shell: `oasis_model_info`) lists a model's fields and extensions without opening source.
 2. Add focused positive and negative public-behavior tests when deterministic.
 3. Implement the narrowest change; verify with authorized project tooling only.
 

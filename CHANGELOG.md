@@ -9,6 +9,13 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Changed
+
+- The six `odoo19-*` skills follow the Gentle Shell skill style guide more closely: decision
+  gates are tables, each skill says when not to use it and which sibling applies, and long
+  rules moved to local references (`test-targets.md`, `checkout-resources.md`,
+  `operation-selection.md`) without losing content. Skill names and triggers are unchanged.
+
 ## [0.4.0] - 2026-11-19
 
 Location and version independence: one `oasis-workspace.toml` per project instead of a
