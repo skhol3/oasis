@@ -20,6 +20,7 @@ class PiLayerTests(unittest.TestCase):
     def test_agent_overlay_template_lists_only_registered_tools(self):
         overlay = json.loads((ROOT / 'pi/agent-overlays/oasis.json').read_text())
         tools = ['oasis_test_module', 'oasis_test_summary', 'oasis_find_module', 'oasis_model_info',
+                 'oasis_view_info', 'oasis_xmlid_info',
                  'oasis_module_status', 'oasis_lint_module', 'oasis_check_environment']
         # The worker also updates modules; verify stays read-only, so it does not get that tool.
         worker = tools[:2] + ['oasis_update_module'] + tools[2:]
