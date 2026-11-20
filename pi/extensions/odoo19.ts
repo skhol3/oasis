@@ -393,7 +393,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
         HEARTBEAT_MS,
       );
       const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };
-      return text(formatTestRun(params.module, result, readLog, options, MAX_LINES), { exit: result.code });
+      return text(formatTestRun(params.module, result, readLog, options, MAX_LINES, params.only), { exit: result.code });
     },
   });
 

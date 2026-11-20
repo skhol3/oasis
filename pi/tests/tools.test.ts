@@ -169,3 +169,17 @@ test("formatUpdateRun passes a refusal through when no log was written", () => {
     "exit=2\nDatabase does not exist: cc_dev_coffee",
   );
 });
+
+test("formatTestRun says so when `only` matched no test", () => {
+  const line = (count: number) =>
+    `2026-11-20 10:00:00,000 1 INFO db odoo.tests.result: 0 failed, 0 error(s) of ${count} tests when loading database 'db'\n`;
+  const stdout = "phase=tests database=db exit=0\nstdout_log=/l/out\nstderr_log=/l/err\n";
+  const report = (count: number, only?: string) =>
+    formatTestRun("coffee", { code: 0, stdout, stderr: "" }, (path) => (path === "/l/out" ? line(count) : ""),
+      { maxFailures: 10, traceLines: 6 }, 60, only);
+  const note = "no test matched only=TestNope: check the class and method names";
+  assert.ok(report(0, "TestNope").split("\n").includes(note));
+  assert.ok(!report(3, "TestNope").includes("no test matched"));
+  assert.ok(!report(10, "TestNope").includes("no test matched"));
+  assert.ok(!report(0).includes("no test matched"), "a module without tests is not a filter mistake");
+});

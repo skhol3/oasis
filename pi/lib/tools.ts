@@ -49,6 +49,7 @@ export function formatTestRun(
   readLog: (path: string) => string,
   options: SummaryOptions,
   maxLines = 60,
+  only?: string,
 ): string {
   const values = keyValues(result.stdout);
   // Without logs the core refused before running tests; its message is already short.
@@ -58,9 +59,15 @@ export function formatTestRun(
   const lifecycle = values.database_lifecycle
     ? ` database_lifecycle=${values.database_lifecycle} dropped=${values.dropped ?? ""}`
     : "";
+  const summary = summarizeTestLog(readLog(values.stdout_log), stderrLog ? readLog(stderrLog) : "", options);
+  // Odoo reports success when a class or method filter matches nothing: say so.
+  const unmatched = only && /^result: .* of 0 tests\b/m.test(summary)
+    ? [`no test matched only=${only}: check the class and method names`]
+    : [];
   return [
     `module=${module} database=${values.database ?? ""} exit=${result.code}${lifecycle}`,
-    summarizeTestLog(readLog(values.stdout_log), stderrLog ? readLog(stderrLog) : "", options),
+    summary,
+    ...unmatched,
     `logs: ${values.stdout_log} ${stderrLog}`.trimEnd(),
   ].join("\n");
 }
