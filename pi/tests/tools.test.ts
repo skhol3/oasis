@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatPlain, formatTestRun, testModuleArgs } from "../lib/tools.ts";
+import { formatPlain, formatTestRun, formatUpdateRun, testModuleArgs, updateModuleArgs } from "../lib/tools.ts";
 
 const STAMP = "2026-11-16 18:00:00,123 4242";
 
@@ -121,4 +121,51 @@ test("formatBackgroundRun reads only run logs named by a compact run", async () 
     "phase=tests exit=0\nstdout_log=/p/logs/odoo19/run-1/stdout.log\nstderr_log=/etc/passwd\n"]) {
     assert.throws(() => formatBackgroundRun("coffee", output, read, { maxFailures: 1, traceLines: 1 }), /test-module --compact/);
   }
+});
+
+test("testModuleArgs passes one class or method with --only", () => {
+  assert.deepEqual(testModuleArgs({ module: "coffee" }), ["test-module", "--compact", "coffee"]);
+  assert.deepEqual(testModuleArgs({ module: "coffee", only: "TestOrder.test_total" }), [
+    "test-module", "--compact", "--only", "TestOrder.test_total", "coffee",
+  ]);
+  assert.deepEqual(testModuleArgs({ module: "coffee", database: "cc_test_x", only: "TestOrder" }), [
+    "test-module", "--compact", "--only", "TestOrder", "coffee", "cc_test_x",
+  ]);
+});
+
+test("formatUpdateRun reports errors and warnings of a compact update, without a test result line", () => {
+  assert.deepEqual(updateModuleArgs({ module: "coffee", database: "cc_dev_coffee" }), [
+    "update-module", "--compact", "coffee", "cc_dev_coffee",
+  ]);
+  const logs: Record<string, string> = {
+    "/p/logs/odoo19/run-a/stdout.log": [
+      "2026-11-20 10:00:00,000 1 INFO cc_dev_coffee odoo.modules.loading: Modules loaded.",
+      "2026-11-20 10:00:01,000 1 WARNING cc_dev_coffee odoo.models: field x has no label",
+      "2026-11-20 10:00:02,000 1 ERROR cc_dev_coffee odoo.modules.registry: Failed to load registry",
+      "Traceback (most recent call last):",
+      "ValueError: bad view",
+      "",
+    ].join("\n"),
+    "/p/logs/odoo19/run-a/stderr.log": "",
+  };
+  const stdout = "phase=update database=cc_dev_coffee exit=1\nstdout_log=/p/logs/odoo19/run-a/stdout.log\nstderr_log=/p/logs/odoo19/run-a/stderr.log\n";
+  const report = formatUpdateRun("coffee", { code: 1, stdout, stderr: "" }, (path) => logs[path], { maxFailures: 10, traceLines: 6 });
+  assert.deepEqual(report.split("\n"), [
+    "module=coffee database=cc_dev_coffee exit=1",
+    "problems: 1 (showing 1)",
+    "- Failed to load registry [odoo.modules.registry]",
+    "    Traceback (most recent call last):",
+    "    ValueError: bad view",
+    "warnings: 1 (odoo.models ×1: field x has no label)",
+    "log: 5 lines, 1 errors, 1 warnings",
+    "logs: /p/logs/odoo19/run-a/stdout.log /p/logs/odoo19/run-a/stderr.log",
+  ]);
+});
+
+test("formatUpdateRun passes a refusal through when no log was written", () => {
+  const refused = { code: 2, stdout: "", stderr: "Database does not exist: cc_dev_coffee\n" };
+  assert.equal(
+    formatUpdateRun("coffee", refused, () => { throw new Error("no log to read"); }, { maxFailures: 10, traceLines: 6 }),
+    "exit=2\nDatabase does not exist: cc_dev_coffee",
+  );
 });

@@ -17,7 +17,9 @@ import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/p
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
 import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
-import { formatBackgroundRun, formatPlain, formatTestRun, testModuleArgs } from "../lib/tools.ts";
+import {
+  formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, testModuleArgs, updateModuleArgs,
+} from "../lib/tools.ts";
 
 const OASIS = fileURLToPath(new URL("../../oasis", import.meta.url));
 const CONFIG_PY = fileURLToPath(new URL("../../tools/config.py", import.meta.url));
@@ -363,6 +365,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     promptSnippet: "Run an Odoo 19 module's tests and get only the result and failures",
     promptGuidelines: [
       "Use oasis_test_module instead of running odoo-bin --test-tags through bash.",
+      "While fixing one failing test, pass `only` (Class or Class.method) to oasis_test_module; run the whole module before finishing.",
       "For a suite expected to take minutes, run `oasis --project <root> test-module --compact <module>` with the " +
         "background shell tool instead of oasis_test_module, then pass what it printed to oasis_test_summary.",
     ],
@@ -370,6 +373,10 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       module: Type.String({ description: "Technical module name" }),
       database: Type.Optional(Type.String({
         description: "Test database to reset and reuse; default: the profile's test_database, else a disposable one",
+      })),
+      only: Type.Optional(Type.String({
+        description: "Run one test class, or one method of it: Class or Class.method. Default: every test of the module",
+        pattern: "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
       })),
       maxFailures: Type.Optional(Type.Integer({ minimum: 0, maximum: 50, default: 10 })),
       traceLines: Type.Optional(Type.Integer({ minimum: 0, maximum: 40, default: 6 })),
@@ -409,6 +416,37 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       await requireRoot(ctx.cwd);
       const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };
       return text(formatBackgroundRun(params.module, params.output, readLog, options, MAX_LINES));
+    },
+  });
+
+  registerWithAlias({
+    name: "oasis_update_module",
+    defaultActive: false,
+    label: "Odoo 19 update module",
+    description:
+      "Update one module in an existing managed database (dev or test prefix) after changing its models, views " +
+      "or data. Returns errors and grouped warnings only; the full log stays on disk.",
+    promptGuidelines: [
+      "Use oasis_update_module instead of running odoo-bin -u through bash; it never creates a database.",
+    ],
+    parameters: Type.Object({
+      module: Type.String({ description: "Technical module name" }),
+      database: Type.String({ description: "Existing managed database (dev or test prefix)" }),
+      maxFailures: Type.Optional(Type.Integer({ minimum: 0, maximum: 50, default: 10 })),
+      traceLines: Type.Optional(Type.Integer({ minimum: 0, maximum: 40, default: 6 })),
+    }),
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const root = await requireRoot(ctx.cwd);
+      const result = await withHeartbeat(
+        () => run(root, updateModuleArgs(params), signal, TEST_TIMEOUT_MS),
+        (seconds) => onUpdate?.({
+          content: [{ type: "text", text: `updating ${params.module} in ${params.database}: ${seconds} s` }],
+          details: { running: true, seconds },
+        }),
+        HEARTBEAT_MS,
+      );
+      const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };
+      return text(formatUpdateRun(params.module, result, readLog, options, MAX_LINES), { exit: result.code });
     },
   });
 

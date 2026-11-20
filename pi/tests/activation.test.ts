@@ -13,6 +13,7 @@ test("OASIS_TOOLS lists the layer tools once each", () => {
     "oasis_module_status",
     "oasis_test_module",
     "oasis_test_summary",
+    "oasis_update_module",
   ]);
 });
 

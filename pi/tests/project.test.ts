@@ -172,6 +172,7 @@ test("projectContext names the root and routes the agent to the oasis tools", ()
   for (const tool of [
     "oasis_test_module",
     "oasis_test_summary",
+    "oasis_update_module",
     "oasis_module_status",
     "oasis_check_environment",
     "oasis_lint_module",

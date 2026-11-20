@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ ${1:-} == --help ]]; then
-  printf 'Usage: %s [--compact] <module> [test_database]\n' "${ODOO19_ENTRYPOINT:-$0}"
+  printf 'Usage: %s [--compact] [--only <Class[.method]>] <module> [test_database]\n' "${ODOO19_ENTRYPOINT:-$0}"
+  printf -- '--only runs the tests of one class of the module, or one method of it (Class.method). The\n'
+  printf 'module is still installed in the test database first.\n'
   printf 'Without a test_database argument or tooling.test_database, each run uses a new disposable\n'
   printf 'database test_prefix + module + _r<6 hex> (test_prefix + slug_ + module + ... in a checkout\n'
   printf 'with a slug; shortened with a hash to fit 56 bytes), created for the run and always dropped\n'
@@ -19,12 +21,22 @@ if [[ ${1:-} == --help ]]; then
 fi
 source "$(dirname "$0")/common.sh"
 compact=false
-if [[ ${1:-} == --compact ]]; then compact=true; shift; fi
 # Internal: a compact run passes the disposable name it reports to the run it starts.
 run_database=''
-if [[ ${1:-} == --disposable-run ]]; then
-  run_database=${2:-}
-  shift $(( $# < 2 ? $# : 2 ))
+only_arguments=()
+while [[ ${1:-} == --* ]]; do
+  case $1 in
+    --compact) compact=true; shift ;;
+    --disposable-run) run_database=${2:-}; shift $(( $# < 2 ? $# : 2 )) ;;
+    --only) only_arguments=(--only "${2:-}"); shift $(( $# < 2 ? $# : 2 )) ;;
+    *) break ;;
+  esac
+done
+# One test class, or one method of it: the only text that reaches --test-tags besides the module.
+only=${only_arguments[1]:-}
+if (( ${#only_arguments[@]} )) && [[ ! "$only" =~ ^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$ ]]; then
+  printf -- '--only takes a test class or Class.method.\n' >&2
+  exit 2
 fi
 module=${1:-}
 require_runtime
@@ -54,13 +66,13 @@ if "$compact"; then
   source "$(dirname "$0")/compact.sh"
   log_directory=$(compact_log_directory)
   status=0
-  run_arguments=("$module" "$database")
+  run_arguments=("${only_arguments[@]}" "$module" "$database")
   # A disposable run (tools/test_temp.py) writes its own cleanup result, `yes` (it left no
   # database behind: dropped, or never created) or `no`, to a new file of this private log
   # directory; a run that ends without writing it (killed) counts as `no`.
   unset ODOO19_RUN_RESULT
   if "$disposable"; then
-    run_arguments=(--disposable-run "$database" "$module")
+    run_arguments=(--disposable-run "$database" "${only_arguments[@]}" "$module")
     export ODOO19_RUN_RESULT="$log_directory/database_lifecycle"
   fi
   # A fresh Bash process preserves errexit inside reset_test_database.
@@ -85,7 +97,7 @@ odoo_config_arguments
 http_port=$(runtime_state ephemeral-port)
 second_port=$(runtime_state ephemeral-port "$http_port")
 odoo_command=("$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "--http-port=$http_port"
-  "$ODOO_SECOND_PORT_OPTION=$second_port" -d "$database" -i "$module" "${ODOO_DEMO_OFF_ARGUMENTS[@]}" --test-tags "/$module" --stop-after-init)
+  "$ODOO_SECOND_PORT_OPTION=$second_port" -d "$database" -i "$module" "${ODOO_DEMO_OFF_ARGUMENTS[@]}" --test-tags "/$module${only:+:$only}" --stop-after-init)
 if "$disposable"; then
   # test_temp.py owns the whole disposable lifecycle and the signals; exec keeps this pid.
   # ODOO19_RUN_RESULT, when set, comes from the --compact parent above (internal).
