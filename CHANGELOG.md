@@ -9,6 +9,29 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-20
+
+Day-to-day operation: narrower test runs, compact updates and the migration plan for agents.
+Additions only; no existing command, option, output or guard changes meaning.
+
+### Added
+
+- `test-module --only <Class[.method]>`: runs one test class of the module, or one method of it
+  (`--test-tags /<module>:<Class>[.<method>]`). The module is still installed first.
+  `oasis_test_module` takes `only` and says so when it matched no test.
+- `update-module --compact`: keeps the log on disk and prints the exit code and the log paths.
+- `oasis_update_module` (agent tool): updates a module in an existing managed database and
+  returns errors and grouped warnings only. The subagent overlay gives it to the worker, not to
+  the read-only verify agent: run `/oasis setup` to refresh an installed overlay.
+- `migrate --plan`: prints the plan and can never apply (`--plan` with `--apply` is a usage
+  error). The bash guard lets an agent run exactly that form, optionally with `--workspace` and
+  a literal absolute path; every other form of `migrate` stays user-run.
+
+### Fixed
+
+- Bash guard: `setsid`, `stdbuf`, `ionice` and `doas` are wrappers, so a blocked program or a
+  heredoc reader behind them is detected.
+
 ## [0.4.2] - 2026-11-20
 
 Follow-ups of the Gentle Shell audit and of the v0.4.1 reviews. No contract changes.
@@ -431,7 +454,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/skhol3/oasis/releases/tag/v0.5.0
 [0.4.2]: https://github.com/skhol3/oasis/releases/tag/v0.4.2
 [0.4.1]: https://github.com/skhol3/oasis/releases/tag/v0.4.1
 [0.4.0]: https://github.com/skhol3/oasis/releases/tag/v0.4.0

@@ -89,6 +89,7 @@ export function projectRootResolver(
 const TOOL_LINES: Record<string, string> = {
   oasis_test_module: "run one module's tests; returns the result line and failures only, full logs stay on disk.",
   oasis_test_summary: "the same summary for a compact run started in the background (pass what it printed).",
+  oasis_update_module: "update a module in an existing managed database; returns errors and warnings only.",
   oasis_module_status: "database and module state for a module.",
   oasis_check_environment: "environment diagnostics (quick by default).",
   oasis_lint_module: "Pylint for one module without starting Odoo.",

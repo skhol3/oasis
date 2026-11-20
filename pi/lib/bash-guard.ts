@@ -17,6 +17,8 @@ const HEREDOC_SHELLS = new Set([...SHELLS, "ksh", "mksh", "ash", "fish", "csh", 
 const HEREDOC_READERS = new Set([...HEREDOC_SHELLS, "source", ".", "eval", "ssh", "su"]);
 const HELP_FLAGS = new Set(["--help", "-h"]);
 const REDIRECTION = /^\d*[<>]/;
+// A path bash passes as written: no expansion, substitution or glob.
+const LITERAL_PATH = /^\/[A-Za-z0-9_.\/-]*$/;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 // Reserved words that precede a command inside compound commands.
 const KEYWORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!"]);
@@ -34,6 +36,10 @@ const WRAPPERS: Record<string, Set<string>> = {
   timeout: new Set(["-s", "-k", "--signal", "--kill-after"]),
   xargs: new Set(["-I", "-n", "-P", "-d", "-L", "-s", "-E"]),
   watch: new Set(["-n", "--interval", "-d", "--differences"]),
+  setsid: new Set(),
+  stdbuf: new Set(["-i", "-o", "-e"]),
+  ionice: new Set(["-c", "-n", "-p"]),
+  doas: new Set(["-u", "-C"]),
 };
 const DOCKER_VALUE_OPTIONS = new Set([
   "-f", "--file", "-p", "--project-name", "--project-directory", "--env-file", "--profile",
@@ -267,9 +273,27 @@ function onlyHelp(args: string[]): boolean {
   return rest.length === 1 && HELP_FLAGS.has(rest[0]);
 }
 
+/**
+ * Whether the arguments only ask migrate for its plan: `--plan` once, optionally `--workspace` with
+ * a literal absolute path, redirections to a file descriptor aside. The tool refuses `--plan` with
+ * `--apply`, so this form cannot apply whatever the words expand to.
+ */
+function onlyPlan(args: string[]): boolean {
+  const rest = args.filter((word) => !REDIRECTION.test(word));
+  let plan = false;
+  for (let i = 0; i < rest.length; i++) {
+    const word = rest[i];
+    if (word === "--plan" && !plan) plan = true;
+    else if (word === "--workspace" && LITERAL_PATH.test(rest[i + 1] ?? "")) i++;
+    else if (!(word.startsWith("--workspace=") && LITERAL_PATH.test(word.slice("--workspace=".length)))) return false;
+  }
+  return plan;
+}
+
 /** A user-run tool when words[index] runs it: its tool script, or an entry point with that command.
  * migrate's scripts count only inside a `tools` directory, since the name is common. Asking only
- * for its help (`--help` or `-h` as the single argument) runs nothing and is not blocked. */
+ * for its help (`--help` or `-h` as the single argument) runs nothing and is not blocked, and
+ * neither is migrate's explicit plan (see onlyPlan). */
 function userRunTool(words: string[], index: number): string | null {
   const word = words[index];
   const name = basename(word);
@@ -285,7 +309,8 @@ function userRunTool(words: string[], index: number): string | null {
     const project = args.indexOf("--project");
     toolArgs = args.filter((arg, k) => arg !== tool && (project < 0 || (k !== project && k !== project + 1)));
   }
-  return tool && !onlyHelp(toolArgs) ? tool : null;
+  if (!tool || onlyHelp(toolArgs) || (tool === MIGRATE && onlyPlan(toolArgs))) return null;
+  return tool;
 }
 
 /**
@@ -369,7 +394,7 @@ export function blockReason(program: string, root: string): string {
   if (program === MIGRATE) {
     return (
       "migrate rewrites the project's configuration files; ask the user to run /oasis migrate in Gentle Shell " +
-      "or the command in a terminal."
+      "or the command in a terminal. To read the plan without changing anything, run it with only --plan."
     );
   }
   if (program === WORKTREE_INIT) {

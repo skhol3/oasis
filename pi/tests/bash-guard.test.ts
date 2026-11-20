@@ -165,7 +165,7 @@ test("blockReason for migrate sends the user to /oasis migrate", () => {
   assert.equal(
     blockReason("migrate", "/work/coffee"),
     "migrate rewrites the project's configuration files; ask the user to run /oasis migrate in Gentle Shell " +
-      "or the command in a terminal.",
+      "or the command in a terminal. To read the plan without changing anything, run it with only --plan.",
   );
 });
 
@@ -187,6 +187,10 @@ test("text that bash would not run is not a command", () => {
     "git commit -m \"fix ssh\" -F - <<'EOF'\ndropdb x\nEOF",
     "gh pr create --title su --body-file - <<'EOF'\npsql -l\nEOF",
     "oasis --project /p migrate --help",
+    "oasis --project /p migrate --plan",
+    "odoo19 --project /p migrate --plan --workspace /work/coffee",
+    "oasis --project /p migrate --workspace=/work/coffee --plan 2>&1 | tail -40",
+    "python3 tools/migrate.py --plan",
     "oasis migrate -h 2>&1 | head -20",
     "python3 tools/migrate.py --help",
     "./tools/worktree-init --help",
@@ -230,6 +234,27 @@ test("text that bash does run stays blocked", () => {
     ["podman exec -i db bash <<'EOF'\ndropdb x\nEOF", "dropdb"],
     ["setsid sh <<'EOF'\npsql -l\nEOF", "psql"],
     ["oasis --project /p migrate --apply --help", "migrate"],
+    ["oasis --project /p migrate --plan --apply", "migrate"],
+    ["oasis --project /p migrate --apply --plan", "migrate"],
+    ["oasis --project /p migrate --apply # --plan", "migrate"],
+    ["oasis --project /p migrate --plan $EXTRA", "migrate"],
+    ["oasis --project /p migrate --plan --workspace $HOME/x", "migrate"],
+    ["oasis --project /p migrate --plan --workspace relative/dir", "migrate"],
+    ["oasis --project /p migrate --workspace --plan --apply", "migrate"],
+    ["oasis --project /p migrate --plan --plan", "migrate"],
+    ["oasis --project /p migrate --plan; oasis --project /p migrate --apply", "migrate"],
+    ["oasis --project /p migrate --plan > plan.txt", "migrate"],
+    ["oasis --project /p worktree-init --plan", "worktree-init"],
+    ["setsid psql -l", "psql"],
+    ["stdbuf -o L dropdb x", "dropdb"],
+    ["ionice -c 3 odoo-bin -d x", "odoo-bin"],
+    ["doas -u postgres psql", "psql"],
+    ["sudo ssh host <<'EOF'\npsql -l\nEOF", "psql"],
+    ["time su postgres <<'EOF'\ndropdb x\nEOF", "dropdb"],
+    ["env A=1 source /dev/stdin <<'EOF'\npsql -l\nEOF", "psql"],
+    ["{ ssh host; } <<'EOF'\npsql -l\nEOF", "psql"],
+    ["if true; then eval \"$(cat)\"; fi <<'EOF'\ndropdb x\nEOF", "dropdb"],
+    ["doas su - postgres <<'EOF'\npsql -l\nEOF", "psql"],
     ["oasis --project /p migrate", "migrate"],
     ["./tools/worktree-init shop feature/x --help", "worktree-init"],
   ];

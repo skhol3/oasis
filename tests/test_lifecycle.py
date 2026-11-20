@@ -239,6 +239,63 @@ exit 0
         self.assertRegex(self.commands.read_text(), '-d cc_test_coffee' + RUN_DATABASE +
                          ' -i coffee --without-demo --test-tags /coffee --stop-after-init')
 
+    def test_only_runs_one_class_or_method(self):
+        for only, tags in (('TestOrder', '/coffee:TestOrder'), ('TestOrder.test_total', '/coffee:TestOrder.test_total')):
+            with self.subTest(only=only):
+                self.commands.unlink(missing_ok=True)
+                result = self.invoke('test-module', '--only', only, 'coffee')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+                self.assertRegex(self.commands.read_text(), '-d cc_test_coffee' + RUN_DATABASE +
+                                 f' -i coffee --without-demo --test-tags {tags} --stop-after-init')
+        self.commands.unlink(missing_ok=True)
+        result = self.invoke('test-module', '--compact', '--only', 'TestOrder', 'coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertRegex(result.stdout, r'(?m)^phase=tests database=cc_test_coffee_r[0-9a-f]{6} exit=0$')
+        self.assertIn(' --test-tags /coffee:TestOrder --stop-after-init', self.commands.read_text())
+
+    def test_only_refuses_anything_but_a_class_or_method(self):
+        for only in ('', 'Test Order', 'a,b', '/other:Test', 'Test.one.two', '-Test', 'Test;id', '.method'):
+            with self.subTest(only=only):
+                result = self.invoke('test-module', '--only', only, 'coffee')
+                self.assertEqual((result.returncode, result.stdout), (2, ''))
+                self.assertEqual(result.stderr, '--only takes a test class or Class.method.\n')
+                self.unchanged()
+        result = self.invoke('test-module', '--only')
+        self.assertEqual((result.returncode, result.stdout), (2, ''))
+        self.unchanged()
+
+    def test_update_module_compact_keeps_the_log_on_disk(self):
+        self.env['FAKE_EXISTS'] = '1'
+        self.python.write_text(self.python.read_text() +
+            'case " $* " in *" -u "*) echo "update out"; echo "update err" >&2; exit "${FAKE_UPDATE_EXIT:-0}" ;; esac\n')
+        for code in (0, 7):
+            with self.subTest(code=code):
+                self.env['FAKE_UPDATE_EXIT'] = str(code)
+                result = self.invoke('update-module', '--compact', 'coffee', 'cc_dev_coffee')
+                self.assertEqual((result.returncode, result.stderr), (code, ''))
+                lines = result.stdout.splitlines()
+                self.assertEqual(lines[0], f'phase=update database=cc_dev_coffee exit={code}')
+                self.assertEqual([line.split('=', 1)[0] for line in lines[1:]], ['stdout_log', 'stderr_log'])
+                out, err = (Path(line.split('=', 1)[1]) for line in lines[1:])
+                self.assertEqual((out.read_text(), err.read_text()), ('update out\n', 'update err\n'))
+                self.assertEqual({out.stat().st_mode & 0o777, err.stat().st_mode & 0o777}, {0o600})
+                self.assertEqual(out.parent, err.parent)
+                self.assertRegex(str(out), r'/dev/logs/odoo19/run-[^/]+/stdout\.log$')
+        self.assertIn('-d cc_dev_coffee -u coffee --stop-after-init', self.commands.read_text())
+
+    def test_update_module_compact_refuses_before_any_log(self):
+        logs = self.root / 'dev/logs/odoo19'
+        for args, message in (
+                (('coffee', 'other_db'), 'Managed databases must use cc_dev_<name> or cc_test_<name>: other_db\n'),
+                (('coffee', 'cc_dev_coffee'), None)):  # the database does not exist
+            with self.subTest(args=args):
+                result = self.invoke('update-module', '--compact', *args)
+                self.assertEqual((result.returncode, result.stdout), (2, ''))
+                if message:
+                    self.assertEqual(result.stderr, message)
+                self.assertFalse(logs.exists() and any(logs.iterdir()))
+        self.assertNotIn(' -u ', self.commands.read_text() if self.commands.exists() else '')
+
     def test_custom_prefixes_and_verify_distinct_names(self):
         path = self.root / '.odoo19-agent.toml'
         path.write_text(PROFILE.replace('cc_dev_', 'demo_dev_').replace('cc_test_', 'demo_test_'))

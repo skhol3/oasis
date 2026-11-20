@@ -59,9 +59,10 @@ function countNewlines(text: string): number {
  * line `log: <lines> lines, <errors> errors, <warnings> warnings`. Its counts are never capped, so
  * a reader can check the summary against the full logs: lines as `cat stdout stderr | wc -l`,
  * errors as ERROR/CRITICAL log lines except odoo.tests.result, warnings as WARNING log lines except
- * odoo.tests.* loggers.
+ * odoo.tests.* loggers. With `tests` false (a run that executes no tests) the result and stats lines
+ * are left out.
  */
-export function summarizeTestLog(stdout: string, stderr: string, options: SummaryOptions): string {
+export function summarizeTestLog(stdout: string, stderr: string, options: SummaryOptions, tests = true): string {
   let result = "not reported";
   const problems: Problem[] = [];
   const stats: string[] = [];
@@ -95,7 +96,8 @@ export function summarizeTestLog(stdout: string, stderr: string, options: Summar
       problems.push(current);
     }
   }
-  const lines = [`result: ${result}`, ...stats];
+  // A run without tests (an update) has no result or stats lines to report.
+  const lines = tests ? [`result: ${result}`, ...stats] : [];
   if (!problems.length) {
     lines.push("problems: 0");
   } else {

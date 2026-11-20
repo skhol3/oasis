@@ -21,7 +21,9 @@ class PiLayerTests(unittest.TestCase):
         overlay = json.loads((ROOT / 'pi/agent-overlays/oasis.json').read_text())
         tools = ['oasis_test_module', 'oasis_test_summary', 'oasis_find_module', 'oasis_model_info',
                  'oasis_module_status', 'oasis_lint_module', 'oasis_check_environment']
-        self.assertEqual(overlay, {'gentle-ai-worker': {'add': tools},
+        # The worker also updates modules; verify stays read-only, so it does not get that tool.
+        worker = tools[:2] + ['oasis_update_module'] + tools[2:]
+        self.assertEqual(overlay, {'gentle-ai-worker': {'add': worker},
                                    'gentle-ai-verify': {'add': tools}})
         for agent, entry in overlay.items():
             self.assertLessEqual(set(entry), {'add', 'remove'}, agent)

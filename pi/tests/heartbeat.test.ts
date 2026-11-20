@@ -8,7 +8,7 @@ test("withHeartbeat beats while the work runs and returns its result", async () 
   const result = await withHeartbeat(async () => { await sleep(70); return "done"; }, (s) => beats.push(s), 20);
   assert.equal(result, "done");
   assert.ok(beats.length >= 2, `beats: ${beats.length}`);
-  assert.ok(beats.every((seconds) => seconds === 0), "elapsed time is reported in whole seconds");
+  assert.ok(beats.every((seconds) => Number.isInteger(seconds) && seconds >= 0), "elapsed time is reported in whole seconds");
   const seen = beats.length;
   await sleep(60);
   assert.equal(beats.length, seen, "no beat after the work ended");

@@ -242,6 +242,23 @@ class MigrateTests(unittest.TestCase):
                          self.plan('dry run: nothing changed; run with --apply to migrate'))
         self.assertEqual(self.tree(), before)
 
+    def test_plan_prints_the_plan_and_never_applies(self):
+        before = self.tree()
+        for args in (('--plan',), ('--workspace', str(self.project), '--plan'), ('--plan', f'--workspace={self.project}')):
+            with self.subTest(args=args):
+                result = self.migrate(*args)
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                self.assertEqual(STAMP.sub('.bak-<stamp>', result.stdout),
+                                 self.plan('dry run: nothing changed; run with --apply to migrate'))
+                self.assertEqual(self.tree(), before)
+        # --plan with --apply is refused in the tool itself, whatever the order.
+        for args in (('--plan', '--apply'), ('--apply', '--plan'), ('--plan', '--plan'),
+                     ('--workspace', '--plan', '--apply')):
+            with self.subTest(args=args):
+                result = self.migrate(*args)
+                self.assertEqual((result.returncode, result.stdout), (2, ''))
+                self.assertEqual(self.tree(), before)
+
     # -- apply ----------------------------------------------------------------------------------
 
     def test_apply_writes_the_workspace_and_keeps_every_configuration_equivalent(self):
@@ -361,10 +378,10 @@ class MigrateTests(unittest.TestCase):
 
     def test_usage(self):
         for args in (('--bogus',), ('--apply', '--apply'), ('--workspace',)):
-            self.assert_refused(args, f'Usage: {CLI} migrate [--workspace <dir>] [--apply]\n')
+            self.assert_refused(args, f'Usage: {CLI} migrate [--workspace <dir>] [--apply | --plan]\n')
         result = self.migrate('--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertTrue(result.stdout.startswith(f'Usage: {CLI} migrate [--workspace <dir>] [--apply]\n'))
+        self.assertTrue(result.stdout.startswith(f'Usage: {CLI} migrate [--workspace <dir>] [--apply | --plan]\n'))
 
     def test_verification_mismatch_restores_every_file(self):
         # An addons_path item that no [tooling] root gives: the composed --addons-path would differ.
@@ -471,7 +488,7 @@ class MigrateSurfaceTests(unittest.TestCase):
     def test_readme_documents_migrate(self):
         readme = (ROOT / 'README.md').read_text()
         self.assertIn('### Migrating to the workspace file\n', readme)
-        self.assertIn('oasis --project /absolute/checkout migrate [--workspace <dir>] [--apply]', readme)
+        self.assertIn('oasis --project /absolute/checkout migrate [--workspace <dir>] [--apply | --plan]', readme)
 
 
 if __name__ == '__main__':
