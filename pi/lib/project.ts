@@ -86,21 +86,34 @@ export function projectRootResolver(
   };
 }
 
-/** Compact system-prompt section for a detected project; `workspace` names its workspace file. */
-export function projectContext(root: string, workspace?: string | null): string {
-  const source = workspace ? `workspace ${workspace}` : `profile ${PROFILE_NAME}`;
-  return [
-    `Odoo 19 project root: ${root} (${source}).`,
-    "Prefer the oasis tools over raw shell; they apply the profile guards and return compact output:",
-    "- oasis_test_module: run one module's tests; returns the result line and failures only, full logs stay on disk.",
-    "- oasis_test_summary: the same summary for a compact run started in the background (pass what it printed).",
-    "- oasis_module_status: database and module state for a module.",
-    "- oasis_check_environment: environment diagnostics (quick by default).",
-    "- oasis_lint_module: Pylint for one module without starting Odoo.",
-    "- oasis_find_module: technical module names from a functional name (manifest name/summary); no ls/grep.",
-    "- oasis_model_info: a model's definition, extensions, fields and methods from source; use it before reading Odoo files.",
-    "Open the logs a tool reports only when its summary is not enough. Do not browse the Odoo source tree to learn",
-    "framework APIs; load the matching odoo19-* skill first.",
-  ].join("\n");
-}
+const TOOL_LINES: Record<string, string> = {
+  oasis_test_module: "run one module's tests; returns the result line and failures only, full logs stay on disk.",
+  oasis_test_summary: "the same summary for a compact run started in the background (pass what it printed).",
+  oasis_module_status: "database and module state for a module.",
+  oasis_check_environment: "environment diagnostics (quick by default).",
+  oasis_lint_module: "Pylint for one module without starting Odoo.",
+  oasis_find_module: "technical module names from a functional name (manifest name/summary); no ls/grep.",
+  oasis_model_info: "a model's definition, extensions, fields and methods from source; use it before reading Odoo files.",
+};
 
+/**
+ * Compact system-prompt section for a detected project; `workspace` names its workspace file.
+ * `tools` are the session's tools: only the oasis tools among them are named, and a session with
+ * none (a subagent without the overlay) is pointed to the CLI. Omitted: every oasis tool.
+ */
+export function projectContext(root: string, workspace?: string | null, tools?: readonly string[]): string {
+  const source = workspace ? `workspace ${workspace}` : `profile ${PROFILE_NAME}`;
+  const names = Object.keys(TOOL_LINES).filter((name) => !tools || tools.includes(name));
+  const routing = names.length > 0
+    ? [
+        "Prefer the oasis tools over raw shell; they apply the profile guards and return compact output:",
+        ...names.map((name) => `- ${name}: ${TOOL_LINES[name]}`),
+        "Open the logs a tool reports only when its summary is not enough. Do not browse the Odoo source tree to learn",
+      ]
+    : [
+        "This session has no oasis tools. Instead of raw odoo-bin, psql or dropdb, run the guarded CLI:",
+        `\`oasis --project ${root} <command>\` (test-module --compact, module-status, check-environment --quick,`,
+        "lint-module, model-info). Do not browse the Odoo source tree to learn",
+      ];
+  return [`Odoo 19 project root: ${root} (${source}).`, ...routing, "framework APIs; load the matching odoo19-* skill first."].join("\n");
+}

@@ -461,8 +461,9 @@ class MigrateSurfaceTests(unittest.TestCase):
 
     def test_gentle_shell_command_shows_the_plan_then_applies(self):
         source = (ROOT / 'pi/extensions/odoo19.ts').read_text()
-        self.assertIn('const USAGE = "Usage: /oasis [setup | doctor | migrate | worktree <feature> <branch>]";',
-                      source)
+        # The subcommand table (usage pinned in pi/tests/commands.test.ts) and its dispatch.
+        self.assertIn('name: "migrate"', (ROOT / 'pi/lib/commands.ts').read_text())
+        self.assertIn('migrate: (ctx) => migrate(ctx),', source)
         self.assertIn('run(root, ["migrate"]', source)
         self.assertIn('run(root, ["migrate", "--apply"]', source)
         self.assertIn('ctx.ui.confirm("oasis migrate"', source)

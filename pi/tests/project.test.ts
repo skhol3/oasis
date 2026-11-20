@@ -171,6 +171,7 @@ test("projectContext names the root and routes the agent to the oasis tools", ()
   assert.match(text, /Odoo 19 project root: \/work\/coffee \(profile \.odoo19-agent\.toml\)/);
   for (const tool of [
     "oasis_test_module",
+    "oasis_test_summary",
     "oasis_module_status",
     "oasis_check_environment",
     "oasis_lint_module",
@@ -189,4 +190,21 @@ test("projectContext names the workspace file of a checkout without profile", ()
   assert.match(text, /Odoo 19 project root: \/work\/acme\/codigo\/acme \(workspace \/work\/acme\/oasis-workspace\.toml\)/);
   assert.ok(!text.includes("profile .odoo19-agent.toml"));
   assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
+});
+
+test("projectContext names only the oasis tools the session has", () => {
+  const some = projectContext("/work/coffee", null, ["read", "bash", "oasis_model_info", "oasis_lint_module"]);
+  assert.ok(some.includes("- oasis_model_info:") && some.includes("- oasis_lint_module:"), some);
+  for (const absent of ["oasis_test_module", "oasis_test_summary", "oasis_module_status", "oasis_find_module"]) {
+    assert.ok(!some.includes(absent), absent);
+  }
+  assert.ok(!some.includes("oasis --project"), some);
+});
+
+test("projectContext points a session without oasis tools to the guarded CLI", () => {
+  const none = projectContext("/work/coffee", null, ["read", "grep"]);
+  assert.match(none, /Odoo 19 project root: \/work\/coffee/);
+  assert.ok(!none.includes("oasis_"), none);
+  assert.ok(none.includes("`oasis --project /work/coffee <command>`"), none);
+  assert.ok(none.includes("load the matching odoo19-* skill first"), none);
 });
