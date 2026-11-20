@@ -6,7 +6,7 @@ Built with Gentle Shell (`github.com/Gentleman-Programming/gentle-shell`).
 
 ## Install or update
 
-Releases follow Semantic Versioning and are tagged `vX.Y.Z`; see the [changelog](CHANGELOG.md). Install a released version of the Gentle Shell layer with `gentle-shell install git:github.com/skhol3/oasis@v0.4.2`.
+Releases follow Semantic Versioning and are tagged `vX.Y.Z`; see the [changelog](CHANGELOG.md). Install a released version of the Gentle Shell layer with `gentle-shell install git:github.com/skhol3/oasis@v0.5.0`.
 
 With owner authorization, commit the change, run the test suite, then run `install.sh` from this repository:
 
@@ -25,25 +25,26 @@ The installed package contains the six `odoo19-*` directories, `tools/`, `projec
 A thin Pi package (`package.json`, `pi/`) layered over Gentle Shell. It changes nothing in Gentle Shell or Pi; its goal is fewer tokens in Odoo work by wrapping the guarded `oasis` core with compact output. Install it from a release tag, so the sessions load a fixed copy that work in a local checkout cannot change:
 
 ```bash
-gentle-shell install git:github.com/skhol3/oasis@v0.4.2
+gentle-shell install git:github.com/skhol3/oasis@v0.5.0
 ```
 
 To move to a newer release, remove the old entry and install the new tag (`gentle-shell list` shows the installed entry), then `/reload` open sessions:
 
 ```bash
-gentle-shell remove git:github.com/skhol3/oasis@v0.4.1
-gentle-shell install git:github.com/skhol3/oasis@v0.4.2
+gentle-shell remove git:github.com/skhol3/oasis@<installed tag>
+gentle-shell install git:github.com/skhol3/oasis@<new tag>
 ```
 
 Installing a local checkout (`gentle-shell install /absolute/path/to/oasis`) loads whatever that directory holds, including a branch under development; use it only to try changes.
 
 Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shell and Pi already scan. The layer adds:
 
-- Tools `oasis_test_module`, `oasis_module_status`, `oasis_check_environment` and `oasis_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`, or `<logs>/odoo19/<main|slug>/` with `[tooling].logs`. Other output is capped at 60 lines (head and tail kept). Test summaries also carry up to five `stats:` lines (tests, time, queries per module) and one `warnings:` line grouping repeated warnings by logger and message. They always end with a control line, `log: <lines> lines, <errors> errors, <warnings> warnings`, counted over the full stdout and stderr logs and never capped: lines match `cat stdout.log stderr.log | wc -l`, errors are ERROR/CRITICAL lines except `odoo.tests.result`, and warnings are WARNING lines except `odoo.tests.*`, so the summary can be checked against the logs. While `oasis_test_module` runs it reports the elapsed time every 15 seconds. For a suite that takes minutes, run `oasis --project <root> test-module --compact <module>` with the background shell tool and pass what it printed to `oasis_test_summary`, which returns the same summary and reads only the run logs that output names.
+- Tools `oasis_test_module`, `oasis_module_status`, `oasis_check_environment` and `oasis_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`, or `<logs>/odoo19/<main|slug>/` with `[tooling].logs`. Other output is capped at 60 lines (head and tail kept). Test summaries also carry up to five `stats:` lines (tests, time, queries per module) and one `warnings:` line grouping repeated warnings by logger and message. They always end with a control line, `log: <lines> lines, <errors> errors, <warnings> warnings`, counted over the full stdout and stderr logs and never capped: lines match `cat stdout.log stderr.log | wc -l`, errors are ERROR/CRITICAL lines except `odoo.tests.result`, and warnings are WARNING lines except `odoo.tests.*`, so the summary can be checked against the logs. While `oasis_test_module` runs it reports the elapsed time every 15 seconds. For a suite that takes minutes, run `oasis --project <root> test-module --compact <module>` with the background shell tool and pass what it printed to `oasis_test_summary`, which returns the same summary and reads only the run logs that output names. `oasis_test_module` takes `only` (`Class` or `Class.method`) to run one test class or one method of the module instead of all of them; when the filter matches nothing, Odoo still reports success, so the summary adds `no test matched only=<value>: check the class and method names`.
+- Tool `oasis_update_module` (module, database): `oasis update-module --compact` on an existing managed database. It returns the exit code, the ERROR/CRITICAL entries with the end of each traceback, grouped warnings, the `log:` control line and the log paths; there is no test result line, since an update runs no tests.
 - Tool `oasis_find_module`: maps a functional name to technical module names by matching the query words against the technical name and the manifest `name`, `summary` and `category` in the profile's addon roots, so the agent needs no `ls` or `grep`.
 - Tool `oasis_model_info`: wraps `oasis model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
 - Prompt context naming the `oasis_*` tools the session has (a session with none, such as a subagent without the overlay, is pointed to the `oasis` CLI instead) when `.odoo19-agent.toml` is found at or above the working directory, or, without one, an `oasis-workspace.toml` (see *Workspace file*; the project root is then the git top level of the working directory).
-- A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. In every session it also blocks the agent from running `worktree-init` (through `oasis` or `odoo19`, `tools/worktree-init` or `worktree_init.py`, `--dry-run` included) and `migrate` (through `oasis` or `odoo19`, or `tools/migrate` and `tools/migrate.py`, the dry run included), which only the user runs; asking only for their help (`--help` or `-h` as the single argument) is allowed. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package. Text that bash would not run is not blocked: substitutions inside single quotes, comments, and heredoc bodies that no command runs, such as `git commit -F - <<'EOF'` or `cat > file <<'EOF'`. A heredoc body is still checked when a command on its opening line runs what it reads: a shell (`bash`, `sh`, `zsh`, `dash`, `ksh`, `mksh`, `ash`, `fish`, `csh`, `tcsh`), `source`, `.`, `eval`, `ssh`, `su` or `xargs`, also behind `sudo`, `env`, `timeout`, `docker exec` and similar wrappers, on a continued line or after a trailing pipe.
+- A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. In every session it also blocks the agent from running `worktree-init` (through `oasis` or `odoo19`, `tools/worktree-init` or `worktree_init.py`, `--dry-run` included) and `migrate` (through `oasis` or `odoo19`, or `tools/migrate` and `tools/migrate.py`, the dry run included), which only the user runs; asking only for their help (`--help` or `-h` as the single argument) is allowed, and so is the migration plan: `migrate --plan`, optionally with `--workspace <literal absolute path>` and nothing else. `--plan` can never apply, because the tool refuses it together with `--apply`. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package. Text that bash would not run is not blocked: substitutions inside single quotes, comments, and heredoc bodies that no command runs, such as `git commit -F - <<'EOF'` or `cat > file <<'EOF'`. A heredoc body is still checked when a command on its opening line runs what it reads: a shell (`bash`, `sh`, `zsh`, `dash`, `ksh`, `mksh`, `ash`, `fish`, `csh`, `tcsh`), `source`, `.`, `eval`, `ssh`, `su` or `xargs`, also behind `sudo`, `doas`, `env`, `timeout`, `setsid`, `stdbuf`, `ionice`, `docker exec` and similar wrappers, on a continued line or after a trailing pipe.
 - `/oasis`: a quick status with the profile, addon modules, configured databases, git worktree, checkout identity and this checkout's server (`server: running on port <port> (pid <pid>)` or `server: stopped`, read from the runtime record). It never starts services or queries databases. `/oasis setup` installs the subagent overlay (see Subagents). `/oasis doctor` shows the `oasis doctor` report (see *Checking the environment*); there is no agent tool for it. `/oasis worktree <feature> <branch>` creates a prepared linked worktree after confirmation (see *Preparing a linked worktree*). `/oasis migrate` shows the `oasis migrate` plan and applies it after confirmation (see *Migrating to the workspace file*). Typing `/oasis ` offers its subcommands (`setup`, `doctor`, `migrate`, `worktree`).
 
 The `oasis_*` tools are active only in sessions started inside an Odoo 19 project (a directory with `.odoo19-agent.toml` or `oasis-workspace.toml` at or above it), so other projects pay no tokens for them; `/oasis` is available everywhere.
@@ -54,7 +55,7 @@ Other agents keep using the core (`oasis` CLI and skills) unchanged.
 
 ### Subagents
 
-Gentle Shell subagents (for example `gentle-ai-worker` and `gentle-ai-verify`) receive only the tools in their allowlist, so they do not see the `oasis_*` tools by default. oasis ships an overlay template, [`pi/agent-overlays/oasis.json`](pi/agent-overlays/oasis.json), that adds the six tools to both agents. Run `/oasis setup` once in Gentle Shell (it asks before writing); oasis reminds you at session start when the overlay is missing or outdated.
+Gentle Shell subagents (for example `gentle-ai-worker` and `gentle-ai-verify`) receive only the tools in their allowlist, so they do not see the `oasis_*` tools by default. oasis ships an overlay template, [`pi/agent-overlays/oasis.json`](pi/agent-overlays/oasis.json), that adds the tools to both agents; `oasis_update_module` goes to the worker only, because the verify agent stays read-only. Run `/oasis setup` once in Gentle Shell (it asks before writing); oasis reminds you at session start when the overlay is missing or outdated.
 
 - `/oasis setup` writes only `agent-overlays.d/oasis.json` under the Gentle AI config home (`$GENTLE_PI_CONFIG_HOME` when it is an absolute path, else `~/.gentle-shell/gentle-ai`). It works outside an Odoo project, does nothing when the overlay is already up to date, and only the user can run it: no agent tool triggers it. Start a new session or `/reload` afterwards.
 - That folder is user configuration: Gentle Shell updates do not replace it. Run `/oasis setup` again after an oasis update that changes the template.
@@ -171,10 +172,10 @@ python = '3.13'
 ```
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/checkout migrate [--workspace <dir>] [--apply]
+~/.agents/skills/odoo19/oasis --project /absolute/checkout migrate [--workspace <dir>] [--apply | --plan]
 ```
 
-- Without `--apply` it prints the plan and changes nothing; the plan ends with `dry run: nothing changed; run with --apply to migrate`. `/oasis migrate` (or `/odoo19 migrate`) shows the plan and runs `migrate --apply` after confirmation. Agents cannot run it: the bash guard blocks it, the dry run included.
+- Without `--apply` it prints the plan and changes nothing; the plan ends with `dry run: nothing changed; run with --apply to migrate`. `--plan` asks for that plan explicitly and can never apply: with `--apply` it is a usage error (exit 2). It is the one form an agent may run (see the bash guard). `/oasis migrate` (or `/odoo19 migrate`) shows the plan and runs `migrate --apply` after confirmation. Agents cannot run it: the bash guard blocks it, the dry run included.
 - Checkouts: every worktree that `git worktree list` reports (outside git, the checkout alone). A missing worktree stops it with `Worktree <path> is missing; restore it or run git worktree prune.`
 - Workspace directory: by default the deepest directory above every checkout and the profile's `odoo.conf` (`<project>` in the layout above). `--workspace <dir>` names another one; it must be an absolute existing directory above every checkout (`Refusing --workspace <dir>: it is not above every checkout (<checkouts>).`). An existing `oasis-workspace.toml` there is never replaced (`<file> already exists.`); a directory the trust rule would refuse, and a nearer `oasis-workspace.toml` or `.odoo19-agent.toml` between a checkout and that directory, are refused too.
 - Agreement: every profile must give the same `[tooling]` and `[development]` values, paths resolved from its checkout, except `checkout_slug`. Otherwise it stops with `Cannot migrate: the profiles of the checkouts disagree on <section>.<key>, ...` (keys only, never values).
@@ -284,7 +285,10 @@ After obtaining authorization to reset the exact destinations:
 ```bash
 ~/.agents/skills/odoo19/oasis --project /absolute/project test-module --compact your_module
 ~/.agents/skills/odoo19/oasis --project /absolute/project verify-module --compact your_module
+~/.agents/skills/odoo19/oasis --project /absolute/project test-module --compact --only TestOrder.test_total your_module
 ```
+
+`test-module --only <Class[.method]>` runs the tests of one class of the module, or one method of it, by passing `--test-tags /<module>:<Class>[.<method>]`. The module is still installed in the test database first, so it shortens the test phase, not the install; use it while fixing one test and run the whole module before finishing. Any other value exits 2 with `--only takes a test class or Class.method.` before any effect. A class or method that does not exist is not an error for Odoo: the run ends with exit 0 and `0 failed, 0 error(s) of 0 tests`.
 
 | Command | Destinations and evidence |
 | --- | --- |
@@ -365,7 +369,7 @@ Not guarded: `start` without `-d`/`--database` uses whatever `db_name` and `--db
 
 Database names are at most 63 bytes (PostgreSQL's identifier limit, counted in UTF-8 bytes). A test database that gets an `_update` sibling in `verify-module` is at most 56 bytes, and a configured `test_database` must fit in 56 bytes after the slug is inserted. Longer names fail before any database command; disposable names are shortened to fit instead.
 
-`update-module` and `odoo-shell` work on existing databases only: a missing database exits 2 with `Database <name> does not exist; create it with install-module or create-database.` and is never created. `install-module` and `create-database` still create their target. oasis never drops a checkout's databases on its own, except the disposable test databases a run created for itself (see *Disposable test databases*) and the orphans `gc --apply` drops when you run it.
+`update-module [--compact] <module> <database>` and `odoo-shell` work on existing databases only: a missing database exits 2 with `Database <name> does not exist; create it with install-module or create-database.` and is never created. `install-module` and `create-database` still create their target. `update-module --compact` keeps stdout and stderr in a new run directory of the logs directory and prints `phase=update database=<name> exit=<n>`, `stdout_log=<path>` and `stderr_log=<path>`; a refusal happens before any log is written. oasis never drops a checkout's databases on its own, except the disposable test databases a run created for itself (see *Disposable test databases*) and the orphans `gc --apply` drops when you run it.
 
 ### Preparing a linked worktree
 
