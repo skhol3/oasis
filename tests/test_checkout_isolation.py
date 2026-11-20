@@ -65,6 +65,20 @@ class SluggedCheckoutTests(IsolationBase):
             '--http-port=<free>', '--gevent-port=<free>', '-d', 'cc_test_wt_1_coffee_r<run>', '-i', 'coffee', '--without-demo', '--test-tags',
             '/coffee', '--stop-after-init')])
 
+    def test_reuse_default_and_configured_names_get_the_slug(self):
+        ports = ('--http-port=<free>', '--gevent-port=<free>')
+        tail = ('--test-tags', '/coffee', '--stop-after-init')
+        for database in ('cc_test_wt_1_coffee', 'cc_test_wt_1_shared'):
+            with self.subTest(database=database):
+                # The first run installs in the working database, the next one updates it.
+                for module_arguments in (('-i', 'coffee', '--without-demo'), ('-u', 'coffee')):
+                    result = self.invoke('test-module', '--reuse', 'coffee')
+                    self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+                    self.assertEqual(self.odoo_lines()[-1],
+                                     self.odoo_call(*ports, '-d', database, *module_arguments, *tail))
+            self.write_profile("test_database = 'cc_test_shared'\n")
+        self.assertNotIn(' cc_test_shared', self.commands.read_text())
+
     def test_configured_test_database_gets_the_slug_after_the_prefix(self):
         self.write_profile("test_database = 'cc_test_shared'\n")
         result = self.invoke('test-module', 'coffee')

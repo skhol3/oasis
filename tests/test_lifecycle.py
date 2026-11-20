@@ -353,6 +353,24 @@ exit 0
                 self.assertEqual(self.odoo_lines(), [])
                 docker.write_text(original)
 
+    def test_a_failed_existence_probe_stops_instead_of_looking_missing(self):
+        docker = self.bindir / 'docker'
+        probe = '*"exec psql"*"SELECT 1 FROM pg_database"*)'
+        original = docker.read_text()
+        self.assertIn(probe, original)
+        docker.write_text(original.replace(probe, probe + ' echo "connection lost" >&2; exit 2 ;;\n  *"never matches"*)'))
+        for command, args in (('test-module', ('--reuse', 'coffee')), ('module-status', ('coffee', 'cc_test_coffee')),
+                              ('update-module', ('coffee', 'cc_dev_coffee'))):
+            with self.subTest(command=command):
+                self.commands.unlink(missing_ok=True)
+                result = self.invoke(command, *args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('database_state=missing', result.stdout)
+                self.assertNotIn('does not exist', result.stderr)
+                self.assertIn('Cannot check whether database', result.stderr)
+                self.assertEqual(self.resets(), 0)
+                self.assertEqual(self.odoo_lines(), [])
+
     def test_reuse_takes_an_explicit_database_in_the_test_namespace(self):
         result = self.invoke('test-module', '--reuse', 'coffee', 'cc_test_iterate')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
