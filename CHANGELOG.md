@@ -9,6 +9,31 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-20
+
+Follow-ups of the Gentle Shell audit and of the v0.4.1 reviews. No contract changes.
+
+### Fixed
+
+- Bash guard, false blocks: a heredoc body is checked only when a command on its opening line
+  runs what it reads, so `git add . && git commit -F - <<'EOF'` or a quoted word such as
+  `"fix ssh"` no longer makes a message that mentions `psql` or `dropdb` a command.
+- Bash guard, coverage restored: comments after `;`, `&&`, `|` or `(` no longer hide a later
+  substitution, `#` after an escaped space is not a comment, and heredocs are checked when their
+  reader is on a continued line, after a trailing pipe, behind `docker exec`, or is `ksh`,
+  `mksh`, `ash`, `fish`, `csh` or `tcsh`.
+- The prompt section names only the `oasis_*` tools the session has; a session with none (a
+  subagent without the overlay) is pointed to the `oasis` CLI.
+
+### Changed
+
+- The agent may ask the user-run commands for their help: `migrate` and `worktree-init` with
+  `--help` or `-h` as the single argument are no longer blocked. Every other form stays user-run.
+- README and release steps: install the Gentle Shell package from the release tag instead of a
+  local checkout.
+- Internal: the `/oasis` subcommands have one table for completion, usage, description and
+  dispatch; the test heartbeat is a tested helper.
+
 ## [0.4.1] - 2026-11-19
 
 Operational fixes from an audit of the Gentle Shell layer.
@@ -406,7 +431,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/skhol3/oasis/releases/tag/v0.4.2
 [0.4.1]: https://github.com/skhol3/oasis/releases/tag/v0.4.1
 [0.4.0]: https://github.com/skhol3/oasis/releases/tag/v0.4.0
 [0.3.0]: https://github.com/skhol3/oasis/releases/tag/v0.3.0

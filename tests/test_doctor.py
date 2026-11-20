@@ -267,7 +267,9 @@ class DoctorTests(unittest.TestCase):
 class DoctorSurfaceTests(unittest.TestCase):
     def test_gentle_shell_command_runs_doctor(self):
         source = (ROOT / 'pi/extensions/odoo19.ts').read_text()
-        self.assertIn('const USAGE = "Usage: /oasis [setup | doctor | migrate | worktree <feature> <branch>]";', source)
+        # The subcommand table (usage pinned in pi/tests/commands.test.ts) and its dispatch.
+        self.assertIn('name: "doctor"', (ROOT / 'pi/lib/commands.ts').read_text())
+        self.assertIn('doctor: (ctx) => doctor(ctx),', source)
         self.assertIn('run(root, ["doctor"]', source)
         self.assertNotIn('oasis_doctor', source)
 

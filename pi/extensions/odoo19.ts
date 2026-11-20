@@ -7,7 +7,10 @@ import { Type } from "typebox";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { subcommandCompletions } from "../lib/commands.ts";
+import {
+  parseCommand, SUBCOMMAND_SUMMARY, type SubcommandName, subcommandCompletions, USAGE,
+} from "../lib/commands.ts";
+import { withHeartbeat } from "../lib/heartbeat.ts";
 import { blockedProgram, blockReason, MIGRATE, WORKTREE_INIT } from "../lib/bash-guard.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/project.ts";
@@ -238,42 +241,30 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     }
   }
 
-  const USAGE = "Usage: /oasis [setup | doctor | migrate | worktree <feature> <branch>]";
   const COMMAND_DESCRIPTION =
     "Odoo 19 project status: profile, addon modules, databases, git worktree and this checkout's server; " +
-    "`setup` installs the subagent overlay; `doctor` checks the environment contract (read-only); " +
-    "`migrate` converts the checkouts' profiles into one oasis-workspace.toml after confirmation; " +
-    "`worktree <feature> <branch>` creates a prepared linked worktree";
+    SUBCOMMAND_SUMMARY;
+  // One entry per subcommand of the table in lib/commands.ts, which also drives completion and usage.
+  type CommandContext = Parameters<Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]>[1];
+  const subcommands: Record<SubcommandName, (ctx: CommandContext, args: string[]) => Promise<void>> = {
+    setup: (ctx) => setup(ctx),
+    doctor: (ctx) => doctor(ctx),
+    migrate: (ctx) => migrate(ctx),
+    worktree: (ctx, args) => worktree(ctx, args[0], args[1]),
+  };
 
   // `/oasis`, and `/odoo19` as its alias: one handler, the same subcommands.
   const command: Parameters<ExtensionAPI["registerCommand"]>[1] = {
     description: COMMAND_DESCRIPTION,
     getArgumentCompletions: (prefix: string) => subcommandCompletions(prefix),
     handler: async (args, ctx) => {
-      const argument = (args ?? "").trim();
-      if (argument === "setup") {
-        await setup(ctx);
-        return;
-      }
-      if (argument === "doctor") {
-        await doctor(ctx);
-        return;
-      }
-      if (argument === "migrate") {
-        await migrate(ctx);
-        return;
-      }
-      const words = argument.split(/\s+/);
-      if (words[0] === "worktree") {
-        if (words.length !== 3 || words.slice(1).some((word) => word.startsWith("-"))) {
-          ctx.ui.notify(USAGE, "warning");
-          return;
-        }
-        await worktree(ctx, words[1], words[2]);
-        return;
-      }
-      if (argument) {
+      const parsed = parseCommand(args ?? "");
+      if (parsed.kind === "usage") {
         ctx.ui.notify(USAGE, "warning");
+        return;
+      }
+      if (parsed.kind === "run") {
+        await subcommands[parsed.name](ctx, parsed.args);
         return;
       }
       const root = await projectRoot(ctx.cwd);
@@ -319,7 +310,8 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     const root = await projectRoot(ctx.cwd);
     if (!root) return;
     // A checkout without profile names its workspace file (null when the root holds the profile).
-    const context = projectContext(root, findWorkspaceFile(root));
+    // Name only the oasis tools this session has: a subagent without the overlay has none.
+    const context = projectContext(root, findWorkspaceFile(root), pi.getActiveTools());
     const sections = event.systemPromptOptions?.sections;
     if (sections) {
       sections.odoo19 = context;
@@ -385,21 +377,16 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     async execute(_id, params, signal, onUpdate, ctx) {
       const root = await requireRoot(ctx.cwd);
       // The run is silent until it ends: report elapsed time so a long suite is not mistaken for a hang.
-      const started = Date.now();
-      const heartbeat = setInterval(() => {
-        const seconds = Math.round((Date.now() - started) / 1000);
-        onUpdate?.({
+      const result = await withHeartbeat(
+        () => run(root, testModuleArgs(params), signal, TEST_TIMEOUT_MS),
+        (seconds) => onUpdate?.({
           content: [{ type: "text", text: `running tests of ${params.module}: ${seconds} s` }],
           details: { running: true, seconds },
-        });
-      }, HEARTBEAT_MS);
-      try {
-        const result = await run(root, testModuleArgs(params), signal, TEST_TIMEOUT_MS);
-        const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };
-        return text(formatTestRun(params.module, result, readLog, options, MAX_LINES), { exit: result.code });
-      } finally {
-        clearInterval(heartbeat);
-      }
+        }),
+        HEARTBEAT_MS,
+      );
+      const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };
+      return text(formatTestRun(params.module, result, readLog, options, MAX_LINES), { exit: result.code });
     },
   });
 

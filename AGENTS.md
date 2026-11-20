@@ -54,5 +54,8 @@ Versions follow Semantic Versioning and are tagged on `main` only:
 2. Merge the pull request to `main`.
 3. On the updated `main`, run the test suite, then tag: `git tag -a vX.Y.Z -m "oasis vX.Y.Z"` and push the tag.
 4. Publish the GitHub release with the changelog section as notes.
+5. Move the Gentle Shell package to the new tag: `gentle-shell remove git:github.com/skhol3/oasis@<old tag>`,
+   then `gentle-shell install git:github.com/skhol3/oasis@vX.Y.Z` and `/reload` open sessions. Sessions load
+   that fixed copy, so work in this checkout never changes what they run.
 
 `install.sh` records the installed `version` and commit in `.oasis-install.json`.

@@ -181,6 +181,16 @@ test("text that bash would not run is not a command", () => {
     "git commit -m 'fix #12: explain `psql`'",
     "cat > notes.md <<'EOF'\n# psql notes\ndropdb is dangerous\nEOF",
     "sudo tee /etc/motd <<'EOF'\npsql -l\nEOF",
+    "git add . && git commit -F - <<'EOF'\npsql is now guarded\nEOF",
+    "git commit -m 'fix sh' -F - <<'EOF'\npsql -l\nEOF",
+    "cat > notes.md <<'EOF' \\\n  2>/dev/null\npsql -l\nEOF",
+    "git commit -m \"fix ssh\" -F - <<'EOF'\ndropdb x\nEOF",
+    "gh pr create --title su --body-file - <<'EOF'\npsql -l\nEOF",
+    "oasis --project /p migrate --help",
+    "oasis migrate -h 2>&1 | head -20",
+    "python3 tools/migrate.py --help",
+    "./tools/worktree-init --help",
+    "oasis --project /p worktree-init -h",
   ];
   for (const command of allowed) {
     assert.equal(blockedProgram(command), null, command);
@@ -203,6 +213,25 @@ test("text that bash does run stays blocked", () => {
     ["echo hi # don't stop\necho $(psql -l)", "psql"],
     ["true # <<EOF\npsql -l\nEOF", "psql"],
     ["echo $'it\\'s' $(dropdb x)", "dropdb"],
+    ["echo hi;# don't\necho $(psql -l)", "psql"],
+    ["true &&# don't\necho $(dropdb x)", "dropdb"],
+    ["echo a\\ #$(psql -l)", "psql"],
+    ["echo ${#items} $(psql -l)", "psql"],
+    ["bash \\\n<<'EOF'\npsql -l\nEOF", "psql"],
+    ["cat <<'EOF' |\npsql -l\nEOF\nsh", "psql"],
+    ["ksh <<'EOF'\ndropdb x\nEOF", "dropdb"],
+    ["fish <<'EOF'\npsql -l\nEOF", "psql"],
+    ["docker exec -i db sh <<'EOF'\npsql -l\nEOF", "psql"],
+    ["cat <<'EOF' | bash\ndropdb x\nEOF", "dropdb"],
+    ["xargs -I{} {} <<'EOF'\npsql -l\nEOF", "psql"],
+    ["cat <<'EOF' \\\n| sh\npsql -l\nEOF", "psql"],
+    ["cat <<'EOF' | \\\nsh\ndropdb x\nEOF", "dropdb"],
+    ["kubectl exec -i pod -- sh <<'EOF'\npsql -l\nEOF", "psql"],
+    ["podman exec -i db bash <<'EOF'\ndropdb x\nEOF", "dropdb"],
+    ["setsid sh <<'EOF'\npsql -l\nEOF", "psql"],
+    ["oasis --project /p migrate --apply --help", "migrate"],
+    ["oasis --project /p migrate", "migrate"],
+    ["./tools/worktree-init shop feature/x --help", "worktree-init"],
   ];
   for (const [command, program] of blocked) {
     assert.equal(blockedProgram(command), program, command);
