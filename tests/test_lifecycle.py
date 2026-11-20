@@ -336,6 +336,23 @@ exit 0
         self.assertRegex(self.odoo_lines()[-1],
                          r' -d cc_test_coffee -i coffee --without-demo --test-tags /coffee --stop-after-init$')
 
+    def test_reuse_stops_when_the_module_state_cannot_be_read(self):
+        docker = self.bindir / 'docker'
+        for query in ('*"to_regclass"*) echo t ;;', "*\"COALESCE(latest_version\"*) printf 'installed\\t19.0\\n' ;;"):
+            with self.subTest(query=query.split(')')[0]):
+                original = docker.read_text()
+                self.assertIn(query, original)
+                docker.write_text(original.replace(query, query.split(')')[0] + ') echo "connection lost" >&2; exit 2 ;;'))
+                self.env['FAKE_EXISTS'] = '1'
+                self.commands.unlink(missing_ok=True)
+                result = self.invoke('test-module', '--reuse', 'coffee')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, '')
+                # Neither reset nor tested: the working database is left as it was.
+                self.assertEqual(self.resets(), 0)
+                self.assertEqual(self.odoo_lines(), [])
+                docker.write_text(original)
+
     def test_reuse_takes_an_explicit_database_in_the_test_namespace(self):
         result = self.invoke('test-module', '--reuse', 'coffee', 'cc_test_iterate')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))

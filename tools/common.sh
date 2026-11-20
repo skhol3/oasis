@@ -289,15 +289,16 @@ database_exists() {
 }
 
 # The state of a module in an existing database: ir_module_module.state, `uninitialized` when
-# Odoo never initialized the database, `not_found` when it has no such module.
+# Odoo never initialized the database, `not_found` when it has no such module. A query that
+# fails returns its status: callers run this in a command substitution, where errexit is off.
 module_state() {
   local module=$1 database=$2 initialized row
-  initialized=$(database_query "$database" -Atqc "SELECT to_regclass('public.ir_module_module') IS NOT NULL")
+  initialized=$(database_query "$database" -Atqc "SELECT to_regclass('public.ir_module_module') IS NOT NULL") || return $?
   if [[ "$initialized" != t ]]; then
     printf 'uninitialized\n'
     return 0
   fi
-  row=$(database_query "$database" -AtF $'\t' -qc "SELECT state, COALESCE(latest_version, '') FROM ir_module_module WHERE name = '$module'")
+  row=$(database_query "$database" -AtF $'\t' -qc "SELECT state, COALESCE(latest_version, '') FROM ir_module_module WHERE name = '$module'") || return $?
   if [[ -z "$row" ]]; then
     printf 'not_found\n'
     return 0

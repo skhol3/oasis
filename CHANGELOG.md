@@ -20,7 +20,8 @@ Faster test iteration, and a harness that takes the Odoo series from the configu
   else `tooling.test_database`, else `<test_prefix>[<slug>_]<module>`). When it exists with the
   module installed, the run updates the module and runs the tests instead of installing it in a
   new database; `--compact` adds `database_lifecycle=reused mode=<install|update>`.
-  `oasis_test_module` takes `reuse`. Without `--reuse` nothing changes.
+  `oasis_test_module` takes `reuse`. Without `--reuse` nothing changes. A run that cannot read
+  the module state stops without touching the database.
 - Capability `test_class_filter`, and `python3 -I -B tools/odoo_versions.py <version> <key>` to
   read one capability from a shell tool. `test-module --only` asks it.
 

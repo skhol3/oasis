@@ -128,7 +128,8 @@ second_port=$(runtime_state ephemeral-port "$http_port")
 module_arguments=(-i "$module" "${ODOO_DEMO_OFF_ARGUMENTS[@]}")
 if "$reuse"; then
   state=missing
-  # Outside a condition, so a failing query stops the run instead of looking like "not installed".
+  # A failing state query stops the run (module_state returns its status and this assignment is
+  # not a condition), instead of looking like "not installed" and resetting the database.
   if database_exists "$database"; then state=$(module_state "$module" "$database"); fi
   mode=install
   if [[ "$state" == installed ]]; then
