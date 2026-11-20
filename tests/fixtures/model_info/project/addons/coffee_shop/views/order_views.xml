@@ -25,4 +25,8 @@
     </record>
     <menuitem id="menu_shop_orders" name="Shop orders" parent="coffee.menu_coffee_root"
               action="coffee.action_coffee_order"/>
+    <!-- Writes on a record another module defines. -->
+    <record id="coffee.view_coffee_order_list" model="ir.ui.view">
+        <field name="priority">5</field>
+    </record>
 </odoo>

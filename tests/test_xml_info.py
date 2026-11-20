@@ -165,6 +165,19 @@ class XmlInfoTests(unittest.TestCase):
                            '  inherit_id: coffee_loyalty.view_coffee_order_form_loyalty\n'
                            '  mode: primary\n')
 
+    def test_a_record_another_module_writes_on(self):
+        # The first definition in scan order is the definition; view-info keeps its values.
+        self.assert_result('xmlid-info', ('coffee.view_coffee_order_list',), 0,
+                           'xml id: coffee.view_coffee_order_list\n'
+                           f'defined: {CORE}:12 record ir.ui.view\n'
+                           '  name: coffee.order.list\n'
+                           '  model: coffee.order\n'
+                           '  type: list\n'
+                           '  priority: 20\n'
+                           f'also written in: {SHOP}:29\n'
+                           'referenced by (1):\n'
+                           f'  {CORE}:29\n')
+
     def test_unknown_ids_and_usage(self):
         self.assert_result('xmlid-info', ('coffee.no_such_record',), 1, '', 'xml id not found: coffee.no_such_record\n')
         # Records in static/ and in source test_ modules are not scanned.

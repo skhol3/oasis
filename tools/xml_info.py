@@ -50,6 +50,7 @@ VALUE_CHARS = 60
 FIELD_CAP = 12
 REFERENCE_CAP = 20
 SKIPPED_CAP = 5
+REWRITE_CAP = 10
 REFERENCE_SUFFIXES = ('.xml', '.py', '.csv')
 
 
@@ -361,7 +362,9 @@ def xmlid_info(values, xml_id):
         lines.append(f'  {key}: {text}')
     if len(fields) > FIELD_CAP:
         lines.append(f'  +{len(fields) - FIELD_CAP} more fields')
-    lines += [f'also written in: {location(other)}' for other in definitions[1:]]
+    lines += [f'also written in: {location(other)}' for other in definitions[1:REWRITE_CAP + 1]]
+    if len(definitions) > REWRITE_CAP + 1:
+        lines.append(f'also written in: +{len(definitions) - REWRITE_CAP - 1} more files')
     extensions = [other for other in records
                   if is_view(other) and other['fields'].get('inherit_id') == xml_id and other['id'] != xml_id]
     if extensions:
