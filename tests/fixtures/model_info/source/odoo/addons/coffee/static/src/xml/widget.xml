@@ -1,0 +1,6 @@
+<templates>
+    <record id="view_static_order" model="ir.ui.view">
+        <field name="model">coffee.order</field>
+        <field name="arch" type="xml"><form/></field>
+    </record>
+</templates>

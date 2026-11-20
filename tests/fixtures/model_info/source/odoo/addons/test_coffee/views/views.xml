@@ -1,0 +1,6 @@
+<odoo>
+    <record id="view_test_order_form" model="ir.ui.view">
+        <field name="model">coffee.order</field>
+        <field name="arch" type="xml"><form/></field>
+    </record>
+</odoo>
