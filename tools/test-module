@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ ${1:-} == --help ]]; then
-  printf 'Usage: %s [--compact] [--only <Class[.method]>] <module> [test_database]\n' "${ODOO19_ENTRYPOINT:-$0}"
+  printf 'Usage: %s [--compact] [--only <Class[.method]>] [--reuse] <module> [test_database]\n' "${ODOO19_ENTRYPOINT:-$0}"
+  printf -- '--reuse keeps a working test database between runs: the explicit test_database, else\n'
+  printf 'tooling.test_database, else test_prefix + [slug_] + module. When it exists with the module\n'
+  printf 'installed, the run updates the module and runs the tests; otherwise it is reset and the\n'
+  printf 'module installed. It is never dropped at the end: run without --reuse for a clean result.\n'
   printf -- '--only runs the tests of one class of the module, or one method of it (Class.method). The\n'
   printf 'module is still installed in the test database first.\n'
   printf 'Without a test_database argument or tooling.test_database, each run uses a new disposable\n'
@@ -21,6 +25,7 @@ if [[ ${1:-} == --help ]]; then
 fi
 source "$(dirname "$0")/common.sh"
 compact=false
+reuse=false
 # Internal: a compact run passes the disposable name it reports to the run it starts.
 run_database=''
 only_arguments=()
@@ -29,6 +34,7 @@ while [[ ${1:-} == --* ]]; do
     --compact) compact=true; shift ;;
     --disposable-run) run_database=${2:-}; shift $(( $# < 2 ? $# : 2 )) ;;
     --only) only_arguments=(--only "${2:-}"); shift $(( $# < 2 ? $# : 2 )) ;;
+    --reuse) reuse=true; shift ;;
     *) break ;;
   esac
 done
@@ -36,6 +42,12 @@ done
 only=${only_arguments[1]:-}
 if (( ${#only_arguments[@]} )) && [[ ! "$only" =~ ^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$ ]]; then
   printf -- '--only takes a test class or Class.method.\n' >&2
+  exit 2
+fi
+# Whether --test-tags takes a class filter depends on the Odoo series (odoo_versions.py).
+if (( ${#only_arguments[@]} )) &&
+    [[ "$(python3 -I -B "$(dirname "$0")/odoo_versions.py" "$ODOO_VERSION" test_class_filter)" != true ]]; then
+  printf -- '--only is not available for Odoo %s.\n' "$ODOO_VERSION" >&2
   exit 2
 fi
 module=${1:-}
@@ -46,6 +58,9 @@ if [[ -n ${2:-} ]]; then
   database=$2
 elif [[ -n "$TEST_DATABASE" ]]; then
   database=$TEST_DATABASE
+elif "$reuse"; then
+  # The working database of this module in the checkout's test namespace.
+  database=$(checkout_database_name "$TEST_PREFIX" "$module")
 else
   disposable=true
   database=${run_database:-$(new_disposable_database_name "$module")}
@@ -67,6 +82,12 @@ if "$compact"; then
   log_directory=$(compact_log_directory)
   status=0
   run_arguments=("${only_arguments[@]}" "$module" "$database")
+  # A reused database: the run writes how it prepared it (install or update) to this new file.
+  unset ODOO19_REUSE_RESULT
+  if "$reuse"; then
+    run_arguments=(--reuse "${run_arguments[@]}")
+    export ODOO19_REUSE_RESULT="$log_directory/database_lifecycle"
+  fi
   # A disposable run (tools/test_temp.py) writes its own cleanup result, `yes` (it left no
   # database behind: dropped, or never created) or `no`, to a new file of this private log
   # directory; a run that ends without writing it (killed) counts as `no`.
@@ -88,6 +109,13 @@ if "$compact"; then
     fi
     printf 'database_lifecycle=disposable dropped=%s\n' "$dropped"
   fi
+  if "$reuse"; then
+    mode=unknown
+    if [[ -f "$ODOO19_REUSE_RESULT" && ! -L "$ODOO19_REUSE_RESULT" ]]; then
+      case "$(<"$ODOO19_REUSE_RESULT")" in install) mode=install ;; update) mode=update ;; esac
+    fi
+    printf 'database_lifecycle=reused mode=%s\n' "$mode"
+  fi
   printf 'stdout_log=%s\nstderr_log=%s\n' "$log_directory/stdout.log" "$log_directory/stderr.log"
   exit "$status"
 fi
@@ -96,13 +124,28 @@ odoo_config_arguments
 # test run never collides with a dev server.
 http_port=$(runtime_state ephemeral-port)
 second_port=$(runtime_state ephemeral-port "$http_port")
+# A reused database that already has the module installed is updated instead of reset.
+module_arguments=(-i "$module" "${ODOO_DEMO_OFF_ARGUMENTS[@]}")
+if "$reuse"; then
+  state=missing
+  # Outside a condition, so a failing query stops the run instead of looking like "not installed".
+  if database_exists "$database"; then state=$(module_state "$module" "$database"); fi
+  mode=install
+  if [[ "$state" == installed ]]; then
+    mode=update
+    module_arguments=(-u "$module")
+  fi
+  if [[ -n ${ODOO19_REUSE_RESULT:-} ]]; then printf '%s\n' "$mode" >"$ODOO19_REUSE_RESULT"; fi
+fi
 odoo_command=("$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "--http-port=$http_port"
-  "$ODOO_SECOND_PORT_OPTION=$second_port" -d "$database" -i "$module" "${ODOO_DEMO_OFF_ARGUMENTS[@]}" --test-tags "/$module${only:+:$only}" --stop-after-init)
+  "$ODOO_SECOND_PORT_OPTION=$second_port" -d "$database" "${module_arguments[@]}" --test-tags "/$module${only:+:$only}" --stop-after-init)
 if "$disposable"; then
   # test_temp.py owns the whole disposable lifecycle and the signals; exec keeps this pid.
   # ODOO19_RUN_RESULT, when set, comes from the --compact parent above (internal).
   exec python3 -B "$(dirname "$0")/test_temp.py" --disposable "$database" "$ODOO_CONFIG" \
     "$PROJECT_ROOT" "${odoo_command[@]}"
 fi
-reset_test_database "$database"
+if ! "$reuse" || [[ "$mode" == install ]]; then
+  reset_test_database "$database"
+fi
 python3 -B "$(dirname "$0")/test_temp.py" "$PROJECT_ROOT" "${odoo_command[@]}"

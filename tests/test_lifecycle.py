@@ -296,6 +296,59 @@ exit 0
                 self.assertFalse(logs.exists() and any(logs.iterdir()))
         self.assertNotIn(' -u ', self.commands.read_text() if self.commands.exists() else '')
 
+    def odoo_lines(self):
+        return [line for line in self.commands.read_text().splitlines() if line.startswith('odoo ')]
+
+    def resets(self):
+        return self.commands.read_text().count('dropdb --if-exists')
+
+    def test_reuse_installs_once_then_updates(self):
+        result = self.invoke('test-module', '--reuse', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(self.resets(), 1)
+        self.assertRegex(self.odoo_lines()[-1],
+                         r' -d cc_test_coffee -i coffee --without-demo --test-tags /coffee --stop-after-init$')
+        # The database now exists with the module installed: the next runs update it and keep it.
+        result = self.invoke('test-module', '--reuse', '--only', 'TestOrder.test_total', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(self.resets(), 1)
+        self.assertRegex(self.odoo_lines()[-1],
+                         r' -d cc_test_coffee -u coffee --test-tags /coffee:TestOrder\.test_total --stop-after-init$')
+        self.assertNotIn('--without-demo', self.odoo_lines()[-1])
+        result = self.invoke('test-module', '--compact', '--reuse', 'coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[:2], ['phase=tests database=cc_test_coffee exit=0',
+                                     'database_lifecycle=reused mode=update'])
+        self.assertEqual([line.split('=', 1)[0] for line in lines[2:]], ['stdout_log', 'stderr_log'])
+        self.assertEqual(self.resets(), 1)
+        self.assertRegex(self.odoo_lines()[-1], r' -d cc_test_coffee -u coffee --test-tags /coffee --stop-after-init$')
+
+    def test_reuse_reinstalls_when_the_module_is_not_installed(self):
+        docker = self.bindir / 'docker'
+        docker.write_text(docker.read_text().replace("printf 'installed\\t19.0\\n'", "printf 'uninstalled\\t\\n'"))
+        self.env['FAKE_EXISTS'] = '1'
+        result = self.invoke('test-module', '--compact', '--reuse', 'coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout.splitlines()[:2], ['phase=tests database=cc_test_coffee exit=0',
+                                                          'database_lifecycle=reused mode=install'])
+        self.assertEqual(self.resets(), 1)
+        self.assertRegex(self.odoo_lines()[-1],
+                         r' -d cc_test_coffee -i coffee --without-demo --test-tags /coffee --stop-after-init$')
+
+    def test_reuse_takes_an_explicit_database_in_the_test_namespace(self):
+        result = self.invoke('test-module', '--reuse', 'coffee', 'cc_test_iterate')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertRegex(self.odoo_lines()[-1], r' -d cc_test_iterate -i coffee ')
+        before = self.commands.read_text()
+        for database, message in (
+                ('cc_dev_coffee', 'Test databases must use the cc_test_ prefix.\n'),
+                ('cc_test_coffee_r0a1b2c', 'Database names ending in _r<6 hex> are reserved for disposable runs: cc_test_coffee_r0a1b2c\n')):
+            with self.subTest(database=database):
+                result = self.invoke('test-module', '--reuse', 'coffee', database)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', message))
+                self.assertEqual(self.commands.read_text(), before)
+
     def test_custom_prefixes_and_verify_distinct_names(self):
         path = self.root / '.odoo19-agent.toml'
         path.write_text(PROFILE.replace('cc_dev_', 'demo_dev_').replace('cc_test_', 'demo_test_'))

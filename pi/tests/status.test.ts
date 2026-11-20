@@ -33,7 +33,7 @@ test("formatStatus shows profile, modules, databases and worktree compactly", ()
   assert.equal(
     text,
     [
-      "odoo19 project: /work/coffee-07.1",
+      "Odoo project: /work/coffee-07.1",
       "odoo source: /opt/odoo",
       "databases: dev cc_dev_<module>, test cc_test_coffee (prefix cc_test_)",
       "addons: /work/coffee-07.1/addons (2): coffee, coffee_mrp",
@@ -45,7 +45,7 @@ test("formatStatus shows profile, modules, databases and worktree compactly", ()
 
 test("formatStatus reports config errors and non-git projects", () => {
   const text = formatStatus({ root: "/p", configError: "ERROR: Invalid tooling addon roots.", modules: [], git: null });
-  assert.equal(text, "odoo19 project: /p\nprofile: ERROR: Invalid tooling addon roots.\ngit: not a git checkout");
+  assert.equal(text, "Odoo project: /p\nprofile: ERROR: Invalid tooling addon roots.\ngit: not a git checkout");
 });
 
 test("formatStatus without a configured test database names the per-module default", () => {
@@ -57,7 +57,7 @@ test("formatStatus without a configured test database names the per-module defau
   });
   assert.equal(
     text,
-    "odoo19 project: /p\nodoo source: /o\ndatabases: dev x_dev_<module>, test x_test_<module>\ngit: main, main checkout, clean",
+    "Odoo project: /p\nodoo source: /o\ndatabases: dev x_dev_<module>, test x_test_<module>\ngit: main, main checkout, clean",
   );
 });
 
@@ -101,7 +101,7 @@ test("parseGit resolves rev-parse dirs against the root and counts changed files
 
 test("formatStatus adds the checkout identity reported by the profile", () => {
   const base = { DEV_PREFIX: "x_dev_", TEST_PREFIX: "x_test_", TEST_DATABASE: "", ODOO_SOURCE: "/o" };
-  const head = "odoo19 project: /p\nodoo source: /o\ndatabases: dev x_dev_<module>, test x_test_<module>\n";
+  const head = "Odoo project: /p\nodoo source: /o\ndatabases: dev x_dev_<module>, test x_test_<module>\n";
   const cases: [Record<string, string>, StatusInput["git"], string][] = [
     [{ CHECKOUT_KIND: "main", CHECKOUT_SLUG: "" }, { branch: "main", linkedWorktree: false, changedFiles: 0 },
       "git: main, main checkout, clean\ncheckout: main"],
@@ -131,10 +131,15 @@ test("formatStatus adds this checkout's server line after the checkout identity"
     modules: [],
     git: { branch: "feat/x", linkedWorktree: true, changedFiles: 0 },
   };
-  const head = "odoo19 project: /p\nodoo source: /o\ndatabases: dev x_dev_<module>, test x_test_<module>\n" +
+  const head = "Odoo project: /p\nodoo source: /o\ndatabases: dev x_dev_<module>, test x_test_<module>\n" +
     "git: feat/x, linked worktree, clean\ncheckout: linked worktree, slug 07_1\n";
   assert.equal(formatStatus({ ...base, server: { pid: 4242, port: 8020 } }), head + "server: running on port 8020 (pid 4242)");
   assert.equal(formatStatus({ ...base, server: null }), head + "server: stopped");
   assert.equal(formatStatus({ ...base, serverError: "ERROR: Runtime state directory is a symlink: /run/x" }),
     head + "server: unknown (ERROR: Runtime state directory is a symlink: /run/x)");
+});
+
+test("formatStatus names the configured Odoo series", () => {
+  const text = formatStatus({ root: "/p", config: { ODOO_VERSION: "19.0", ODOO_SOURCE: "/o" }, modules: [], git: null });
+  assert.equal(text.split("\n")[0], "Odoo 19.0 project: /p");
 });

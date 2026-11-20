@@ -68,7 +68,8 @@ export function parseGit(root: string, revParse: string, porcelain: string): Sta
 }
 
 export function formatStatus(input: StatusInput): string {
-  const lines = [`odoo19 project: ${input.root}`];
+  const series = input.config?.ODOO_VERSION;
+  const lines = [`${series ? `Odoo ${series}` : "Odoo"} project: ${input.root}`];
   if (input.configError) lines.push(`profile: ${input.configError}`);
   const config = input.config;
   if (config) {

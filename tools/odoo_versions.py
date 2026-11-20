@@ -12,10 +12,17 @@ Keys:
   --with-demo is given, but keeps the explicit off option the tools always passed: whether an
   odoo.conf could turn demo data back on without it is unverified, so the guard stays.
 - test_tags_implies_stop: whether --test-tags implies --stop-after-init.
+- test_class_filter: whether --test-tags takes `/module:Class.method` (test-module --only).
+
+Shell tools read one value with `python3 -I -B odoo_versions.py <version> <key>`: a boolean
+prints true or false, a list its items quoted for the shell, anything else its text. An
+unsupported series or an unknown key exits 2.
 """
 import copy
 import json
 import re
+import shlex
+import sys
 
 CAPABILITIES = {
     '19.0': {
@@ -24,6 +31,7 @@ CAPABILITIES = {
         'second_port_option': '--gevent-port',
         'demo_off_args': ['--without-demo'],
         'test_tags_implies_stop': True,
+        'test_class_filter': True,
     },
 }
 
@@ -56,3 +64,29 @@ def python_supported(version, python) -> bool:
     low, high = (tuple(int(part) for part in bound.split('.'))
                  for bound in capability(version, 'python'))
     return low <= tuple(int(part) for part in python.split('.')) <= high
+
+
+def main(arguments: list[str]) -> int:
+    if len(arguments) != 2:
+        print('Usage: odoo_versions.py <version> <key>', file=sys.stderr)
+        return 2
+    version, key = arguments
+    try:
+        value = capability(version, key)
+    except UnsupportedVersion as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    except KeyError:
+        print(f'Unknown capability {json.dumps(key)}.', file=sys.stderr)
+        return 2
+    if isinstance(value, bool):
+        print('true' if value else 'false')
+    elif isinstance(value, (list, tuple)):
+        print(shlex.join(str(item) for item in value))
+    else:
+        print(value)
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main(sys.argv[1:]))

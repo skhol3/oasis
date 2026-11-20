@@ -1,4 +1,4 @@
-// Odoo 19 project detection. No Pi imports: tested directly with node:test.
+// Odoo project detection. No Pi imports: tested directly with node:test.
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -101,8 +101,17 @@ const TOOL_LINES: Record<string, string> = {
  * Compact system-prompt section for a detected project; `workspace` names its workspace file.
  * `tools` are the session's tools: only the oasis tools among them are named, and a session with
  * none (a subagent without the overlay) is pointed to the CLI. Omitted: every oasis tool.
+ * `version` is the configured Odoo series ("19.0"); it names the project and its skills.
  */
-export function projectContext(root: string, workspace?: string | null, tools?: readonly string[]): string {
+export function projectContext(
+  root: string,
+  workspace?: string | null,
+  tools?: readonly string[],
+  version?: string,
+): string {
+  // The series comes from the project's configuration; without it no number is made up.
+  const odoo = version ? `Odoo ${version}` : "Odoo";
+  const skills = version ? `odoo${version.split(".")[0]}-*` : "Odoo";
   const source = workspace ? `workspace ${workspace}` : `profile ${PROFILE_NAME}`;
   const names = Object.keys(TOOL_LINES).filter((name) => !tools || tools.includes(name));
   const routing = names.length > 0
@@ -116,5 +125,9 @@ export function projectContext(root: string, workspace?: string | null, tools?: 
         `\`oasis --project ${root} <command>\` (test-module --compact, module-status, check-environment --quick,`,
         "lint-module, model-info). Do not browse the Odoo source tree to learn",
       ];
-  return [`Odoo 19 project root: ${root} (${source}).`, ...routing, "framework APIs; load the matching odoo19-* skill first."].join("\n");
+  return [
+    `${odoo} project root: ${root} (${source}).`,
+    ...routing,
+    `framework APIs; load the matching ${skills} skill first.`,
+  ].join("\n");
 }

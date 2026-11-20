@@ -2,6 +2,8 @@
 from pathlib import Path
 import importlib.util
 import re
+import sys
+import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,7 +17,7 @@ class CapabilityTableTests(unittest.TestCase):
     def test_only_odoo_19_is_supported_with_its_capabilities(self):
         self.assertEqual(odoo_versions.CAPABILITIES, {'19.0': {
             'python': ('3.10', '3.14'), 'postgres_min': 13, 'second_port_option': '--gevent-port',
-            'demo_off_args': ['--without-demo'], 'test_tags_implies_stop': True}})
+            'demo_off_args': ['--without-demo'], 'test_tags_implies_stop': True, 'test_class_filter': True}})
         self.assertEqual(odoo_versions.supported(), ['19.0'])
 
     def test_capability_reads_one_key(self):
@@ -66,6 +68,36 @@ class VersionNeutralToolsTests(unittest.TestCase):
                 if self.FLAGS.search(line):
                     found.append(f'{path.relative_to(ROOT)}:{number}: {line.strip()}')
         self.assertEqual(found, [])
+
+    # The series itself is read from the configuration (ODOO_VERSION) or the table: besides
+    # odoo_versions.py, only the legacy profile contract in config.py may name it.
+    SERIES = re.compile(r"(?<![\w.])19\.0(?!\d)|\(19, 0\)|release_is_19")
+    ALLOWED = {('tools/config.py', "LEGACY_VERSION = '19.0'")}
+
+    def test_no_tool_names_the_odoo_series(self):
+        found = []
+        for path in sorted(TOOLS.rglob('*')):
+            if not path.is_file() or path.name == 'odoo_versions.py' or '__pycache__' in path.parts:
+                continue
+            for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+                if self.SERIES.search(line) and (str(path.relative_to(ROOT)), line.strip()) not in self.ALLOWED:
+                    found.append(f'{path.relative_to(ROOT)}:{number}: {line.strip()}')
+        self.assertEqual(found, [])
+
+    def test_capabilities_can_be_read_from_the_shell(self):
+        def read(*args):
+            return subprocess.run([sys.executable, '-I', '-B', str(TOOLS / 'odoo_versions.py'), *args],
+                                  text=True, capture_output=True)
+        for key, expected in (('test_class_filter', 'true\n'), ('second_port_option', '--gevent-port\n'),
+                              ('demo_off_args', '--without-demo\n'), ('postgres_min', '13\n')):
+            with self.subTest(key=key):
+                result = read('19.0', key)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected, ''))
+        for args in (('12.0', 'test_class_filter'), ('19.0', 'no_such_key'), ('19.0',), ()):
+            with self.subTest(args=args):
+                result = read(*args)
+                self.assertEqual((result.returncode, result.stdout), (2, ''))
+                self.assertTrue(result.stderr.strip())
 
 
 if __name__ == '__main__':

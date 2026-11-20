@@ -7,9 +7,15 @@ export interface CoreResult {
   stderr: string;
 }
 
-export function testModuleArgs(params: { module: string; database?: string; only?: string }): string[] {
+export function testModuleArgs(params: {
+  module: string;
+  database?: string;
+  only?: string;
+  reuse?: boolean;
+}): string[] {
   return [
     "test-module", "--compact",
+    ...(params.reuse ? ["--reuse"] : []),
     ...(params.only ? ["--only", params.only] : []),
     params.module,
     ...(params.database ? [params.database] : []),
@@ -56,9 +62,9 @@ export function formatTestRun(
   if (!values.stdout_log) return formatPlain(result, maxLines);
   const stderrLog = values.stderr_log ?? "";
   // A disposable database (no explicit or configured one) is reported as dropped or not.
-  const lifecycle = values.database_lifecycle
-    ? ` database_lifecycle=${values.database_lifecycle} dropped=${values.dropped ?? ""}`
-    : "";
+  // A reused one is reported with how the run prepared it (install or update).
+  const detail = values.mode !== undefined ? `mode=${values.mode}` : `dropped=${values.dropped ?? ""}`;
+  const lifecycle = values.database_lifecycle ? ` database_lifecycle=${values.database_lifecycle} ${detail}` : "";
   const summary = summarizeTestLog(readLog(values.stdout_log), stderrLog ? readLog(stderrLog) : "", options);
   // Odoo reports success when a class or method filter matches nothing: say so.
   const unmatched = only && /^result: .* of 0 tests\b/m.test(summary)
