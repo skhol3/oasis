@@ -13,7 +13,11 @@ const MIGRATE_SCRIPTS = new Set([MIGRATE, "migrate.py"]);
 const ENTRY_POINTS = new Set(["oasis", "odoo19"]);
 const SHELLS = new Set(["bash", "sh", "zsh", "dash"]);
 // Programs that run what they read from a heredoc; its body is then classified as commands.
-const HEREDOC_EXECUTORS = new Set([...SHELLS, "source", ".", "eval", "ssh", "xargs", "su"]);
+const HEREDOC_READERS = new Set([
+  ...SHELLS, "ksh", "mksh", "ash", "fish", "csh", "tcsh", "source", ".", "eval", "ssh", "su",
+]);
+const HELP_FLAGS = new Set(["--help", "-h"]);
+const REDIRECTION = /^\d*[<>]/;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 // Reserved words that precede a command inside compound commands.
 const KEYWORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!"]);
@@ -43,6 +47,14 @@ function basename(word: string): string {
 }
 
 /**
+ * Whether a `#` at `index` starts a comment: at the start of a word, which an escaped character
+ * (`a\ #b`, with the escaped one at `escapedAt`) does not begin.
+ */
+function startsComment(text: string, index: number, escapedAt: number): boolean {
+  return index === 0 || (escapedAt !== index - 1 && /[\s;&|(]/.test(text[index - 1]));
+}
+
+/**
  * Pull out $(...) and `...` bodies so they are classified as commands too. With `quotes`, text
  * inside single quotes is left alone, as bash does; heredoc bodies pass `quotes = false`, because
  * quotes are literal there.
@@ -51,11 +63,13 @@ function substitutions(command: string, quotes = true): { outer: string; inner: 
   const inner: string[] = [];
   let outer = "";
   let inDouble = false;
+  let escapedAt = -1;
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
     if (quotes && c === "\\" && i + 1 < command.length) {
       outer += c + command[++i];
-    } else if (quotes && !inDouble && c === "#" && (i === 0 || /\s/.test(command[i - 1]))) {
+      escapedAt = i;
+    } else if (quotes && !inDouble && c === "#" && startsComment(command, i, escapedAt)) {
       // A comment runs to the end of the line; quotes inside it mean nothing.
       const end = command.indexOf("\n", i);
       i = (end < 0 ? command.length : end) - 1;
@@ -106,6 +120,7 @@ interface Heredoc {
 function heredocsOpened(line: string): Heredoc[] {
   const found: Heredoc[] = [];
   let quote = "";
+  let escapedAt = -1;
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
     if (quote) {
@@ -114,8 +129,8 @@ function heredocsOpened(line: string): Heredoc[] {
     } else if (c === "'" || c === '"') {
       quote = c;
     } else if (c === "\\") {
-      i++;
-    } else if (c === "#" && (i === 0 || /\s/.test(line[i - 1]))) {
+      escapedAt = ++i;
+    } else if (c === "#" && startsComment(line, i, escapedAt)) {
       break; // the rest of the line is a comment
     } else if (c === "<" && line[i + 1] === "<" && line[i + 2] !== "<" && line[i - 1] !== "<") {
       const match = /^<<(-?)\s*(\\?)(['"]?)([A-Za-z_][A-Za-z0-9_]*)\3/.exec(line.slice(i));
@@ -129,10 +144,35 @@ function heredocsOpened(line: string): Heredoc[] {
 }
 
 /**
- * Separate heredoc bodies from commands. A body is data unless a shell or another executor reads
- * it (`bash <<EOF`, `ssh host <<EOF`):
- * then it stays in `text` and is classified as commands. `data` holds the bodies of unquoted
- * heredocs, where bash still runs substitutions. An unterminated heredoc is left as commands.
+ * Whether a command on the heredoc's opening line runs what it reads (`bash <<EOF`,
+ * `cat <<EOF | sh`, `docker exec db sh <<EOF`). Only words in command position count, so
+ * `git add . && git commit -F - <<EOF` does not. Any command on the line counts, not only the one
+ * the heredoc is attached to: the check errs towards classifying the body.
+ */
+function readsCommands(opener: string): boolean {
+  return segments(opener).some((segment) => {
+    // `bash<<EOF` is one word here; redirections are not part of the command.
+    const words = segment.map((word) => word.split(/[<>]/)[0]).filter(Boolean);
+    let i = 0;
+    for (;;) {
+      while (i < words.length && (ASSIGNMENT.test(words[i]) || KEYWORDS.has(words[i]))) i++;
+      if (i >= words.length) return false;
+      // xargs runs its input lines as arguments of any command, or as the command itself.
+      if (basename(words[i]) === "xargs") return true;
+      const next = unwrap(words, i);
+      if (next === undefined) return HEREDOC_READERS.has(basename(words[i]));
+      if (next === null) return false;
+      i = next;
+    }
+  });
+}
+
+/**
+ * Separate heredoc bodies from commands. A body is data unless a command on its opening line runs
+ * what it reads (see readsCommands): then it stays in `text` and is classified as commands. The
+ * opening line includes the lines it continues (`bash \` + newline) and, after a trailing `|`,
+ * the line that follows the body. `data` holds the bodies of unquoted heredocs, where bash still
+ * runs substitutions. An unterminated heredoc is left as commands.
  */
 function heredocs(command: string): { text: string; data: string[] } {
   const lines = command.split("\n");
@@ -141,14 +181,16 @@ function heredocs(command: string): { text: string; data: string[] } {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     text.push(line);
-    const fedToShell = line.split(/[\s;|&(){}<>]+/).some((word) => HEREDOC_EXECUTORS.has(basename(word)));
+    let opener = line;
+    for (let k = i - 1; k >= 0 && lines[k].endsWith("\\"); k--) opener = `${lines[k].slice(0, -1)} ${opener}`;
     for (const heredoc of heredocsOpened(line)) {
       const matches = (candidate: string) =>
         (heredoc.stripTabs ? candidate.replace(/^\t+/, "") : candidate) === heredoc.delimiter;
       const end = lines.findIndex((candidate, index) => index > i && matches(candidate));
       if (end < 0) break;
       const body = lines.slice(i + 1, end);
-      if (fedToShell) text.push(...body);
+      const piped = /\|\s*$/.test(line) ? ` ${lines[end + 1] ?? ""}` : "";
+      if (readsCommands(opener + piped)) text.push(...body);
       else if (!heredoc.quoted) data.push(body.join("\n"));
       i = end;
     }
@@ -211,16 +253,49 @@ function entryPointCommand(words: string[], index: number): string | undefined {
   return words[i];
 }
 
+/** Whether the arguments only ask for help: one help flag, redirections aside. */
+function onlyHelp(args: string[]): boolean {
+  const rest = args.filter((word) => !REDIRECTION.test(word));
+  return rest.length === 1 && HELP_FLAGS.has(rest[0]);
+}
+
 /** A user-run tool when words[index] runs it: its tool script, or an entry point with that command.
- * migrate's scripts count only inside a `tools` directory, since the name is common. */
+ * migrate's scripts count only inside a `tools` directory, since the name is common. Asking only
+ * for its help (`--help` or `-h` as the single argument) runs nothing and is not blocked. */
 function userRunTool(words: string[], index: number): string | null {
   const word = words[index];
   const name = basename(word);
-  if (WORKTREE_INIT_SCRIPTS.has(name)) return WORKTREE_INIT;
-  if (MIGRATE_SCRIPTS.has(name) && /(^|\/)tools\/[^/]+$/.test(word)) return MIGRATE;
-  if (!ENTRY_POINTS.has(name)) return null;
-  if (words.slice(index + 1).includes(WORKTREE_INIT)) return WORKTREE_INIT;
-  return entryPointCommand(words, index) === MIGRATE ? MIGRATE : null;
+  const args = words.slice(index + 1);
+  let tool: string | null = null;
+  let toolArgs = args;
+  if (WORKTREE_INIT_SCRIPTS.has(name)) tool = WORKTREE_INIT;
+  else if (MIGRATE_SCRIPTS.has(name) && /(^|\/)tools\/[^/]+$/.test(word)) tool = MIGRATE;
+  else if (ENTRY_POINTS.has(name)) {
+    if (args.includes(WORKTREE_INIT)) tool = WORKTREE_INIT;
+    else if (entryPointCommand(words, index) === MIGRATE) tool = MIGRATE;
+    // The entry point's own `--project <dir>` and the command name are not the tool's arguments.
+    const project = args.indexOf("--project");
+    toolArgs = args.filter((arg, k) => arg !== tool && (project < 0 || (k !== project && k !== project + 1)));
+  }
+  return tool && !onlyHelp(toolArgs) ? tool : null;
+}
+
+/**
+ * The index of the command a wrapper at words[index] runs (`sudo -u x cmd`, `docker exec db cmd`):
+ * undefined when words[index] is not a wrapper, null when it runs no further command.
+ */
+function unwrap(words: string[], index: number): number | null | undefined {
+  const name = basename(words[index]);
+  const wrapper = WRAPPERS[name];
+  if (wrapper) {
+    const next = skipOptions(words, index + 1, wrapper);
+    return name === "timeout" && next < words.length ? next + 1 : next; // the duration
+  }
+  if (name !== "docker") return undefined;
+  let i = skipOptions(words, index + 1, DOCKER_VALUE_OPTIONS);
+  if (words[i] === "compose") i = skipOptions(words, i + 1, DOCKER_VALUE_OPTIONS);
+  if (words[i] !== "exec" && words[i] !== "run") return null;
+  return skipOptions(words, i + 1, DOCKER_VALUE_OPTIONS) + 1; // the service or container
 }
 
 function classifySegment(words: string[]): string | null {
@@ -240,17 +315,10 @@ function classifySegment(words: string[]): string | null {
       const exec = words.findIndex((w, k) => k > i && (w === "-exec" || w === "-execdir" || w === "-ok"));
       return exec > 0 ? classifySegment(words.slice(exec + 1)) : null;
     }
-    const wrapper = WRAPPERS[name];
-    if (wrapper) {
-      i = skipOptions(words, i + 1, wrapper);
-      if (name === "timeout" && i < words.length) i++; // the duration
-      continue;
-    }
-    if (name === "docker") {
-      i = skipOptions(words, i + 1, DOCKER_VALUE_OPTIONS);
-      if (words[i] === "compose") i = skipOptions(words, i + 1, DOCKER_VALUE_OPTIONS);
-      if (words[i] !== "exec" && words[i] !== "run") return null;
-      i = skipOptions(words, i + 1, DOCKER_VALUE_OPTIONS) + 1; // the service or container
+    const next = unwrap(words, i);
+    if (next === null) return null;
+    if (next !== undefined) {
+      i = next;
       continue;
     }
     if (BLOCKED.has(name)) return name;
