@@ -2,6 +2,7 @@
 
 export const OASIS_TOOLS: readonly string[] = [
   "oasis_test_module",
+  "oasis_test_summary",
   "oasis_find_module",
   "oasis_model_info",
   "oasis_module_status",

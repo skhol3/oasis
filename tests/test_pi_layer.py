@@ -19,7 +19,7 @@ class PiLayerTests(unittest.TestCase):
 
     def test_agent_overlay_template_lists_only_registered_tools(self):
         overlay = json.loads((ROOT / 'pi/agent-overlays/oasis.json').read_text())
-        tools = ['oasis_test_module', 'oasis_find_module', 'oasis_model_info',
+        tools = ['oasis_test_module', 'oasis_test_summary', 'oasis_find_module', 'oasis_model_info',
                  'oasis_module_status', 'oasis_lint_module', 'oasis_check_environment']
         self.assertEqual(overlay, {'gentle-ai-worker': {'add': tools},
                                    'gentle-ai-verify': {'add': tools}})

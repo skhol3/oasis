@@ -93,6 +93,7 @@ export function projectContext(root: string, workspace?: string | null): string 
     `Odoo 19 project root: ${root} (${source}).`,
     "Prefer the oasis tools over raw shell; they apply the profile guards and return compact output:",
     "- oasis_test_module: run one module's tests; returns the result line and failures only, full logs stay on disk.",
+    "- oasis_test_summary: the same summary for a compact run started in the background (pass what it printed).",
     "- oasis_module_status: database and module state for a module.",
     "- oasis_check_environment: environment diagnostics (quick by default).",
     "- oasis_lint_module: Pylint for one module without starting Odoo.",
