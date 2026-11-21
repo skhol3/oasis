@@ -9,6 +9,14 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-21
+
+### Fixed
+
+- `xmlid-info` left a whole line out of `referenced by` when it contained `inherit_id`. Only the
+  inherit_id reference of a data file is left out now: a `groups` or other reference on the same
+  line, and Python that assigns `inherit_id`, are listed.
+
 ## [0.7.0] - 2026-11-20
 
 Query tools for views and XML ids, read from source like `model-info`.
@@ -505,7 +513,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/skhol3/oasis/releases/tag/v0.7.1
 [0.7.0]: https://github.com/skhol3/oasis/releases/tag/v0.7.0
 [0.6.0]: https://github.com/skhol3/oasis/releases/tag/v0.6.0
 [0.5.0]: https://github.com/skhol3/oasis/releases/tag/v0.5.0
