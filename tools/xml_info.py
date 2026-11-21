@@ -56,6 +56,10 @@ REWRITE_CAP = 10
 EXTENSION_CAP = 40
 UNRESOLVED_CAP = 10
 REFERENCE_SUFFIXES = ('.xml', '.py', '.csv')
+# The two ways a data file names the inherited view: <template inherit_id="..."> and
+# <field name="inherit_id" ref="..."/>.
+INHERIT_ATTRIBUTE = re.compile(r'''\binherit_id=["'][^"']*["']''')
+INHERIT_FIELD = re.compile(r'''(name=["']inherit_id["'][^>]*?)\bref=["'][^"']*["']''')
 
 
 def fail(message):
@@ -342,7 +346,7 @@ def view_info(values, model, kind, module):
 
 
 def references(values, xml_id, definitions):
-    """`path:line` of every text reference to the id, definitions and inherit_id lines aside."""
+    """`path:line` of every text reference to the id, definitions and inherit_id references aside."""
     model_info = sibling('model_info')
     owner, name = xml_id.split('.', 1)
     full = re.compile(r'(?<![\w.])' + re.escape(xml_id) + r'(?![\w.])')
@@ -366,8 +370,12 @@ def references(values, xml_id, definitions):
                 continue
             relative = str(path.relative_to(root))
             for number, line in enumerate(content.decode('utf-8', 'replace').splitlines(), 1):
-                if 'inherit_id' in line or (relative, number) in defined:
+                if (relative, number) in defined:
                     continue
+                if relative.endswith('.xml') and 'inherit_id' in line:
+                    # The inherited view is already under "extended by": leave only that
+                    # reference out, so another one on the same line still counts.
+                    line = INHERIT_FIELD.sub(' ', INHERIT_ATTRIBUTE.sub(' ', line))
                 local = module == owner and (short.search(line) or in_groups(line) or (
                     # A CSV cell holds the bare name (ir.model.access.csv group and model columns).
                     relative.endswith('.csv') and name in (cell.strip().strip('"') for cell in line.split(','))))
