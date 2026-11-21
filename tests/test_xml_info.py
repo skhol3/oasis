@@ -280,6 +280,33 @@ class XmlInfoTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout), (1, ''))
         self.assertEqual(result.stderr.splitlines(), ['xml id not found: views.lost_id'] + skipped)
 
+    def test_an_inherit_id_field_is_not_a_reference_whatever_its_attribute_order(self):
+        scratch = self.temp / 'order'
+        project = scratch / 'project'
+        module = scratch / 'source/odoo/addons/core'
+        (scratch / 'source/odoo/odoo/addons').mkdir(parents=True)
+        (project / 'addons').mkdir(parents=True)
+        module.mkdir(parents=True)
+        (project / '.odoo19-agent.toml').write_text((PROJECT / '.odoo19-agent.toml').read_text())
+        (module / '__manifest__.py').write_text("{'name': 'x'}\n")
+        (module / 'views.xml').write_text(
+            '<odoo>\n'
+            '<record id="base_view" model="ir.ui.view"><field name="model">x.thing</field></record>\n'
+            '<record id="first" model="ir.ui.view"><field name="inherit_id" ref="base_view"/></record>\n'
+            '<record id="second" model="ir.ui.view"><field ref="core.base_view" name="inherit_id"/></record>\n'
+            '<record id="third" model="ir.ui.view"><field name="inherit_id" ref="base_view"/>'
+            '<field name="view_id" ref="base_view"/></record>\n'
+            '</odoo>\n')
+        result = subprocess.run([sys.executable, '-I', '-B', str(ROOT / 'oasis'), '--project', str(project),
+                                 'xmlid-info', 'core.base_view'], cwd=self.temp, env=self.env, text=True,
+                                capture_output=True)
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout.splitlines()[2:],
+                         ['  model: x.thing', '  type: unknown', 'extended by (3):',
+                          '  core.first core/views.xml:3', '  core.second core/views.xml:4', '  core.third core/views.xml:5',
+                          # Only the other field of the last record refers to it.
+                          'referenced by (1):', '  core/views.xml:5'])
+
     def test_unknown_ids_and_usage(self):
         self.assert_result('xmlid-info', ('coffee.no_such_record',), 1, '', 'xml id not found: coffee.no_such_record\n')
         # Records in static/ and in source test_ modules are not scanned.

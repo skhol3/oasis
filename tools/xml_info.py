@@ -59,7 +59,8 @@ REFERENCE_SUFFIXES = ('.xml', '.py', '.csv')
 # The two ways a data file names the inherited view: <template inherit_id="..."> and
 # <field name="inherit_id" ref="..."/>.
 INHERIT_ATTRIBUTE = re.compile(r'''\binherit_id=["'][^"']*["']''')
-INHERIT_FIELD = re.compile(r'''(name=["']inherit_id["'][^>]*?)\bref=["'][^"']*["']''')
+INHERIT_FIELD = re.compile(r'''<field\b[^>]*\bname=["']inherit_id["'][^>]*>''')
+REF_ATTRIBUTE = re.compile(r'''\bref=["'][^"']*["']''')
 
 
 def fail(message):
@@ -375,7 +376,9 @@ def references(values, xml_id, definitions):
                 if relative.endswith('.xml') and 'inherit_id' in line:
                     # The inherited view is already under "extended by": leave only that
                     # reference out, so another one on the same line still counts.
-                    line = INHERIT_FIELD.sub(' ', INHERIT_ATTRIBUTE.sub(' ', line))
+                    # (the ref of the inherit_id field, wherever it stands in the tag).
+                    line = INHERIT_FIELD.sub(lambda tag: REF_ATTRIBUTE.sub(' ', tag.group(0)),
+                                             INHERIT_ATTRIBUTE.sub(' ', line))
                 local = module == owner and (short.search(line) or in_groups(line) or (
                     # A CSV cell holds the bare name (ir.model.access.csv group and model columns).
                     relative.endswith('.csv') and name in (cell.strip().strip('"') for cell in line.split(','))))
