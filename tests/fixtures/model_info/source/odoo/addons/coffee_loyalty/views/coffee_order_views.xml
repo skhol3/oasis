@@ -28,4 +28,5 @@
     <template id="report_order_points" inherit_id="coffee_loyalty.report_order">
         <xpath expr="//t" position="inside"><span/></xpath>
     </template>
+    <template id="report_order_manager" inherit_id="coffee_loyalty.report_order" groups="coffee.group_coffee_manager"/>
 </odoo>

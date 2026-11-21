@@ -125,7 +125,10 @@ class XmlInfoTests(unittest.TestCase):
                            'also written in: a_coffee_theme/views/theme.xml:4\n'
                            'extended by (2):\n'
                            f'  coffee_loyalty.view_coffee_order_form_loyalty {LOYALTY}:3\n'
-                           f'  coffee_shop.view_shop_order_form {SHOP}:4\n')
+                           f'  coffee_shop.view_shop_order_form {SHOP}:4\n'
+                           # Python that assigns inherit_id is a reference; the XML inherit_id lines are not repeated.
+                           'referenced by (1):\n'
+                           '  coffee_shop/controllers/main.py:6\n')
 
     def test_an_action_with_references_from_xml_and_python(self):
         # Inside its own module the id is referenced without the module name.
@@ -160,8 +163,9 @@ class XmlInfoTests(unittest.TestCase):
                            f'defined: {LOYALTY}:25 template\n'
                            '  name: Order report\n'
                            '  type: qweb\n'
-                           'extended by (1):\n'
-                           f'  coffee_loyalty.report_order_points {LOYALTY}:28\n')
+                           'extended by (2):\n'
+                           f'  coffee_loyalty.report_order_points {LOYALTY}:28\n'
+                           f'  coffee_loyalty.report_order_manager {LOYALTY}:31\n')
         self.assert_result('xmlid-info', ('coffee_loyalty.view_coffee_order_form_vip',), 0,
                            'xml id: coffee_loyalty.view_coffee_order_form_vip\n'
                            f'defined: {LOYALTY}:16 record ir.ui.view\n'
@@ -188,9 +192,11 @@ class XmlInfoTests(unittest.TestCase):
                            'xml id: coffee.group_coffee_manager\n'
                            f'defined: {CORE}:34 record res.groups\n'
                            '  name: Coffee manager\n'
-                           'referenced by (2):\n'
+                           'referenced by (3):\n'
                            '  coffee/security/ir.model.access.csv:2\n'
-                           f'  {CORE}:38\n')
+                           f'  {CORE}:38\n'
+                           # A line that also inherits another template still counts for its groups.
+                           f'  {LOYALTY}:31\n')
 
     def test_long_lists_are_capped_with_the_count_of_the_rest(self):
         scratch = self.temp / 'capped'
@@ -217,6 +223,9 @@ class XmlInfoTests(unittest.TestCase):
                                      '<field name="arch" type="xml"><form/></field></record></odoo>',
                          **{f'ext{index:02d}.xml': extension.format(index) for index in range(45)},
                          **{f'broken{index}.xml': '<odoo><!-- x.thing lost_id -->' for index in range(7)}})
+        orphan = ('<odoo><record id="o{0:02d}" model="ir.ui.view"><field name="model">x.thing</field>'
+                  '<field name="inherit_id" ref="gone.view"/><field name="arch" type="xml"><form/></field></record></odoo>')
+        module('zorphans', {f'o{index:02d}.xml': orphan.format(index) for index in range(12)})
         env = {**self.env}
 
         def run(command, *args):
@@ -243,7 +252,24 @@ class XmlInfoTests(unittest.TestCase):
         self.assertEqual(result.stdout.splitlines(),
                          ['model: x.thing — 1 view, 45 extensions', 'form views.v views/base.xml:1']
                          + [f'  + views.e{index:02d} views/ext{index:02d}.xml:1 (1 change)' for index in range(40)]
-                         + ['  +5 more extensions (narrow with --module)'] + skipped)
+                         + ['  +5 more extensions (narrow with --module)']
+                         + [f'unresolved: zorphans.o{index:02d} zorphans/o{index:02d}.xml:1 inherits gone.view'
+                            for index in range(10)]
+                         + ['unresolved: +2 more'] + skipped)
+        result = run('view-info', 'x.thing', '--module', 'views')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout.splitlines(),
+                         ['model: x.thing — module views: 1 view, 45 extensions', 'form views.v views/base.xml:1']
+                         + [f'+ views.e{index:02d} views/ext{index:02d}.xml:1 (1 change) extends views.v'
+                            for index in range(40)]
+                         + ['+5 more extensions'] + skipped)
+        result = run('view-info', 'x.thing', '--module', 'zorphans')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout.splitlines(),
+                         ['model: x.thing — module zorphans: 0 views, 0 extensions']
+                         + [f'unresolved: zorphans.o{index:02d} zorphans/o{index:02d}.xml:1 inherits gone.view'
+                            for index in range(10)]
+                         + ['unresolved: +2 more'])
         result = run('xmlid-info', 'views.v')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertEqual(result.stdout.splitlines()[4:],
@@ -253,6 +279,33 @@ class XmlInfoTests(unittest.TestCase):
         result = run('xmlid-info', 'views.lost_id')
         self.assertEqual((result.returncode, result.stdout), (1, ''))
         self.assertEqual(result.stderr.splitlines(), ['xml id not found: views.lost_id'] + skipped)
+
+    def test_an_inherit_id_field_is_not_a_reference_whatever_its_attribute_order(self):
+        scratch = self.temp / 'order'
+        project = scratch / 'project'
+        module = scratch / 'source/odoo/addons/core'
+        (scratch / 'source/odoo/odoo/addons').mkdir(parents=True)
+        (project / 'addons').mkdir(parents=True)
+        module.mkdir(parents=True)
+        (project / '.odoo19-agent.toml').write_text((PROJECT / '.odoo19-agent.toml').read_text())
+        (module / '__manifest__.py').write_text("{'name': 'x'}\n")
+        (module / 'views.xml').write_text(
+            '<odoo>\n'
+            '<record id="base_view" model="ir.ui.view"><field name="model">x.thing</field></record>\n'
+            '<record id="first" model="ir.ui.view"><field name="inherit_id" ref="base_view"/></record>\n'
+            '<record id="second" model="ir.ui.view"><field ref="core.base_view" name="inherit_id"/></record>\n'
+            '<record id="third" model="ir.ui.view"><field name="inherit_id" ref="base_view"/>'
+            '<field name="view_id" ref="base_view"/></record>\n'
+            '</odoo>\n')
+        result = subprocess.run([sys.executable, '-I', '-B', str(ROOT / 'oasis'), '--project', str(project),
+                                 'xmlid-info', 'core.base_view'], cwd=self.temp, env=self.env, text=True,
+                                capture_output=True)
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout.splitlines()[2:],
+                         ['  model: x.thing', '  type: unknown', 'extended by (3):',
+                          '  core.first core/views.xml:3', '  core.second core/views.xml:4', '  core.third core/views.xml:5',
+                          # Only the other field of the last record refers to it.
+                          'referenced by (1):', '  core/views.xml:5'])
 
     def test_unknown_ids_and_usage(self):
         self.assert_result('xmlid-info', ('coffee.no_such_record',), 1, '', 'xml id not found: coffee.no_such_record\n')

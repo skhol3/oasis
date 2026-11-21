@@ -6,7 +6,7 @@ Built with Gentle Shell (`github.com/Gentleman-Programming/gentle-shell`).
 
 ## Install or update
 
-Releases follow Semantic Versioning and are tagged `vX.Y.Z`; see the [changelog](CHANGELOG.md). Install a released version of the Gentle Shell layer with `gentle-shell install git:github.com/skhol3/oasis@v0.7.0`.
+Releases follow Semantic Versioning and are tagged `vX.Y.Z`; see the [changelog](CHANGELOG.md). Install a released version of the Gentle Shell layer with `gentle-shell install git:github.com/skhol3/oasis@v0.7.1`.
 
 With owner authorization, commit the change, run the test suite, then run `install.sh` from this repository:
 
@@ -25,7 +25,7 @@ The installed package contains the six `odoo19-*` directories, `tools/`, `projec
 A thin Pi package (`package.json`, `pi/`) layered over Gentle Shell. It changes nothing in Gentle Shell or Pi; its goal is fewer tokens in Odoo work by wrapping the guarded `oasis` core with compact output. Install it from a release tag, so the sessions load a fixed copy that work in a local checkout cannot change:
 
 ```bash
-gentle-shell install git:github.com/skhol3/oasis@v0.7.0
+gentle-shell install git:github.com/skhol3/oasis@v0.7.1
 ```
 
 To move to a newer release, remove the old entry and install the new tag (`gentle-shell list` shows the installed entry), then `/reload` open sessions:
@@ -268,7 +268,7 @@ referenced by (3):
 - `defined:` names the file, line and kind: `record <model>`, `template` or `menuitem`. Its fields follow in document order (at most 12, values cut at 60 characters; a `ref` is shown as its full id; `arch` is left out). A base view also gets `type:`.
 - `also written in:` lists other data files that write on the same id (at most ten). The definition is the record of the module the id belongs to; without one, the first in scan order.
 - `extended by (<n>):` lists the views whose `inherit_id` is this id (at most 20).
-- `referenced by (<n>):` lists `file:line` of text references in XML, Python and CSV files (at most 20): the full id anywhere, and inside the defining module also the name alone in `ref`, `parent` and `action` attributes, in comma-separated `groups` lists, `%(name)d`, `ref('name')` and CSV cells (such as the group column of `ir.model.access.csv`). Definition and `inherit_id` lines are not repeated there.
+- `referenced by (<n>):` lists `file:line` of text references in XML, Python and CSV files (at most 20): the full id anywhere, and inside the defining module also the name alone in `ref`, `parent` and `action` attributes, in comma-separated `groups` lists, `%(name)d`, `ref('name')` and CSV cells (such as the group column of `ir.model.access.csv`). Definition lines and the `inherit_id` reference of a data file are not repeated there; another reference on such a line still counts.
 - `skipped:` lines name files that mention the id but are not well-formed XML; with `xml id not found: <id>` they go to stderr, since one of them may hold the definition.
 - Exit status: 0 when found, 1 with `xml id not found: <id>`, 2 for a usage error.
 
