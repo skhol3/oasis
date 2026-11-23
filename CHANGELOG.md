@@ -9,6 +9,40 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-23
+
+The harness names itself oasis in what it sets and prints. Everything existing keeps working;
+see the contract note in the README.
+
+### Added
+
+- `OASIS_PROJECT_ROOT`, `OASIS_ENTRYPOINT`, `OASIS_TOOLS_DIR` and `OASIS_COMPOSE_LOCK_TIMEOUT`:
+  the tools read each one first and its `ODOO19_*` name when it is unset or empty, so the
+  `ODOO19_*` names keep working. The entry point and the project wrappers set both names with
+  the same value.
+
+### Changed
+
+- With `[tooling].logs`, compact runs and browser evidence go to `<logs>/<slug or main>/run-*`,
+  without the `odoo19/` level. Existing `<logs>/odoo19/` directories are never moved or deleted,
+  and `oasis_test_summary` accepts the run logs of both layouts. Without `[tooling].logs` runs
+  stay under `dev/logs/odoo19/`.
+- Messages, help and usage no longer say "Odoo 19": `Unsupported oasis command: <name>` and
+  `oasis tools are not installed: <path>` (also in the project wrappers). Help and messages that
+  tell you to run `gc`, and the `start` banner, name the invoked entry point (`oasis`, or
+  `odoo19` through the alias) instead of a fixed `odoo19`. Errors about the project root name
+  `OASIS_PROJECT_ROOT`.
+- The variables that pass only between `test-module --compact` and the run it starts are
+  `OASIS_RUN_RESULT` and `OASIS_REUSE_RESULT` (internal, no legacy name).
+- The Gentle Shell extension is `pi/extensions/oasis.ts`; its prompt section and tag are
+  `oasis` and its status message type `oasis-status`.
+
+### Fixed
+
+- `test_shared_conf` (and the port tests of `test_runtime_state`) no longer fail when another
+  process's loopback connection takes the port after the configured one: the tests choose their
+  configured ports outside the kernel's ephemeral port range.
+
 ## [0.7.1] - 2026-11-21
 
 ### Fixed
@@ -513,7 +547,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/skhol3/oasis/releases/tag/v0.8.0
 [0.7.1]: https://github.com/skhol3/oasis/releases/tag/v0.7.1
 [0.7.0]: https://github.com/skhol3/oasis/releases/tag/v0.7.0
 [0.6.0]: https://github.com/skhol3/oasis/releases/tag/v0.6.0
