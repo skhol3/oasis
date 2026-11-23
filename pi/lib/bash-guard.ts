@@ -110,12 +110,14 @@ function insideOasisTree(dir: string, context: GuardContext): boolean {
 /**
  * Whether a word names the menu's script (`menu` or `actions.py`). Resolved to a file, it must sit
  * in a `tools` directory whose parent is an oasis tree. When its path is unknown (expansion, an
- * unknown `cd` target), it is blocked only when spelled `tools/menu` or `tools/actions.py` and the
- * session works inside an oasis tree. Without a context, only the installed bundle's spelling counts.
+ * unknown `cd` target), it is blocked when spelled like the installed bundle (`.../skills/odoo19/tools/menu`)
+ * or, spelled `tools/menu` or `tools/actions.py`, when the session works inside an oasis tree. Without a context, only the installed bundle's spelling counts.
  */
 function menuScript(word: string, where: Where | undefined): boolean {
   if (!MENU_NAMES.has(basename(word))) return false;
-  if (!where) return MENU_SCRIPT.test(word);
+  // The installed bundle's spelling is blocked from anywhere, as before the session context,
+  // also when the rest of the path is an expansion (`$HOME/...`, `${HOME}/...`).
+  if (MENU_SCRIPT.test(word) || !where) return MENU_SCRIPT.test(word);
   const path = literalPath(word, where);
   if (path === null) return SPELLED_MENU_SCRIPT.test(word) && insideOasisTree(where.context.cwd, where.context);
   const tools = posix.dirname(path);

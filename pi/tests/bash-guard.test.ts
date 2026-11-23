@@ -413,6 +413,17 @@ test("menu scripts are blocked by what they resolve to, also relative or after a
   }
 });
 
+test("an unresolved path spelled like the installed bundle stays blocked from any directory", () => {
+  for (const command of [
+    "$HOME/.agents/skills/odoo19/tools/menu",
+    "${HOME}/.agents/skills/odoo19/tools/menu --catalog",
+    "python3 $HOME/.agents/skills/odoo19/tools/actions.py",
+    "~other/.agents/skills/odoo19/tools/menu",
+  ]) {
+    assert.equal(blockedProgram(command, at("/work/shop")), "menu", command);
+  }
+});
+
 test("unrelated tools/menu scripts stay allowed with the session context", () => {
   const allowed: [string, string][] = [
     ["/work/shop", "./tools/menu"],
