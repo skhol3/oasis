@@ -304,8 +304,17 @@ class Terminal:
                     return ''
                 print('A value is required.')
                 continue
-            if listed and answer.isdigit() and 1 <= int(answer) <= len(listed):
-                return listed[int(answer) - 1]
+            if item['kind'] == 'choice' and answer.isdigit():
+                # A number picks from the list; it never becomes a name.
+                if listed and 1 <= int(answer) <= len(listed):
+                    return listed[int(answer) - 1]
+                if not item['allow_new']:
+                    print(f'Choose a number from 1 to {len(listed)}, or a name from the list.')
+                elif listed:
+                    print(f'Choose a number from 1 to {len(listed)}, or type a name.')
+                else:
+                    print(f'No {label.lower()} is listed: type a name.')
+                continue
             if answer in listed:
                 return answer
             if item['kind'] == 'choice' and not item['allow_new']:

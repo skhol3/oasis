@@ -210,10 +210,10 @@ class TerminalMenuTests(MenuFixture):
         self.unchanged()
 
     def test_invalid_answers_are_asked_again(self):
-        result = self.terminal('9\n3\n2\nteh\n1\nTest Order\nTestOrder\n')
+        result = self.terminal('9\n3\n2\nteh\n5\n1\nTest Order\nTestOrder\n')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         self.assertIn('Choose a number from 1 to 4, or q.\n', result.stdout)
-        self.assertIn('Choose a number from 1 to 1, or a name from the list.\n', result.stdout)
+        self.assertEqual(result.stdout.count('Choose a number from 1 to 1, or a name from the list.\n'), 2)
         self.assertIn('--only takes a test class or Class.method.\n', result.stdout)
         self.assertTrue(result.stdout.endswith(self.command('test-module', '--only', 'TestOrder', 'coffee')))
         self.assertIn(' --test-tags /coffee:TestOrder ', self.log())
@@ -227,6 +227,23 @@ class TerminalMenuTests(MenuFixture):
         # list-databases started the database service (S7), then install-module ran.
         self.assertIn('up -d --wait --wait-timeout 60 db', self.log())
         self.assertIn('-d cc_dev_coffee -i coffee --with-demo --stop-after-init', self.log())
+
+    def test_a_number_outside_the_database_list_is_asked_again(self):
+        self.env.update(FAKE_DATABASES='cc_dev_coffee', FAKE_EXISTS='1')
+        result = self.terminal('2\n2\n1\n7\n0\n1\n')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout.count('Choose a number from 1 to 1, or type a name.\n'), 2, result.stdout)
+        self.assertTrue(result.stdout.endswith(self.command('update-module', 'coffee', 'cc_dev_coffee')))
+        self.assertNotIn(' -d 7 ', self.log())
+        self.assertIn('-d cc_dev_coffee -u coffee --stop-after-init', self.log())
+
+    def test_a_number_is_not_a_database_name_when_none_is_listed(self):
+        result = self.terminal('2\n1\n1\n3\n\nn\n')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn('No databases found.\n', result.stdout)
+        self.assertIn('No database is listed: type a name.\n', result.stdout)
+        self.assertTrue(result.stdout.endswith(self.command('install-module', 'coffee')))
+        self.assertIn('-d cc_dev_coffee -i coffee', self.log())
 
     def test_drop_requires_typing_the_database_name(self):
         self.env.update(FAKE_DATABASES='cc_dev_coffee cc_test_other', FAKE_EXISTS='1')
@@ -368,6 +385,33 @@ class DetachTests(MenuFixture):
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.detached(result, self.root.resolve().parent / 'logs/main/server.log')
         self.assertFalse((self.root / 'dev/logs').exists())
+
+    def assert_refused_before_anything(self, result, message):
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', message))
+        self.assertEqual(self.record(), '')
+        # Neither the database service nor Odoo was started.
+        self.unchanged()
+
+    def test_detach_refuses_a_log_directory_outside_the_project(self):
+        outside = Path(self.scratch.name) / 'elsewhere'
+        outside.mkdir()
+        (self.root / 'dev/logs').symlink_to(outside, target_is_directory=True)
+        self.env['FAKE_SERVE'] = '1'
+        self.assert_refused_before_anything(self.start('--detach'),
+                                            'Compact logs must remain inside the project.\n')
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_detach_refuses_a_checkout_directory_escaping_the_logs_directory(self):
+        profile = self.root / '.odoo19-agent.toml'
+        profile.write_text(profile.read_text() + "logs = '../logs'\n")
+        outside = Path(self.scratch.name) / 'elsewhere'
+        outside.mkdir()
+        (self.root.parent / 'logs').mkdir()
+        (self.root.parent / 'logs/main').symlink_to(outside, target_is_directory=True)
+        self.env['FAKE_SERVE'] = '1'
+        self.assert_refused_before_anything(self.start('--detach'),
+                                            'Compact logs must remain inside the configured logs directory.\n')
+        self.assertEqual(list(outside.iterdir()), [])
 
     def test_detach_refuses_a_batch_run(self):
         result = self.start('--detach', '--stop-after-init', '-u', 'coffee')

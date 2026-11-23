@@ -26,8 +26,9 @@ names) may still change in a minor release; every such change is listed here und
   with Pi's dialogs, confirms destructive and user-run actions as the catalog says, runs the exact
   command in the project root and shows it with its output (compact for `test-module` and
   `update-module`) as a session entry that is never sent to the model. No agent tool opens it.
-- The bash guard of the Gentle Shell layer blocks agents from running `oasis menu` (or
-  `tools/menu`, `tools/actions.py`), `--catalog` included; asking only for its help is allowed.
+- The bash guard of the Gentle Shell layer blocks agents from running `oasis menu` (or the
+  installed bundle's `skills/odoo19/tools/menu` and `tools/actions.py`), `--catalog` included;
+  asking only for its help is allowed. A `tools/menu` of another project is not blocked.
 
 ## [0.8.0] - 2026-11-23
 

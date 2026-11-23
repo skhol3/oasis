@@ -12,7 +12,9 @@ const MIGRATE_SCRIPTS = new Set([MIGRATE, "migrate.py"]);
 // User-run only: the interactive action menu (its catalog included) is for the user, in a terminal
 // or the Gentle Shell panel; agents run the commands it lists directly.
 export const MENU = "menu";
-const MENU_SCRIPTS = new Set([MENU, "actions.py"]);
+// Its scripts are blocked only in the installed bundle: `tools/menu` and `tools/actions.py` are
+// common names in other projects, and the menu itself refuses to run without a terminal.
+const MENU_SCRIPT = /(^|\/)skills\/odoo19\/tools\/(menu|actions\.py)$/;
 // The entry point and its alias: worktree-init, migrate and menu are blocked through either.
 const ENTRY_POINTS = new Set(["oasis", "odoo19"]);
 const SHELLS = new Set(["bash", "sh", "zsh", "dash"]);
@@ -295,7 +297,8 @@ function onlyPlan(args: string[]): boolean {
 }
 
 /** A user-run tool when words[index] runs it: its tool script, or an entry point with that command.
- * migrate's and menu's scripts count only inside a `tools` directory, since the names are common. Asking only
+ * migrate's scripts count only inside a `tools` directory, and menu's only in the installed bundle
+ * (`.../skills/odoo19/tools/`), since the names are common. Asking only
  * for its help (`--help` or `-h` as the single argument) runs nothing and is not blocked, and
  * neither is migrate's explicit plan (see onlyPlan). */
 function userRunTool(words: string[], index: number): string | null {
@@ -306,7 +309,7 @@ function userRunTool(words: string[], index: number): string | null {
   let toolArgs = args;
   if (WORKTREE_INIT_SCRIPTS.has(name)) tool = WORKTREE_INIT;
   else if (MIGRATE_SCRIPTS.has(name) && /(^|\/)tools\/[^/]+$/.test(word)) tool = MIGRATE;
-  else if (MENU_SCRIPTS.has(name) && /(^|\/)tools\/[^/]+$/.test(word)) tool = MENU;
+  else if (MENU_SCRIPT.test(word)) tool = MENU;
   else if (ENTRY_POINTS.has(name)) {
     if (args.includes(WORKTREE_INIT)) tool = WORKTREE_INIT;
     else if (entryPointCommand(words, index) === MIGRATE) tool = MIGRATE;

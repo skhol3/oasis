@@ -285,7 +285,8 @@ test("blocks agents from running the menu through the entry points or its tool, 
     "setsid oasis --project /p menu",
     "oasis --project /p menu --help --catalog",
     "oasis --project /p menu --catalog > catalog.json",
-    "tools/menu",
+    "~/.agents/skills/odoo19/tools/menu",
+    "/home/u/.agents/skills/odoo19/tools/actions.py --catalog",
     "bash ~/.agents/skills/odoo19/tools/menu --catalog",
     "python3 -I -B ~/.agents/skills/odoo19/tools/actions.py",
   ];
@@ -324,4 +325,45 @@ test("blockReason for menu sends the user to the terminal menu or the panel", ()
 test("user-run programs are blocked in every session, the others only in Odoo projects", () => {
   for (const program of ["migrate", "worktree-init", "menu"]) assert.equal(blockedEverywhere(program), true, program);
   for (const program of ["psql", "dropdb", "odoo-bin"]) assert.equal(blockedEverywhere(program), false, program);
+});
+
+test("menu's script forms are blocked only in the installed bundle, not in unrelated projects", () => {
+  const allowed = [
+    "./tools/menu",
+    "tools/menu --catalog",
+    "bash /work/shop/tools/menu",
+    "python3 tools/actions.py",
+    "python3 -B /work/shop/tools/actions.py --catalog",
+    "/opt/oasis/tools/menu",
+  ];
+  for (const command of allowed) {
+    assert.equal(blockedProgram(command), null, command);
+  }
+  const blocked = [
+    "oasis menu",
+    "odoo19 menu",
+    "~/.agents/skills/odoo19/oasis --project /p menu",
+    "~/.agents/skills/odoo19/tools/menu",
+    "sh /home/u/.agents/skills/odoo19/tools/menu",
+    "python3 -I -B ~/.agents/skills/odoo19/tools/actions.py --catalog",
+  ];
+  for (const command of blocked) {
+    assert.equal(blockedProgram(command), "menu", command);
+  }
+});
+
+test("migrate and worktree-init script forms stay blocked in any tools directory (unchanged)", () => {
+  const blocked: [string, string][] = [
+    ["./tools/migrate --apply", "migrate"],
+    ["bash /work/shop/tools/migrate", "migrate"],
+    ["python3 /opt/oasis/tools/migrate.py --apply", "migrate"],
+    ["./tools/worktree-init feat x", "worktree-init"],
+    ["python3 /work/shop/worktree_init.py feat x", "worktree-init"],
+  ];
+  for (const [command, program] of blocked) {
+    assert.equal(blockedProgram(command), program, command);
+  }
+  for (const command of ["./migrate --apply", "python3 migrate.py"]) {
+    assert.equal(blockedProgram(command), null, command);
+  }
 });
