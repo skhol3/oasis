@@ -11,7 +11,7 @@ import {
   parseCommand, SUBCOMMAND_SUMMARY, type SubcommandName, subcommandCompletions, USAGE,
 } from "../lib/commands.ts";
 import { withHeartbeat } from "../lib/heartbeat.ts";
-import { blockedProgram, blockReason, MIGRATE, WORKTREE_INIT } from "../lib/bash-guard.ts";
+import { blockedEverywhere, blockedProgram, blockReason } from "../lib/bash-guard.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
@@ -346,7 +346,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     if (typeof command !== "string") return;
     const program = blockedProgram(command);
     if (!program) return;
-    if (program === WORKTREE_INIT || program === MIGRATE) return { block: true, reason: blockReason(program, "") };
+    if (blockedEverywhere(program)) return { block: true, reason: blockReason(program, "") };
     const root = await projectRoot(ctx.cwd);
     if (root) return { block: true, reason: blockReason(program, root) };
   });

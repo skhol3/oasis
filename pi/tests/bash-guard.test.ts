@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { blockedProgram, blockReason } from "../lib/bash-guard.ts";
+import { blockedEverywhere, blockedProgram, blockReason } from "../lib/bash-guard.ts";
 
 test("blocks odoo-bin, dropdb and psql in command position", () => {
   const blocked: [string, string][] = [
@@ -267,4 +267,61 @@ test("command -v / -V and which only look up the program", () => {
   for (const command of ["command -v psql", "command -V odoo-bin", "which dropdb", "type psql"]) {
     assert.equal(blockedProgram(command), null, command);
   }
+});
+
+test("blocks agents from running the menu through the entry points or its tool, --catalog included", () => {
+  const blocked = [
+    "oasis --project /p menu",
+    "oasis --project /p menu --catalog",
+    "oasis --project=/p menu",
+    "~/.agents/skills/odoo19/oasis --project /p menu",
+    "~/.agents/skills/odoo19/odoo19 --project /p menu --catalog",
+    "python3 -B /opt/oasis/oasis --project /p menu",
+    "cd /p && odoo19 --project /p menu",
+    "env A=1 python3 oasis --project /p menu",
+    "bash -c 'oasis --project /p menu'",
+    "echo $(oasis --project /p menu --catalog)",
+    "timeout 60 oasis --project /p menu",
+    "setsid oasis --project /p menu",
+    "oasis --project /p menu --help --catalog",
+    "oasis --project /p menu --catalog > catalog.json",
+    "tools/menu",
+    "bash ~/.agents/skills/odoo19/tools/menu --catalog",
+    "python3 -I -B ~/.agents/skills/odoo19/tools/actions.py",
+  ];
+  for (const command of blocked) {
+    assert.equal(blockedProgram(command), "menu", command);
+  }
+});
+
+test("allows the menu's help and commands that only mention menu", () => {
+  const allowed = [
+    "oasis --project /p menu --help",
+    "odoo19 --project /p menu -h 2>&1 | head -20",
+    "./tools/menu --help",
+    "oasis --project /p test-module menu",
+    "oasis --project /p model-info menu.item",
+    "grep -n menu tools/actions.py",
+    "cat tools/menu",
+    "python3 -B -m unittest tests.test_menu",
+    "./menu.sh",
+    "python3 actions.py",
+    "git log --grep=menu",
+  ];
+  for (const command of allowed) {
+    assert.equal(blockedProgram(command), null, command);
+  }
+});
+
+test("blockReason for menu sends the user to the terminal menu or the panel", () => {
+  assert.equal(
+    blockReason("menu", "/work/coffee"),
+    "menu is the user's interactive action menu; ask the user to run `oasis --project <root> menu` in a " +
+      "terminal or to open the oasis panel in Gentle Shell.",
+  );
+});
+
+test("user-run programs are blocked in every session, the others only in Odoo projects", () => {
+  for (const program of ["migrate", "worktree-init", "menu"]) assert.equal(blockedEverywhere(program), true, program);
+  for (const program of ["psql", "dropdb", "odoo-bin"]) assert.equal(blockedEverywhere(program), false, program);
 });

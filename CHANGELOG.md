@@ -9,6 +9,21 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Added
+
+- `oasis menu`: numbered menus of the everyday actions of a checkout (server, modules, tests,
+  databases and maintenance) that ask the inputs, show the exact command before running it and
+  ask you to type the database name or `yes` before a destructive action. It needs a terminal
+  (exit 2 without one). `oasis menu --catalog` prints the same actions as JSON for the Gentle
+  Shell panel; `tools/actions.py` is the only list of actions.
+- `start --detach [odoo options]`: starts the checkout's server in the background with its
+  output appended to `server.log` in the compact log directory (`dev/logs/odoo19/`, or
+  `<logs>/<slug or main>/` with `[tooling].logs`), prints `pid=<pid> port=<port> log=<path>`
+  and returns; a server that exits at once is reported with the end of its log (exit 1). The
+  record and `stop` are the same. Without `--detach`, `start` is unchanged.
+- The bash guard of the Gentle Shell layer blocks agents from running `oasis menu` (or
+  `tools/menu`, `tools/actions.py`), `--catalog` included; asking only for its help is allowed.
+
 ## [0.8.0] - 2026-11-23
 
 The harness names itself oasis in what it sets and prints. Everything existing keeps working;

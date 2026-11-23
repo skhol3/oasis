@@ -4,6 +4,11 @@
 Usage:
   runtime_state.py show <project_root>       pid=<pid> port=<port> when a live server is recorded
   runtime_state.py record <project_root> <pid> <port> <odoo_bin> [<python>]
+  runtime_state.py detach <project_root> <port> <log> <odoo_bin> <python> -- <odoo argument>...
+                                             start <python> <odoo_bin> <arguments> in a new
+                                             session with stdin from /dev/null and stdout and
+                                             stderr appended to <log> (0600), record it, and
+                                             print pid=<pid> port=<port> log=<log> (see below)
   runtime_state.py stop <project_root>       SIGTERM this checkout's server, wait up to 20 s
   runtime_state.py others <project_root>     live servers of the other checkouts, one per line
   runtime_state.py port <interface> <first> <last> [<excluded>...]
@@ -46,6 +51,13 @@ live or stale, is never replaced, so two runs never share a name. A lock is live
 runs the recorded command line (argv read from /proc when it was written, compared exactly,
 whatever the interpreter), so a reused pid does not keep an orphan alive.
 
+Detached server (start --detach): the record names the new process, written right after it is
+forked. The command then waits up to DETACH_WAIT seconds (OASIS_DETACH_WAIT, for the tests only),
+returning as soon as 127.0.0.1:<port> accepts connections; a server still alive at the end counts
+as started. One that exits meanwhile has its record removed, and the command prints
+`Odoo exited at once with status <n>; the end of <log>:` and the last DETACH_TAIL lines it wrote,
+then exits 1.
+
 Compose lock: `compose-<first 16 hex of sha256(realpath compose_file)>.lock` (0600) directly in
 the user root, shared by every checkout of this user whose profile names that compose file.
 This helper only creates and checks it (a regular file of the current user); common.sh holds
@@ -70,6 +82,8 @@ import time
 RECORD = 'server.json'
 STOP_TIMEOUT = 20
 GRACE = 10
+DETACH_WAIT = 10.0
+DETACH_TAIL = 20
 RUNS = 'runs'
 RUN_NAME_BYTES = 56
 RUN_DATABASE = re.compile(r'[A-Za-z0-9_]+_r[0-9a-f]{6}(?:_update)?')
@@ -281,6 +295,112 @@ def write_record(project_root, pid, port, odoo_bin, python=None):
     except BaseException:
         os.unlink(temporary)
         raise
+
+
+def remove_record_of(project_root, pid):
+    """Remove the checkout's record only while it still names pid."""
+    directory = state_dir(project_root, create=False)
+    if directory is None:
+        return
+    path = directory / RECORD
+    seen = snapshot(path)
+    if seen is None or seen[0] != 'file':
+        return
+    try:
+        record = parse(seen[1])
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return
+    if record['pid'] == pid:
+        discard_stale(path, seen)
+
+
+def close_inherited_descriptors():
+    """Close every descriptor above stderr, so the server holds no pipe or lock of its caller."""
+    try:
+        descriptors = [int(name) for name in os.listdir('/proc/self/fd')]
+    except OSError:
+        descriptors = range(3, 1024)
+    for descriptor in descriptors:
+        if descriptor > 2:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def accepts(port):
+    try:
+        with socket.create_connection(('127.0.0.1', port), timeout=0.2):
+            return True
+    except OSError:
+        return False
+
+
+def detach_wait():
+    try:
+        wait = float(os.environ.get('OASIS_DETACH_WAIT', ''))
+    except ValueError:
+        return DETACH_WAIT
+    return wait if math.isfinite(wait) and wait >= 0 else DETACH_WAIT
+
+
+def tail(path, offset, count):
+    """The last count lines written to path after offset."""
+    try:
+        with open(path, 'rb') as stream:
+            stream.seek(offset)
+            text = stream.read().decode('utf-8', 'replace')
+    except OSError:
+        return []
+    return text.splitlines()[-count:]
+
+
+def detach(project_root, port, log, odoo_bin, python, arguments):
+    """Start Odoo in a new session writing to log, record it and report it (see the docstring)."""
+    try:
+        descriptor = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+                             0o600)
+    except OSError as exc:
+        raise StateError(f'Cannot open the server log: {log}') from exc
+    offset = os.fstat(descriptor).st_size
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - the child execs Odoo or exits
+        try:
+            os.setsid()
+            null = os.open(os.devnull, os.O_RDONLY)
+            os.dup2(null, 0)
+            os.dup2(descriptor, 1)
+            os.dup2(descriptor, 2)
+            close_inherited_descriptors()
+            os.execv(python, [python, odoo_bin, *arguments])
+        except BaseException as exc:  # noqa: BLE001 - report anything, never return into the parent
+            try:
+                os.write(2, f'Cannot start Odoo: {exc}\n'.encode())
+            finally:
+                os._exit(127)
+    os.close(descriptor)
+    try:
+        write_record(project_root, pid, port, odoo_bin, python)
+    except BaseException:
+        # An unrecorded server could never be stopped with stop: end it.
+        os.kill(pid, signal.SIGTERM)
+        os.waitpid(pid, 0)
+        raise
+    deadline = time.monotonic() + detach_wait()
+    while True:
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done:
+            remove_record_of(project_root, pid)
+            print(f'Odoo exited at once with status {os.waitstatus_to_exitcode(status)}; the end of {log}:',
+                  file=sys.stderr)
+            for line in tail(log, offset, DETACH_TAIL):
+                print(line, file=sys.stderr)
+            return 1
+        if accepts(port) or time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+    print(f'pid={pid} port={port} log={log}')
+    return 0
 
 
 def stop(project_root):
@@ -577,6 +697,8 @@ def main(argv):
             return 0
         if command == 'stop' and len(args) == 1:
             return stop(args[0])
+        if command == 'detach' and len(args) >= 6 and args[5] == '--':
+            return detach(args[0], integer(args[1]), args[2], args[3], args[4], args[6:])
         if command == 'others' and len(args) == 1:
             for record in others(args[0]):
                 print(f"{record['project_root']} (port {record['port']}, pid {record['pid']})")
@@ -615,7 +737,7 @@ def main(argv):
         return 2
     except ValueError:
         pass
-    print('ERROR: Usage: runtime_state.py show|record|stop|others|port|ephemeral-port|run-name|'
+    print('ERROR: Usage: runtime_state.py show|record|detach|stop|others|port|ephemeral-port|run-name|'
           'run-lock|run-unlock|run-owned|compose-lock ...', file=sys.stderr)
     return 2
 

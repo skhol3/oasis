@@ -9,7 +9,11 @@ const WORKTREE_INIT_SCRIPTS = new Set([WORKTREE_INIT, "worktree_init.py"]);
 // User-run only: it rewrites the project's configuration files (profiles, odoo.conf, lock.sha256).
 export const MIGRATE = "migrate";
 const MIGRATE_SCRIPTS = new Set([MIGRATE, "migrate.py"]);
-// The entry point and its alias: worktree-init and migrate are blocked through either.
+// User-run only: the interactive action menu (its catalog included) is for the user, in a terminal
+// or the Gentle Shell panel; agents run the commands it lists directly.
+export const MENU = "menu";
+const MENU_SCRIPTS = new Set([MENU, "actions.py"]);
+// The entry point and its alias: worktree-init, migrate and menu are blocked through either.
 const ENTRY_POINTS = new Set(["oasis", "odoo19"]);
 const SHELLS = new Set(["bash", "sh", "zsh", "dash"]);
 // Programs that run what they read from a heredoc; its body is then classified as commands.
@@ -291,7 +295,7 @@ function onlyPlan(args: string[]): boolean {
 }
 
 /** A user-run tool when words[index] runs it: its tool script, or an entry point with that command.
- * migrate's scripts count only inside a `tools` directory, since the name is common. Asking only
+ * migrate's and menu's scripts count only inside a `tools` directory, since the names are common. Asking only
  * for its help (`--help` or `-h` as the single argument) runs nothing and is not blocked, and
  * neither is migrate's explicit plan (see onlyPlan). */
 function userRunTool(words: string[], index: number): string | null {
@@ -302,9 +306,11 @@ function userRunTool(words: string[], index: number): string | null {
   let toolArgs = args;
   if (WORKTREE_INIT_SCRIPTS.has(name)) tool = WORKTREE_INIT;
   else if (MIGRATE_SCRIPTS.has(name) && /(^|\/)tools\/[^/]+$/.test(word)) tool = MIGRATE;
+  else if (MENU_SCRIPTS.has(name) && /(^|\/)tools\/[^/]+$/.test(word)) tool = MENU;
   else if (ENTRY_POINTS.has(name)) {
     if (args.includes(WORKTREE_INIT)) tool = WORKTREE_INIT;
     else if (entryPointCommand(words, index) === MIGRATE) tool = MIGRATE;
+    else if (entryPointCommand(words, index) === MENU) tool = MENU;
     // The entry point's own `--project <dir>` and the command name are not the tool's arguments.
     const project = args.indexOf("--project");
     toolArgs = args.filter((arg, k) => arg !== tool && (project < 0 || (k !== project && k !== project + 1)));
@@ -374,6 +380,15 @@ function classifySegment(words: string[]): string | null {
   }
 }
 
+/**
+ * Whether a blocked program is user-run and so blocked in every session (it writes configuration,
+ * links environment files or opens the interactive menu); the others are blocked only in Odoo
+ * projects, where they would bypass the database guards.
+ */
+export function blockedEverywhere(program: string): boolean {
+  return program === WORKTREE_INIT || program === MIGRATE || program === MENU;
+}
+
 /** The blocked program a bash command would run directly, or null. */
 export function blockedProgram(command: string): string | null {
   const { text, data } = heredocs(command);
@@ -395,6 +410,12 @@ export function blockReason(program: string, root: string): string {
     return (
       "migrate rewrites the project's configuration files; ask the user to run /oasis migrate in Gentle Shell " +
       "or the command in a terminal. To read the plan without changing anything, run it with only --plan."
+    );
+  }
+  if (program === MENU) {
+    return (
+      "menu is the user's interactive action menu; ask the user to run `oasis --project <root> menu` in a " +
+      "terminal or to open the oasis panel in Gentle Shell."
     );
   }
   if (program === WORKTREE_INIT) {

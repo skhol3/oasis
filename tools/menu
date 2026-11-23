@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+# The action catalog and the terminal menu (tools/actions.py); user-run: it needs a terminal.
+exec python3 -I -B "$(dirname "$0")/actions.py" "$@"
