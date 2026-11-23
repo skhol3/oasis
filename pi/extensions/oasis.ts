@@ -17,10 +17,8 @@ import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/p
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
 import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
-import {
-  askInputs, type CatalogAction, confirmRun, fillTemplate, type MenuEntry, menuOutput, menuShortcut, parseCatalog,
-  type Prompter, shellJoin, sources, terminalCommand,
-} from "../lib/menu.ts";
+import { type CatalogAction, menuShortcut } from "../lib/menu.ts";
+import { actionPanel, type ExecPurpose } from "../lib/panel.ts";
 import { MENU_ENTRY, MenuPanel, renderMenuEntry } from "../ui/menu-panel.ts";
 import {
   formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, testModuleArgs, updateModuleArgs, viewInfoArgs,
@@ -267,103 +265,44 @@ export default function oasisLayer(pi: ExtensionAPI) {
   }
 
   // The action panel (alt+o or OASIS_MENU_KEY, and /oasis menu): user-run only, no agent tool opens
-  // it. It reads the core catalog (`oasis menu --catalog`), asks the inputs with the Pi dialogs, runs
-  // the filled argv with pi.exec in the project root and shows the command and its output as a custom
-  // session entry (pi.appendEntry with an entry renderer): Pi shows it but never sends it to the model.
+  // it. lib/panel.ts decides everything (catalog, inputs, confirmation, run, result); this adapter
+  // gives it pi.exec in the project root, the Pi dialogs and the overlay, and records results as
+  // custom session entries (pi.appendEntry with an entry renderer): Pi shows them but never sends
+  // them to the model.
   pi.registerEntryRenderer(MENU_ENTRY, renderMenuEntry);
-  let menuBusy: string | null = null;
+  const EXEC_TIMEOUTS: Record<ExecPurpose, number> = {
+    catalog: STATUS_TIMEOUT_MS, list: TOOL_TIMEOUT_MS, run: MENU_TIMEOUT_MS,
+  };
+  const openPanel = actionPanel({
+    projectRoot: (cwd) => projectRoot(cwd),
+    notProject,
+    catalogArgv: (root) => ["python3", "-B", OASIS, "--project", root, "menu", "--catalog"],
+    exec: (argv, cwd, purpose) => pi.exec(argv[0], argv.slice(1), { cwd, timeout: EXEC_TIMEOUTS[purpose] }),
+    exists: existsSync,
+    readLog,
+    appendEntry: (entry) => pi.appendEntry(MENU_ENTRY, entry),
+  });
 
-  async function menu(ctx: ExtensionContext): Promise<void> {
-    if (ctx.mode !== "tui") {
-      ctx.ui.notify(
-        "oasis menu: the action panel needs the interactive terminal UI; run `oasis menu` in a terminal.", "warning",
-      );
-      return;
-    }
-    if (menuBusy !== null) {
-      ctx.ui.notify(`oasis menu: ${menuBusy} is still in progress.`, "info");
-      return;
-    }
-    menuBusy = "the panel";
-    try {
-      await runMenu(ctx);
-    } catch (error) {
-      ctx.ui.notify(`oasis menu failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-    } finally {
-      menuBusy = null;
-      ctx.ui.setStatus(MENU_STATUS, undefined);
-    }
-  }
-
-  async function runMenu(ctx: ExtensionContext): Promise<void> {
-    const root = await projectRoot(ctx.cwd);
-    if (!root) {
-      ctx.ui.notify(`Not an Odoo project: ${notProject(ctx.cwd)}`, "warning");
-      return;
-    }
-    const listed = await run(root, ["menu", "--catalog"], undefined, STATUS_TIMEOUT_MS);
-    if (listed.code !== 0) {
-      ctx.ui.notify(`oasis menu: ${listed.stderr.trim() || `exit ${listed.code}`}`, "error");
-      return;
-    }
-    const catalog = parseCatalog(listed.stdout);
-    const action = await ctx.ui.custom<CatalogAction | undefined>(
-      (tui, theme, keybindings, done) => new MenuPanel(catalog, tui, theme, keybindings, done),
-      {
-        overlay: true,
-        overlayOptions: { anchor: "center", width: "80%", minWidth: 40, maxHeight: "90%" },
-        blocked: { kind: "question", message: "oasis menu" },
+  function menu(ctx: ExtensionContext): Promise<void> {
+    return openPanel({
+      mode: ctx.mode,
+      cwd: ctx.cwd,
+      ui: {
+        pick: (catalog) => ctx.ui.custom<CatalogAction | undefined>(
+          (tui, theme, keybindings, done) => new MenuPanel(catalog, tui, theme, keybindings, done),
+          {
+            overlay: true,
+            overlayOptions: { anchor: "center", width: "80%", minWidth: 40, maxHeight: "90%" },
+            blocked: { kind: "question", message: "oasis menu" },
+          },
+        ),
+        select: (title, options) => ctx.ui.select(title, options),
+        input: (title, placeholder) => ctx.ui.input(title, placeholder),
+        confirm: (title, message) => ctx.ui.confirm(title, message),
+        notify: (message, level) => ctx.ui.notify(message, level),
+        setStatus: (text) => ctx.ui.setStatus(MENU_STATUS, text),
       },
-    );
-    if (!action) return;
-    const show = (entry: MenuEntry) => pi.appendEntry(MENU_ENTRY, entry);
-    if (action.terminal_only) {
-      show({
-        label: action.label, command: terminalCommand(action), output: "",
-        note: "terminal only: run it in a terminal, or use oasis menu there",
-      });
-      return;
-    }
-    if (action.kind === "log" && !existsSync(catalog.server_log)) {
-      ctx.ui.notify(`oasis menu: no server log yet: ${catalog.server_log}`, "warning");
-      return;
-    }
-    const prompter: Prompter = {
-      select: (title, options) => ctx.ui.select(title, options),
-      input: (title, placeholder) => ctx.ui.input(title, placeholder),
-      confirm: (title, message) => ctx.ui.confirm(title, message),
-      notify: (message, level) => ctx.ui.notify(message, level),
-    };
-    const exec = (argv: string[], timeout: number) => pi.exec(argv[0], argv.slice(1), { cwd: root, timeout });
-    const choices = sources(catalog, {
-      exec: (argv) => exec(argv, TOOL_TIMEOUT_MS),
-      waiting: (text) => {
-        ctx.ui.setStatus(MENU_STATUS, text);
-        if (text) ctx.ui.notify(text, "info");
-      },
-      notify: prompter.notify,
     });
-    const answers = await askInputs(action, prompter, choices);
-    if (!answers) {
-      ctx.ui.notify("oasis menu: nothing ran.", "info");
-      return;
-    }
-    // The panel wants compact output: the summaries below read the run logs it names.
-    const argv = fillTemplate(action, answers, true);
-    const command = shellJoin(argv);
-    if (!(await confirmRun(action, answers, command, prompter))) {
-      ctx.ui.notify("oasis menu: not confirmed, nothing ran.", "info");
-      return;
-    }
-    menuBusy = command;
-    ctx.ui.notify(`oasis menu: running ${command}`, "info");
-    ctx.ui.setStatus(MENU_STATUS, `oasis: ${action.label}`);
-    const result = await withHeartbeat(
-      () => exec(argv, MENU_TIMEOUT_MS),
-      (seconds) => ctx.ui.setStatus(MENU_STATUS, `oasis: ${action.label} (${seconds} s)`),
-      HEARTBEAT_MS,
-    );
-    show({ label: action.label, command, exit: result.code, output: menuOutput(action, answers, result, readLog) });
   }
 
   // OASIS_MENU_KEY (alt+o when unset; empty or `off` disables it), read when Pi loads the extension

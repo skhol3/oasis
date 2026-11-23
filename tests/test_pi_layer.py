@@ -73,37 +73,42 @@ class PiLayerTests(unittest.TestCase):
         self.assertEqual(len(re.findall(r'\bregisterWithAlias\(\{', source)), len(registered))
 
     def test_action_panel_wiring(self):
-        # The panel's logic is tested in pi/tests/menu.test.ts; this checks the Pi wiring, which only
-        # loads inside Pi (S6).
+        # The panel's decisions are tested with fakes in pi/tests/panel.test.ts (and menu.test.ts); the
+        # extension only adapts Pi to them, which loads only inside Pi (S6).
         source = (ROOT / 'pi/extensions/oasis.ts').read_text()
-        [panel] = re.findall(r'\n  async function runMenu\(.*?\n  \}\n', source, re.S)
-        panel = ' '.join(panel.split())
-        # The catalog comes from the core and the filled argv runs as given, in the project root.
-        self.assertIn('await run(root, ["menu", "--catalog"], undefined, STATUS_TIMEOUT_MS);', panel)
-        self.assertIn('const catalog = parseCatalog(listed.stdout);', panel)
-        self.assertIn('pi.exec(argv[0], argv.slice(1), { cwd: root, timeout })', panel)
-        self.assertIn('const argv = fillTemplate(action, answers, true);', panel)
-        self.assertIn('await confirmRun(action, answers, command, prompter)', panel)
-        self.assertIn('overlay: true,', panel)
-        self.assertIn('new MenuPanel(catalog, tui, theme, keybindings, done)', panel)
+        start = source.index('  // The action panel (alt+o or OASIS_MENU_KEY, and /oasis menu)')
+        panel = source[start:source.index('  const COMMAND_DESCRIPTION =', start)]
+        # The whole panel block: the adapter, menu() and the shortcut with its handler and notice.
+        for part in ('const openPanel = actionPanel({', 'function menu(ctx: ExtensionContext): Promise<void> {',
+                     'pi.registerShortcut(', 'handler: (ctx) => menu(ctx),', 'ctx.ui.notify(`oasis: ${shortcut.error}`'):
+            self.assertIn(part, panel)
         # Results are custom entries: shown to the user, never sent to the model.
-        self.assertIn('pi.appendEntry(MENU_ENTRY, entry)', panel)
         self.assertNotIn('sendMessage', panel)
         self.assertNotIn('sendUserMessage', panel)
-        self.assertIn('pi.registerEntryRenderer(MENU_ENTRY, renderMenuEntry);', source)
+        flat = ' '.join(panel.split())
+        self.assertIn('pi.registerEntryRenderer(MENU_ENTRY, renderMenuEntry);', flat)
+        self.assertIn('appendEntry: (entry) => pi.appendEntry(MENU_ENTRY, entry),', flat)
+        # The catalog comes from the core; argv runs as given, without a shell, in the directory the panel names.
+        self.assertIn('catalogArgv: (root) => ["python3", "-B", OASIS, "--project", root, "menu", "--catalog"],', flat)
+        self.assertIn('exec: (argv, cwd, purpose) => pi.exec(argv[0], argv.slice(1), '
+                      '{ cwd, timeout: EXEC_TIMEOUTS[purpose] }),', flat)
+        self.assertIn('new MenuPanel(catalog, tui, theme, keybindings, done)', flat)
+        self.assertIn('overlay: true,', flat)
+        self.assertIn('mode: ctx.mode, cwd: ctx.cwd,', flat)
         # alt+o unless OASIS_MENU_KEY says otherwise, and /oasis menu; no agent tool opens the panel.
-        self.assertIn('const shortcut = menuShortcut(process.env.OASIS_MENU_KEY);', source)
-        self.assertIn('handler: (ctx) => menu(ctx),', source)
+        self.assertIn('const shortcut = menuShortcut(process.env.OASIS_MENU_KEY);', flat)
         self.assertIn('menu: (ctx) => menu(ctx),', source)
         tools = re.findall(r'registerWithAlias\(\{.*?\n  \}\);', source, re.S)
         self.assertTrue(tools)
-        self.assertFalse([tool for tool in tools if 'menu(' in tool or 'runMenu' in tool])
-        # The overlay is the layer's own component on the public Pi API.
+        self.assertFalse([tool for tool in tools if 'menu(' in tool or 'openPanel' in tool])
+        # The overlay is the layer's own component on the public Pi API; the logic has no Pi imports.
         panel_ui = (ROOT / 'pi/ui/menu-panel.ts').read_text()
         imports = set(re.findall(r'^import .*? from "([^"]+)";$', panel_ui, re.M | re.S))
         self.assertEqual(imports, {'@earendil-works/pi-coding-agent', '@earendil-works/pi-tui', '../lib/menu.ts'})
-        menu_lib = (ROOT / 'pi/lib/menu.ts').read_text()
-        self.assertEqual(set(re.findall(r' from "([^"]+)";', menu_lib)), {'./output.ts', './tools.ts'})
+        for name, allowed in (('menu.ts', {'./output.ts', './tools.ts'}),
+                              ('panel.ts', {'./heartbeat.ts', './menu.ts', './tools.ts'})):
+            lib = (ROOT / 'pi/lib' / name).read_text()
+            self.assertEqual(set(re.findall(r' from "([^"]+)";', lib)), allowed, name)
 
     def test_node_catalog_fixture_is_the_core_catalog(self):
         # pi/tests/menu.test.ts reads a copy of `oasis menu --catalog`; it must stay the core's output.

@@ -351,15 +351,20 @@ const KEY = new RegExp(`^((?:${MODIFIER}\\+)*)(${KEY_NAME})$`, "i");
 /**
  * The panel shortcut from OASIS_MENU_KEY: alt+o when unset, none when empty or `off`. A value that
  * is not a Pi key with ctrl, alt or super (or a function key alone) turns the shortcut off with an
- * error to show, so a plain letter never steals typing.
+ * error to show, so a plain letter never steals typing. The key is returned lowercased, the form Pi
+ * parses, matches and compares key ids in (pi-tui parseKeyId, ExtensionRunner.getShortcuts), so
+ * `ALT+O` and `alt+o` register the same shortcut; a repeated modifier never matches there, so it
+ * is refused.
  */
 export function menuShortcut(value: string | undefined): { key: string | null; error?: string } {
   if (value === undefined) return { key: MENU_KEY_DEFAULT };
-  const key = value.trim();
-  if (key === "" || key.toLowerCase() === "off") return { key: null };
+  const key = value.trim().toLowerCase();
+  if (key === "" || key === "off") return { key: null };
   const match = KEY.exec(key);
-  const modifiers = match?.[1].toLowerCase() ?? "";
-  const usable = match !== null && (/ctrl|alt|super/.test(modifiers) || /^f\d+$/i.test(match[2]));
+  const modifiers = match?.[1].split("+").filter(Boolean) ?? [];
+  const repeated = new Set(modifiers).size !== modifiers.length;
+  const usable = match !== null && !repeated &&
+    (modifiers.some((name) => name !== "shift") || /^f\d+$/.test(match[2]));
   if (usable) return { key };
   return {
     key: null,

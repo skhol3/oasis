@@ -317,8 +317,15 @@ test("menuShortcut: alt+o by default, configurable with OASIS_MENU_KEY, off when
   assert.deepEqual(menuShortcut("OFF"), { key: null });
   assert.deepEqual(menuShortcut(" ctrl+shift+m "), { key: "ctrl+shift+m" });
   assert.deepEqual(menuShortcut("f5"), { key: "f5" });
-  assert.deepEqual(menuShortcut("alt+pageDown"), { key: "alt+pageDown" });
-  for (const bad of ["o", "shift+o", "alt+", "alt+oo", "hyper+o", "ctrl+f13"]) {
+  // Pi lowercases key ids when it parses and matches them (pi-tui parseKeyId, ExtensionRunner.getShortcuts):
+  // the registered key is that canonical form.
+  assert.deepEqual(menuShortcut("ALT+O"), { key: "alt+o" });
+  assert.deepEqual(menuShortcut("Alt+o"), { key: "alt+o" });
+  assert.deepEqual(menuShortcut("alt+pageDown"), { key: "alt+pagedown" });
+  assert.deepEqual(menuShortcut("Ctrl+Shift+PageUp"), { key: "ctrl+shift+pageup" });
+  assert.deepEqual(menuShortcut("F5"), { key: "f5" });
+  // A repeated modifier never matches in Pi (parseKeyId returns null).
+  for (const bad of ["o", "shift+o", "alt+", "alt+oo", "hyper+o", "ctrl+f13", "alt+alt+o", "Alt+ALT+o"]) {
     assert.deepEqual(menuShortcut(bad), {
       key: null,
       error: `OASIS_MENU_KEY=${JSON.stringify(bad)} is not a usable key (for example alt+o, ctrl+shift+m or f5); ` +
