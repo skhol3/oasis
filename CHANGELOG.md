@@ -21,6 +21,11 @@ names) may still change in a minor release; every such change is listed here und
   `<logs>/<slug or main>/` with `[tooling].logs`), prints `pid=<pid> port=<port> log=<path>`
   and returns; a server that exits at once is reported with the end of its log (exit 1). The
   record and `stop` are the same. Without `--detach`, `start` is unchanged.
+- Gentle Shell action panel: `alt+o` (`OASIS_MENU_KEY` changes it; empty or `off` disables it)
+  and `/oasis menu` open an overlay with the actions of `oasis menu --catalog`. It asks the inputs
+  with Pi's dialogs, confirms destructive and user-run actions as the catalog says, runs the exact
+  command in the project root and shows it with its output (compact for `test-module` and
+  `update-module`) as a session entry that is never sent to the model. No agent tool opens it.
 - The bash guard of the Gentle Shell layer blocks agents from running `oasis menu` (or
   `tools/menu`, `tools/actions.py`), `--catalog` included; asking only for its help is allowed.
 
