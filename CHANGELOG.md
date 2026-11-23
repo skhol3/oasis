@@ -9,6 +9,11 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-23
+
+An action menu to run Odoo operations by hand: `oasis menu` in a terminal and a pop-up panel in
+Gentle Shell (`alt+o`), both from one catalog; `start --detach` runs the server in the background.
+
 ### Added
 
 - `oasis menu`: numbered menus of the everyday actions of a checkout (server, modules, tests,
@@ -572,7 +577,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/skhol3/oasis/releases/tag/v0.9.0
 [0.8.0]: https://github.com/skhol3/oasis/releases/tag/v0.8.0
 [0.7.1]: https://github.com/skhol3/oasis/releases/tag/v0.7.1
 [0.7.0]: https://github.com/skhol3/oasis/releases/tag/v0.7.0
