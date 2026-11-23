@@ -457,12 +457,12 @@ def parse_view_arguments(arguments):
 
 def load_values():
     """The project's resolved configuration, or an error message."""
-    selected = os.environ.get('ODOO19_PROJECT_ROOT', '')
-    if not selected or not Path(selected).is_absolute() or not Path(selected).is_dir():
-        return None, 'ODOO19_PROJECT_ROOT must name an absolute existing project directory.'
     config = sibling('config')
+    root = config.selected_root()
+    if root is None:
+        return None, config.PROJECT_ROOT_REQUIRED
     try:
-        return config.load(Path(selected).resolve()), None
+        return config.load(root), None
     except config.InvalidConfig as exc:
         return None, str(exc)
 

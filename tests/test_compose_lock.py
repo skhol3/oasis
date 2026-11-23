@@ -115,6 +115,18 @@ class ComposeLockTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertIn(' up -d --wait --wait-timeout 60 db\n', self.commands.read_text())
 
+    def test_lock_timeout_is_read_as_oasis_compose_lock_timeout_first(self):
+        self.lock.parent.mkdir(mode=0o700)
+        descriptor = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, descriptor)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        # The legacy name would wait 60 s; the default 120 s. The OASIS_ name wins when set.
+        env = {**self.env, 'OASIS_COMPOSE_LOCK_TIMEOUT': '0.3', 'ODOO19_COMPOSE_LOCK_TIMEOUT': '60'}
+        result = subprocess.run(['bash', str(self.wrapper(self.root, 'list-databases'))], text=True,
+                                cwd=self.root, env=env, capture_output=True, timeout=30)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', TIMEOUT_MESSAGE))
+        self.unchanged()
+
     def test_without_flock_warns_and_still_starts_the_service(self):
         farm = Path(tempfile.mkdtemp(prefix='oasis-no-flock-'))
         self.addCleanup(shutil.rmtree, farm, ignore_errors=True)

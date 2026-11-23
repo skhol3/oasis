@@ -300,7 +300,7 @@ class DisposableTestModuleTests(DisposableFixture):
         database = self.run_database()
         self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', (
             'drop failed\n'
-            f'Cannot drop disposable test database {database}; run odoo19 gc --apply later.\n')))
+            f'Cannot drop disposable test database {database}; run oasis gc --apply later.\n')))
         self.assertEqual(self.run_locks(), [f'{database}.json'])
         self.commands.unlink()
         result = self.invoke('test-module', '--compact', 'coffee')
@@ -479,7 +479,7 @@ class DisposableTestModuleTests(DisposableFixture):
         result = self.invoke('test-module', '--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertIn('disposable', result.stdout)
-        self.assertIn('odoo19 gc', result.stdout)
+        self.assertIn('oasis gc', result.stdout)
         self.unchanged()
 
 
@@ -527,6 +527,11 @@ class DisposableVerifyModuleTests(DisposableFixture):
                 self.assertTrue(result.stdout.endswith(f'database_lifecycle=disposable dropped={dropped}\n'),
                                 result.stdout)
                 self.assertEqual(result.stdout.count('database_lifecycle='), 1)
+                if dropped == 'no':
+                    database = self.run_database()
+                    self.assertTrue(result.stderr.endswith(
+                        f'Cannot drop the disposable databases {database} and {database}_update; '
+                        'run oasis gc --apply later.\n'), result.stderr)
 
     def test_existing_names_are_refused_and_nothing_is_dropped(self):
         self.env['FAKE_EXISTS'] = '1'

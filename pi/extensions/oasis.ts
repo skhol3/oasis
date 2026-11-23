@@ -4,7 +4,7 @@
 // aliases: `/odoo19` and the inactive odoo19_* tools.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
@@ -54,7 +54,7 @@ function notProject(cwd: string): string {
   return `no .odoo19-agent.toml or oasis-workspace.toml at or above ${cwd}`;
 }
 
-export default function odoo19Layer(pi: ExtensionAPI) {
+export default function oasisLayer(pi: ExtensionAPI) {
   async function gitTopLevel(start: string): Promise<string | null> {
     try {
       const result = await pi.exec("git", ["-C", start, "rev-parse", "--show-toplevel"], {
@@ -290,7 +290,7 @@ export default function odoo19Layer(pi: ExtensionAPI) {
         return;
       }
       const content = formatStatus(await projectStatus(root));
-      pi.sendMessage({ customType: "odoo19-status", content, display: true });
+      pi.sendMessage({ customType: "oasis-status", content, display: true });
     },
   };
   pi.registerCommand("oasis", command);
@@ -331,10 +331,10 @@ export default function odoo19Layer(pi: ExtensionAPI) {
     const context = projectContext(root, findWorkspaceFile(root), pi.getActiveTools(), await projectVersion(root));
     const sections = event.systemPromptOptions?.sections;
     if (sections) {
-      sections.odoo19 = context;
+      sections.oasis = context;
       return;
     }
-    return { systemPrompt: `${event.systemPrompt}\n\n<odoo19>\n${context}\n</odoo19>` };
+    return { systemPrompt: `${event.systemPrompt}\n\n<oasis>\n${context}\n</oasis>` };
   });
 
   // Agent bash only: direct odoo-bin/dropdb/psql bypass the core's database guards (Odoo projects);
@@ -435,9 +435,14 @@ export default function odoo19Layer(pi: ExtensionAPI) {
       traceLines: Type.Optional(Type.Integer({ minimum: 0, maximum: 40, default: 6 })),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
-      await requireRoot(ctx.cwd);
+      const root = await requireRoot(ctx.cwd);
+      // The named logs must lie in this checkout's log locations ([tooling].logs or dev/logs/odoo19).
+      const { config, error } = await profileConfig(root);
+      if (!config) throw new Error(`Cannot read the project profile: ${error}`);
       const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };
-      return text(formatBackgroundRun(params.module, params.output, readLog, options, MAX_LINES));
+      // lib/tools.ts decides: the named logs' real paths in the real log locations (symlinks followed).
+      return text(formatBackgroundRun(params.module, params.output, config, { realpath: realpathSync, readLog }, options,
+        MAX_LINES));
     },
   });
 

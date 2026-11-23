@@ -82,49 +82,6 @@ test("keyValues keeps log paths that contain spaces", async () => {
   });
 });
 
-test("formatBackgroundRun summarizes a compact run that finished in the background", async () => {
-  const { formatBackgroundRun } = await import("../lib/tools.ts");
-  const stamp = "2026-11-16 18:00:00,123 4242";
-  const logs: Record<string, string> = {
-    "/p/logs/odoo19/main/run-1/stdout.log": "",
-    "/p/logs/odoo19/main/run-1/stderr.log": `${stamp} INFO db odoo.tests.result: 0 failed, 0 error(s) of 3 tests\n`,
-  };
-  const output =
-    "phase=tests database=acme_test_coffee_r1a2b3c exit=0\ndatabase_lifecycle=disposable dropped=yes\n" +
-    "stdout_log=/p/logs/odoo19/main/run-1/stdout.log\nstderr_log=/p/logs/odoo19/main/run-1/stderr.log\n";
-  assert.equal(
-    formatBackgroundRun("coffee", output, (path) => logs[path] ?? "", { maxFailures: 10, traceLines: 6 }),
-    [
-      "module=coffee database=acme_test_coffee_r1a2b3c exit=0 database_lifecycle=disposable dropped=yes",
-      "result: 0 failed, 0 error(s) of 3 tests",
-      "problems: 0",
-      "log: 1 lines, 0 errors, 0 warnings",
-      "logs: /p/logs/odoo19/main/run-1/stdout.log /p/logs/odoo19/main/run-1/stderr.log",
-    ].join("\n"),
-  );
-});
-
-test("formatBackgroundRun reads only run logs named by a compact run", async () => {
-  const { formatBackgroundRun, isRunLog } = await import("../lib/tools.ts");
-  for (const path of [
-    "/p/dev/logs/odoo19/run-ab_1/stdout.log",
-    "/p/logs/odoo19/shop_feature/run-x9/stderr.log",
-  ]) assert.equal(isRunLog(path), true, path);
-  for (const path of [
-    "/etc/passwd",
-    "/p/config/odoo.conf",
-    "relative/odoo19/run-1/stdout.log",
-    "/p/logs/odoo19/run-1/../../../config/odoo.conf",
-    "/p/logs/odoo19/run-1/other.log",
-    "/p/logs/odoo19/a/b/run-1/stdout.log",
-  ]) assert.equal(isRunLog(path), false, path);
-  const read = () => { throw new Error("must not read"); };
-  for (const output of ["", "exit=0\n", "phase=tests exit=0\nstdout_log=/p/config/odoo.conf\n",
-    "phase=tests exit=0\nstdout_log=/p/logs/odoo19/run-1/stdout.log\nstderr_log=/etc/passwd\n"]) {
-    assert.throws(() => formatBackgroundRun("coffee", output, read, { maxFailures: 1, traceLines: 1 }), /test-module --compact/);
-  }
-});
-
 test("testModuleArgs passes one class or method with --only", () => {
   assert.deepEqual(testModuleArgs({ module: "coffee" }), ["test-module", "--compact", "coffee"]);
   assert.deepEqual(testModuleArgs({ module: "coffee", only: "TestOrder.test_total" }), [

@@ -49,7 +49,10 @@ class GlobalCliTests(unittest.TestCase):
     def invoke(self, *args, input='', program='oasis'):
         env = {**os.environ, 'FAKE_LOG': str(self.log), 'PYTHONDONTWRITEBYTECODE': '1',
                'ODOO19_PROJECT_ROOT': str(self.temp / 'wrong'),
-               'ODOO19_TOOLS_DIR': str(self.temp / 'wrong')}
+               'ODOO19_TOOLS_DIR': str(self.temp / 'wrong'),
+               'OASIS_PROJECT_ROOT': str(self.temp / 'wrong'),
+               'OASIS_ENTRYPOINT': str(self.temp / 'wrong'),
+               'OASIS_TOOLS_DIR': str(self.temp / 'wrong')}
         return subprocess.run([sys.executable, '-B', str(self.bundle / program), *args],
                               input=input, text=True, capture_output=True, cwd=self.temp, env=env)
 
@@ -98,7 +101,7 @@ class GlobalCliTests(unittest.TestCase):
         self.assertEqual(observed['oasis'], observed['odoo19'])
         self.assertEqual(observed['oasis'][2], [
             (17, 'delegated\n', 'delegated error\n'),
-            (2, '', 'ERROR: Unsupported Odoo 19 command: unknown\n'),
+            (2, '', 'ERROR: Unsupported oasis command: unknown\n'),
             (2, '', 'ERROR: --project requires an absolute existing project directory.\n')])
 
     def test_dispatch_preserves_argv_stdin_exit_and_explicit_root(self):
@@ -119,6 +122,25 @@ class GlobalCliTests(unittest.TestCase):
                                  (17, 'delegated\n', 'delegated error\n'))
                 self.assertEqual(json.loads(self.log.read_text()), {
                     'argv': ['--help'], 'root': str(self.project), 'stdin': '', 'tool': name})
+
+    def test_entry_point_sets_both_variable_names(self):
+        # OASIS_* and the legacy ODOO19_* carry the same values; neither tools directory is inherited.
+        names = [f'{prefix}_{name}' for name in ('PROJECT_ROOT', 'ENTRYPOINT', 'TOOLS_DIR')
+                 for prefix in ('OASIS', 'ODOO19')]
+        (self.bundle / 'tools/status').write_text(
+            '#!/bin/bash\nexec python3 -c \'import json, os, sys; '
+            'open(os.environ["FAKE_LOG"], "a").write(json.dumps({name: os.environ.get(name) '
+            'for name in sys.argv[1:]}))\' ' + ' '.join(names) + '\n')
+        for program in PROGRAMS:
+            with self.subTest(program=program):
+                self.log.unlink(missing_ok=True)
+                result = self.invoke('--project', str(self.project), 'status', program=program)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+                entrypoint = str((self.bundle / program).resolve())
+                self.assertEqual(json.loads(self.log.read_text()), {
+                    'OASIS_PROJECT_ROOT': str(self.project), 'ODOO19_PROJECT_ROOT': str(self.project),
+                    'OASIS_ENTRYPOINT': entrypoint, 'ODOO19_ENTRYPOINT': entrypoint,
+                    'OASIS_TOOLS_DIR': None, 'ODOO19_TOOLS_DIR': None})
 
     def test_existing_start_option_passes_through(self):
         result = self.invoke('--project', str(self.project), 'start', '--stop-after-init')
@@ -158,12 +180,12 @@ class GlobalCliTests(unittest.TestCase):
         for name in ('unknown', 'config.py', 'common.sh', 'audit_dependencies.py',
                      '../tools/status', '/bin/bash', 'status/../start'):
             self.assert_no_calls(self.invoke('--project', str(self.project), name),
-                                 f'ERROR: Unsupported Odoo 19 command: {name}\n')
+                                 f'ERROR: Unsupported oasis command: {name}\n')
 
     def test_missing_packaged_tool_does_not_fall_back_to_inherited_tools(self):
         (self.bundle / 'tools/status').unlink()
         self.assert_no_calls(self.invoke('--project', str(self.project), 'status'),
-                             f'Odoo 19 tools are not installed: {self.bundle / "tools/status"}\n')
+                             f'oasis tools are not installed: {self.bundle / "tools/status"}\n')
 
     def test_staged_guidance_describes_full_path_and_optional_wrappers(self):
         readme = (ROOT / 'README.md').read_text()
@@ -178,7 +200,7 @@ class GlobalCliTests(unittest.TestCase):
         self.assertIn('mise', readme)
 
     def test_existing_config_guards_reject_bad_profile_before_effects(self):
-        for name in ('common.sh', 'config.py', 'status'):
+        for name in ('common.sh', 'oasis_env.sh', 'config.py', 'status'):
             shutil.copyfile(ROOT / 'tools' / name, self.bundle / 'tools' / name)
         profile = self.project / '.odoo19-agent.toml'
         for text, error in (

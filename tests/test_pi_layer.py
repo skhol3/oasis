@@ -14,8 +14,33 @@ class PiLayerTests(unittest.TestCase):
     def test_manifest_declares_only_existing_extensions(self):
         manifest = json.loads((ROOT / 'package.json').read_text())
         self.assertIn('pi-package', manifest['keywords'])
-        self.assertEqual(manifest['pi'], {'extensions': ['./pi/extensions/odoo19.ts']})
-        self.assertTrue((ROOT / 'pi/extensions/odoo19.ts').is_file())
+        self.assertEqual(manifest['pi'], {'extensions': ['./pi/extensions/oasis.ts']})
+        self.assertTrue((ROOT / 'pi/extensions/oasis.ts').is_file())
+        self.assertFalse((ROOT / 'pi/extensions/odoo19.ts').exists())
+
+    def test_test_summary_reads_only_the_project_log_locations(self):
+        # oasis_test_summary hands the checkout's tools/config.py values and the real file system to
+        # lib/tools.ts formatBackgroundRun, which decides (behavior in pi/tests/run-logs.test.ts).
+        source = (ROOT / 'pi/extensions/oasis.ts').read_text()
+        [summary] = re.findall(r'name: "oasis_test_summary",.*?\n  \}\);', source, re.S)
+        summary = ' '.join(summary.split())
+        self.assertIn('const root = await requireRoot(ctx.cwd);', summary)
+        self.assertIn('const { config, error } = await profileConfig(root);', summary)
+        self.assertIn('formatBackgroundRun(params.module, params.output, config, '
+                      '{ realpath: realpathSync, readLog }, options, MAX_LINES)', summary)
+        self.assertIn('import { readFileSync, realpathSync } from "node:fs";', source)
+
+    def test_extension_names_its_prompt_section_and_status_message_oasis(self):
+        source = (ROOT / 'pi/extensions/oasis.ts').read_text()
+        self.assertIn('export default function oasisLayer(pi: ExtensionAPI)', source)
+        self.assertIn('sections.oasis = context;', source)
+        self.assertIn('`${event.systemPrompt}\\n\\n<oasis>\\n${context}\\n</oasis>`', source)
+        self.assertIn('customType: "oasis-status"', source)
+        for legacy in ('sections.odoo19', '<odoo19>', '"odoo19-status"', 'odoo19Layer'):
+            self.assertNotIn(legacy, source)
+        # The aliases stay (S6): /odoo19 and the inactive odoo19_* tools.
+        self.assertIn('pi.registerCommand("odoo19", ', source)
+        self.assertIn('const alias = aliasOf(tool.name);', source)
 
     def test_agent_overlay_template_lists_only_registered_tools(self):
         overlay = json.loads((ROOT / 'pi/agent-overlays/oasis.json').read_text())
@@ -31,7 +56,7 @@ class PiLayerTests(unittest.TestCase):
             for key, names in entry.items():
                 self.assertIsInstance(names, list, f'{agent}.{key}')
                 self.assertTrue(all(isinstance(name, str) for name in names), f'{agent}.{key}')
-        source = (ROOT / 'pi/extensions/odoo19.ts').read_text()
+        source = (ROOT / 'pi/extensions/oasis.ts').read_text()
         registered = set(re.findall(r'\bname:\s*"(oasis_[A-Za-z0-9_]+)"', source))
         listed = {name for entry in overlay.values() for names in entry.values() for name in names}
         self.assertTrue(listed)

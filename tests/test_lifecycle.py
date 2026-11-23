@@ -1,6 +1,7 @@
 """Lifecycle CLI tests use only a disposable project and deterministic command fakes."""
 from pathlib import Path
 import os
+import random
 import re
 import socket
 import subprocess
@@ -17,6 +18,47 @@ def free_port():
     with socket.socket() as probe:
         probe.bind(('127.0.0.1', 0))
         return probe.getsockname()[1]
+
+
+def ephemeral_range():
+    """The kernel's ip_local_port_range, or Linux's default when it cannot be read."""
+    try:
+        low, high = map(int, Path('/proc/sys/net/ipv4/ip_local_port_range').read_text().split())
+    except (OSError, ValueError):
+        return 32768, 60999
+    return low, high
+
+
+def bindable(port):
+    """Whether 127.0.0.1:port can be bound now, probed like the tools (SO_REUSEADDR)."""
+    with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(('127.0.0.1', port))
+        except OSError:
+            return False
+    return True
+
+
+def quiet_ports(count, excluded=()):
+    """A port P with P .. P+count-1 free on 127.0.0.1, all outside the ephemeral range.
+
+    A test that expects exactly the port after a configured one (a linked worktree's first
+    free port) needs that port to stay free until the tool probes it. free_port's ports come
+    from the ephemeral range, where bind(0) hands out odd ports and connect() gives every
+    outgoing loopback connection of any process an even source port: P+1 of an odd P can be
+    taken in the meantime. Outside that range the kernel never allocates a port, so only a
+    process binding that exact port could take it. Ports in excluded are never part of the
+    range. Falls back to free_port when the ephemeral range leaves no room.
+    """
+    low, high = ephemeral_range()
+    candidates = [*range(1024, low - count + 1), *range(high + 1, 65536 - count + 1)]
+    for _ in range(200):
+        port = random.choice(candidates) if candidates else free_port()
+        span = range(port, port + count)
+        if port + count <= 65536 and not set(span) & set(excluded) and all(map(bindable, span)):
+            return port
+    raise AssertionError('no free port range on 127.0.0.1')
 
 
 def any_test_port(line):
@@ -170,7 +212,7 @@ exit 0
         self.env['ODOO19_TOOLS_DIR'] = str(self.root / 'not installed')
         result = self.invoke('status')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', 'Odoo 19 tools are not installed: ' +
+                         (2, '', 'oasis tools are not installed: ' +
                           str(self.root / 'not installed/status') + '\n'))
         self.unchanged()
 
@@ -537,7 +579,7 @@ exit 0
                 result = self.invoke(command, *args, input='')
                 self.assertEqual(result.returncode, 0)
                 if command == 'start':
-                    self.assertRegex(result.stderr, rf'^odoo19 start: http://localhost:{port} \(pid \d+\)\n$')
+                    self.assertRegex(result.stderr, rf'^oasis start: http://localhost:{port} \(pid \d+\)\n$')
                 else:
                     self.assertEqual(result.stderr, '')
                 self.assertEqual([any_run_database(any_test_port(entry))
@@ -575,7 +617,7 @@ exit 0
         (self.root / 'dev/odoo.conf').write_text(conf_text(f'http_port = {port}\n'))
         result = self.invoke('start')
         self.assertEqual((result.returncode, result.stdout), (0, ''))
-        self.assertRegex(result.stderr, rf'^odoo19 start: http://localhost:{port} \(pid \d+\)\n$')
+        self.assertRegex(result.stderr, rf'^oasis start: http://localhost:{port} \(pid \d+\)\n$')
         for command, args, output in (
                 ('status', (), 'server: stopped\n'),
                 ('stop', (), 'No Odoo server running for this checkout.\n'),

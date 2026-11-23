@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+source "$(dirname "$0")/oasis_env.sh"
 if [[ ${1:-} == --help ]]; then
-  printf 'Usage: %s [--compact] [--only <Class[.method]>] [--reuse] <module> [test_database]\n' "${ODOO19_ENTRYPOINT:-$0}"
+  printf 'Usage: %s [--compact] [--only <Class[.method]>] [--reuse] <module> [test_database]\n' "$(usage_name)"
   printf -- '--reuse keeps a working test database between runs: the explicit test_database, else\n'
   printf 'tooling.test_database, else test_prefix + [slug_] + module. When it exists with the module\n'
   printf 'installed, the run updates the module and runs the tests; otherwise it is reset and the\n'
@@ -12,12 +13,12 @@ if [[ ${1:-} == --help ]]; then
   printf 'database test_prefix + module + _r<6 hex> (test_prefix + slug_ + module + ... in a checkout\n'
   printf 'with a slug; shortened with a hash to fit 56 bytes), created for the run and always dropped\n'
   printf 'with its filestore at the end, also on failure or Ctrl+C. A run that was killed leaves it\n'
-  printf 'behind: odoo19 gc lists such databases and odoo19 gc --apply drops them.\n'
+  printf 'behind: %s gc lists such databases and %s gc --apply drops them.\n' "$(program_name)" "$(program_name)"
   printf 'An explicit test_database or tooling.test_database is reset and reused; run shared targets\n'
   printf 'sequentially. Explicit names must use the checkout namespace and are limited to 63 bytes;\n'
   printf 'names ending in _r<6 hex> (optionally _update) are reserved for disposable runs.\n'
-  printf -- '--compact retains stdout/stderr under odoo19/ of the profile'\''s logs directory (default\n'
-  printf 'dev/logs); with [tooling].logs, in odoo19/<slug or main>.\n'
+  printf -- '--compact retains stdout/stderr under dev/logs/odoo19/; with [tooling].logs, under\n'
+  printf '<logs>/<slug or main>/.\n'
   printf 'Tests use private short scratch; browser diagnostics remain under the same directory.\n'
   printf 'The test server gets its own free --http-port and a free second (gevent) port, so it never\n'
   printf 'collides with a running server.\n'
@@ -83,18 +84,18 @@ if "$compact"; then
   status=0
   run_arguments=("${only_arguments[@]}" "$module" "$database")
   # A reused database: the run writes how it prepared it (install or update) to this new file.
-  unset ODOO19_REUSE_RESULT
+  unset OASIS_REUSE_RESULT
   if "$reuse"; then
     run_arguments=(--reuse "${run_arguments[@]}")
-    export ODOO19_REUSE_RESULT="$log_directory/database_lifecycle"
+    export OASIS_REUSE_RESULT="$log_directory/database_lifecycle"
   fi
   # A disposable run (tools/test_temp.py) writes its own cleanup result, `yes` (it left no
   # database behind: dropped, or never created) or `no`, to a new file of this private log
   # directory; a run that ends without writing it (killed) counts as `no`.
-  unset ODOO19_RUN_RESULT
+  unset OASIS_RUN_RESULT
   if "$disposable"; then
     run_arguments=(--disposable-run "$database" "${only_arguments[@]}" "$module")
-    export ODOO19_RUN_RESULT="$log_directory/database_lifecycle"
+    export OASIS_RUN_RESULT="$log_directory/database_lifecycle"
   fi
   # A fresh Bash process preserves errexit inside reset_test_database.
   # Calling the function in an &&/|| context would disable its fail-closed checks.
@@ -104,15 +105,15 @@ if "$compact"; then
   printf 'phase=tests database=%s exit=%s\n' "$database" "$status"
   if "$disposable"; then
     dropped=no
-    if [[ -f "$ODOO19_RUN_RESULT" && ! -L "$ODOO19_RUN_RESULT" && "$(<"$ODOO19_RUN_RESULT")" == yes ]]; then
+    if [[ -f "$OASIS_RUN_RESULT" && ! -L "$OASIS_RUN_RESULT" && "$(<"$OASIS_RUN_RESULT")" == yes ]]; then
       dropped=yes
     fi
     printf 'database_lifecycle=disposable dropped=%s\n' "$dropped"
   fi
   if "$reuse"; then
     mode=unknown
-    if [[ -f "$ODOO19_REUSE_RESULT" && ! -L "$ODOO19_REUSE_RESULT" ]]; then
-      case "$(<"$ODOO19_REUSE_RESULT")" in install) mode=install ;; update) mode=update ;; esac
+    if [[ -f "$OASIS_REUSE_RESULT" && ! -L "$OASIS_REUSE_RESULT" ]]; then
+      case "$(<"$OASIS_REUSE_RESULT")" in install) mode=install ;; update) mode=update ;; esac
     fi
     printf 'database_lifecycle=reused mode=%s\n' "$mode"
   fi
@@ -136,13 +137,13 @@ if "$reuse"; then
     mode=update
     module_arguments=(-u "$module")
   fi
-  if [[ -n ${ODOO19_REUSE_RESULT:-} ]]; then printf '%s\n' "$mode" >"$ODOO19_REUSE_RESULT"; fi
+  if [[ -n ${OASIS_REUSE_RESULT:-} ]]; then printf '%s\n' "$mode" >"$OASIS_REUSE_RESULT"; fi
 fi
 odoo_command=("$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "--http-port=$http_port"
   "$ODOO_SECOND_PORT_OPTION=$second_port" -d "$database" "${module_arguments[@]}" --test-tags "/$module${only:+:$only}" --stop-after-init)
 if "$disposable"; then
   # test_temp.py owns the whole disposable lifecycle and the signals; exec keeps this pid.
-  # ODOO19_RUN_RESULT, when set, comes from the --compact parent above (internal).
+  # OASIS_RUN_RESULT, when set, comes from the --compact parent above (internal).
   exec python3 -B "$(dirname "$0")/test_temp.py" --disposable "$database" "$ODOO_CONFIG" \
     "$PROJECT_ROOT" "${odoo_command[@]}"
 fi

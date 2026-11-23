@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+source "$(dirname "$0")/oasis_env.sh"
 if [[ ${1:-} == --help && $# == 1 ]]; then
-  printf 'Usage: %s <database>\n' "${ODOO19_ENTRYPOINT:-$0}"
+  printf 'Usage: %s <database>\n' "$(usage_name)"
   printf 'Opens an Odoo shell on an existing managed database (dev_prefix/test_prefix, with the\n'
   printf 'checkout slug in a checkout that has one). A missing database is refused, never created.\n'
   exit 0
@@ -10,7 +11,7 @@ source "$(dirname "$0")/common.sh"
 database=${1:-}
 require_runtime
 if [[ -z "$database" ]]; then
-  printf 'Usage: %s <database>\n' "${ODOO19_ENTRYPOINT:-$0}" >&2
+  printf 'Usage: %s <database>\n' "$(usage_name)" >&2
   exit 2
 fi
 require_working_database_name "$database"

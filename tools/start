@@ -125,5 +125,5 @@ fi
 wait_for_database
 # $$ survives exec: the record names the Odoo process itself.
 runtime_state record "$PROJECT_ROOT" "$$" "$port" "$ODOO_BIN" "$PYTHON"
-printf 'odoo19 start: http://localhost:%s (pid %s)\n' "$port" "$$" >&2
+printf '%s start: http://localhost:%s (pid %s)\n' "$(program_name)" "$port" "$$" >&2
 exec "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" "$@"

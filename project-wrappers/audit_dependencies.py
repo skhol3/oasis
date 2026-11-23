@@ -7,12 +7,12 @@ import subprocess
 import sys
 
 root = Path(__file__).resolve().parents[2]
-tools = Path(os.environ.get('ODOO19_TOOLS_DIR', str(
-    Path.home() / '.agents/skills/odoo19/tools')))
+tools = Path(os.environ.get('OASIS_TOOLS_DIR') or os.environ.get('ODOO19_TOOLS_DIR') or str(
+    Path.home() / '.agents/skills/odoo19/tools'))
 helper = tools / 'audit_dependencies.py'
 config = tools / 'config.py'
 if not helper.is_file() or not config.is_file():
-    print(f'Odoo 19 tools are not installed: {helper}', file=sys.stderr)
+    print(f'oasis tools are not installed: {helper}', file=sys.stderr)
     raise SystemExit(2)
 result = subprocess.run([sys.executable, '-B', str(config), str(root)],
                         text=True, capture_output=True, check=False)

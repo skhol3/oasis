@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-export ODOO19_PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-tools=${ODOO19_TOOLS_DIR:-$HOME/.agents/skills/odoo19/tools}
-if [[ ! -f "$tools/stop" ]]; then printf 'Odoo 19 tools are not installed: %s\n' "$tools/stop" >&2; exit 2; fi
+export OASIS_PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+export ODOO19_PROJECT_ROOT="$OASIS_PROJECT_ROOT"
+tools=${OASIS_TOOLS_DIR:-${ODOO19_TOOLS_DIR:-$HOME/.agents/skills/odoo19/tools}}
+if [[ ! -f "$tools/stop" ]]; then printf 'oasis tools are not installed: %s\n' "$tools/stop" >&2; exit 2; fi
 exec bash "$tools/stop" "$@"

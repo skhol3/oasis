@@ -69,7 +69,7 @@ def git(cwd, *args, timeout=QUERY_TIMEOUT_SECONDS):
 
 def load_config():
     # Load the packaged parser by its own path; never import project Python code.
-    spec = importlib.util.spec_from_file_location('odoo19_config', Path(__file__).with_name('config.py'))
+    spec = importlib.util.spec_from_file_location('oasis_config', Path(__file__).with_name('config.py'))
     config = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(config)
     return config
@@ -347,11 +347,10 @@ def main():
     if parsed is None:
         return fail(USAGE)
     feature_input, branch, dry_run, resume = parsed
-    selected = os.environ.get('ODOO19_PROJECT_ROOT', '')
-    if not selected or not Path(selected).is_absolute() or not Path(selected).is_dir():
-        return fail('ODOO19_PROJECT_ROOT must name an absolute existing project directory.')
     config = load_config()
-    root = Path(selected).resolve()
+    root = config.selected_root()
+    if root is None:
+        return fail(config.PROJECT_ROOT_REQUIRED)
     try:
         values = config.load(root)
     except config.InvalidConfig as exc:

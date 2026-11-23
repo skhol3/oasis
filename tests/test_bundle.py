@@ -160,7 +160,7 @@ class BundleTests(unittest.TestCase):
         self.assertNotIn('logs', tomllib.loads(raw)['tooling'])
         self.assertEqual(re.findall(r"^# logs = '([^']*)'$", raw, re.MULTILINE), ['../logs'])
         contract = (ROOT / 'odoo19-environment/references/project-contract.md').read_text(encoding='utf-8')
-        for phrase in ('`logs`', '`LOGS_DIR`', '<logs>/odoo19/'):
+        for phrase in ('`logs`', '`LOGS_DIR`', '`<logs>/<slug, or main for the main checkout>/run-*`'):
             self.assertIn(phrase, contract)
 
     def test_workspace_example_schema_and_negative_examples(self):

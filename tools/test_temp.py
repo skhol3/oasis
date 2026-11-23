@@ -10,8 +10,8 @@ Usage:
       createdb fails, the name is dropped only if it exists now and no other live run of this
       user holds a lock of it (createdb created it, then failed); otherwise (the name was
       taken in the meantime) nothing is dropped. A database that
-      cannot be dropped keeps its lock and is reported; `odoo19 gc --apply` removes it later.
-      With ODOO19_RUN_RESULT set (test-module --compact), the run writes `yes` (it left no
+      cannot be dropped keeps its lock and is reported; `oasis gc --apply` removes it later.
+      With OASIS_RUN_RESULT set (test-module --compact), the run writes `yes` (it left no
       database behind: dropped, or never created) or `no` to that new file at the end.
   test_temp.py --discard <database> <odoo.conf> <project_root>
       drop a disposable database and its filestore, then remove its run lock (verify-module).
@@ -29,11 +29,12 @@ import subprocess
 import sys
 import tempfile
 
+import config
 import odoo_addons_path
 import runtime_state
 
 TOOLS = Path(__file__).resolve().parent
-RESULT = 'ODOO19_RUN_RESULT'
+RESULT = 'OASIS_RUN_RESULT'
 USAGE = ('Usage: test_temp.py [--disposable <database> <odoo.conf>] <project_root> <command...> | '
          '--discard <database> <odoo.conf> <project_root>')
 
@@ -268,7 +269,8 @@ def main():
                 status = status or 1
         dropped = True
         if created and not discard(conf, disposable):
-            print(f'Cannot drop disposable test database {disposable}; run odoo19 gc --apply later.',
+            print(f'Cannot drop disposable test database {disposable}; '
+                  f'run {config.program_name()} gc --apply later.',
                   file=sys.stderr)
             status = status or 1
             dropped = False

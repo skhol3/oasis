@@ -3,7 +3,7 @@ set -Eeuo pipefail
 source "$(dirname "$0")/common.sh"
 mode=${1:---quick}
 if (( $# > 1 )) || [[ "$mode" != "--quick" && "$mode" != "--full" ]]; then
-  printf 'Usage: %s [--quick|--full]\n' "${ODOO19_ENTRYPOINT:-$0}" >&2
+  printf 'Usage: %s [--quick|--full]\n' "$(usage_name)" >&2
   exit 2
 fi
 require_runtime
