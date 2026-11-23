@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { blockedEverywhere, blockedProgram, blockReason } from "../lib/bash-guard.ts";
+import { readFileSync } from "node:fs";
 
 test("blocks odoo-bin, dropdb and psql in command position", () => {
   const blocked: [string, string][] = [
@@ -366,4 +367,94 @@ test("migrate and worktree-init script forms stay blocked in any tools directory
   for (const command of ["./migrate --apply", "python3 migrate.py"]) {
     assert.equal(blockedProgram(command), null, command);
   }
+});
+
+// A fake file system for the menu script checks: the installed bundle, an oasis source checkout and
+// an unrelated project that happens to have tools/menu and tools/actions.py.
+const HOME = "/home/u";
+const BUNDLE = `${HOME}/.agents/skills/odoo19`;
+const SOURCE = "/work/oasis";
+const FILES = new Set([
+  ...[BUNDLE, SOURCE].flatMap((root) => [`${root}/oasis`, `${root}/tools/actions.py`, `${root}/tools/menu`]),
+  "/work/shop/tools/menu",
+  "/work/shop/tools/actions.py",
+]);
+const at = (cwd: string) => ({ cwd, home: HOME, exists: (path: string) => FILES.has(path) });
+
+test("menu scripts are blocked by what they resolve to, also relative or after a literal cd", () => {
+  const blocked: [string, string][] = [
+    ["/work/shop", "cd ~/.agents/skills/odoo19 && tools/menu"],
+    ["/work/shop", "cd ~/.agents/skills/odoo19/tools && ./menu --catalog"],
+    ["/work/shop", "cd ~/.agents/skills/odoo19/tools; python3 actions.py"],
+    [BUNDLE, "python3 tools/actions.py"],
+    [BUNDLE, "python3 -I -B tools/actions.py --catalog"],
+    [`${BUNDLE}/tools`, "./menu"],
+    [SOURCE, "tools/menu"],
+    [SOURCE, "bash tools/menu --catalog"],
+    ["/tmp", "cd /work/oasis; python3 -B tools/actions.py"],
+    ["/work/shop", "cd /work && cd oasis && tools/menu"],
+    ["/work/shop", "cd ../oasis && ./tools/menu"],
+    ["/work/shop", "/work/oasis/tools/menu"],
+    ["/work/shop", "~/.agents/skills/odoo19/tools/menu"],
+    ["/work/shop", "cd ~ && .agents/skills/odoo19/tools/menu"],
+    ["/work/shop", "cd && .agents/skills/odoo19/tools/menu"],
+    ["/work/shop", "pushd /work/oasis && tools/menu"],
+    [BUNDLE, "bash -c 'tools/menu'"],
+    [BUNDLE, "echo $(tools/menu --catalog)"],
+    [BUNDLE, "timeout 60 tools/menu"],
+    // Unknown targets: blocked when the word is tools/menu or tools/actions.py and the session
+    // works inside an oasis tree.
+    [SOURCE, "cd $DIR && tools/menu"],
+    [`${SOURCE}/docs`, "$OASIS/tools/actions.py"],
+    [BUNDLE, "cd $(mktemp -d) && tools/menu"],
+  ];
+  for (const [cwd, command] of blocked) {
+    assert.equal(blockedProgram(command, at(cwd)), "menu", `${cwd}: ${command}`);
+  }
+});
+
+test("unrelated tools/menu scripts stay allowed with the session context", () => {
+  const allowed: [string, string][] = [
+    ["/work/shop", "./tools/menu"],
+    ["/work/shop", "tools/menu --catalog"],
+    ["/work/shop", "python3 tools/actions.py"],
+    ["/work/shop", "bash tools/menu"],
+    ["/work/shop", "/work/shop/tools/menu"],
+    [BUNDLE, "cd /work/shop && tools/menu"],
+    ["/work/shop", "cd $DIR && tools/menu"],
+    [SOURCE, "cd $DIR && ./menu"],
+    ["/work/shop", "cd ~/.agents/skills/odoo19 && ./menu"],
+    [BUNDLE, "tools/menu --help"],
+    [BUNDLE, "cat tools/menu"],
+    [BUNDLE, "grep -n menu tools/actions.py"],
+    [SOURCE, "python3 -B -m unittest tests.test_menu"],
+  ];
+  for (const [cwd, command] of allowed) {
+    assert.equal(blockedProgram(command, at(cwd)), null, `${cwd}: ${command}`);
+  }
+});
+
+test("with the session context the entry points, migrate and worktree-init are unchanged", () => {
+  const cases: [string, string | null][] = [
+    ["oasis menu", "menu"],
+    ["odoo19 --project /p menu --catalog", "menu"],
+    ["~/.agents/skills/odoo19/oasis --project /p menu", "menu"],
+    ["oasis --project /p menu --help", null],
+    ["./tools/migrate --apply", "migrate"],
+    ["python3 /opt/oasis/tools/migrate.py --apply", "migrate"],
+    ["oasis --project /p migrate --plan", null],
+    ["tools/worktree-init feat x", "worktree-init"],
+    ["oasis --project /p worktree-init feat x", "worktree-init"],
+    ["psql -l", "psql"],
+  ];
+  for (const cwd of ["/work/shop", BUNDLE, SOURCE]) {
+    for (const [command, program] of cases) {
+      assert.equal(blockedProgram(command, at(cwd)), program, `${cwd}: ${command}`);
+    }
+  }
+});
+
+test("the extension passes the session cwd, the home directory and a file check to the guard", () => {
+  const source = readFileSync(new URL("../extensions/oasis.ts", import.meta.url), "utf8");
+  assert.match(source, /blockedProgram\(command, \{ cwd: ctx\.cwd, home: homedir\(\), exists: existsSync \}\)/);
 });

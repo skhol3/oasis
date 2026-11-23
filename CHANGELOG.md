@@ -31,9 +31,14 @@ Gentle Shell (`alt+o`), both from one catalog; `start --detach` runs the server 
   with Pi's dialogs, confirms destructive and user-run actions as the catalog says, runs the exact
   command in the project root and shows it with its output (compact for `test-module` and
   `update-module`) as a session entry that is never sent to the model. No agent tool opens it.
-- The bash guard of the Gentle Shell layer blocks agents from running `oasis menu` (or the
-  installed bundle's `skills/odoo19/tools/menu` and `tools/actions.py`), `--catalog` included;
-  asking only for its help is allowed. A `tools/menu` of another project is not blocked.
+- The bash guard of the Gentle Shell layer blocks agents from running `oasis menu` or `odoo19
+  menu`, `--catalog` included, and the menu's scripts `tools/menu` and `tools/actions.py` when
+  they are oasis's: each is resolved against the session's directory and literal `cd`/`pushd`
+  targets in the same command, and blocked when its `tools` directory sits next to the `oasis`
+  entry point and `tools/actions.py` (the installed bundle, an oasis checkout), also when run
+  relatively. A `tools/menu` of another project is not blocked; asking only for help is allowed.
+- In the terminal menu a number picks from the list and is never taken as a new name; a listed
+  value made of digits (a database named `2024`) is taken as written.
 
 ## [0.8.0] - 2026-11-23
 

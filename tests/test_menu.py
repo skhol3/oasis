@@ -237,6 +237,14 @@ class TerminalMenuTests(MenuFixture):
         self.assertNotIn(' -d 7 ', self.log())
         self.assertIn('-d cc_dev_coffee -u coffee --stop-after-init', self.log())
 
+    def test_a_listed_name_made_of_digits_is_taken_as_written(self):
+        self.env.update(FAKE_DATABASES='cc_dev_coffee 2024', FAKE_EXISTS='1')
+        for answer, database in (('2024', '2024'), ('2', '2024'), ('1', 'cc_dev_coffee')):
+            with self.subTest(answer=answer):
+                result = self.terminal(f'2\n3\n1\n{answer}\n')
+                self.assertNotIn('Choose a number', result.stdout)
+                self.assertIn(self.command('module-status', 'coffee', database), result.stdout)
+
     def test_a_number_is_not_a_database_name_when_none_is_listed(self):
         result = self.terminal('2\n1\n1\n3\n\nn\n')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)

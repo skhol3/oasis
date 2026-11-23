@@ -402,13 +402,14 @@ export default function oasisLayer(pi: ExtensionAPI) {
   });
 
   // Agent bash only: direct odoo-bin/dropdb/psql bypass the core's database guards (Odoo projects);
-  // worktree-init links environment files and migrate rewrites configuration files, so both are
-  // user-run in every session.
+  // worktree-init links environment files, migrate rewrites configuration files and menu is the
+  // user's interactive menu, so all three are user-run in every session.
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName !== "bash") return;
     const command = (event.input as { command?: unknown }).command;
     if (typeof command !== "string") return;
-    const program = blockedProgram(command);
+    // The menu's scripts are judged by the file they resolve to from the session's directory.
+    const program = blockedProgram(command, { cwd: ctx.cwd, home: homedir(), exists: existsSync });
     if (!program) return;
     if (blockedEverywhere(program)) return { block: true, reason: blockReason(program, "") };
     const root = await projectRoot(ctx.cwd);
