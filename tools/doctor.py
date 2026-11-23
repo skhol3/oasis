@@ -231,7 +231,7 @@ def check_port(report: Report, values: dict, conf_reader, state):
 
 
 def usage() -> str:
-    return f'Usage: {os.environ.get("ODOO19_ENTRYPOINT") or "oasis"} doctor'
+    return f'Usage: {sibling("config").usage_name()} doctor'
 
 
 HELP = '''
@@ -251,12 +251,11 @@ def main(arguments: list[str]) -> int:
     if arguments:
         print(usage(), file=sys.stderr)
         return 2
-    selected = os.environ.get('ODOO19_PROJECT_ROOT', '')
-    if not selected or not Path(selected).is_absolute() or not Path(selected).is_dir():
-        print('ERROR: ODOO19_PROJECT_ROOT must name an absolute existing project directory.', file=sys.stderr)
-        return 2
-    root = Path(selected).resolve()
     config = sibling('config')
+    root = config.selected_root()
+    if root is None:
+        print(f'ERROR: {config.PROJECT_ROOT_REQUIRED}', file=sys.stderr)
+        return 2
     report = Report()
     try:
         values = config.load(root)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Explicit-project entry point for the installed Odoo 19 tool bundle.
+"""Explicit-project entry point for the installed oasis tool bundle.
 
 `oasis` is the entry point; `odoo19` is a compatibility alias that runs this same file, so every
 command, option, exit code and output is identical. Help and usage name the invoked program.
@@ -19,7 +19,7 @@ COMMANDS = (
 PROGRAMS = ('oasis', 'odoo19')
 # The invoked file. The odoo19 alias runs this file with runpy.run_path(..., init_globals=
 # {'ALIAS_PATH': <its own path>}), because runpy rewrites argv[0] to this file; help, usage and
-# ODOO19_ENTRYPOINT then name the program the user actually ran.
+# OASIS_ENTRYPOINT then name the program the user actually ran.
 INVOKED = Path(globals().get('ALIAS_PATH') or __file__)
 
 
@@ -29,7 +29,7 @@ def below_workspace(tools: Path, root: Path) -> bool:
     if not reader.is_file():
         return False
     sys.dont_write_bytecode = True  # never leave __pycache__ in the installed bundle
-    spec = importlib.util.spec_from_file_location('odoo19_config', reader)
+    spec = importlib.util.spec_from_file_location('oasis_config', reader)
     config = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(config)
     return config.find_workspace(root) is not None
@@ -44,7 +44,7 @@ def main() -> int:
     prog = program_name()
     parser = argparse.ArgumentParser(
         prog=prog,
-        description='Run an installed Odoo 19 tool for an explicitly selected project.',
+        description='Run an installed oasis tool for an explicitly selected project.',
         epilog=('Commands: ' + ', '.join(COMMANDS) + '\n'
                 f'Example: {prog} --project /absolute/project check-environment --quick'),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -56,7 +56,7 @@ def main() -> int:
     parser.add_argument('arguments', nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.command not in COMMANDS:
-        print(f'ERROR: Unsupported Odoo 19 command: {args.command}', file=sys.stderr)
+        print(f'ERROR: Unsupported oasis command: {args.command}', file=sys.stderr)
         return 2
     if not args.project or not Path(args.project).is_absolute() or not Path(args.project).is_dir():
         print('ERROR: --project requires an absolute existing project directory.', file=sys.stderr)
@@ -69,12 +69,15 @@ def main() -> int:
         return 2
     tool = tools / args.command
     if not tool.is_file() or not tool.resolve().is_relative_to(tools):
-        print(f'Odoo 19 tools are not installed: {tool}', file=sys.stderr)
+        print(f'oasis tools are not installed: {tool}', file=sys.stderr)
         return 2
     env = os.environ.copy()
-    env['ODOO19_PROJECT_ROOT'] = str(root)
-    env['ODOO19_ENTRYPOINT'] = str(INVOKED.resolve())
-    env.pop('ODOO19_TOOLS_DIR', None)
+    # Both names of each variable, with the same value: the tools read OASIS_* first and the
+    # legacy ODOO19_* when it is unset (tools/oasis_env.sh, tools/config.py variable()).
+    for prefix in ('OASIS', 'ODOO19'):
+        env[f'{prefix}_PROJECT_ROOT'] = str(root)
+        env[f'{prefix}_ENTRYPOINT'] = str(INVOKED.resolve())
+        env.pop(f'{prefix}_TOOLS_DIR', None)
     # argparse consumes a separator after the command; tool arguments must stay byte-for-byte.
     arguments = sys.argv[sys.argv.index(args.command, 1) + 1:]
     os.execve('/bin/bash', ['bash', str(tool), *arguments], env)

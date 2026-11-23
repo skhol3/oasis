@@ -11,9 +11,10 @@ import tempfile
 root = Path(sys.argv[1]).resolve()
 kind, main_root, logs, slug = sys.argv[2:6]
 if logs:
-    # [tooling].logs: one directory per checkout, <logs>/odoo19/<slug or main>.
+    # [tooling].logs: one directory per checkout, <logs>/<slug or main>. Runs of the layout
+    # before 0.8.0 (<logs>/odoo19/<slug or main>) stay where they are.
     base = Path(logs).resolve()
-    target = base / 'odoo19' / (slug or 'main')
+    target = base / (slug or 'main')
     refused = 'Compact logs must remain inside the configured logs directory.'
     # Checked before anything is created, and again on the created run directory.
     if not target.resolve().is_relative_to(base):

@@ -254,7 +254,7 @@ class LinkedWorktreeEvidenceTests(unittest.TestCase):
 
 
 class ConfiguredLogsEvidenceTests(unittest.TestCase):
-    """With [tooling].logs, browser evidence goes to <logs>/odoo19/<main|slug>/run-*."""
+    """With [tooling].logs, browser evidence goes to <logs>/<main|slug>/run-*."""
     setUp = compact_guards.ConfiguredLogsCompactTests.setUp
     setUp_fixture = lifecycle.LifecycleTests.setUp
     git = compact_guards.LinkedWorktreeCompactTests.git
@@ -272,7 +272,7 @@ class ConfiguredLogsEvidenceTests(unittest.TestCase):
                              (0, 'test stdout\n', 'test stderr\n'))
         for checkout_id in ('main', 'wt'):
             with self.subTest(checkout=checkout_id):
-                runs = list((self.logs / 'odoo19' / checkout_id).iterdir())
+                runs = list((self.logs / checkout_id).iterdir())
                 self.assertEqual(len(runs), 1)
                 self.assertTrue(runs[0].name.startswith('run-'))
                 files = {p.relative_to(runs[0]): p.read_text() for p in runs[0].rglob('*') if p.is_file()}
@@ -289,8 +289,8 @@ class ConfiguredLogsEvidenceTests(unittest.TestCase):
         self.prepare_probe()
         outside = self.main.parent.parent / 'outside'
         outside.mkdir()
-        (self.logs / 'odoo19').mkdir(parents=True)
-        (self.logs / 'odoo19' / 'wt').symlink_to(outside, target_is_directory=True)
+        self.logs.mkdir()
+        (self.logs / 'wt').symlink_to(outside, target_is_directory=True)
         result = self.invoke(self.linked, 'test-module', 'coffee')
         scratch = Path(self.observation.read_text().splitlines()[0])
         self.assertEqual(scratch.parent, Path('/tmp'))

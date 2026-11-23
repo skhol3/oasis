@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+source "$(dirname "$0")/oasis_env.sh"
 if [[ ${1:-} == --help && $# == 1 ]]; then
-  printf 'Usage: %s [--compact] <module> <database>\n' "${ODOO19_ENTRYPOINT:-$0}"
+  printf 'Usage: %s [--compact] <module> <database>\n' "$(usage_name)"
   printf 'Updates the module in an existing managed database (dev_prefix/test_prefix, with the\n'
   printf 'checkout slug in a checkout that has one). A missing database is refused, never created.\n'
-  printf -- '--compact retains stdout/stderr under odoo19/ of the profile'\''s logs directory (default\n'
-  printf 'dev/logs; with [tooling].logs, in odoo19/<slug or main>) and prints the exit code and the\n'
-  printf 'two log paths.\n'
+  printf -- '--compact retains stdout/stderr under dev/logs/odoo19/ (with [tooling].logs, under\n'
+  printf '<logs>/<slug or main>/) and prints the exit code and the two log paths.\n'
   exit 0
 fi
 source "$(dirname "$0")/common.sh"
@@ -17,7 +17,7 @@ database=${2:-}
 require_runtime
 require_module "$module"
 if [[ -z "$database" ]]; then
-  printf 'Usage: %s <module> <database>\n' "${ODOO19_ENTRYPOINT:-$0}" >&2
+  printf 'Usage: %s <module> <database>\n' "$(usage_name)" >&2
   exit 2
 fi
 require_working_database_name "$database"

@@ -36,7 +36,7 @@ dev_prefix = 'acme_dev_'
 test_prefix = 'acme_test_'
 # Optional reusable sequential test target; never implies reset permission.
 # test_database = 'acme_test_suite'
-# Optional logs directory: runs go to <logs>/odoo19/<slug, or main for the main checkout>/.
+# Optional logs directory: runs go to <logs>/<slug, or main for the main checkout>/.
 # logs = 'logs'
 # Optional Odoo data directory: every Odoo launch gets --data-dir=<it>, and disposable test
 # runs remove their filestores there. Without it, the data_dir of odoo.conf applies.

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+source "$(dirname "$0")/oasis_env.sh"
 usage() {
-  printf 'Usage: %s gc [--apply] [--all-checkouts]\n' "${ODOO19_ENTRYPOINT:-$0}"
+  printf 'Usage: %s gc [--apply] [--all-checkouts]\n' "$(usage_name)"
 }
 apply=false
 scope=checkout

@@ -5,7 +5,7 @@ module=${1:-}
 database=${2:-}
 require_runtime
 if [[ -z "$module" || -z "$database" || $# -ne 2 ]]; then
-  printf 'Usage: %s <module> <%s*|%s*>\n' "${ODOO19_ENTRYPOINT:-$0}" "$DEV_PREFIX" "$TEST_PREFIX" >&2
+  printf 'Usage: %s <module> <%s*|%s*>\n' "$(usage_name)" "$DEV_PREFIX" "$TEST_PREFIX" >&2
   exit 2
 fi
 require_module "$module"

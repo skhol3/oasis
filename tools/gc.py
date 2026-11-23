@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Orphaned disposable test databases for `odoo19 gc` (internal CLI behind tools/gc).
+"""Orphaned disposable test databases for `oasis gc` (internal CLI behind tools/gc).
 
 Usage:
   gc.py orphans <project_root> <test_prefix> <slug> <checkout|all> [<test_database>]

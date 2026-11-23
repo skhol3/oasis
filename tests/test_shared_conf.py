@@ -28,17 +28,13 @@ SHARED_PROFILE = (lifecycle.PROFILE
 SECRET = 'fixture-secret-value'
 
 
-def free_pair():
-    """A port P with P and P+1 free on 127.0.0.1: the conf port and a linked worktree's first."""
-    for _ in range(100):
-        port = lifecycle.free_port()
-        try:
-            with lifecycle.socket.socket() as probe:
-                probe.bind(('127.0.0.1', port + 1))
-        except OSError:
-            continue
-        return port
-    raise AssertionError('no free port pair on 127.0.0.1')
+def free_pair(excluded=()):
+    """A port P with P and P+1 free on 127.0.0.1: the conf port and a linked worktree's first.
+
+    Outside the ephemeral range (lifecycle.quiet_ports), so no other process's loopback
+    connection takes P+1 before `start` probes it.
+    """
+    return lifecycle.quiet_ports(2, excluded)
 
 
 def shared_layout(test, profile=SHARED_PROFILE):
@@ -55,7 +51,8 @@ def shared_layout(test, profile=SHARED_PROFILE):
     test.conf = test.config_dir / 'odoo.conf'
     test.enterprise = test.main.parent.parent / 'source' / 'enterprise'
     test.odoo_addons = test.source / 'addons'
-    test.http_port, test.gevent_port = free_pair(), free_pair()
+    test.http_port = free_pair()
+    test.gevent_port = free_pair(excluded=(test.http_port, test.http_port + 1))
     write_conf(test, f'{test.enterprise},{test.main},{test.odoo_addons}')
     (test.main / '.odoo19-agent.toml').write_text(profile)
 
@@ -125,7 +122,7 @@ class SharedConfTests(unittest.TestCase):
             result = self.invoke(root, command, *args, input=stdin)
             self.assertEqual(result.returncode, 0, command)
             if command == 'start':
-                self.assertRegex(result.stderr, r'^odoo19 start: http://localhost:\d+ \(pid \d+\)\n$')
+                self.assertRegex(result.stderr, r'^oasis start: http://localhost:\d+ \(pid \d+\)\n$')
             else:
                 self.assertEqual(result.stderr, '', command)
             lines[command] = self.odoo_lines()

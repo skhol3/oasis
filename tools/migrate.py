@@ -71,7 +71,7 @@ def sibling(name: str):
 
 
 def usage() -> str:
-    return f'Usage: {os.environ.get("ODOO19_ENTRYPOINT") or "oasis"} migrate [--workspace <dir>] [--apply | --plan]'
+    return f'Usage: {sibling("config").usage_name()} migrate [--workspace <dir>] [--apply | --plan]'
 
 
 def parse_arguments(arguments: list[str]):
@@ -657,12 +657,11 @@ def main(arguments: list[str]) -> int:
     if workspace is not None and (not os.path.isabs(workspace) or not os.path.isdir(workspace)):
         print('ERROR: --workspace requires an absolute existing directory.', file=sys.stderr)
         return 2
-    selected = os.environ.get('ODOO19_PROJECT_ROOT', '')
-    if not selected or not Path(selected).is_absolute() or not Path(selected).is_dir():
-        print('ERROR: ODOO19_PROJECT_ROOT must name an absolute existing project directory.', file=sys.stderr)
-        return 2
-    root = Path(selected).resolve()
     config, reader = sibling('config'), sibling('odoo_addons_path')
+    root = config.selected_root()
+    if root is None:
+        print(f'ERROR: {config.PROJECT_ROOT_REQUIRED}', file=sys.stderr)
+        return 2
     try:
         if not (root / PROFILE).is_file():
             try:

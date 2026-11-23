@@ -2,11 +2,11 @@
   "name": "oasis-odoo19",
   "version": "0.7.1",
   "private": true,
-  "description": "Odoo 19 layer for Gentle Shell (Pi): guarded odoo19 tools with compact, token-saving output.",
+  "description": "Odoo layer for Gentle Shell (Pi): guarded oasis tools with compact, token-saving output.",
   "type": "module",
   "keywords": ["pi-package"],
   "pi": {
-    "extensions": ["./pi/extensions/odoo19.ts"]
+    "extensions": ["./pi/extensions/oasis.ts"]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

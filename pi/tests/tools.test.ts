@@ -104,19 +104,52 @@ test("formatBackgroundRun summarizes a compact run that finished in the backgrou
   );
 });
 
+test("formatBackgroundRun summarizes a run of the <logs>/<checkout> layout", async () => {
+  const { formatBackgroundRun } = await import("../lib/tools.ts");
+  const stamp = "2026-11-23 18:00:00,123 4242";
+  const logs: Record<string, string> = {
+    "/p/logs/shop_feature/run-1/stdout.log": `${stamp} INFO db odoo.tests.result: 0 failed, 0 error(s) of 2 tests\n`,
+    "/p/logs/shop_feature/run-1/stderr.log": "",
+  };
+  const output =
+    "phase=tests database=acme_test_shop_feature_coffee_r1a2b3c exit=0\ndatabase_lifecycle=disposable dropped=yes\n" +
+    "stdout_log=/p/logs/shop_feature/run-1/stdout.log\nstderr_log=/p/logs/shop_feature/run-1/stderr.log\n";
+  assert.equal(
+    formatBackgroundRun("coffee", output, (path) => logs[path] ?? "", { maxFailures: 10, traceLines: 6 }),
+    [
+      "module=coffee database=acme_test_shop_feature_coffee_r1a2b3c exit=0 database_lifecycle=disposable dropped=yes",
+      "result: 0 failed, 0 error(s) of 2 tests",
+      "problems: 0",
+      "log: 1 lines, 0 errors, 0 warnings",
+      "logs: /p/logs/shop_feature/run-1/stdout.log /p/logs/shop_feature/run-1/stderr.log",
+    ].join("\n"),
+  );
+});
+
 test("formatBackgroundRun reads only run logs named by a compact run", async () => {
   const { formatBackgroundRun, isRunLog } = await import("../lib/tools.ts");
   for (const path of [
+    // dev/logs/odoo19/run-<id>/ without [tooling].logs.
     "/p/dev/logs/odoo19/run-ab_1/stdout.log",
+    // <logs>/<main|slug>/run-<id>/ with [tooling].logs.
+    "/p/logs/main/run-1/stdout.log",
+    "/p/logs/shop_feature/run-x9/stderr.log",
+    // <logs>/odoo19/<main|slug>/run-<id>/ of runs before 0.8.0.
     "/p/logs/odoo19/shop_feature/run-x9/stderr.log",
+    // A logs directory may itself end in odoo19/<name>.
+    "/p/logs/odoo19/a/b/run-1/stdout.log",
   ]) assert.equal(isRunLog(path), true, path);
   for (const path of [
     "/etc/passwd",
     "/p/config/odoo.conf",
     "relative/odoo19/run-1/stdout.log",
+    "relative/main/run-1/stdout.log",
+    "/run-1/stdout.log",
     "/p/logs/odoo19/run-1/../../../config/odoo.conf",
+    "/p/logs/main/run-1/../../../config/odoo.conf",
     "/p/logs/odoo19/run-1/other.log",
-    "/p/logs/odoo19/a/b/run-1/stdout.log",
+    "/p/logs/main/run-1/sub/stdout.log",
+    "/p/logs/Shop-Feature/run-1/stdout.log",
   ]) assert.equal(isRunLog(path), false, path);
   const read = () => { throw new Error("must not read"); };
   for (const output of ["", "exit=0\n", "phase=tests exit=0\nstdout_log=/p/config/odoo.conf\n",

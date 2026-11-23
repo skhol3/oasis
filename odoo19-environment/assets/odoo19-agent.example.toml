@@ -36,7 +36,7 @@ test_prefix = 'sample_test_'
 # name and limits database arguments to the <prefix><slug>_ namespace.
 # checkout_slug = 'sample_07_1'
 # Optional logs directory, relative to the checkout. Compact runs and browser
-# evidence go to <logs>/odoo19/<slug, or main for the main checkout>/run-*;
+# evidence go to <logs>/<slug, or main for the main checkout>/run-*;
 # without it they stay under dev/logs/odoo19. Point every checkout at the same one.
 # logs = '../logs'
 

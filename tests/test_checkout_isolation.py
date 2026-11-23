@@ -181,7 +181,7 @@ class SluggedCheckoutTests(IsolationBase):
                 self.commands.unlink(missing_ok=True)
                 result = self.invoke('start', *args)
                 self.assertEqual((result.returncode, result.stdout), (0, ''))
-                self.assertRegex(result.stderr, rf'^odoo19 start: http://localhost:{port} \(pid \d+\)\n$')
+                self.assertRegex(result.stderr, rf'^oasis start: http://localhost:{port} \(pid \d+\)\n$')
                 self.assertEqual(self.odoo_lines(), [self.odoo_call(f'--http-port={port}', *args)])
             args = ('--workers=0', *form('cc_dev_coffee'))
             with self.subTest(rejected=args):
@@ -296,7 +296,7 @@ class MainCheckoutTests(IsolationBase):
                 self.commands.unlink(missing_ok=True)
                 result = self.invoke(command, *args)
                 self.assertEqual((result.returncode, result.stdout), (0, ''))
-                started = rf'^odoo19 start: http://localhost:{port} \(pid \d+\)\n$'
+                started = rf'^oasis start: http://localhost:{port} \(pid \d+\)\n$'
                 self.assertRegex(result.stderr, started if command == 'start' else '^$')
                 self.assertEqual(self.odoo_lines(), [expected])
 

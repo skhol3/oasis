@@ -88,7 +88,7 @@ class PathFreeConfFixture(unittest.TestCase):
                 self.assertEqual((result.returncode, result.stdout if command != 'odoo-shell' else ''),
                                  (0, ''), result.stderr)
                 if command == 'start':
-                    self.assertRegex(result.stderr, rf'^odoo19 start: http://localhost:{self.port} \(pid \d+\)\n$')
+                    self.assertRegex(result.stderr, rf'^oasis start: http://localhost:{self.port} \(pid \d+\)\n$')
                 else:
                     self.assertEqual(result.stderr, '')
                 tail = {

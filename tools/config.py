@@ -19,6 +19,38 @@ import sys
 import tomllib
 
 
+def variable(name: str) -> str:
+    """OASIS_<name>, else the legacy ODOO19_<name> when that is unset or empty, else ''.
+
+    For the variables a user, a project wrapper or a test may set (PROJECT_ROOT, ENTRYPOINT,
+    TOOLS_DIR, COMPOSE_LOCK_TIMEOUT); tools/oasis_env.sh oasis_variable in the shell tools.
+    """
+    return os.environ.get(f'OASIS_{name}') or os.environ.get(f'ODOO19_{name}') or ''
+
+
+PROJECT_ROOT_REQUIRED = 'OASIS_PROJECT_ROOT must name an absolute existing project directory.'
+
+
+def selected_root() -> Path | None:
+    """The project root the entry point or a wrapper selected, resolved; None when the variable
+    does not name an absolute existing directory (report PROJECT_ROOT_REQUIRED)."""
+    selected = variable('PROJECT_ROOT')
+    if not selected or not Path(selected).is_absolute() or not Path(selected).is_dir():
+        return None
+    return Path(selected).resolve()
+
+
+def program_name() -> str:
+    """The program a help or message tells the user to run (`oasis gc`): the invoked entry
+    point, `odoo19` through its alias, else `oasis` (also through a project wrapper)."""
+    return 'odoo19' if Path(variable('ENTRYPOINT')).name == 'odoo19' else 'oasis'
+
+
+def usage_name() -> str:
+    """What a usage line names: the entry point that ran the tool, else `oasis`."""
+    return variable('ENTRYPOINT') or 'oasis'
+
+
 @functools.cache
 def versions():
     """tools/odoo_versions.py, loaded from its file when first needed: callers import this file
@@ -435,7 +467,7 @@ def resolve(document: dict, root: Path, base: Path, legacy: bool = True) -> dict
     # verify-module's _update sibling.
     if output['TEST_DATABASE'] and slug and len(output['TEST_DATABASE'].encode('utf-8')) + len(slug) + 1 > 56:
         raise InvalidConfig(f'Tooling test database exceeds 56 bytes with checkout slug {slug}.')
-    # Compact runs and browser evidence go to <LOGS_DIR>/odoo19/<slug or main> when set.
+    # Compact runs and browser evidence go to <LOGS_DIR>/<slug or main> when set.
     output['LOGS_DIR'] = logs_dir
     return output
 

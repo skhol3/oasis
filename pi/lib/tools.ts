@@ -105,9 +105,15 @@ export function formatUpdateRun(
   ].join("\n");
 }
 
-const RUN_LOG = /\/odoo19\/(?:[A-Za-z0-9_]+\/)?run-[A-Za-z0-9_]+\/(?:stdout|stderr)\.log$/;
+// dev/logs/odoo19/run-<id>/ (no [tooling].logs), <logs>/<checkout>/run-<id>/ (since 0.8.0) and
+// <logs>/odoo19/<checkout>/run-<id>/ (before 0.8.0); <checkout> is `main` or a checkout slug.
+const RUN_LOG =
+  /\/(?:odoo19|odoo19\/[A-Za-z0-9_]+|[a-z0-9][a-z0-9_]{0,19})\/run-[A-Za-z0-9_]+\/(?:stdout|stderr)\.log$/;
 
-/** Whether a path is a log a compact run writes: stdout.log or stderr.log in <logs>/odoo19/[<checkout>/]run-<id>/. */
+/**
+ * Whether a path is a log a compact run writes: stdout.log or stderr.log in dev/logs/odoo19/run-<id>/,
+ * <logs>/<checkout>/run-<id>/ or, from runs before 0.8.0, <logs>/odoo19/<checkout>/run-<id>/.
+ */
 export function isRunLog(path: string): boolean {
   return path.startsWith("/") && !path.split("/").includes("..") && RUN_LOG.test(path);
 }

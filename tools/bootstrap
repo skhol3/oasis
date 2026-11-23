@@ -5,7 +5,7 @@ mode=${1:---preview}
 lockfile="$REQUIREMENTS_DIR/dev.txt"
 required_paths=("$ODOO_BIN" "$ODOO_CONFIG" "$COMPOSE_FILE" "$ENV_FILE" "$lockfile")
 if (( $# > 1 )) || [[ "$mode" != "--preview" && "$mode" != "--apply" ]]; then
-  printf 'Usage: %s [--preview|--apply]\n' "${ODOO19_ENTRYPOINT:-$0}" >&2
+  printf 'Usage: %s [--preview|--apply]\n' "$(usage_name)" >&2
   exit 2
 fi
 for path in "${required_paths[@]}"; do

@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Only project wrappers set the explicit root. Never infer it from installed tools.
-if [[ -z ${ODOO19_PROJECT_ROOT:-} || ! -d ${ODOO19_PROJECT_ROOT:-} ]]; then
-  printf 'ODOO19_PROJECT_ROOT must name an existing project directory.\n' >&2
+source "$(dirname "${BASH_SOURCE[0]}")/oasis_env.sh"
+# Only the entry point and project wrappers set the explicit root (OASIS_PROJECT_ROOT, or the
+# legacy ODOO19_PROJECT_ROOT). Never infer it from installed tools.
+_project_root=$(oasis_variable PROJECT_ROOT)
+if [[ -z "$_project_root" || ! -d "$_project_root" ]]; then
+  printf 'OASIS_PROJECT_ROOT must name an existing project directory.\n' >&2
   return 2
 fi
-_config_output=$(python3 -B "$(dirname "${BASH_SOURCE[0]}")/config.py" "$ODOO19_PROJECT_ROOT") || return $?
+_config_output=$(python3 -B "$(dirname "${BASH_SOURCE[0]}")/config.py" "$_project_root") || return $?
+unset _project_root
 # config.py sets ENTERPRISE_SOURCE only when it is configured: never inherit the caller's.
 unset ENTERPRISE_SOURCE
 eval "$_config_output"
@@ -203,7 +207,8 @@ require_existing_database() {
 # that compose file's lock in the user's runtime root (tools/runtime_state.py compose-lock),
 # waiting at most 120 s. Once the first caller finished, the next `up` finds the service
 # running. The lock descriptor is closed before returning, so Odoo never inherits it.
-# ODOO19_COMPOSE_LOCK_TIMEOUT (seconds) exists for the tests only.
+# OASIS_COMPOSE_LOCK_TIMEOUT (seconds; the legacy ODOO19_COMPOSE_LOCK_TIMEOUT when unset)
+# exists for the tests only.
 wait_for_database() {
   local lock lock_fd timeout=120 status=0
   if ! command -v flock >/dev/null 2>&1; then
@@ -211,8 +216,10 @@ wait_for_database() {
     compose up -d --wait --wait-timeout 60 "$DB_SERVICE"
     return
   fi
-  if [[ "${ODOO19_COMPOSE_LOCK_TIMEOUT:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-    timeout=$ODOO19_COMPOSE_LOCK_TIMEOUT
+  local configured
+  configured=$(oasis_variable COMPOSE_LOCK_TIMEOUT)
+  if [[ "$configured" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    timeout=$configured
   fi
   lock=$(runtime_state compose-lock "$COMPOSE_FILE") || return $?
   exec {lock_fd}>>"$lock" || return 1

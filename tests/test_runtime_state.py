@@ -32,25 +32,13 @@ SERVE = f'if [ -n "${{FAKE_SERVE:-}}" ]; then exec "{sys.executable}" "$@"; fi\n
 SLEEPER = 'import time\nwhile True:\n    time.sleep(0.1)\n'
 
 
-def bindable(port):
-    with socket.socket() as probe:
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            probe.bind(('127.0.0.1', port))
-        except OSError:
-            return False
-    return True
+bindable = lifecycle.bindable
 
 
 def free_ports(count):
-    """A port P such that P .. P+count-1 are free on 127.0.0.1."""
-    for _ in range(100):
-        with socket.socket() as probe:
-            probe.bind(('127.0.0.1', 0))
-            port = probe.getsockname()[1]
-        if port + count <= 65535 and all(bindable(port + offset) for offset in range(count)):
-            return port
-    raise AssertionError('no free port range on 127.0.0.1')
+    """A port P such that P .. P+count-1 are free on 127.0.0.1 (outside the ephemeral range:
+    lifecycle.quiet_ports)."""
+    return lifecycle.quiet_ports(count)
 
 
 @contextmanager
@@ -407,7 +395,7 @@ class ServerLifecycleTests(unittest.TestCase):
         return json.loads(path.read_text()) if path.exists() else None
 
     def started(self, result, port):
-        match = re.fullmatch(rf'odoo19 start: http://localhost:{port} \(pid (\d+)\)\n', result.stderr)
+        match = re.fullmatch(rf'oasis start: http://localhost:{port} \(pid (\d+)\)\n', result.stderr)
         self.assertIsNotNone(match, result.stderr)
         return int(match.group(1))
 

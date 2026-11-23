@@ -5,7 +5,7 @@ database=${1:-}
 mode=${2:-}
 require_runtime
 if [[ -z "$database" || ( -n "$mode" && "$mode" != "--terminate" ) || $# -gt 2 ]]; then
-  printf 'Usage: %s <%s*|%s*> [--terminate]\n' "${ODOO19_ENTRYPOINT:-$0}" "$DEV_PREFIX" "$TEST_PREFIX" >&2
+  printf 'Usage: %s <%s*|%s*> [--terminate]\n' "$(usage_name)" "$DEV_PREFIX" "$TEST_PREFIX" >&2
   exit 2
 fi
 require_managed_database_name "$database"

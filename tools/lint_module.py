@@ -56,14 +56,13 @@ def main():
     module_name = arguments[0]
     if not re.fullmatch(r'[A-Za-z0-9_]+', module_name):
         return fail('Module must use only letters, numbers, and underscores.')
-    selected = os.environ.get('ODOO19_PROJECT_ROOT', '')
-    if not selected or not Path(selected).is_absolute() or not Path(selected).is_dir():
-        return fail('ODOO19_PROJECT_ROOT must name an absolute existing project directory.')
-    root = Path(selected).resolve()
     # Load the packaged parser by its own path; never import project Python code.
-    spec = importlib.util.spec_from_file_location('odoo19_config', Path(__file__).with_name('config.py'))
+    spec = importlib.util.spec_from_file_location('oasis_config', Path(__file__).with_name('config.py'))
     config = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(config)
+    root = config.selected_root()
+    if root is None:
+        return fail(config.PROJECT_ROOT_REQUIRED)
     try:
         values = config.load(root)
         module = None
