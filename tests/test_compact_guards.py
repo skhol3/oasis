@@ -1,14 +1,45 @@
 """Compact execution must preserve fail-closed behavior and evidence."""
 from pathlib import Path
 import hashlib
+import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import unittest
 import test_lifecycle as lifecycle
 
 REFUSED = 'Compact logs must remain inside the project.\n'
+# The decision oasis_test_summary makes (pi/lib/tools.ts formatBackgroundRun with the real file
+# system), for the checkout's tools/config.py values and what test-module --compact printed.
+SUMMARY = """
+import { readFileSync, realpathSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const { formatBackgroundRun } = await import(pathToFileURL(process.env.OASIS_TOOLS_TS).href);
+const { config, output } = JSON.parse(process.env.OASIS_SUMMARY_INPUT);
+try {
+  const files = { realpath: realpathSync, readLog: (path) => readFileSync(path, "utf8") };
+  console.log(formatBackgroundRun("coffee", output, config, files, { maxFailures: 10, traceLines: 6 }));
+} catch (error) {
+  console.log(`refused: ${error.message}`);
+}
+"""
+
+
+def summary_of(test, root, output):
+    """What oasis_test_summary would answer in the checkout at root for this compact output."""
+    if not shutil.which('node'):
+        test.skipTest('node is required')
+    values = subprocess.run(['python3', '-B', str(lifecycle.STAGE / 'tools/config.py'), str(root)],
+                            text=True, capture_output=True, env=test.env, check=True).stdout
+    config = dict(word.split('=', 1) for word in shlex.split(values))
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', SUMMARY], text=True, capture_output=True, timeout=60,
+        env={**test.env, 'OASIS_TOOLS_TS': str(lifecycle.STAGE / 'pi/lib/tools.ts'),
+             'OASIS_SUMMARY_INPUT': json.dumps({'config': config, 'output': output})})
+    test.assertEqual((result.returncode, result.stderr), (0, ''))
+    return result.stdout
 GIT = ['git', '-c', 'user.name=oasis tests', '-c', 'user.email=tests@example.invalid',
        '-c', 'init.defaultBranch=main', '-c', 'commit.gpgsign=false']
 
@@ -120,6 +151,10 @@ class LinkedWorktreeCompactTests(unittest.TestCase):
         self.assertEqual(Path(logs['stdout_log']).resolve(), runs[0] / 'stdout.log')
         self.assertEqual(Path(logs['stderr_log']).resolve(), runs[0] / 'stderr.log')
         self.assertEqual(runs[0].stat().st_mode & 0o777, 0o700)
+        # oasis_test_summary follows the link to the main checkout's dev/logs/odoo19.
+        summary = summary_of(self, self.linked, result.stdout)
+        self.assertTrue(summary.startswith('module=coffee database=cc_test_wt_coffee_r'), summary)
+        self.assertIn(f"logs: {logs['stdout_log']} {logs['stderr_log']}", summary)
 
     def test_linked_logs_outside_both_checkouts_are_refused(self):
         outside = self.main.parent.parent / 'outside'
@@ -200,6 +235,27 @@ class ConfiguredLogsCompactTests(unittest.TestCase):
         # No dev/ log directory is needed in either checkout.
         self.assertFalse((self.main / 'dev/logs').exists())
         self.assertFalse((self.linked / 'dev/logs').exists())
+
+    def test_a_logs_path_with_a_link_or_dotdot_still_gives_readable_runs(self):
+        # tools/config.py resolves [tooling].logs, so compact.sh prints paths below the real
+        # directory and oasis_test_summary reads them.
+        (self.main.parent / 'logs-link').symlink_to('logs', target_is_directory=True)
+        self.logs.mkdir()
+        profile = self.main / '.odoo19-agent.toml'
+        text = profile.read_text()
+        for spelling in ("../logs-link", "dev/../../logs"):
+            with self.subTest(logs=spelling):
+                profile.write_text(text.replace("logs = '../logs'\n", f"logs = '{spelling}'\n"))
+                result = self.invoke(self.main, 'test-module', '--compact', 'coffee')
+                self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+                logs = dict(line.split('=', 1) for line in result.stdout.splitlines()[1:])
+                self.assertEqual(Path(logs['stdout_log']).parent.parent, self.logs / 'main')
+                summary = summary_of(self, self.main, result.stdout)
+                self.assertTrue(summary.startswith('module=coffee database=cc_test_coffee_r'), summary)
+                self.assertIn(f"logs: {logs['stdout_log']} {logs['stderr_log']}", summary)
+                # Named through the link instead, it is not below the resolved LOGS_DIR: refused.
+                linked = result.stdout.replace(str(self.logs), str(self.main.parent / 'logs-link'))
+                self.assertEqual(summary_of(self, self.main, linked).split(':', 1)[0], 'refused')
 
     def test_main_checkout_runs_go_under_the_main_id(self):
         self.assert_single_run(self.main, 'main', 'cc_test_coffee')

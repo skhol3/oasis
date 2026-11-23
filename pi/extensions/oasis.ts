@@ -4,7 +4,7 @@
 // aliases: `/odoo19` and the inactive odoo19_* tools.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
@@ -18,8 +18,7 @@ import { formatStatus, listModules, parseAssignments, parseGit, parseServer, typ
 import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
 import {
-  formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, runLogLocations, testModuleArgs, updateModuleArgs,
-  viewInfoArgs,
+  formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, testModuleArgs, updateModuleArgs, viewInfoArgs,
 } from "../lib/tools.ts";
 
 const OASIS = fileURLToPath(new URL("../../oasis", import.meta.url));
@@ -441,7 +440,9 @@ export default function oasisLayer(pi: ExtensionAPI) {
       const { config, error } = await profileConfig(root);
       if (!config) throw new Error(`Cannot read the project profile: ${error}`);
       const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };
-      return text(formatBackgroundRun(params.module, params.output, readLog, options, runLogLocations(config), MAX_LINES));
+      // lib/tools.ts decides: the named logs' real paths in the real log locations (symlinks followed).
+      return text(formatBackgroundRun(params.module, params.output, config, { realpath: realpathSync, readLog }, options,
+        MAX_LINES));
     },
   });
 

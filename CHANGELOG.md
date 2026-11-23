@@ -38,7 +38,8 @@ see the contract note in the README.
   `oasis` and its status message type `oasis-status`.
 - `oasis_test_summary` reads run logs only inside the checkout's log locations: `<logs>/` with
   `[tooling].logs`, otherwise `dev/logs/odoo19/` of the checkout (and of the main checkout in a
-  linked worktree). A path elsewhere is refused even when it looks like a run log.
+  linked worktree). A path elsewhere is refused even when it looks like a run log, and so is a
+  run directory or log file that is a symlink leading outside those locations.
 
 ### Fixed
 

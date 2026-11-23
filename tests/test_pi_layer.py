@@ -19,14 +19,16 @@ class PiLayerTests(unittest.TestCase):
         self.assertFalse((ROOT / 'pi/extensions/odoo19.ts').exists())
 
     def test_test_summary_reads_only_the_project_log_locations(self):
-        # oasis_test_summary checks the named logs against the checkout's tools/config.py values
-        # (lib/tools.ts runLogLocations; behavior pinned in pi/tests/tools.test.ts).
+        # oasis_test_summary hands the checkout's tools/config.py values and the real file system to
+        # lib/tools.ts formatBackgroundRun, which decides (behavior in pi/tests/run-logs.test.ts).
         source = (ROOT / 'pi/extensions/oasis.ts').read_text()
         [summary] = re.findall(r'name: "oasis_test_summary",.*?\n  \}\);', source, re.S)
+        summary = ' '.join(summary.split())
         self.assertIn('const root = await requireRoot(ctx.cwd);', summary)
         self.assertIn('const { config, error } = await profileConfig(root);', summary)
-        self.assertIn('formatBackgroundRun(params.module, params.output, readLog, options, runLogLocations(config), MAX_LINES)',
-                      summary)
+        self.assertIn('formatBackgroundRun(params.module, params.output, config, '
+                      '{ realpath: realpathSync, readLog }, options, MAX_LINES)', summary)
+        self.assertIn('import { readFileSync, realpathSync } from "node:fs";', source)
 
     def test_extension_names_its_prompt_section_and_status_message_oasis(self):
         source = (ROOT / 'pi/extensions/oasis.ts').read_text()
