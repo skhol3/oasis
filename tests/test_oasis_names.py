@@ -5,6 +5,7 @@ The lifecycle fixture (fake docker/python, private runtime directory) and the pu
 run directly with the variables the entry point or a project wrapper sets.
 """
 from pathlib import Path
+import json
 import os
 import subprocess
 import sys
@@ -16,6 +17,11 @@ import test_lifecycle as lifecycle
 ROOT = lifecycle.STAGE
 TOOLS = ROOT / 'tools'
 VARIABLES = ('PROJECT_ROOT', 'ENTRYPOINT', 'TOOLS_DIR', 'COMPOSE_LOCK_TIMEOUT', 'RUN_RESULT', 'REUSE_RESULT')
+WRAPPERS = sorted((ROOT / 'project-wrappers').iterdir())
+WRAPPER_VARIABLES = ('OASIS_PROJECT_ROOT', 'ODOO19_PROJECT_ROOT', 'OASIS_ENTRYPOINT', 'ODOO19_ENTRYPOINT',
+                     'OASIS_TOOLS_DIR', 'ODOO19_TOOLS_DIR')
+# Wrappers whose usage names the installed tool, not the wrapper: they set no entry point.
+NO_ENTRYPOINT = {'common.sh', 'install-module', 'start', 'status', 'stop', 'test-module'}
 ROOT_ERROR_SHELL = 'OASIS_PROJECT_ROOT must name an existing project directory.\n'
 ROOT_ERROR = 'ERROR: OASIS_PROJECT_ROOT must name an absolute existing project directory.\n'
 # Python tools that read the project root, with arguments that reach that check.
@@ -116,6 +122,67 @@ class WrapperVariableTests(unittest.TestCase):
     setUp = lifecycle.LifecycleTests.setUp
     invoke = lifecycle.LifecycleTests.invoke
     unchanged = lifecycle.LifecycleTests.unchanged
+
+    def fake_tools(self):
+        """A tools directory whose every tool (and common.sh) records the wrapper's variables."""
+        tools = self.root / 'fake tools'
+        tools.mkdir()
+        recorder = ('python3 -c \'import json, os, sys; json.dump({name: os.environ.get(name) for name in '
+                    'sys.argv[2:]}, open(sys.argv[1], "w"))\' "$FAKE_ENV_OUT" ' + ' '.join(WRAPPER_VARIABLES) + '\n')
+        for wrapper in WRAPPERS:
+            if not wrapper.name.endswith('.py'):
+                (tools / wrapper.name).write_text('#!/usr/bin/env bash\n' + recorder)
+        # The Python wrappers run their helper with this Python (check_environment.py) or read
+        # the configuration with config.py, then run the helper with the profile's Python.
+        (tools / 'check_environment.py').write_text(
+            'import json, os, sys\n'
+            f'json.dump({{name: os.environ.get(name) for name in {WRAPPER_VARIABLES!r}}}, '
+            'open(os.environ["FAKE_ENV_OUT"], "w"))\n')
+        for name in ('config.py', 'odoo_versions.py'):
+            (tools / name).write_bytes((TOOLS / name).read_bytes())
+        (tools / 'audit_dependencies.py').touch()
+        return tools
+
+    def test_every_wrapper_sets_both_names_and_reads_the_legacy_tools_dir(self):
+        for prefix in ('OASIS_', 'ODOO19_'):
+            for name in VARIABLES:
+                self.env.pop(prefix + name, None)
+        tools = self.fake_tools()
+        self.env['ODOO19_TOOLS_DIR'] = str(tools)
+        scripts = self.root / 'dev/scripts'
+        scripts.mkdir(parents=True)
+        self.assertEqual(len(WRAPPERS), 18)
+        for wrapper in WRAPPERS:
+            with self.subTest(wrapper=wrapper.name):
+                path = scripts / wrapper.name
+                path.write_bytes(wrapper.read_bytes())
+                out = self.root / f'env-{wrapper.name}.json'
+                env = {**self.env, 'FAKE_ENV_OUT': str(out)}
+                if wrapper.name.endswith('.py'):
+                    argv = [sys.executable, '-B', str(path)]
+                elif wrapper.name == 'common.sh':
+                    argv = ['bash', '-c', 'source "$1"', 'caller', str(path)]
+                else:
+                    argv = ['bash', str(path)]
+                result = subprocess.run(argv, text=True, cwd=self.root, env=env, capture_output=True)
+                self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+                if wrapper.name == 'audit_dependencies.py':
+                    # It passes the root as an argument; the profile's (fake) Python ran the helper.
+                    self.assertIn(f'odoo {tools / "audit_dependencies.py"} --project-root {self.root} ',
+                                  self.commands.read_text())
+                    self.commands.unlink()
+                    continue
+                seen = json.loads(out.read_text())
+                if wrapper.name == 'check_environment.py':
+                    # The lockfile CLI takes paths as arguments and sets no variable.
+                    self.assertEqual(seen, {**dict.fromkeys(WRAPPER_VARIABLES), 'ODOO19_TOOLS_DIR': str(tools)})
+                    continue
+                entrypoint = None if wrapper.name in NO_ENTRYPOINT else str(path)
+                self.assertEqual(seen, {
+                    'OASIS_PROJECT_ROOT': str(self.root), 'ODOO19_PROJECT_ROOT': str(self.root),
+                    'OASIS_ENTRYPOINT': entrypoint, 'ODOO19_ENTRYPOINT': entrypoint,
+                    'OASIS_TOOLS_DIR': None, 'ODOO19_TOOLS_DIR': str(tools)})
+        self.unchanged()
 
     def test_wrappers_override_stale_oasis_names(self):
         # A wrapper sets both names, so a stale OASIS_* value of the caller is never read.

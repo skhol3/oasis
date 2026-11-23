@@ -82,8 +82,78 @@ test("keyValues keeps log paths that contain spaces", async () => {
   });
 });
 
+// tools/config.py values of a checkout with [tooling].logs, and of a linked worktree without it.
+const WITH_LOGS = { PROJECT_ROOT: "/p/shop", LOGS_DIR: "/p/logs", CHECKOUT_KIND: "main", CHECKOUT_MAIN_ROOT: "/p/shop" };
+const LINKED = { PROJECT_ROOT: "/p/shop-wt", LOGS_DIR: "", CHECKOUT_KIND: "linked", CHECKOUT_MAIN_ROOT: "/p/shop" };
+
+test("runLogLocations follows the compact log rules of tools/compact.sh", async () => {
+  const { runLogLocations } = await import("../lib/tools.ts");
+  // [tooling].logs: only that directory, whatever the checkout.
+  assert.deepEqual(runLogLocations(WITH_LOGS), { logs: "/p/logs", devLogs: [] });
+  assert.deepEqual(runLogLocations({ ...LINKED, LOGS_DIR: "/p/logs/" }), { logs: "/p/logs", devLogs: [] });
+  // Without it: the checkout's dev/logs/odoo19, and the main checkout's for a linked worktree.
+  assert.deepEqual(runLogLocations({ ...WITH_LOGS, LOGS_DIR: "" }), { devLogs: ["/p/shop/dev/logs/odoo19"] });
+  assert.deepEqual(runLogLocations(LINKED), { devLogs: ["/p/shop-wt/dev/logs/odoo19", "/p/shop/dev/logs/odoo19"] });
+  // A linked worktree whose main checkout is unknown (git failed, profile slug) has only its own.
+  assert.deepEqual(runLogLocations({ ...LINKED, CHECKOUT_MAIN_ROOT: "" }), { devLogs: ["/p/shop-wt/dev/logs/odoo19"] });
+  assert.deepEqual(runLogLocations({ ...LINKED, CHECKOUT_KIND: "none", CHECKOUT_MAIN_ROOT: "" }),
+    { devLogs: ["/p/shop-wt/dev/logs/odoo19"] });
+});
+
+test("isRunLog accepts the run logs of each layout inside the project's log locations", async () => {
+  const { isRunLog, runLogLocations } = await import("../lib/tools.ts");
+  const withLogs = runLogLocations(WITH_LOGS);
+  for (const path of [
+    // <logs>/<main|slug>/run-<id>/ (0.8.0).
+    "/p/logs/main/run-1/stdout.log",
+    "/p/logs/shop_feature/run-x9/stderr.log",
+    // <logs>/odoo19/<main|slug>/run-<id>/ of runs before 0.8.0.
+    "/p/logs/odoo19/main/run-1/stdout.log",
+    "/p/logs/odoo19/shop_feature/run-x9/stderr.log",
+  ]) assert.equal(isRunLog(path, withLogs), true, path);
+  const linked = runLogLocations(LINKED);
+  for (const path of [
+    "/p/shop-wt/dev/logs/odoo19/run-ab_1/stdout.log",
+    // A linked worktree's dev/logs may stay linked to the main checkout's.
+    "/p/shop/dev/logs/odoo19/run-ab_1/stderr.log",
+  ]) assert.equal(isRunLog(path, linked), true, path);
+});
+
+test("isRunLog rejects paths outside the project's log locations, even with a run log's shape", async () => {
+  const { isRunLog, runLogLocations } = await import("../lib/tools.ts");
+  const withLogs = runLogLocations(WITH_LOGS);
+  for (const path of [
+    "/tmp/x/main/run-1/stdout.log",
+    "/tmp/odoo19/main/run-1/stdout.log",
+    "/p/logs-other/main/run-1/stdout.log",
+    "/p/logsmain/run-1/stdout.log",
+    // dev/logs/odoo19 is not read when [tooling].logs is set.
+    "/p/shop/dev/logs/odoo19/run-1/stdout.log",
+    "/p/logs/run-1/stdout.log",
+    "/p/logs/a/b/run-1/stdout.log",
+    "/p/logs/Shop-Feature/run-1/stdout.log",
+    "/p/logs/main/run-1/other.log",
+    "/p/logs/main/run-1/sub/stdout.log",
+    "/p/logs/main/run-1/../../../shop/config/odoo.conf",
+    "/p/logs/main/../main/run-1/stdout.log",
+    "p/logs/main/run-1/stdout.log",
+    "/etc/passwd",
+  ]) assert.equal(isRunLog(path, withLogs), false, path);
+  const linked = runLogLocations(LINKED);
+  for (const path of [
+    "/tmp/x/dev/logs/odoo19/run-1/stdout.log",
+    "/p/other/dev/logs/odoo19/run-1/stdout.log",
+    "/p/shop-wt/dev/logs/odoo19/main/run-1/stdout.log",
+    "/p/shop-wt/dev/logs/odoo19/run-1/../../../../.env",
+    "/p/logs/main/run-1/stdout.log",
+  ]) assert.equal(isRunLog(path, linked), false, path);
+  // The main checkout's dev/logs only counts for a linked worktree.
+  assert.equal(isRunLog("/p/shop/dev/logs/odoo19/run-1/stdout.log",
+    runLogLocations({ ...WITH_LOGS, PROJECT_ROOT: "/p/other", LOGS_DIR: "" })), false);
+});
+
 test("formatBackgroundRun summarizes a compact run that finished in the background", async () => {
-  const { formatBackgroundRun } = await import("../lib/tools.ts");
+  const { formatBackgroundRun, runLogLocations } = await import("../lib/tools.ts");
   const stamp = "2026-11-16 18:00:00,123 4242";
   const logs: Record<string, string> = {
     "/p/logs/odoo19/main/run-1/stdout.log": "",
@@ -93,7 +163,8 @@ test("formatBackgroundRun summarizes a compact run that finished in the backgrou
     "phase=tests database=acme_test_coffee_r1a2b3c exit=0\ndatabase_lifecycle=disposable dropped=yes\n" +
     "stdout_log=/p/logs/odoo19/main/run-1/stdout.log\nstderr_log=/p/logs/odoo19/main/run-1/stderr.log\n";
   assert.equal(
-    formatBackgroundRun("coffee", output, (path) => logs[path] ?? "", { maxFailures: 10, traceLines: 6 }),
+    formatBackgroundRun("coffee", output, (path) => logs[path] ?? "", { maxFailures: 10, traceLines: 6 },
+      runLogLocations(WITH_LOGS)),
     [
       "module=coffee database=acme_test_coffee_r1a2b3c exit=0 database_lifecycle=disposable dropped=yes",
       "result: 0 failed, 0 error(s) of 3 tests",
@@ -105,7 +176,7 @@ test("formatBackgroundRun summarizes a compact run that finished in the backgrou
 });
 
 test("formatBackgroundRun summarizes a run of the <logs>/<checkout> layout", async () => {
-  const { formatBackgroundRun } = await import("../lib/tools.ts");
+  const { formatBackgroundRun, runLogLocations } = await import("../lib/tools.ts");
   const stamp = "2026-11-23 18:00:00,123 4242";
   const logs: Record<string, string> = {
     "/p/logs/shop_feature/run-1/stdout.log": `${stamp} INFO db odoo.tests.result: 0 failed, 0 error(s) of 2 tests\n`,
@@ -115,7 +186,8 @@ test("formatBackgroundRun summarizes a run of the <logs>/<checkout> layout", asy
     "phase=tests database=acme_test_shop_feature_coffee_r1a2b3c exit=0\ndatabase_lifecycle=disposable dropped=yes\n" +
     "stdout_log=/p/logs/shop_feature/run-1/stdout.log\nstderr_log=/p/logs/shop_feature/run-1/stderr.log\n";
   assert.equal(
-    formatBackgroundRun("coffee", output, (path) => logs[path] ?? "", { maxFailures: 10, traceLines: 6 }),
+    formatBackgroundRun("coffee", output, (path) => logs[path] ?? "", { maxFailures: 10, traceLines: 6 },
+      runLogLocations(WITH_LOGS)),
     [
       "module=coffee database=acme_test_shop_feature_coffee_r1a2b3c exit=0 database_lifecycle=disposable dropped=yes",
       "result: 0 failed, 0 error(s) of 2 tests",
@@ -126,35 +198,16 @@ test("formatBackgroundRun summarizes a run of the <logs>/<checkout> layout", asy
   );
 });
 
-test("formatBackgroundRun reads only run logs named by a compact run", async () => {
-  const { formatBackgroundRun, isRunLog } = await import("../lib/tools.ts");
-  for (const path of [
-    // dev/logs/odoo19/run-<id>/ without [tooling].logs.
-    "/p/dev/logs/odoo19/run-ab_1/stdout.log",
-    // <logs>/<main|slug>/run-<id>/ with [tooling].logs.
-    "/p/logs/main/run-1/stdout.log",
-    "/p/logs/shop_feature/run-x9/stderr.log",
-    // <logs>/odoo19/<main|slug>/run-<id>/ of runs before 0.8.0.
-    "/p/logs/odoo19/shop_feature/run-x9/stderr.log",
-    // A logs directory may itself end in odoo19/<name>.
-    "/p/logs/odoo19/a/b/run-1/stdout.log",
-  ]) assert.equal(isRunLog(path), true, path);
-  for (const path of [
-    "/etc/passwd",
-    "/p/config/odoo.conf",
-    "relative/odoo19/run-1/stdout.log",
-    "relative/main/run-1/stdout.log",
-    "/run-1/stdout.log",
-    "/p/logs/odoo19/run-1/../../../config/odoo.conf",
-    "/p/logs/main/run-1/../../../config/odoo.conf",
-    "/p/logs/odoo19/run-1/other.log",
-    "/p/logs/main/run-1/sub/stdout.log",
-    "/p/logs/Shop-Feature/run-1/stdout.log",
-  ]) assert.equal(isRunLog(path), false, path);
+test("formatBackgroundRun reads only run logs named by a compact run in the project's log locations", async () => {
+  const { formatBackgroundRun, runLogLocations } = await import("../lib/tools.ts");
   const read = () => { throw new Error("must not read"); };
   for (const output of ["", "exit=0\n", "phase=tests exit=0\nstdout_log=/p/config/odoo.conf\n",
-    "phase=tests exit=0\nstdout_log=/p/logs/odoo19/run-1/stdout.log\nstderr_log=/etc/passwd\n"]) {
-    assert.throws(() => formatBackgroundRun("coffee", output, read, { maxFailures: 1, traceLines: 1 }), /test-module --compact/);
+    "phase=tests exit=0\nstdout_log=/p/logs/main/run-1/stdout.log\nstderr_log=/etc/passwd\n",
+    "phase=tests exit=0\nstdout_log=/tmp/x/main/run-1/stdout.log\nstderr_log=/tmp/x/main/run-1/stderr.log\n",
+    "phase=tests exit=0\nstdout_log=/p/logs/main/run-1/stdout.log\nstderr_log=/tmp/x/main/run-1/stderr.log\n"]) {
+    assert.throws(
+      () => formatBackgroundRun("coffee", output, read, { maxFailures: 1, traceLines: 1 }, runLogLocations(WITH_LOGS)),
+      /test-module --compact/, output);
   }
 });
 

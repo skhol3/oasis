@@ -36,6 +36,9 @@ see the contract note in the README.
   `OASIS_RUN_RESULT` and `OASIS_REUSE_RESULT` (internal, no legacy name).
 - The Gentle Shell extension is `pi/extensions/oasis.ts`; its prompt section and tag are
   `oasis` and its status message type `oasis-status`.
+- `oasis_test_summary` reads run logs only inside the checkout's log locations: `<logs>/` with
+  `[tooling].logs`, otherwise `dev/logs/odoo19/` of the checkout (and of the main checkout in a
+  linked worktree). A path elsewhere is refused even when it looks like a run log.
 
 ### Fixed
 

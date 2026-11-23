@@ -18,7 +18,8 @@ import { formatStatus, listModules, parseAssignments, parseGit, parseServer, typ
 import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
 import {
-  formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, testModuleArgs, updateModuleArgs, viewInfoArgs,
+  formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, runLogLocations, testModuleArgs, updateModuleArgs,
+  viewInfoArgs,
 } from "../lib/tools.ts";
 
 const OASIS = fileURLToPath(new URL("../../oasis", import.meta.url));
@@ -435,9 +436,12 @@ export default function oasisLayer(pi: ExtensionAPI) {
       traceLines: Type.Optional(Type.Integer({ minimum: 0, maximum: 40, default: 6 })),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
-      await requireRoot(ctx.cwd);
+      const root = await requireRoot(ctx.cwd);
+      // The named logs must lie in this checkout's log locations ([tooling].logs or dev/logs/odoo19).
+      const { config, error } = await profileConfig(root);
+      if (!config) throw new Error(`Cannot read the project profile: ${error}`);
       const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };
-      return text(formatBackgroundRun(params.module, params.output, readLog, options, MAX_LINES));
+      return text(formatBackgroundRun(params.module, params.output, readLog, options, runLogLocations(config), MAX_LINES));
     },
   });
 
