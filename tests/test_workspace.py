@@ -510,6 +510,15 @@ class WorkspaceTests(unittest.TestCase):
         self.assertIsNotNone(match, first_line)
         return match.group(1)
 
+    def test_guide_follows_the_declared_python_and_checks_the_locks_with_full(self):
+        guide = (ROOT / 'docs' / 'new-workspace.md').read_text(encoding='utf-8')
+        # The commands take the environment's declared Python, never a fixed one.
+        self.assertEqual(re.findall(r'--python(?:-version)? 3\.\d+', guide), [])
+        self.assertIn('--python "$python"', guide)
+        self.assertIn('--python-version "$python"', guide)
+        # Checking the installed packages against the locks is --full; --quick skips it.
+        self.assertIn('check-environment --full', guide)
+
     def test_guide_workspace_resolves_to_its_example_tree(self):
         series = self.scratch / 'odoo' / '19.0'
         self.project = series / 'projects' / 'acme'

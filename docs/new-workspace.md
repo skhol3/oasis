@@ -108,26 +108,35 @@ checkout.
 
 4. Write the dependency inputs, lock them and fingerprint the locks. `runtime.in` takes Odoo's
    requirements (the `-r` path is relative to the `.in` file), `dev.in` adds the development
-   tools within the same versions.
+   tools within the same versions. `python` is the Python the workspace declares for the
+   environment: 3.12 for `[tooling].environment`, as here, or the `python` of a named
+   environment (see [Environments](#environments)).
 
    ```bash
+   python=3.12
    cd ~/odoo/19.0/projects/acme/config/requirements
    printf -- '-r ../../../../source/odoo/requirements.txt\n' > runtime.in
    printf -- '-c runtime.txt\n-r runtime.in\npylint\n' > dev.in
-   uv pip compile --python-version 3.12 runtime.in -o runtime.txt
-   uv pip compile --python-version 3.12 dev.in -o dev.txt
+   uv pip compile --python-version "$python" runtime.in -o runtime.txt
+   uv pip compile --python-version "$python" dev.in -o dev.txt
    sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256
    ```
 
-5. Create the Python environment and install the locked packages into it. The environment's
-   folder sits in `environments/`, which is what the [environment rule](#the-python-environment)
-   asks for.
+5. Create the Python environment, with the same `python`, and install the locked packages into
+   it. The environment's folder sits in `environments/`, which is what the
+   [environment rule](#the-python-environment) asks for.
 
    ```bash
-   uv venv --python 3.12 ~/odoo/19.0/environments/acme
+   uv venv --python "$python" ~/odoo/19.0/environments/acme
    uv pip sync --python ~/odoo/19.0/environments/acme/bin/python \
      ~/odoo/19.0/projects/acme/config/requirements/dev.txt
    ```
+
+   Once steps 6 to 8 are done, `oasis --project <checkout> bootstrap --preview` shows the same
+   plan and `bootstrap --apply` carries it out: it creates the environment with the declared
+   Python, syncs `dev.txt`, saves the packages it found before as `bootstrap-before.txt` in the
+   checkout's log directory (`logs/main/` here), and ends with `check-environment --full`, which
+   needs the database service running.
 
 6. Write the compose file and the environment file. The compose file needs a top-level `name:`
    (`doctor` checks it); oasis runs it as `docker compose --env-file <env_file> -f <compose>`
@@ -192,7 +201,7 @@ checkout.
 
 9. Run `doctor` until it prints `doctor_failures=0`, fixing the first `FAIL` each time (the
    checks and their messages are in [Checking the environment](checking-environment.md)); then
-   check the environment against its locks.
+   run the quick environment check.
 
    ```bash
    ~/.agents/skills/odoo19/oasis --project ~/odoo/19.0/projects/acme/codigo/acme doctor
@@ -200,13 +209,19 @@ checkout.
    ```
 
    `PASS configuration=workspace` shows that the workspace file was found and accepted.
+   `--quick` checks the requirement files and their fingerprint, the environment's Python (the
+   declared one), the virtualenv, uv, the Odoo version and the compose file; it skips the
+   installed packages, the dependency audit and PostgreSQL (`SKIP ...=use_--full`).
 
 10. Create a development database with the role accounts of `[development]`; it asks for each
     password with the echo off (see [Development database](dev-database.md)). The name must start
-    with `dev_prefix`.
+    with `dev_prefix`. It starts the database service, so `check-environment --full` can then
+    check the installed packages against the locks (`dev.txt`), audit the dependencies and query
+    PostgreSQL.
 
     ```bash
     ~/.agents/skills/odoo19/oasis --project ~/odoo/19.0/projects/acme/codigo/acme init-dev-database acme_sale acme_dev_manual
+    ~/.agents/skills/odoo19/oasis --project ~/odoo/19.0/projects/acme/codigo/acme check-environment --full
     ```
 
 11. Run the module's tests on a disposable database, with a compact summary (see
@@ -281,7 +296,7 @@ checkout serves only that checkout.
 Either one environment for every checkout, or named environments that each checkout chooses
 from; not both in the same file (`Set either [tooling].environment or [environments] in <file>, not both.`).
 
-- One environment: `[tooling].environment`, as in the example tree. Its Python must be 3.12.
+- One environment: `[tooling].environment`, as in the example tree. Its Python is 3.12.
 - Named environments: `[environments.<name>]` tables with a `path` (the same rules as
   `[tooling].environment`) and a `python` within the range of Odoo 19.0 (3.10 to 3.14). A
   checkout uses `default`, unless its `oasis-checkout.toml` names another one.
@@ -304,6 +319,7 @@ environment = 'next'
 ```
 
 With these, the main checkout uses `environments/acme` and the worktree `environments/acme-next`;
-`doctor` checks that each environment's interpreter reports its `python`. Create the second
-environment as in step 5, with `--python 3.13`. `oasis-checkout.toml` may set only
+`bootstrap` creates each one with its `python`, and `doctor` and `check-environment` check that
+its interpreter reports it. Create the second environment as in step 5 with `python=3.13`, or
+run `bootstrap --apply` in the worktree. `oasis-checkout.toml` may set only
 `checkout_slug` and `environment`; see [Workspace file](workspace-file.md#checkout-file-and-named-environments).

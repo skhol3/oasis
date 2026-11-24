@@ -3,7 +3,18 @@
 Two commands, for two questions:
 
 - `oasis --project /absolute/project doctor` asks *can oasis work here at all?* It checks the environment contract up front and is read-only: it never starts a service, never connects to a database and never prints file contents. In Gentle Shell, `/oasis doctor` (or `/odoo19 doctor`) shows the same report.
-- `check-environment [--quick|--full]` asks *does the project environment match its locks?* It checks the requirement files and their fingerprint, `lock.sha256`, the virtualenv, uv and `compose config`; `--full` also checks installed packages, audits dependencies and queries PostgreSQL.
+- `check-environment [--quick|--full]` asks *does the project environment match its locks?* `--quick` (the default) checks the requirement files and their fingerprint, `lock.sha256`, the environment's Python, the virtualenv, uv, the Odoo version and `compose config`; it skips the installed packages, the dependency audit and PostgreSQL (`SKIP <check>=use_--full`). `--full` also checks the installed packages against the locks (`dev.txt`) and their compatibility, audits dependencies and queries PostgreSQL, so it needs the database service running.
+
+## The declared Python
+
+The environment's Python is the one the configuration declares: 3.12 for a profile and for a workspace with `[tooling].environment`, else the `python` of the selected named environment (see [Workspace file](workspace-file.md#checkout-file-and-named-environments)). `bootstrap` creates a missing environment with it (`bootstrap --preview` prints `planned_action=create_python_<version>_and_sync_lock`) and refuses an existing one with another Python; `check-environment` reports `PASS python_version=<version>`, and on a mismatch stops with exit 2 before any other check:
+
+```text
+Python 3.13 is required; found 3.12.
+Move /home/you/odoo/19.0/environments/acme-next away and run oasis bootstrap --apply to recreate it with Python 3.13.
+```
+
+`bootstrap --apply` saves the packages it found before the sync as `bootstrap-before.txt` in the checkout's log directory: `<logs>/<slug, or main>/` with `[tooling].logs`, else `dev/logs/odoo19/` (before 0.12.0 it went to `dev/runtime/`, which a workspace checkout does not have).
 
 ## Dependency locks
 

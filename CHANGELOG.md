@@ -21,6 +21,20 @@ names) may still change in a minor release; every such change is listed here und
   documentation index link to the guide. Tests pin the paths, the environment rule and the
   guide's examples.
 
+### Fixed
+
+- `bootstrap` creates the environment with the Python the configuration declares (3.12 for a
+  profile and `[tooling].environment`, else the selected named environment's `python`), and
+  `--preview` names it in `planned_action=create_python_<version>_and_sync_lock`. It works in a
+  workspace checkout: `bootstrap-before.txt` now goes to the checkout's log directory
+  (`<logs>/<slug or main>/`, else `dev/logs/odoo19/`) instead of `dev/runtime/`, also for profiles.
+- `check-environment` checks the declared Python instead of a fixed 3.12, so a named 3.13
+  environment passes; a mismatch exits 2 with the expected and found versions and how to
+  recreate the environment.
+- docs/new-workspace.md uses the declared Python instead of a hardcoded 3.12, says what
+  `check-environment --quick` skips, and checks the locks with `--full` once the database
+  service runs.
+
 ## [0.11.0] - 2026-11-24
 
 Safer destructive operations and server control: dropped databases go to a trash, agents are asked

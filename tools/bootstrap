@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$(dirname "$0")/common.sh"
+source "$(dirname "$0")/compact.sh"
 mode=${1:---preview}
 lockfile="$REQUIREMENTS_DIR/dev.txt"
 required_paths=("$ODOO_BIN" "$ODOO_CONFIG" "$COMPOSE_FILE" "$ENV_FILE" "$lockfile")
@@ -28,8 +29,9 @@ if [[ -e "$PROJECT_ENVIRONMENT" && ! -x "$PYTHON" ]]; then
   printf 'Refusing to replace a non-virtualenv path: %s\n' "$PROJECT_ENVIRONMENT" >&2
   exit 2
 fi
-# An existing isolated interpreter must be 3.12, even before a dry-run or repair.
-# Odoo may lack dependencies until the explicitly requested sync completes.
+# An existing isolated interpreter must be the declared Python ($PYTHON_VERSION: 3.12 for a
+# profile and [tooling].environment, else the selected named environment's python), even
+# before a dry-run or repair. Odoo may lack dependencies until the requested sync completes.
 if [[ -x "$PYTHON" ]]; then require_python_version; fi
 printf 'mode=%s\n' "${mode#--}"
 printf 'project=%s\n' "$PROJECT_NAME"
@@ -42,17 +44,20 @@ if [[ "$mode" == "--preview" ]]; then
     exec uv pip sync --dry-run --python "$PYTHON" "$lockfile"
   fi
   printf 'environment_state=missing\n'
-  printf 'planned_action=create_python_3.12_and_sync_lock\n'
+  printf 'planned_action=create_python_%s_and_sync_lock\n' "$PYTHON_VERSION"
   exit 0
 fi
 printf 'mutation=isolated_project_virtualenv\n'
+# The snapshot of the packages before the sync goes to the checkout's log directory
+# (tools/log_dirs.py, created 0700), never under global tools; resolved before any change.
+snapshot_dir=$(server_log_path)
+snapshot_dir=${snapshot_dir%/*}
 mkdir -p "$ENVIRONMENTS_DIR"
 if [[ ! -x "$PYTHON" ]]; then
-  uv venv --python 3.12 "$PROJECT_ENVIRONMENT"
+  uv venv --python "$PYTHON_VERSION" "$PROJECT_ENVIRONMENT"
   require_python_version
 fi
-# The local runtime snapshot path stays project-owned, never under global tools.
-uv pip freeze --python "$PYTHON" > "$PROJECT_ROOT/dev/runtime/bootstrap-before.txt"
+uv pip freeze --python "$PYTHON" > "$snapshot_dir/bootstrap-before.txt"
 uv pip sync --python "$PYTHON" "$lockfile"
 require_runtime
 exec "$(dirname "$0")/check-environment" --full

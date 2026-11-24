@@ -14,7 +14,8 @@
 # and a directory with a profile on the way up ends the search.
 workspace_version = 1
 # Odoo series of every checkout; the tooling version derives from it, and Python is 3.12
-# unless a named environment below declares another one that the series supports.
+# unless a named environment below declares another one that the series supports. bootstrap
+# creates the environment with that Python; doctor and check-environment check it.
 odoo_version = '19.0'
 
 # Same keys and guards as the profile's [tooling], without version and python_version.
@@ -57,7 +58,8 @@ test_prefix = 'acme_test_'
 
 # Optional named environments, instead of [tooling].environment: a checkout uses `default`
 # unless its oasis-checkout.toml names another. path follows the [tooling].environment rules
-# (relative to this file); python must lie within the range of odoo_version (19.0: 3.10 to 3.14).
+# (relative to this file); python must lie within the range of odoo_version (19.0: 3.10 to 3.14)
+# and is the Python bootstrap creates the environment with.
 # [environments.default]
 # path = 'environments/acme'
 # python = '3.12'
