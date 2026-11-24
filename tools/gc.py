@@ -16,15 +16,15 @@ Namespaces (scope `checkout`): a checkout with a slug owns `<test_prefix><slug>_
 main checkout (or a project outside git) owns `<test_prefix><rest>`. Both exclude the names
 of every other existing checkout whose namespace is longer and starts with theirs, so the main
 checkout skips `<test_prefix><linked slug>_...`. The other checkouts' slugs come from
-`git worktree list` (their profile's checkout_slug, or without a profile their
-oasis-checkout.toml's, else the slug derived from the folder name, as tools/config.py does). A worktree that no longer exists has no namespace, so the
-main checkout takes its leftovers. Scope `all` matches every name with the run suffix.
+`git worktree list` (their oasis-checkout.toml's checkout_slug, else the slug derived from
+the folder name, as tools/config.py does; a checkout that still has a legacy profile stops
+it). A worktree that no longer exists has no namespace, so the main checkout takes its
+leftovers. Scope `all` matches every name with the run suffix.
 """
 import os
 from pathlib import Path
 import subprocess
 import sys
-import tomllib
 
 import config
 import runtime_state
@@ -35,25 +35,21 @@ USAGE = ('Usage: gc.py orphans <project_root> <test_prefix> <slug> <checkout|all
 
 
 def profile_slug(checkout):
-    """A checkout's own [tooling].checkout_slug, or None.
+    """A checkout's own [tooling].checkout_slug from its oasis-checkout.toml, or None.
 
-    From its profile; a checkout without one (workspace mode) sets it in its
-    oasis-checkout.toml, read with tools/config.py's rules. An untrusted or invalid checkout file
-    raises: falling back to the folder slug could make this checkout's databases look like
-    another checkout's orphans.
+    Read with tools/config.py's rules. An untrusted or invalid checkout file, or a legacy
+    profile (no longer read, so its slug is unknown), raises with the fix: falling back to the
+    folder slug could make that checkout's databases look like this checkout's.
     """
-    if not (checkout / config.PROFILE_NAME).is_file():
-        try:
-            value = config.checkout_overrides(checkout).get('checkout_slug')
-        except config.InvalidConfig as exc:
-            raise config.InvalidConfig(f'Cannot read the checkout slug of {checkout}: {exc}') from exc
-        return value if isinstance(value, str) and config.SLUG.fullmatch(value) else None
+    reason = f'Cannot read the checkout slug of {checkout}:'
+    profile = checkout / config.PROFILE_NAME
+    if profile.is_file():
+        raise config.InvalidConfig(f'{reason} {config.legacy_profile_refusal(profile, config.program_name())}')
     try:
-        with (checkout / config.PROFILE_NAME).open('rb') as stream:
-            tooling = tomllib.load(stream).get('tooling', {})
-    except (OSError, tomllib.TOMLDecodeError):
-        return None
-    value = tooling.get('checkout_slug') if isinstance(tooling, dict) else None
+        value = config.checkout_overrides(checkout).get('checkout_slug')
+    except config.InvalidConfig as exc:
+        raise config.InvalidConfig(f'{reason} {exc} Fix {checkout / config.CHECKOUT_NAME}, '
+                                   'then run the command again.') from exc
     return value if isinstance(value, str) and config.SLUG.fullmatch(value) else None
 
 

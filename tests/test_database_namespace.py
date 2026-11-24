@@ -66,12 +66,36 @@ class WorktreeNamespaceTests(NamespaceFixture):
         self.assertEqual(self.listed(self.main), sorted(MAIN + WT))
         self.assertEqual(self.listed(self.linked_1), WT_1)
 
-    def test_a_profile_slug_names_the_namespace(self):
-        (self.linked / '.odoo19-agent.toml').write_text(
-            (self.linked / '.odoo19-agent.toml').read_text() + "checkout_slug = 'wtx'\n")
+    def test_a_checkout_file_slug_names_the_namespace(self):
+        (self.linked / 'oasis-checkout.toml').write_text("[tooling]\ncheckout_slug = 'wtx'\n")
         self.assertEqual(self.listed(self.linked), ['cc_dev_wtx_coffee'])
         # The main checkout now leaves wtx to that worktree, and takes back wt's databases.
         self.assertEqual(self.listed(self.main), sorted(set(MAIN + WT) - {'cc_dev_wtx_coffee'}))
+
+    def assert_main_listing_refused(self, stderr):
+        calls = len(self.calls())
+        result = self.cli('list-databases', root=self.main)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', stderr))
+        self.assertEqual(self.mutations(), [])
+        self.assertEqual([argv[-1] for argv in self.calls()[calls:] if 'up' not in argv], [QUERY])
+
+    def test_an_unreadable_worktree_slug_stops_the_main_listing_and_names_the_fix(self):
+        # Fails closed: without that worktree's slug, its databases could be listed as main's.
+        checkout_file = self.linked / 'oasis-checkout.toml'
+        checkout_file.write_text('[tooling\n')
+        self.assert_main_listing_refused(
+            f'ERROR: Cannot read the checkout slug of {self.linked}: Invalid TOML in {checkout_file}. '
+            f'Fix {checkout_file}, then run the command again.\n')
+        # A worktree that still has a legacy profile: its slug is not read, so the same stop.
+        checkout_file.unlink()
+        profile = self.linked / '.odoo19-agent.toml'
+        profile.write_text("[tooling]\ncheckout_slug = 'wtx'\n")
+        self.assert_main_listing_refused(
+            f'ERROR: Cannot read the checkout slug of {self.linked}: {profile} is the old profile format, '
+            'no longer read: run oasis migrate --plan to see its conversion to oasis-workspace.toml, then '
+            'oasis migrate --apply.\n')
+        profile.unlink()
+        self.assertEqual(self.listed(self.main), MAIN)
 
 
 class OutsideGitTests(NamespaceFixture):
@@ -97,8 +121,8 @@ class OutsideGitTests(NamespaceFixture):
         self.assertEqual(self.calls(), [])
 
 
-class SluggedProfileTests(NamespaceFixture):
-    """A profile slug outside git (git failed in a linked worktree): only <prefix><slug>_."""
+class SluggedCheckoutTests(NamespaceFixture):
+    """A checkout file slug outside git (git failed in a linked worktree): only <prefix><slug>_."""
     profile_extra = "checkout_slug = 'wt_1'\n"
 
     def test_only_the_slug_namespace_is_listed(self):

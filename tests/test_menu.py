@@ -327,7 +327,7 @@ class CatalogTests(MenuFixture):
             'terminal_only': False, 'follow': False, 'superseded_by': None})
 
     def test_catalog_server_log_follows_the_configured_logs_directory(self):
-        profile = self.root / '.odoo19-agent.toml'
+        profile = self.root / 'oasis-workspace.toml'
         profile.write_text(profile.read_text() + "logs = '../logs'\n")
         self.assertEqual(self.catalog()['server_log'], str(self.root.resolve().parent / 'logs/main/server.log'))
         self.assertFalse((self.root.parent / 'logs').exists())
@@ -498,6 +498,21 @@ class TerminalMenuTests(MenuFixture):
             '\nRun this command? [y/N]: Not confirmed: nothing ran.\n'), result.stdout)
         self.assertEqual(self.odoo_lines(), [])
 
+    def test_dash_chooses_no_database_when_the_input_has_no_default(self):
+        # Two modules and no remembered database: the database input has no default, and `-`
+        # still chooses none instead of failing the name check.
+        (self.root / 'tea').mkdir()
+        (self.root / 'tea/__manifest__.py').touch()
+        self.env.update(FAKE_DATABASES='cc_dev_coffee')
+        result = self.terminal('1\n1\n-\n\n\nn\n')
+        self.assertEqual((result.returncode, result.stderr), (1, ''), result.stdout)
+        self.assertIn('Database (number or name, Enter for none): Dev mode\n', result.stdout)
+        self.assertTrue(result.stdout.endswith(
+            self.command('start', '--detach') + NO_CONF_DATABASE +
+            '\nRun this command? [y/N]: Not confirmed: nothing ran.\n'), result.stdout)
+        self.assertEqual(self.odoo_lines(), [])
+        self.assertFalse(self.state_file().exists())
+
     def test_the_last_action_is_offered_first_and_repeats_after_the_same_confirmation(self):
         self.env.update(FAKE_DATABASES='cc_dev_coffee', FAKE_EXISTS='1')
         result = self.terminal('2\n3\n1\n1\n')
@@ -601,12 +616,12 @@ class TerminalMenuTests(MenuFixture):
         # The fake service answers every name; list-databases keeps this checkout's (v0.12.0 S2).
         self.env.update(FAKE_DATABASES='cc_dev_coffee cc_dev_wt_1_coffee cc_test_other cc_test_wt_1_x postgres',
                         FAKE_EXISTS='1')
-        profile = self.root / '.odoo19-agent.toml'
+        profile = self.root / 'oasis-workspace.toml'
         for extra, listed, database in (
                 ('', ['cc_dev_coffee', 'cc_dev_wt_1_coffee', 'cc_test_other', 'cc_test_wt_1_x'], 'cc_dev_coffee'),
                 ("checkout_slug = 'wt_1'\n", ['cc_dev_wt_1_coffee', 'cc_test_wt_1_x'], 'cc_dev_wt_1_coffee')):
             with self.subTest(slug=extra):
-                profile.write_text(lifecycle.PROFILE + extra)
+                lifecycle.write_config(self.root, lifecycle.WORKSPACE + extra)
                 result = self.terminal('2\n3\n1\n1\n')
                 self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
                 choices = ''.join(f'  {number}) {name}\n' for number, name in enumerate(listed, 1))
@@ -893,7 +908,7 @@ class DetachTests(MenuFixture):
                                  (0, f'Stopped Odoo for this checkout: pid {pid}, port {self.port}.\n', ''))
 
     def test_detach_writes_to_the_configured_logs_directory(self):
-        profile = self.root / '.odoo19-agent.toml'
+        profile = self.root / 'oasis-workspace.toml'
         profile.write_text(profile.read_text() + "logs = '../logs'\n")
         self.env['FAKE_SERVE'] = '1'
         result = self.start('--detach')
@@ -917,7 +932,7 @@ class DetachTests(MenuFixture):
         self.assertEqual(list(outside.iterdir()), [])
 
     def test_detach_refuses_a_checkout_directory_escaping_the_logs_directory(self):
-        profile = self.root / '.odoo19-agent.toml'
+        profile = self.root / 'oasis-workspace.toml'
         profile.write_text(profile.read_text() + "logs = '../logs'\n")
         outside = Path(self.scratch.name) / 'elsewhere'
         outside.mkdir()

@@ -126,7 +126,7 @@ class TrashFixture(unittest.TestCase):
         self.seed({})
 
     def write_profile(self, extra=''):
-        (self.root / '.odoo19-agent.toml').write_text(lifecycle.PROFILE + self.profile_extra + extra)
+        lifecycle.write_config(self.root, lifecycle.WORKSPACE + self.profile_extra + extra)
 
     def seed(self, databases):
         self.state.write_text(json.dumps({'databases': {
@@ -330,8 +330,8 @@ class DropToTrashTests(TrashFixture):
 
     def test_a_namespace_too_long_to_shorten_is_refused(self):
         dev, test = 'c' * 30 + '_dev_', 'c' * 30 + '_test_'
-        (self.root / '.odoo19-agent.toml').write_text(
-            lifecycle.PROFILE.replace("'cc_dev_'", f"'{dev}'").replace("'cc_test_'", f"'{test}'"))
+        (self.root / 'oasis-workspace.toml').write_text(
+            lifecycle.WORKSPACE.replace("'cc_dev_'", f"'{dev}'").replace("'cc_test_'", f"'{test}'"))
         self.assertEqual(len(dev), 35)
         original = dev + 'coffeeshop'
         self.seed({original: {}})

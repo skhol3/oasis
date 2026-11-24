@@ -557,7 +557,8 @@ class Terminal:
                     return (item['default'] or '') if item['kind'] == 'choice' else ''
                 print('A value is required.')
                 continue
-            if answer == '-' and not item['required'] and item['kind'] == 'choice' and item['default']:
+            # `-` chooses none for any optional choice, with or without a default.
+            if answer == '-' and not item['required'] and item['kind'] == 'choice':
                 return ''
             # A listed value is taken as written, even one made of digits (a database named 2024).
             if answer in listed:
