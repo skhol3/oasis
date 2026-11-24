@@ -11,7 +11,7 @@ import {
   parseCommand, SUBCOMMAND_SUMMARY, type SubcommandName, subcommandCompletions, USAGE,
 } from "../lib/commands.ts";
 import { withHeartbeat } from "../lib/heartbeat.ts";
-import { blockedEverywhere, blockedProgram, blockReason } from "../lib/bash-guard.ts";
+import { agentGate, DECISION_ENTRY } from "../lib/destructive.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
@@ -402,19 +402,37 @@ export default function oasisLayer(pi: ExtensionAPI) {
     return { systemPrompt: `${event.systemPrompt}\n\n<oasis>\n${context}\n</oasis>` };
   });
 
-  // Agent bash only: direct odoo-bin/dropdb/psql bypass the core's database guards (Odoo projects);
-  // worktree-init links environment files, migrate rewrites configuration files and menu is the
-  // user's interactive menu, so all three are user-run in every session.
+  // Agent bash only; lib/destructive.ts decides. Deny tier: direct odoo-bin/dropdb/psql bypass the
+  // core's database guards (Odoo projects); worktree-init links environment files, migrate rewrites
+  // configuration files and menu is the user's interactive menu, so all three are user-run in every
+  // session. Ask tier: drop-database, stop --database and gc --apply --trash run after the user
+  // types the database name or `yes` in a dialog, unless the session project's
+  // [tooling].agent_destructive (read through config.py, never from a tool argument) says deny or
+  // allow. Each ask decision is a custom session entry: Pi shows it but never sends it to the model.
+  pi.registerEntryRenderer(DECISION_ENTRY, renderMenuEntry);
+  const gate = agentGate({
+    projectRoot: (cwd) => projectRoot(cwd),
+    home: homedir(),
+    exists: existsSync,
+    agentDestructive: async (root) => {
+      try {
+        return (await profileConfig(root)).config?.AGENT_DESTRUCTIVE;
+      } catch {
+        return undefined; // unreadable: ask
+      }
+    },
+    appendEntry: (entry) => pi.appendEntry(DECISION_ENTRY, entry),
+  });
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName !== "bash") return;
     const command = (event.input as { command?: unknown }).command;
     if (typeof command !== "string") return;
-    // The menu's scripts are judged by the file they resolve to from the session's directory.
-    const program = blockedProgram(command, { cwd: ctx.cwd, home: homedir(), exists: existsSync });
-    if (!program) return;
-    if (blockedEverywhere(program)) return { block: true, reason: blockReason(program, "") };
-    const root = await projectRoot(ctx.cwd);
-    if (root) return { block: true, reason: blockReason(program, root) };
+    return gate(command, {
+      cwd: ctx.cwd,
+      hasUI: ctx.hasUI,
+      signal: ctx.signal,
+      ui: { input: (title, placeholder, options) => ctx.ui.input(title, placeholder, options) },
+    });
   });
 
   // Each tool is registered under its oasis_* name and, always inactive, under its odoo19_* alias

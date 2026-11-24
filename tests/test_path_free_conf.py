@@ -139,13 +139,14 @@ class DataDirTests(PathFreeConfFixture):
         result = subprocess.run([sys.executable, '-B', str(READER), str(self.root)], capture_output=True,
                                 text=True, env=self.env)
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertEqual(result.stdout.splitlines()[-2:],
-                         ['PYTHON_VERSION=3.12', 'DATA_DIR=' + shlex.quote(str(self.root.resolve() / 'dev/data'))])
+        self.assertEqual(result.stdout.splitlines()[-3:],
+                         ['PYTHON_VERSION=3.12', 'DATA_DIR=' + shlex.quote(str(self.root.resolve() / 'dev/data')),
+                          'AGENT_DESTRUCTIVE=ask'])
         self.write_profile()
         result = subprocess.run([sys.executable, '-B', str(READER), str(self.root)], capture_output=True,
                                 text=True, env=self.env)
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertEqual(result.stdout.splitlines()[-1], "DATA_DIR=''")
+        self.assertEqual(result.stdout.splitlines()[-2:], ["DATA_DIR=''", 'AGENT_DESTRUCTIVE=ask'])
 
     def test_an_invalid_data_dir_is_refused_without_assignments(self):
         for value in ('""', '7', '["data"]', '"a\\nb"', '"a\\u0000b"'):

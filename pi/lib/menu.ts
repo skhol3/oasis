@@ -279,7 +279,8 @@ export interface MenuEntry {
 const ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g;
 const CONTROLS = /[\x00-\x1f\x7f-\x9f]/g;
 
-function plainLine(line: string): string {
+/** A line without terminal control sequences (CSI, OSC, other control characters); tabs become spaces. */
+export function plainLine(line: string): string {
   return line.replace(ESCAPES, "").replaceAll("\t", "    ").replace(CONTROLS, "");
 }
 

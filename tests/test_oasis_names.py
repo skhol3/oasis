@@ -7,12 +7,15 @@ run directly with the variables the entry point or a project wrapper sets.
 from pathlib import Path
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
 
 import test_lifecycle as lifecycle
+
+BACKUP_STAMP = re.compile(r'\.bak-\d{8}T\d{6}Z')
 
 ROOT = lifecycle.STAGE
 TOOLS = ROOT / 'tools'
@@ -45,7 +48,11 @@ class OasisVariableTests(unittest.TestCase):
                               env={**self.env, **variables}, capture_output=True)
 
     def observed(self, result):
-        return result.returncode, result.stdout, result.stderr
+        # migrate's plan names backups with the current second (.bak-<YYYYMMDDTHHMMSSZ>); two runs
+        # may fall in different seconds, so the stamp is not part of what is compared.
+        def plain(text):
+            return BACKUP_STAMP.sub('.bak-<stamp>', text)
+        return result.returncode, plain(result.stdout), plain(result.stderr)
 
     def test_shell_tools_read_oasis_names_first(self):
         result = self.tool('check-environment', '--bogus', OASIS_PROJECT_ROOT=str(self.root),

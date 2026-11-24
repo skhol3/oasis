@@ -93,7 +93,7 @@ of a checkout and runs them by hand. [Docs →](docs/action-menu.md)
 | [docs/README.md](docs/README.md) | Index of the documentation by reader |
 | [Install or update](docs/install.md) | `install.sh`, release tags and what gets installed |
 | [Gentle Shell layer](docs/gentle-shell-layer.md) | The agent tools, prompt context, `/oasis` and aliases |
-| [Bash guard](docs/bash-guard.md) | What the agent's bash commands may not run |
+| [Bash guard](docs/bash-guard.md) | Which agent bash commands run, wait for the user's confirmation or are blocked; `agent_destructive` |
 | [Subagents](docs/subagents.md) | The overlay that gives subagents the `oasis_*` tools |
 | [New project setup](docs/project-setup.md) | Profile, entry point and optional project wrappers |
 | [Checking the environment](docs/checking-environment.md) | `doctor`, `check-environment` and `lock.sha256` |

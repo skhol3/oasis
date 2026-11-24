@@ -33,7 +33,7 @@ One topic per file. Start from the group that matches what you are doing; the
 | Documentation | Purpose |
 | --- | --- |
 | [Gentle Shell layer](gentle-shell-layer.md) | Agent tools, their output and the prompt context |
-| [Bash guard](bash-guard.md) | What the agent's bash commands may not run |
+| [Bash guard](bash-guard.md) | Which agent bash commands run, wait for the user's confirmation or are blocked; `agent_destructive` |
 | [Subagents](subagents.md) | The overlay that gives subagents the `oasis_*` tools |
 | [Static inspection without starting Odoo](static-inspection.md) | `model-info`, `view-info`, `xmlid-info` and `module-info` |
 | [Lint one module without starting Odoo](lint-module.md) | `lint-module` with the project's Pylint rcfile |

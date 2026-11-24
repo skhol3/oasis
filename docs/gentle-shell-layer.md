@@ -61,7 +61,7 @@ Prompt context naming the `oasis_*` tools the session has (a session with none, 
 
 ### Bash guard
 
-A bash guard blocks the agent from running some commands directly; see [Bash guard](bash-guard.md).
+A bash guard blocks the agent from running some commands directly and asks the user, in a dialog, before the agent's `drop-database`, `stop --database` or `gc --apply --trash` run (`[tooling].agent_destructive` can make them deny or allow); see [Bash guard](bash-guard.md).
 
 ### The /oasis command
 

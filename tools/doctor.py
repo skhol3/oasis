@@ -236,7 +236,7 @@ def usage() -> str:
 
 HELP = '''
 Checks the environment contract of this checkout, read-only: the configuration (legacy profile
-or workspace), git 2.31 or newer, docker and `docker compose version`, flock, /proc, the
+or workspace) and its agent_destructive setting, git 2.31 or newer, docker and `docker compose version`, flock, /proc, the
 environment's Python, the Odoo source release, odoo.conf, the compose file's top-level name,
 the env file (existence only), the logs and data directories, and the HTTP port.
 Prints PASS|WARN|FAIL <check>[=<value>] per check and doctor_failures=<n>; exit 1 when n > 0.
@@ -266,6 +266,7 @@ def main(arguments: list[str]) -> int:
         workspace = bool(values['WORKSPACE_ROOT'])
         report.check('configuration', 'workspace' if workspace else 'legacy')
         report.check('odoo_version', values['ODOO_VERSION'])
+        report.check('agent_destructive', values['AGENT_DESTRUCTIVE'])
     check_git(report)
     check_docker(report)
     if shutil.which('flock') is None:

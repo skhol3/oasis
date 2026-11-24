@@ -31,6 +31,7 @@ dev_prefix = 'acme_dev_'
 test_prefix = 'acme_test_'
 logs = 'logs'
 data_dir = 'data'
+agent_destructive = 'ask'
 ```
 
 ## Discovery, precedence and versions
@@ -42,6 +43,7 @@ data_dir = 'data'
 ## Tooling keys
 
 - `[tooling]` takes the profile's keys and guards (prefixes, `test_database`, `logs`, `data_dir`, `enterprise`, and the advisory sections such as `[odoo].version`), except `version` and `python_version`: they derive from `odoo_version` (Python 3.12, or the selected named environment's `python`) and are refused when set (`[tooling].<key> is derived in a workspace; remove it from <file>.`). Every path resolves from the workspace file's directory, except `addons_paths`, which resolves from each checkout (`'.'` is the checkout itself), because the modules live in every checkout. The environment target keeps the profile rule: inside the checkout, or in a directory whose name ends in `environments`.
+- `agent_destructive` (optional, in the workspace file or a profile) decides what the Gentle Shell layer does when an agent runs `drop-database`, `stop --database` or `gc --apply --trash`: `'ask'` (the default) shows the user a dialog first, `'deny'` blocks them, `'allow'` lets them run without a dialog (see [Bash guard](bash-guard.md)). Any other value, or a value that is not a string, stops every command with `Invalid tooling agent_destructive: use ask, deny or allow.` `oasis-checkout.toml` cannot set it, and no tool argument changes it; `doctor` prints `PASS agent_destructive=<value>`.
 
 ## Checkout file and named environments
 
@@ -72,7 +74,7 @@ python = '3.13'
 
 ## What the tools read from it
 
-- `tools/config.py` emits the same assignments as for a profile, plus `WORKSPACE_ROOT` (the workspace directory, empty for a profile). After it, for a profile too, come `ODOO_VERSION`, `ODOO_SECOND_PORT_OPTION` and `ODOO_DEMO_OFF_ARGS` (the Odoo series and its options from `tools/odoo_versions.py`, the only file that writes version-specific Odoo options), `ENVIRONMENT_NAME` (the named environment, empty otherwise), `PYTHON_VERSION` and `DATA_DIR` (the resolved `[tooling].data_dir`, empty when absent). Checkout identity, slugs and database names are unchanged.
+- `tools/config.py` emits the same assignments as for a profile, plus `WORKSPACE_ROOT` (the workspace directory, empty for a profile). After it, for a profile too, come `ODOO_VERSION`, `ODOO_SECOND_PORT_OPTION` and `ODOO_DEMO_OFF_ARGS` (the Odoo series and its options from `tools/odoo_versions.py`, the only file that writes version-specific Odoo options), `ENVIRONMENT_NAME` (the named environment, empty otherwise), `PYTHON_VERSION`, `DATA_DIR` (the resolved `[tooling].data_dir`, empty when absent) and, last, `AGENT_DESTRUCTIVE` (`[tooling].agent_destructive`, `ask` when absent). Checkout identity, slugs and database names are unchanged.
 - Odoo series options: `start` passes the second server port with `ODOO_SECOND_PORT_OPTION` (`--gevent-port` on 19.0) and recognizes it when given; `test-module`, `install-module` (and so `verify-module`) and `init-dev-database` render the demo-off options from `ODOO_DEMO_OFF_ARGS`. On 19.0 the table keeps `--without-demo`, so every Odoo command line is unchanged.
 - `worktree-init`, when the main checkout has no profile and finds a workspace file, only runs `git worktree add` and prints `workspace: <dir>` after the slug line: nothing is copied or linked. The new folder must be below the workspace directory (`The new worktree <path> would not be under the workspace <dir>; prepare the worktree by hand.` otherwise). A main checkout with a profile keeps the shared or legacy layout.
 - In a checkout without a profile, `init-dev-database` reads `[development]` from the workspace file and `lint-module` reads `[tooling].lint_rcfile` from it, resolved from the workspace file's directory like the other tooling paths. `gc` takes the slug of another worktree without a profile from its `oasis-checkout.toml` (else from the folder name), so the main checkout skips that worktree's namespace.

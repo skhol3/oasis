@@ -360,7 +360,21 @@ def load(root: Path) -> dict[str, str]:
     # Appended after them: Odoo's data directory, passed as --data-dir (empty when absent:
     # the odoo.conf data_dir, if any, applies as before).
     output['DATA_DIR'] = optional_path(document['tooling'], 'data_dir', base)
+    # Appended last: what the Gentle Shell layer does with the agent's destructive commands.
+    output['AGENT_DESTRUCTIVE'] = agent_destructive(document['tooling'])
     return output
+
+
+AGENT_DESTRUCTIVE = ('ask', 'deny', 'allow')
+
+
+def agent_destructive(tooling: dict) -> str:
+    """[tooling].agent_destructive, `ask` when absent. The user sets it in the profile or the
+    workspace file; oasis-checkout.toml refuses it (CHECKOUT_KEYS)."""
+    value = tooling.get('agent_destructive', 'ask')
+    if not isinstance(value, str) or value not in AGENT_DESTRUCTIVE:
+        raise InvalidConfig('Invalid tooling agent_destructive: use ask, deny or allow.')
+    return value
 
 
 def optional_path(tooling: dict, key: str, base: Path) -> str:

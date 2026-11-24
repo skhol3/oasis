@@ -21,6 +21,18 @@ names) may still change in a minor release; every such change is listed here und
   Plain `gc` and `gc --apply` are unchanged and never touch the trash.
 - Action menu and panel: *List trash*, *Restore from trash* and *Empty trash* (`gc --apply
   --trash`, typed `yes`).
+- Gentle Shell ask tier: before the agent's `drop-database <name>`, `stop --database` or `gc
+  --apply --trash` (through `oasis`, `odoo19` or oasis's tool scripts) runs, a dialog shows the
+  exact command and asks the user to type the database name or `yes`. A wrong answer, Esc, no
+  answer within 2 minutes or a session without a dialog (subagent, headless) blocks it with a
+  reason that tells the agent to ask the user; `drop-database` needs a literal database name.
+  Each decision is recorded as an *Agent command approved/refused* session entry that is never
+  sent to the model. The deny tier is unchanged. See `docs/bash-guard.md`.
+- `[tooling].agent_destructive` (`ask`, the default, `deny` or `allow`) in the workspace file or
+  the profile decides that tier: `deny` blocks those commands, `allow` runs them without a dialog.
+  `oasis-checkout.toml` refuses it; an invalid value fails with `Invalid tooling
+  agent_destructive: use ask, deny or allow.` `tools/config.py` prints it last as
+  `AGENT_DESTRUCTIVE=<value>`.
 
 ### Changed
 
@@ -32,6 +44,8 @@ names) may still change in a minor release; every such change is listed here und
   <trash name>` instead of `Database dropped: <name>`. A missing database, the usage, the
   session refusal (exit 3) and `--terminate` are unchanged. The menu action is now *Move a
   database to the trash*.
+- `doctor` prints `PASS agent_destructive=<value>` after `odoo_version` when the configuration
+  loads.
 - Contract: names ending in `_trash_<8 digits>_<6 digits>` are reserved for the trash; every
   command that takes a database refuses them (exit 2), `drop-database` and `module-status`
   included. The `gc` usage line names `--trash`.

@@ -16,9 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 READER = ROOT / 'tools' / 'config.py'
 PROFILE = (ROOT / 'tests' / 'fixture-profile.toml').read_text()
 # Appended after WORKSPACE_ROOT for a profile: the Odoo 19.0 options, no named environment,
-# then DATA_DIR (empty without [tooling].data_dir).
+# then DATA_DIR (empty without [tooling].data_dir) and AGENT_DESTRUCTIVE (ask by default).
 APPENDED = ['ODOO_VERSION=19.0', 'ODOO_SECOND_PORT_OPTION=--gevent-port', 'ODOO_DEMO_OFF_ARGS=--without-demo',
-            "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12', "DATA_DIR=''"]
+            "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12', "DATA_DIR=''", 'AGENT_DESTRUCTIVE=ask']
 GIT = ['git', '-c', 'user.name=oasis tests', '-c', 'user.email=tests@example.invalid',
        '-c', 'init.defaultBranch=main', '-c', 'commit.gpgsign=false']
 
@@ -224,9 +224,9 @@ class CheckoutIdentityTests(unittest.TestCase):
                 self.assertEqual((result.returncode, result.stderr), (0, ''))
                 lines = result.stdout.splitlines()
                 # The main checkout is unknown without git: CHECKOUT_MAIN_ROOT stays empty.
-                self.assertEqual(lines[-11:], ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=mrp_2',
+                self.assertEqual(lines[-12:], ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=mrp_2',
                                                "CHECKOUT_MAIN_ROOT=''", "LOGS_DIR=''", "WORKSPACE_ROOT=''", *APPENDED])
-                self.assertEqual(lines[:-11], self.previous_assignments(linked))
+                self.assertEqual(lines[:-12], self.previous_assignments(linked))
 
     def test_git_failure_in_a_main_checkout_fails_closed(self):
         main = self.repository('proj')
