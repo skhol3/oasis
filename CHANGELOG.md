@@ -47,19 +47,28 @@ names) may still change in a minor release; every such change is listed here und
   explicit port, `--stop-after-init`; `--detach` and informational options print the usage) is
   refused before the server is stopped (exit 2); a server that does not stop is left running and
   `restart` exits 1 after `stop`'s message with `Nothing was restarted: Odoo is still running for
-  this checkout.` See `docs/servers-and-ports.md`.
+  this checkout.`; any other failure of `stop` (an unreadable runtime state, exit 2) prints its
+  message and `Nothing was restarted.` with `stop`'s exit code. See `docs/servers-and-ports.md`.
 - `stop --force`: after the graceful 20 s, SIGKILL to the server and every process of it still
   running (the members of its session and of the process group it leads, and their descendants;
   never the caller or its parents), then the record is removed: `Killed Odoo for this checkout
   after 20 s (SIGKILL to its session): pid <pid>, port <port>.`, or `Stopped ...; killed <n>
-  process(es) of its session that outlived it.` when only those were left.
+  process(es) of its session that outlived it.` when only those were left. The server gets SIGKILL
+  first, so a prefork master cannot replace a worker it sees die, and its processes are scanned
+  again until no new one appears. When the server's process list cannot be read, only the server
+  is killed (`Killed Odoo ... (SIGKILL; its other processes could not be read): ...`). A server
+  still running 5 s after SIGKILL exits 1 with `Odoo is still running after SIGKILL: pid <pid>,
+  port <port>.` and keeps its record.
 - `status` in a git checkout lists the live servers of every checkout of the repository after its
   own line: `repository servers: <n>` and one `  <checkout>: pid <pid>, port <port>[, database
   <database>][ (this checkout)]` line each. A project outside git prints only its own line, as
-  before. `start` records the database it is given with `-d`/`--database` for that list.
+  before. `start` records the database it is given with `-d`/`--database` for that list. When git
+  cannot list the worktrees (missing, failing), it prints `repository servers: unknown (<reason>)`
+  instead of a count; warnings of the read go to stderr and are never counted as servers.
 - Action menu and panel: *Restart the server* (optional database) and *Follow the server log*
   (`tail -n 200 -f` until Ctrl+C in the terminal menu; in the Gentle Shell panel a live overlay
-  that reads the end of `server.log` again every second while open). The panel header shows the
+  that reads the end of `server.log` again every second while open; a last line longer than the
+  64 KiB it reads shows its end, starting with `…`). The panel header shows the
   checkout's server: `server: running on port <port> (pid <pid>)`, `server: stopped` or `server:
   unknown (<reason>)`. The catalog's actions carry a `follow` key (true only for the live log).
 - Gentle Shell: `restart`, `stop --force` and `status` stay in the allow tier (they act on the
@@ -129,7 +138,7 @@ names) may still change in a minor release; every such change is listed here und
 - `start --detach`: a server that did not listen in time was stopped with SIGTERM to its session
   and SIGKILL only when the server itself survived, so members of its session that ignore SIGTERM
   or outlive it were left running. After the 5 s grace every process of the server still running
-  now gets SIGKILL.
+  now gets SIGKILL, the server first, and processes it started meanwhile are killed too.
 
 ## [0.10.1] - 2026-11-24
 

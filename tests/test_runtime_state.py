@@ -4,11 +4,12 @@ The lifecycle fixture (fake docker/python recording every argv) with a private
 XDG_RUNTIME_DIR per test; the linked checkout comes from the shared-conf fixture. Every
 socket a test binds uses 127.0.0.1 only, and every spawned process is killed in cleanup.
 """
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -21,6 +22,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 import test_lifecycle as lifecycle
 import test_shared_conf as shared
@@ -45,6 +47,28 @@ if os.environ.get('FAKE_TERM') == 'ignore':
 subprocess.Popen([sys.executable, sys.argv[0], '--fake-child'])
 while True:
     time.sleep(0.1)
+'''
+# A fake prefork master for stop --force: it ignores SIGTERM (FAKE_TERM=ignore) and forks a worker
+# again each time the last one ended. Each worker appends its pid to FAKE_WORKERS and ends a few
+# milliseconds later while its master lives, so new workers keep appearing; once the master is gone
+# a worker stays until it is killed.
+PREFORK = '''import os, signal, time
+if os.environ.get('FAKE_TERM') == 'ignore':
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+master = os.getpid()
+while True:
+    worker = os.fork()
+    if worker == 0:
+        with open(os.environ['FAKE_WORKERS'], 'a') as stream:
+            stream.write(f'{os.getpid()}\\n')
+        born = time.monotonic()
+        while os.getppid() == master:
+            if time.monotonic() - born > 0.005:
+                os._exit(0)
+            time.sleep(0.001)
+        while True:
+            time.sleep(0.1)
+    os.waitpid(worker, 0)
 '''
 
 
@@ -373,6 +397,97 @@ class RuntimeStateHelperTests(unittest.TestCase):
         result = self.helper('ephemeral-port', 'http')
         self.assertEqual((result.returncode, result.stdout), (2, ''))
         self.assertTrue(result.stderr.startswith('ERROR: Usage: runtime_state.py '), result.stderr)
+
+    def fake_git(self, name, body):
+        """A directory holding only a `git` script with body (none when body is None)."""
+        directory = self.scratch / name
+        directory.mkdir()
+        if body is not None:
+            git = directory / 'git'
+            git.write_text(f'#!/bin/sh\n{body}\n')
+            git.chmod(0o755)
+        return str(directory)
+
+    def test_servers_reports_a_git_failure_instead_of_no_servers(self):
+        for name, body, message in (
+                ('missing', None, 'Cannot run git worktree list: No such file or directory'),
+                ('failing', 'echo "warning: first" >&2; echo "fatal: boom" >&2; exit 128',
+                 'git worktree list failed: fatal: boom'),
+                ('silent', 'exit 5', 'git worktree list exited with status 5')):
+            with self.subTest(git=name):
+                self.env['PATH'] = self.fake_git(name, body)
+                result = self.helper('servers', str(self.root))
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', f'ERROR: {message}\n'))
+        # A repository without servers still lists none.
+        self.env['PATH'] = self.fake_git('working', f'printf "worktree {self.root}\\nHEAD 0\\n"')
+        result = self.helper('servers', str(self.root))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+
+    def in_process_stop(self, module, kill, process_info=None):
+        """module.stop(force=True) with os.kill replaced by kill (and process_info when given):
+        (exit code, stdout, stderr)."""
+        stdout, stderr = io.StringIO(), io.StringIO()
+        patches = [mock.patch.dict(os.environ, {'XDG_RUNTIME_DIR': str(self.xdg), 'OASIS_STOP_TIMEOUT': '0.3'}),
+                   mock.patch.object(module.os, 'kill', kill), mock.patch.object(module, 'KILL_WAIT', 0.3)]
+        if process_info is not None:
+            patches.append(mock.patch.object(module, 'process_info', process_info))
+        for patch in patches:
+            patch.start()
+        try:
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                status = module.stop(str(self.root), force=True)
+        finally:
+            for patch in reversed(patches):
+                patch.stop()
+        return status, stdout.getvalue(), stderr.getvalue()
+
+    def test_stop_force_keeps_the_record_of_a_server_still_running_after_sigkill(self):
+        process = self.spawn()
+        self.write(process.pid, ago(0))
+        before = self.record_path().read_bytes()
+        sent = []
+        # Every signal to the server is dropped: it outlives SIGTERM and SIGKILL.
+        real_kill = os.kill
+        def kill(pid, number):
+            sent.append((pid, number))
+            if pid != process.pid:
+                real_kill(pid, number)
+        result = self.in_process_stop(load_state_module(), kill)
+        self.assertEqual(result, (1, '', f'Odoo is still running after SIGKILL: pid {process.pid}, port 8070.\n'))
+        self.assertEqual(sent, [(process.pid, signal.SIGTERM), (process.pid, signal.SIGKILL)])
+        self.assertIsNone(process.poll())
+        self.assertEqual(self.record_path().read_bytes(), before)
+
+    def test_stop_force_kills_the_server_alone_when_its_processes_cannot_be_read(self):
+        process = self.spawn()
+        self.write(process.pid, ago(0))
+        sent = []
+        real_kill = os.kill
+        def kill(pid, number):
+            # SIGTERM is dropped (a server that ignores it); SIGKILL reaches it.
+            sent.append((pid, number))
+            if number != signal.SIGTERM:
+                real_kill(pid, number)
+        result = self.in_process_stop(load_state_module(), kill, process_info=lambda pid: None)
+        self.assertEqual(result, (0, (
+            'Killed Odoo for this checkout after 0.3 s (SIGKILL; its other processes could not be read): '
+            f'pid {process.pid}, port 8070.\n'), ''))
+        self.assertEqual(sent, [(process.pid, signal.SIGTERM), (process.pid, signal.SIGKILL)])
+        self.assertEqual(process.wait(5), -signal.SIGKILL)
+        self.assertFalse(self.record_path().exists())
+
+    def test_kill_all_kills_the_leader_first_then_rescans_its_processes(self):
+        module = load_state_module()
+        killed, appeared = [], {300: 3}
+        def running(processes):
+            return {pid: started for pid, started in processes.items() if pid not in killed}
+        def scan(leader, started):
+            # The leader's processes: a worker it started just before it was killed appears once.
+            return {pid: s for pid, s in {100: 1, 200: 2, **appeared}.items() if pid != 300 or 100 in killed}
+        with mock.patch.object(module, 'running', running), mock.patch.object(module, 'server_processes', scan), \
+                mock.patch.object(module.os, 'kill', lambda pid, number: killed.append(pid)):
+            module.kill_all({200: 2, 100: 1}, 100, 1)
+        self.assertEqual(killed, [100, 200, 300])
 
 
 class ServerLifecycleTests(unittest.TestCase):
@@ -877,6 +992,70 @@ class ServerLifecycleTests(unittest.TestCase):
         result = self.invoke(self.main, 'status')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, 'server: stopped\nrepository servers: 0\n', ''))
+
+    def test_stop_force_kills_the_master_first_and_the_workers_it_starts_meanwhile(self):
+        (self.source / 'odoo-bin').write_text(PREFORK)
+        workers = Path(self.scratch.name) / 'workers'
+        self.env.update(FAKE_TERM='ignore', FAKE_WORKERS=str(workers), OASIS_STOP_TIMEOUT='1')
+        def listed():
+            return [int(pid) for pid in workers.read_text().split()] if workers.exists() else []
+        self.addCleanup(lambda: [self.kill_fake(pid) for pid in listed()])
+        process = self.serve(self.root)
+        deadline = time.monotonic() + 20
+        while len(listed()) < 3:
+            self.assertLess(time.monotonic(), deadline, 'the fake master never started workers')
+            time.sleep(0.05)
+        result = self.invoke(self.root, 'stop', '--force')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
+            f'Killed Odoo for this checkout after 1 s (SIGKILL to its session): pid {process.pid}, '
+            f'port {self.port}.\n'), ''))
+        self.assertEqual(process.wait(5), -signal.SIGKILL)
+        deadline = time.monotonic() + 5
+        while survivors := [pid for pid in listed() if self.running(pid)]:
+            self.assertLess(time.monotonic(), deadline, f'workers survived stop --force: {survivors}')
+            time.sleep(0.05)
+        self.assertIsNone(self.record(self.root))
+
+    def git_checkout(self):
+        self.env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True, env=self.env, capture_output=True)
+
+    def test_status_reports_unknown_repository_servers_when_git_fails(self):
+        self.git_checkout()
+        # git works for the checkout identity; only `git worktree list` fails.
+        wrapper = Path(self.scratch.name) / 'git-wrapper'
+        wrapper.mkdir()
+        (wrapper / 'git').write_text('#!/bin/sh\ncase " $* " in *" worktree list "*) echo "fatal: boom" >&2; exit 128 ;; '
+                                     f'esac\nexec {shutil.which("git")} "$@"\n')
+        (wrapper / 'git').chmod(0o755)
+        self.env['PATH'] = f'{wrapper}:{self.env["PATH"]}'
+        result = self.invoke(self.root, 'status')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
+            'server: stopped\nrepository servers: unknown (git worktree list failed: fatal: boom)\n'), ''))
+        self.assertTrue(self.commands.read_text().endswith(' ps\n'))
+
+    def test_status_counts_only_the_servers_on_stdout(self):
+        self.git_checkout()
+        self.staged_tools_with_state_helper(
+            'import sys\n'
+            'if sys.argv[1] == "servers":\n'
+            '    print("/elsewhere: pid 4242, port 8070")\n'
+            '    print("warning: something to note", file=sys.stderr)\n')
+        result = self.invoke(self.root, 'status')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
+            'server: stopped\nrepository servers: 1\n  /elsewhere: pid 4242, port 8070\n'),
+            'warning: something to note\n'))
+        self.assertTrue(self.commands.read_text().endswith(' ps\n'))
+        # On failure the last stderr line is the reason, and stdout is not listed.
+        self.staged_tools_with_state_helper(
+            'import sys\n'
+            'if sys.argv[1] == "servers":\n'
+            '    print("/elsewhere: pid 4242, port 8070")\n'
+            '    print("ERROR: broken servers", file=sys.stderr)\n'
+            '    sys.exit(2)\n')
+        result = self.invoke(self.root, 'status')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, 'server: stopped\nrepository servers: unknown (broken servers)\n', ''))
 
 
 class TestRunPortTests(unittest.TestCase):

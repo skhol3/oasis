@@ -40,3 +40,24 @@ test("readTail of a missing or unreadable path is empty", () => {
     done();
   }
 });
+
+test("readTail shows the cut end of a line longer than the window, marked with an ellipsis", () => {
+  const { dir, done } = scratch();
+  try {
+    const log = join(dir, "server.log");
+    // No newline inside the window: the end of the line, not an empty log.
+    writeFileSync(log, "start\n" + "x".repeat(200));
+    assert.equal(readTail(log, 100), "…" + "x".repeat(100));
+    // The only newline ends the window: still the end of that line, with its newline.
+    writeFileSync(log, "start\n" + "y".repeat(200) + "\n");
+    assert.equal(readTail(log, 100), "…" + "y".repeat(99) + "\n");
+    // A window starting inside a multi-byte character skips its remaining bytes.
+    writeFileSync(log, "é".repeat(100));
+    assert.equal(readTail(log, 51), "…" + "é".repeat(25));
+    // A whole line after the cut one is still where the view starts.
+    writeFileSync(log, "z".repeat(200) + "\nlast\n");
+    assert.equal(readTail(log, 100), "last\n");
+  } finally {
+    done();
+  }
+});

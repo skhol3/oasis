@@ -6,8 +6,10 @@ set -Eeuo pipefail
 # -d/--database (or an abbreviation) the database its record names, if any; a checkout without a
 # running server gets start's port and no database. What start would refuse (a database guard, an
 # invalid or busy explicit port, --stop-after-init) is refused before the server is stopped, and so
-# are --detach (implied) and informational options. A server that does not stop is left running:
-# nothing starts and restart exits with stop's status (1).
+# are --detach (implied) and informational options. When stop fails, nothing starts and restart
+# exits with stop's status after stop's own message: a server that did not stop in time is left
+# running (`Nothing was restarted: Odoo is still running for this checkout.`, exit 1); any other
+# failure (an unreadable state, exit 2) says only `Nothing was restarted.`.
 source "$(dirname "$0")/oasis_env.sh"
 usage() {
   printf 'Usage: %s restart [odoo options]\n' "$(usage_name)"
@@ -65,12 +67,21 @@ if [[ -n "$explicit_port" ]]; then
     fi
   fi
 fi
-stop_status=0
-python3 -I -B "$(dirname "$0")/runtime_state.py" stop "$PROJECT_ROOT" --program "$(program_name)" ||
-  stop_status=$?
+# stop's stdout goes straight through; its stderr is kept to tell a timeout from other failures,
+# then passed on unchanged.
+stop_status=0 stop_error=''
+{
+  stop_error=$(python3 -I -B "$(dirname "$0")/runtime_state.py" stop "$PROJECT_ROOT" \
+    --program "$(program_name)" 2>&1 1>&3 3>&-) || stop_status=$?
+} 3>&1
+if [[ -n "$stop_error" ]]; then printf '%s\n' "$stop_error" >&2; fi
 if (( stop_status != 0 )); then
-  # stop's message already names the remedy (stop --force).
-  printf 'Nothing was restarted: Odoo is still running for this checkout.\n' >&2
+  if (( stop_status == 1 )) && grep -q '^Odoo did not stop within ' <<< "$stop_error"; then
+    # stop's message already names the remedy (stop --force).
+    printf 'Nothing was restarted: Odoo is still running for this checkout.\n' >&2
+  else
+    printf 'Nothing was restarted.\n' >&2
+  fi
   exit "$stop_status"
 fi
 kept=()

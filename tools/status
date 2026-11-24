@@ -38,14 +38,28 @@ if (( state_status == 0 )) && [[ -n "$state_error" ]]; then
   printf '%s\n' "$state_error" >&2
 fi
 if [[ "${CHECKOUT_KIND:-}" == main || "${CHECKOUT_KIND:-}" == linked ]]; then
-  # stdout and stderr together, without a temporary file: the helper writes stderr only on failure.
-  servers_status=0
-  servers=$(runtime_state servers "$PROJECT_ROOT" 2>&1) || servers_status=$?
+  # Read as the server line is: only stdout lists servers; stderr is the reason of a failure
+  # (git cannot list the worktrees, an unreadable state) and, after a success, a warning passed
+  # through to stderr unchanged.
+  servers_error='' servers='' servers_status=0
+  {
+    IFS=$'\n' read -r -d '' servers_error || true
+    IFS=$'\n' read -r -d '' servers || true
+    IFS=$'\n' read -r -d '' servers_status || true
+  } < <(
+    {
+      status=0
+      output=$(runtime_state servers "$PROJECT_ROOT") || status=$?
+      printf '\0%s\0%s\0' "$output" "$status"
+    } 2>&1
+  )
+  if [[ ! "$servers_status" =~ ^[0-9]+$ ]]; then servers_status=1; fi
   if (( servers_status != 0 )); then
-    reason=$(printf '%s\n' "$servers" | sed '/^[[:space:]]*$/d' | tail -n 1)
+    reason=$(printf '%s\n' "$servers_error" | sed '/^[[:space:]]*$/d' | tail -n 1)
     reason=${reason#ERROR: }
     printf 'repository servers: unknown (%s)\n' "${reason:-runtime_state.py exited with $servers_status}"
   else
+    if [[ -n "$servers_error" ]]; then printf '%s\n' "$servers_error" >&2; fi
     count=0
     lines=()
     while IFS= read -r line; do

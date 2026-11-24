@@ -5,9 +5,14 @@ import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 /** How much of the end of the file is read: far more than an overlay shows. */
 export const TAIL_BYTES = 64 * 1024;
 
+/** What starts the end of a line cut by the window. */
+export const CUT_MARK = "…";
+
 /**
  * The last `maxBytes` of the file at `path` as UTF-8, starting at the first whole line inside that
- * window (the whole file when it is smaller); empty when it cannot be read (missing, a directory).
+ * window (the whole file when it is smaller). When no whole line starts inside it (one line longer
+ * than the window), the end of that line, marked with `CUT_MARK` and without the bytes of a
+ * character cut by the window. Empty when it cannot be read (missing, a directory).
  */
 export function readTail(path: string, maxBytes: number = TAIL_BYTES): string {
   let descriptor: number | undefined;
@@ -22,10 +27,14 @@ export function readTail(path: string, maxBytes: number = TAIL_BYTES): string {
       if (count === 0) break;
       read += count;
     }
-    const text = buffer.subarray(0, read).toString("utf8");
-    if (start === 0) return text;
-    const newline = text.indexOf("\n");
-    return newline < 0 ? "" : text.slice(newline + 1);
+    const bytes = buffer.subarray(0, read);
+    if (start === 0) return bytes.toString("utf8");
+    const newline = bytes.indexOf(0x0a);
+    if (newline >= 0 && newline + 1 < bytes.length) return bytes.subarray(newline + 1).toString("utf8");
+    // Only the end of one line: skip the continuation bytes of a character the window cut.
+    let first = 0;
+    while (first < bytes.length && (bytes[first] & 0xc0) === 0x80) first += 1;
+    return CUT_MARK + bytes.subarray(first).toString("utf8");
   } catch {
     return "";
   } finally {

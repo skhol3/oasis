@@ -75,14 +75,20 @@ The processes of a server are the recorded process, the members of the session a
 group it leads, and their descendants (of this user, started after it; never this process or its
 ancestors). Stopping a detached server that does not listen sends SIGTERM to its session and, after
 STOP_GRACE seconds (OASIS_STOP_GRACE, for the tests only), SIGKILL to every one of them still
-running, so members that ignore SIGTERM or outlive the server do not stay. `stop` sends SIGTERM to
+running, so members that ignore SIGTERM or outlive the server do not stay. SIGKILL goes to the
+recorded process first and, once it has ended (or KILL_WAIT seconds later), to the others; the
+processes are then scanned again, and new ones killed, until a scan finds none (at most KILL_ROUNDS
+rounds), so a prefork master cannot leave a worker it started meanwhile. `stop` sends SIGTERM to
 the server and waits STOP_TIMEOUT seconds (OASIS_STOP_TIMEOUT, for the tests only) for it to end
 (exit 1 when it does not, with `Odoo did not stop within <s> s: pid <pid>, port <port>; run
 <program> stop --force.`); `stop --force` waits for it and its processes, then sends SIGKILL to
-every one still running and removes the record once the server is gone.
+every one still running and removes the record once the server is gone. When the server's
+/proc/<pid>/stat cannot be read, its other processes are unknown: only the server gets SIGKILL.
 
 Repository servers (status): the live records, of this checkout and the others, whose checkout is
-one of the worktrees `git worktree list` names for the project root, or inside one.
+one of the worktrees `git worktree list` names for the project root, or inside one. When git
+cannot list them (missing, failing, timed out), `servers` exits 2 with `ERROR: <reason>` instead
+of listing none.
 
 Compose lock: `compose-<first 16 hex of sha256(realpath compose_file)>.lock` (0600) directly in
 the user root, shared by every checkout of this user whose profile names that compose file.
@@ -114,6 +120,8 @@ DETACH_TAIL = 20
 STOP_GRACE = 5
 # How long stop --force waits for the processes it sent SIGKILL to.
 KILL_WAIT = 5
+# How many times the processes of a server are scanned again for new ones after SIGKILL.
+KILL_ROUNDS = 10
 GIT_TIMEOUT = 20
 # Addresses that mean every interface: the probe connects to the loopback instead.
 ANY_INTERFACE = {'', '0.0.0.0', '::'}
@@ -129,6 +137,10 @@ class StateError(Exception):
 
 class PortError(Exception):
     """A port that cannot be probed for a reason other than being in use."""
+
+
+class GitError(Exception):
+    """git cannot list the worktrees of the repository; the message says why."""
 
 
 class RunError(Exception):
@@ -429,13 +441,37 @@ def running(processes):
     return left
 
 
-def kill_all(processes):
-    """SIGKILL every one of the processes that still runs."""
-    for pid in running(processes):
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+def wait_ended(processes, wait):
+    """Wait up to wait seconds until none of the processes runs; the ones still running."""
+    deadline = time.monotonic() + wait
+    left = running(processes)
+    while left and time.monotonic() < deadline:
+        time.sleep(0.05)
+        left = running(left)
+    return left
+
+
+def kill_all(processes, leader, started):
+    """SIGKILL the processes that still run, the leader first: once it has ended (or KILL_WAIT
+    seconds later) it cannot start a replacement for a worker it sees die. After each round the
+    leader's processes (started is its start time) are scanned again and the new ones killed,
+    until a scan finds none, at most KILL_ROUNDS rounds. Returns (every process seen, the pids
+    sent SIGKILL)."""
+    known, killed = dict(processes), set()
+    for _ in range(KILL_ROUNDS):
+        targets = [pid for pid in running(known) if pid not in killed]
+        if not targets:
+            break
+        for pid in sorted(targets, key=lambda pid: pid != leader):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            killed.add(pid)
+            if pid == leader:
+                wait_ended({leader: known[leader]}, KILL_WAIT)
+        known.update(server_processes(leader, started))
+    return known, killed
 
 
 def seconds(name, default):
@@ -468,7 +504,7 @@ def end_session(pid):
         deadline = time.monotonic() + seconds('OASIS_STOP_GRACE', STOP_GRACE)
         while running(server_processes(pid, info[4])) and time.monotonic() < deadline:
             time.sleep(0.05)
-        kill_all(server_processes(pid, info[4]))
+        kill_all(server_processes(pid, info[4]), pid, info[4])
     else:
         try:
             os.kill(pid, signal.SIGKILL)
@@ -586,15 +622,28 @@ def stop(project_root, force=False, program='oasis'):
                 return 1
             break
         time.sleep(0.1)
-    if not left:
+    if not left and not is_live(record):
         read_live(checkout_dir(project_root))
         print(f'Stopped Odoo for this checkout: pid {pid}, port {port}.')
         return 0
-    kill_all(processes)
-    deadline = time.monotonic() + KILL_WAIT
-    while running(left) and time.monotonic() < deadline:
-        time.sleep(0.05)
-    if pid in running(left):
+    if info is None:
+        # Its /proc/<pid>/stat could not be read: its other processes are unknown, the server alone.
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + KILL_WAIT
+        while is_live(record) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if is_live(record):
+            print(f'Odoo is still running after SIGKILL: pid {pid}, port {port}.', file=sys.stderr)
+            return 1
+        remove_record_of(project_root, pid)
+        print(f'Killed Odoo for this checkout after {timeout:g} s (SIGKILL; its other processes could not be '
+              f'read): pid {pid}, port {port}.')
+        return 0
+    known, killed = kill_all(processes, pid, info[4])
+    if pid in wait_ended(known, KILL_WAIT):
         print(f'Odoo is still running after SIGKILL: pid {pid}, port {port}.', file=sys.stderr)
         return 1
     remove_record_of(project_root, pid)
@@ -602,8 +651,8 @@ def stop(project_root, force=False, program='oasis'):
         print(f'Killed Odoo for this checkout after {timeout:g} s (SIGKILL to its session): pid {pid}, '
               f'port {port}.')
     else:
-        print(f'Stopped Odoo for this checkout: pid {pid}, port {port}; killed {len(left)} process(es) of '
-              'its session that outlived it.')
+        print(f'Stopped Odoo for this checkout: pid {pid}, port {port}; killed {len(killed - {pid})} '
+              'process(es) of its session that outlived it.')
     return 0
 
 
@@ -629,16 +678,23 @@ def others(project_root):
 
 
 def worktrees(project_root):
-    """The real paths of the worktrees of project_root's git repository; empty when git fails."""
+    """The real paths of the worktrees of project_root's git repository; GitError when git cannot
+    list them (missing, failing or timed out), so a failure never reads as no worktrees."""
     env = {key: value for key, value in os.environ.items()
            if key not in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE')}
     try:
         result = subprocess.run(['git', '-C', str(project_root), 'worktree', 'list', '--porcelain'],
                                 capture_output=True, text=True, env=env, timeout=GIT_TIMEOUT)
-    except (OSError, subprocess.SubprocessError):
-        return []
+    except subprocess.TimeoutExpired as exc:
+        raise GitError(f'git worktree list did not finish within {GIT_TIMEOUT} s') from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
+        raise GitError(f'Cannot run git worktree list: {reason}') from exc
     if result.returncode != 0:
-        return []
+        lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
+        if lines:
+            raise GitError(f'git worktree list failed: {lines[-1]}')
+        raise GitError(f'git worktree list exited with status {result.returncode}')
     return [os.path.realpath(line[len('worktree '):]) for line in result.stdout.splitlines()
             if line.startswith('worktree ')]
 
@@ -958,7 +1014,7 @@ def main(argv):
     except RunLocked as exc:
         print(exc, file=sys.stderr)
         return 2
-    except (StateError, RunError) as exc:
+    except (StateError, RunError, GitError) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 2
     except PortError as exc:

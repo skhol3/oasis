@@ -10,6 +10,7 @@ import os
 import re
 import select
 import shlex
+import shutil
 import signal
 import socket
 import subprocess
@@ -763,6 +764,36 @@ class DetachTests(MenuFixture):
         result = self.oasis('restart')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.restarted(result, self.port)
+
+    def test_restart_reports_a_stop_failure_without_claiming_odoo_still_runs(self):
+        self.env['FAKE_SERVE'] = '1'
+        result = self.start('--detach')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        pid = self.detached(result, self.server_log)
+        lines = self.odoo_lines()
+        # The tools with a runtime_state.py whose stop fails as FAKE_STOP says; the rest is the real one.
+        tools = Path(self.scratch.name) / 'staged-tools'
+        shutil.copytree(ROOT / 'tools', tools, ignore=shutil.ignore_patterns('__pycache__'))
+        (tools / 'runtime_state.py').write_text(
+            'import os, sys\n'
+            'if sys.argv[1:2] == ["stop"]:\n'
+            '    status, message = os.environ["FAKE_STOP"].split(":", 1)\n'
+            '    print(message, file=sys.stderr)\n'
+            '    sys.exit(int(status))\n'
+            f'os.execv(sys.executable, [sys.executable, "-I", "-B", {str(ROOT / "tools/runtime_state.py")!r}, '
+            '*sys.argv[1:]])\n')
+        env = {**self.env, 'OASIS_PROJECT_ROOT': str(self.root), 'ODOO19_PROJECT_ROOT': str(self.root)}
+        for status, message in ((2, f'ERROR: Cannot read runtime state: {self.root}/server.json'),
+                                (1, 'Traceback (most recent call last):\nPermissionError: [Errno 13] Permission denied')):
+            with self.subTest(status=status):
+                result = subprocess.run(['bash', str(tools / 'restart')], text=True, cwd=self.root,
+                                        env={**env, 'FAKE_STOP': f'{status}:{message}'}, capture_output=True,
+                                        stdin=subprocess.DEVNULL, timeout=30)
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (status, '', f'{message}\nNothing was restarted.\n'))
+                self.assertEqual(self.record(), f'pid={pid} port={self.port}\n')
+                self.assertIn(pid, self.fake_servers())
+                self.assertEqual(self.odoo_lines(), lines)
 
     def test_restart_refuses_before_stopping_what_start_would_refuse(self):
         self.env['FAKE_SERVE'] = '1'
