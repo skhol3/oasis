@@ -1,4 +1,5 @@
-// The /oasis subcommands: one table for completion, usage, description and dispatch. No Pi imports.
+// The /oasis subcommands: one table for completion (after /oasis and, v0.12.1, while its name is typed), usage,
+// description and dispatch. No Pi imports.
 
 export const SUBCOMMANDS = [
   {
@@ -72,4 +73,91 @@ export function subcommandCompletions(prefix: string): Completion[] | null {
     description: item.description,
   }));
   return items.length > 0 ? items : null;
+}
+
+/** The command names whose subcommands are suggested while the name is typed (S3, v0.12.1). */
+const COMMAND_NAMES = ["oasis", "odoo19"] as const;
+// From two typed letters: `/o` alone matches too many commands.
+const MIN_TYPED = 2;
+
+/** An editor suggestion and a suggestion list, shaped like pi-tui's AutocompleteItem and AutocompleteSuggestions. */
+export interface SuggestionItem {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+export interface Suggestions {
+  items: SuggestionItem[];
+  prefix: string;
+}
+
+/** The part of pi-tui's AutocompleteProvider the wrapper uses (no Pi imports here). */
+export interface AutocompleteSource {
+  triggerCharacters?: string[];
+  getSuggestions(lines: string[], cursorLine: number, cursorCol: number,
+    options: { signal: AbortSignal; force?: boolean }): Promise<Suggestions | null>;
+  applyCompletion(lines: string[], cursorLine: number, cursorCol: number, item: SuggestionItem, prefix: string):
+    { lines: string[]; cursorLine: number; cursorCol: number };
+  shouldTriggerFileCompletion?(lines: string[], cursorLine: number, cursorCol: number): boolean;
+}
+
+/**
+ * `/oasis <subcommand>` (and `/odoo19 <subcommand>`) suggestions while the command name is typed:
+ * a slash, at least two letters of the name and no space yet. The prefix is the typed command as
+ * Pi's slash-command completion uses it, so its applyCompletion inserts `/<value> `.
+ */
+export function commandNameCompletions(textBeforeCursor: string): Suggestions | null {
+  const typed = textBeforeCursor.trimStart();
+  if (!typed.startsWith("/")) return null;
+  const name = typed.slice(1);
+  if (name.length < MIN_TYPED || /\s/.test(name)) return null;
+  const items = COMMAND_NAMES.filter((command) => command.startsWith(name)).flatMap((command) =>
+    SUBCOMMANDS.map((item) => ({
+      value: `${command} ${item.name}`, label: `${command} ${item.name}`, description: item.description,
+    })));
+  return items.length > 0 ? { prefix: typed, items } : null;
+}
+
+/**
+ * The existing suggestions with the subcommands of the typed command name added right after the
+ * command's own item (last when it is not listed), without repeating one already there; any other
+ * text, or suggestions for another prefix, are returned unchanged.
+ */
+export function withSubcommandSuggestions(textBeforeCursor: string, base: Suggestions | null): Suggestions | null {
+  const extra = commandNameCompletions(textBeforeCursor);
+  if (!extra || (base && base.prefix !== extra.prefix)) return base;
+  const items = [...(base?.items ?? [])];
+  const known = new Set(items.map((item) => item.value));
+  for (const command of COMMAND_NAMES) {
+    const added = extra.items.filter((item) => item.value.startsWith(`${command} `) && !known.has(item.value));
+    if (added.length === 0) continue;
+    const at = items.findIndex((item) => item.value === command);
+    items.splice(at === -1 ? items.length : at + 1, 0, ...added);
+  }
+  return { prefix: extra.prefix, items };
+}
+
+/**
+ * The editor's autocomplete provider wrapped for S3 (ctx.ui.addAutocompleteProvider): the current
+ * provider answers first, then the /oasis and /odoo19 subcommands are added while their name is
+ * typed. Forced completion, completion itself, file completion and trigger characters delegate
+ * unchanged.
+ */
+export function subcommandAutocomplete(current: AutocompleteSource): AutocompleteSource {
+  const provider: AutocompleteSource = {
+    async getSuggestions(lines, cursorLine, cursorCol, options) {
+      const base = await current.getSuggestions(lines, cursorLine, cursorCol, options);
+      if (options.force || options.signal.aborted) return base;
+      return withSubcommandSuggestions((lines[cursorLine] ?? "").slice(0, cursorCol), base);
+    },
+    applyCompletion: (lines, cursorLine, cursorCol, item, prefix) =>
+      current.applyCompletion(lines, cursorLine, cursorCol, item, prefix),
+  };
+  if (current.triggerCharacters) provider.triggerCharacters = current.triggerCharacters;
+  if (current.shouldTriggerFileCompletion) {
+    provider.shouldTriggerFileCompletion = (lines, cursorLine, cursorCol) =>
+      current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true;
+  }
+  return provider;
 }

@@ -7,6 +7,7 @@ import {
   parseCatalog, type PickerChoice, type Prompter, RUN_ACTION, type ServerState, serverLine, shellJoin, sources,
   terminalCommand,
 } from "./menu.ts";
+import { nativeCommands, printCommandArgv } from "./native.ts";
 import type { CoreResult } from "./tools.ts";
 
 const HEARTBEAT_MS = 15 * 1000;
@@ -14,8 +15,8 @@ const NON_TUI = "oasis menu: the action panel needs the interactive terminal UI;
 const TERMINAL_ONLY = "terminal only: run it in a terminal, or use oasis menu there";
 const NOT_RUN = "could not run";
 
-/** What a command is run for: the timeout the adapter gives it. */
-export type ExecPurpose = "catalog" | "list" | "run";
+/** What a command is run for: the timeout the adapter gives it ("print": the native odoo-bin line, S4). */
+export type ExecPurpose = "catalog" | "list" | "print" | "run";
 
 /** The panel's dialogs: the Prompter questions plus the overlays (picker, live log) and the footer status. */
 export interface PanelUi extends Prompter {
@@ -45,6 +46,8 @@ export interface PanelEffects {
   exec(argv: string[], cwd: string, purpose: ExecPurpose): Promise<CoreResult>;
   exists(path: string): boolean;
   readLog(path: string): string;
+  /** The home directory the start / restart form shows as `~` in the native line. */
+  home?: string;
   /** Records a result as a custom session entry (shown to the user, never sent to the model). */
   appendEntry(entry: MenuEntry): void;
   /** This checkout's server record (`runtime_state.py show`); may reject when it cannot be read. */
@@ -66,7 +69,9 @@ function message(error: unknown): string {
  * lets the user pick an action (or Repeat the last one), asks its inputs (the start / restart flow
  * in one form) and confirmation with the filled command, runs it in the project root, records the
  * command with its output as an entry and remembers the action. A command that cannot be started is
- * recorded the same way, with the error as output.
+ * recorded the same way, with the error as output. The start / restart form shows the native
+ * odoo-bin line (`start --print-command`, read in the background, S4); a read line also goes to
+ * the run's entry, and a line that cannot be read changes nothing else.
  */
 export function actionPanel(effects: PanelEffects): (ctx: PanelContext) => Promise<void> {
   let busy: string | null = null;
@@ -129,10 +134,15 @@ export function actionPanel(effects: PanelEffects): (ctx: PanelContext) => Promi
       notify: (text, level) => ui.notify(text, level),
     });
     let answers: Answers | null | undefined;
-    if (action.id === RUN_ACTION) {
+    // The native lines the start / restart form shows; never an entry or a notice of their own.
+    const native = action.id === RUN_ACTION ? nativeCommands((argv) => effects.exec(argv, root, "print")) : undefined;
+    if (native) {
       // One form asks, previews and confirms; a repeat opens it at the confirmation.
       const databases = repeated ? [] : await choices("databases");
-      answers = await ui.form({ catalog, action, header, databases, ...(repeated ? { answers: repeated } : {}) });
+      answers = await ui.form({
+        catalog, action, header, databases, native, ...(effects.home ? { home: effects.home } : {}),
+        ...(repeated ? { answers: repeated } : {}),
+      });
     } else {
       answers = repeated ? { ...repeated } : await askInputs(action, ui, choices);
     }
@@ -147,6 +157,9 @@ export function actionPanel(effects: PanelEffects): (ctx: PanelContext) => Promi
       ui.notify("oasis menu: not confirmed, nothing ran.", "info");
       return;
     }
+    // The native line of these answers, asked before the run (the form usually has it already).
+    const nativeArgv = native ? printCommandArgv(action.command, argv) : null;
+    const nativeLine = native && nativeArgv ? native.settled(nativeArgv) : Promise.resolve(null);
     setBusy(command);
     ui.notify(`oasis menu: running ${command}`, "info");
     ui.setStatus(`oasis: ${action.label}`);
@@ -155,8 +168,10 @@ export function actionPanel(effects: PanelEffects): (ctx: PanelContext) => Promi
       (seconds) => ui.setStatus(`oasis: ${action.label} (${seconds} s)`),
       effects.heartbeatMs ?? HEARTBEAT_MS,
     );
+    const nativeShown = await nativeLine;
     effects.appendEntry({
-      label: action.label, command, exit: result.code, output: menuOutput(action, answers, result, effects.readLog),
+      label: action.label, command, exit: result.code, ...(nativeShown ? { native: nativeShown } : {}),
+      output: menuOutput(action, answers, result, effects.readLog),
     });
     // Repeat (S6): never a user-run action (terminal-only and the live log never get here).
     if (!action.user_run) {

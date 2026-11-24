@@ -6,6 +6,8 @@ import {
   MENU_KEY_DEFAULT, menuHeader, menuOutput, menuShortcut, moveSelection, parseCatalog, pickerRows, type Prompter,
   RunForm, serverLine, shellJoin, sources, terminalCommand, textError, visibleStart, wrapLine,
 } from "../lib/menu.ts";
+import { nativeCommands } from "../lib/native.ts";
+import type { CoreResult } from "../lib/tools.ts";
 
 // A real `oasis menu --catalog` of the synthetic lifecycle fixture (tests/test_pi_layer.py checks it
 // against the core), with the project at /work/a project and the entry point at /opt/oasis/oasis.
@@ -318,6 +320,9 @@ test("entryLines shows the command and exit, and the last lines unless expanded"
   // Terminal control sequences in command output never reach the TUI.
   assert.deepEqual(entryLines({ label: "L", command: "c", exit: 1, output: "\x1b[31mred\x1b[0m\tx\r\nbell\x07" },
     false, 20).slice(2), ["red    x", "bell"]);
+  // S4: the native odoo-bin line of a start / restart run follows the command, never cut.
+  assert.deepEqual(entryLines({ label: "L", command: "c", exit: 0, native: "/env/python /odoo/odoo-bin", output: "x" },
+    false, 20), ["oasis: L (exit 0)", "$ c", "native: /env/python /odoo/odoo-bin", "x"]);
 });
 
 test("pickerRows lists the groups with their actions; selection skips group rows", () => {
@@ -443,8 +448,8 @@ test("askInputs asks a closed choice by its labels and shows its warning", async
   assert.deepEqual(script.notices, [`warning: ${RELOAD}`]);
 });
 
-function texts(form: RunForm, width = 200): string[] {
-  return form.lines(width).map((line) => line.text);
+function texts(form: RunForm, width = 200, room?: number): string[] {
+  return form.lines(width, room).map((line) => line.text);
 }
 
 test("RunForm asks database, dev mode and port in order; the last line is the command filled so far", () => {
@@ -555,3 +560,125 @@ test("wrapLine breaks at spaces, indents continuations and splits a word longer 
   assert.deepEqual(wrapLine("$ abcdefghijkl", 6), ["$", "  abcd", "  efgh", "  ijkl"]);
   assert.deepEqual(wrapLine("short", 40), ["short"]);
 });
+
+const MANY = Array.from({ length: 30 }, (_, index) => `cc_dev_${String(index).padStart(2, "0")}`);
+
+test("RunForm shows a window of a long list around the selected row; header and command stay (S1)", () => {
+  const header = "checkout: main\nserver: stopped\ndefault database: cc_dev_coffee";
+  const form = new RunForm({ catalog, action: action("server.run"), header, databases: MANY });
+  // 33 options (default, 30 databases, none, type a name) in 20 rows: 5 above the list, 2 below.
+  const view = (selected: string, above: string[], below: string[]) => {
+    const lines = texts(form, 200, 20);
+    assert.ok(lines.length <= 20, String(lines.length));
+    assert.deepEqual(lines.slice(0, 5), [...header.split("\n"), "", "Database (Enter for cc_dev_coffee, - for none)"]);
+    assert.deepEqual(lines.slice(-2), ["", `$ ${RUN} start --detach`]);
+    const list = lines.slice(5, -2);
+    assert.ok(list.includes(`› ${selected}`), list.join(" | "));
+    assert.deepEqual(list.filter((line) => line.includes(" more")), [...above, ...below]);
+    if (above.length) assert.equal(list[0], above[0]);
+    if (below.length) assert.equal(list.at(-1), below[0]);
+    assert.equal(list.length - above.length - below.length, 11);
+    return list;
+  };
+  const top = view("cc_dev_coffee (default)", [], ["  ↓ 22 more"]);
+  assert.equal(top[0], "› cc_dev_coffee (default)");
+  form.move(16);
+  const middle = view("cc_dev_15", ["  ↑ 6 more"], ["  ↓ 16 more"]);
+  assert.equal(middle.at(-2), "› cc_dev_15");
+  form.move(100);
+  const end = view("(type a name)", ["  ↑ 22 more"], []);
+  assert.equal(end.at(-1), "› (type a name)");
+  // The window stays while the selection is in it, and follows it when it leaves.
+  form.move(-1);
+  view("(none)", ["  ↑ 22 more"], []);
+  form.move(-25);
+  view("cc_dev_05", ["  ↑ 5 more"], ["  ↓ 17 more"]);
+  // Without a height (or a short list) the whole list is shown, as before.
+  assert.equal(texts(form).filter((line) => /^[ ›] /.test(line)).length, 33);
+  // The next question starts at the top of its own list.
+  form.submit();
+  assert.deepEqual(texts(form, 200, 12).slice(5, 9), ["Dev mode (Enter for off)", "› off", "  all (access, qweb, reload, xml)",
+    "  ↓ 6 more"]);
+});
+
+test("RunForm filters a list by typed text, case-insensitively; (none) and (type a name) stay (S2)", () => {
+  const form = new RunForm({ catalog, action: action("server.run"), header: "h",
+    databases: ["cc_dev_tea", "cc_test_COFFEE_old", "shop"] });
+  assert.equal(form.hint(), "↑↓ move · type to filter · enter choose · esc cancel");
+  form.type("Cof");
+  assert.deepEqual(texts(form), ["h", "", "Database (Enter for cc_dev_coffee, - for none)", "filter: Cof",
+    "› cc_dev_coffee (default)", "  cc_test_COFFEE_old", "  (none)", "  (type a name)", "", `$ ${RUN} start --detach`]);
+  assert.equal(form.hint(), "↑↓ move · backspace edits the filter · enter choose · esc clears the filter");
+  form.type("fee_");
+  assert.deepEqual(texts(form).slice(3, 7), ["filter: Coffee_", "› cc_test_COFFEE_old", "  (none)", "  (type a name)"]);
+  for (let index = 0; index < 5; index += 1) form.backspace();
+  assert.deepEqual(texts(form).slice(3, 6), ["filter: Co", "› cc_dev_coffee (default)", "  cc_test_COFFEE_old"]);
+  form.type("zz");
+  assert.deepEqual(texts(form).slice(3, -2), ["filter: Cozz", "  no match: backspace edits the filter",
+    "› (none)", "  (type a name)"]);
+  // Typing a name starts from the filter text.
+  form.move(1);
+  form.submit();
+  assert.deepEqual(texts(form).slice(2, 4), ["Database (Enter for cc_dev_coffee, - for none)", "> Cozz"]);
+  form.submit();
+  assert.equal(texts(form)[2], "Database: Cozz");
+  // A closed choice filters by its labels; nothing matching leaves Enter without effect.
+  form.type("REL");
+  assert.deepEqual(texts(form).slice(4, 8), ["filter: REL", "› all (access, qweb, reload, xml)", "  reload",
+    "  reload,xml"]);
+  form.move(2);
+  form.submit();
+  assert.equal(texts(form)[3], "Dev mode: reload,xml");
+  // A text input types as before; at the confirmation, typing filters nothing.
+  form.submit();
+  form.type("x");
+  assert.deepEqual(texts(form).slice(-6), ["HTTP port: 8069 (default)", "Run this command?", "› Run", "  Cancel", "",
+    `$ ${RUN} start --detach -d Cozz --dev reload,xml`]);
+});
+
+test("RunForm: esc clears a filter first, then cancels; a filter with no match ignores Enter (S2)", () => {
+  const form = new RunForm({ catalog, action: action("server.run"), header: "h", databases: ["cc_dev_tea"] });
+  form.type("tea");
+  form.escape();
+  assert.equal(form.finished, false);
+  assert.deepEqual(texts(form).slice(2, 7), ["Database (Enter for cc_dev_coffee, - for none)", "› cc_dev_coffee (default)",
+    "  cc_dev_tea", "  (none)", "  (type a name)"]);
+  form.submit();
+  form.type("nothing");
+  assert.deepEqual(texts(form).slice(3, -2), ["Dev mode (Enter for off)", "filter: nothing",
+    "  no match: backspace edits the filter"]);
+  form.submit();
+  assert.equal(form.input?.id, "dev");
+  form.escape();
+  form.escape();
+  assert.deepEqual([form.finished, form.result], [true, undefined]);
+});
+
+test("RunForm shows the native odoo-bin line abbreviated; the oasis line with a note while loading or failed (S4)",
+  async () => {
+    const pending = new Map<string, (result: CoreResult) => void>();
+    const native = nativeCommands((argv) => new Promise((resolve) => pending.set(argv.slice(3).join(" "), resolve)));
+    const form = new RunForm({ catalog, action: action("server.run"), header: "h", databases: [], native,
+      home: "/home/dev" });
+    assert.deepEqual(texts(form).slice(-3), ["", `$ ${RUN} start --detach`, "  (loading the odoo-bin command…)"]);
+    const line = "/home/dev/env/bin/python /home/dev/odoo/odoo-bin -c /home/dev/p/odoo.conf " +
+      "--addons-path=/home/dev/odoo/addons,/home/dev/odoo/odoo/addons,/home/dev/p/addons --http-port 8069";
+    pending.get("start --print-command")?.({ code: 0, stdout: `${line}\n`, stderr: "" });
+    assert.equal(await native.settled([...PREFIX, "start", "--print-command"]), line);
+    const shown = "$ ~/env/bin/python ~/odoo/odoo-bin -c ~/p/odoo.conf " +
+      "--addons-path=~/odoo/addons,~/odoo…o/addons,~/p/addons --http-port 8069";
+    assert.deepEqual(texts(form).slice(-2), ["", shown]);
+    // Wrapped, never truncated.
+    const narrow = form.lines(30).filter((item) => item.style === "command");
+    assert.ok(narrow.length > 2 && narrow.every((item) => item.text.length <= 30));
+    assert.equal(narrow.map((item) => item.text).join("").replaceAll(" ", ""), shown.replaceAll(" ", ""));
+    // New answers: the next drawing (after every key) reads their native line, the oasis line meanwhile.
+    form.submit();
+    assert.deepEqual(texts(form).slice(-2), [`$ ${RUN} start --detach -d cc_dev_coffee`, "  (loading the odoo-bin command…)"]);
+    assert.deepEqual([...pending.keys()], ["start --print-command", "start --print-command -d cc_dev_coffee"]);
+    pending.get("start --print-command -d cc_dev_coffee")?.({ code: 2, stdout: "", stderr: "unknown option\n" });
+    await native.settled([...PREFIX, "start", "--print-command", "-d", "cc_dev_coffee"]);
+    assert.deepEqual(texts(form).slice(-2), [`$ ${RUN} start --detach -d cc_dev_coffee`,
+      "  (the odoo-bin command is unavailable: exit 2; this is the oasis command)"]);
+    assert.equal(pending.size, 2);
+  });

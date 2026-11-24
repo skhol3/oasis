@@ -12,6 +12,7 @@ const ROOT = "/work/a project";
 const ENTRY = "/opt/oasis/oasis --project '/work/a project'";
 const CATALOG_ARGV = ["python3", "-B", "/opt/oasis/oasis", "--project", ROOT, "menu", "--catalog"];
 const NOT_PROJECT = "no oasis-workspace.toml at or above /elsewhere";
+const NATIVE = "/home/dev/env/bin/python /home/dev/odoo/odoo-bin -c '/work/a project/odoo.conf' -d cc_dev_coffee";
 const NON_TUI = "warning: oasis menu: the action panel needs the interactive terminal UI; run `oasis menu` in a terminal.";
 
 type Exec = (argv: string[], purpose: ExecPurpose) => Promise<CoreResult>;
@@ -60,6 +61,7 @@ function harness(options: Setup = {}) {
       return (purpose === "catalog" ? catalog : exec)(argv, purpose);
     },
     exists: () => options.exists ?? true,
+    home: "/home/dev",
     readLog: () => "",
     appendEntry: (entry) => entries.push(entry),
     remember: async (root, id, answers) => {
@@ -383,7 +385,11 @@ test("start / restart lists the databases, then asks everything in one form that
   const answers = { database: "cc_dev_coffee", dev: "all", port: "" };
   const { open, context, events, entries, forms, remembered } = harness({
     pick: "server.run", form: answers,
-    exec: async (argv) => ({ code: 0, stdout: argv.includes("list-databases") ? "cc_dev_coffee\n" : "pid=1\n", stderr: "" }),
+    exec: async (argv) => ({
+      code: 0, stderr: "",
+      stdout: argv.includes("list-databases") ? "cc_dev_coffee\n"
+        : argv.includes("--print-command") ? `${NATIVE}\n` : "pid=1\n",
+    }),
   });
   await open(context());
   assert.deepEqual(events.slice(1), [
@@ -393,6 +399,8 @@ test("start / restart lists the databases, then asks everything in one form that
     `exec list in ${ROOT}: /opt/oasis/oasis --project ${ROOT} list-databases`,
     "status -",
     "form server.run",
+    // S4: the native line of the chosen answers, asked before the run (the form asks it while open).
+    `exec print in ${ROOT}: /opt/oasis/oasis --project ${ROOT} start --print-command -d cc_dev_coffee --dev all`,
     `info: oasis menu: running ${ENTRY} start --detach -d cc_dev_coffee --dev all`,
     "status oasis: Start / restart the server",
     `exec run in ${ROOT}: /opt/oasis/oasis --project ${ROOT} start --detach -d cc_dev_coffee --dev all`,
@@ -400,7 +408,10 @@ test("start / restart lists the databases, then asks everything in one form that
   ]);
   assert.deepEqual([forms[0].databases, forms[0].answers, forms[0].header],
     [["cc_dev_coffee"], undefined, "checkout: main\nserver: stopped\ndefault database: cc_dev_coffee"]);
-  assert.deepEqual(entries.map((entry) => entry.command), [`${ENTRY} start --detach -d cc_dev_coffee --dev all`]);
+  assert.deepEqual(entries.map((entry) => [entry.command, entry.native]),
+    [[`${ENTRY} start --detach -d cc_dev_coffee --dev all`, NATIVE]]);
+  assert.equal(forms[0].home, "/home/dev");
+  assert.ok(forms[0].native);
   assert.deepEqual(remembered, [`${ROOT}: server.run ${JSON.stringify(answers)}`]);
   const cancelled = harness({ pick: "server.run" });
   await cancelled.open(cancelled.context());
@@ -425,4 +436,31 @@ test("Repeat runs the remembered answers after the same preview and confirmation
   assert.deepEqual(restart.events.slice(1, 3), ["pick", "form server.run"]);
   assert.deepEqual(restart.forms[0].answers, run);
   assert.deepEqual(restart.entries.map((entry) => entry.command), [`${ENTRY} start --detach --http-port 8070`]);
+});
+
+test("start / restart still runs when its native line cannot be read; the entry then has none (S4)", async () => {
+  for (const print of [
+    async () => ({ code: 2, stdout: "", stderr: "start: unknown option --print-command\n" }),
+    async () => {
+      throw new Error("spawn python3 ENOENT");
+    },
+  ]) {
+    const answers = { database: "", dev: "", port: "8070" };
+    const { open, context, events, entries } = harness({
+      pick: "server.run", repeat: answers, form: answers,
+      exec: async (argv) => (argv.includes("--print-command") ? print() : { code: 0, stdout: "pid=1\n", stderr: "" }),
+    });
+    await open(context());
+    assert.deepEqual(events.slice(1), [
+      "pick", "form server.run",
+      `exec print in ${ROOT}: /opt/oasis/oasis --project ${ROOT} start --print-command --http-port 8070`,
+      `info: oasis menu: running ${ENTRY} start --detach --http-port 8070`,
+      "status oasis: Start / restart the server",
+      `exec run in ${ROOT}: /opt/oasis/oasis --project ${ROOT} start --detach --http-port 8070`,
+      "status -",
+    ]);
+    assert.deepEqual(entries, [{
+      label: "Start / restart the server", command: `${ENTRY} start --detach --http-port 8070`, exit: 0, output: "pid=1",
+    }]);
+  }
 });
