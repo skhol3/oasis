@@ -9,6 +9,10 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-24
+
+A one-screen map of a module from source: `module-info`.
+
 ### Added
 
 - `module-info <module> [--section <name>]`: a one-screen map of one module from its source,
@@ -599,7 +603,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/skhol3/oasis/releases/tag/v0.10.0
 [0.9.0]: https://github.com/skhol3/oasis/releases/tag/v0.9.0
 [0.8.0]: https://github.com/skhol3/oasis/releases/tag/v0.8.0
 [0.7.1]: https://github.com/skhol3/oasis/releases/tag/v0.7.1
