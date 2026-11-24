@@ -164,4 +164,9 @@ test("viewInfoArgs forwards the optional type and module filters", () => {
 test("moduleInfoArgs forwards the optional section", () => {
   assert.deepEqual(moduleInfoArgs({ module: "sale_mrp" }), ["module-info", "sale_mrp"]);
   assert.deepEqual(moduleInfoArgs({ module: "sale_mrp", section: "views" }), ["module-info", "sale_mrp", "--section", "views"]);
+  // Any given section goes to the CLI, which reports an invalid one; only undefined means none.
+  assert.deepEqual(moduleInfoArgs({ module: "sale_mrp", section: "" }), ["module-info", "sale_mrp", "--section", ""]);
+  assert.deepEqual(moduleInfoArgs({ module: "sale_mrp", section: "bogus" }), [
+    "module-info", "sale_mrp", "--section", "bogus",
+  ]);
 });

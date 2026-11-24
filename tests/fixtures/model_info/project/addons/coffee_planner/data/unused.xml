@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <!-- On disk, not in the manifest. -->
+    <!-- On disk, not in the manifest: merged after the listed files. -->
+    <record id="action_server_renew" model="ir.actions.server">
+        <field name="name">Renew all</field>
+    </record>
 </odoo>

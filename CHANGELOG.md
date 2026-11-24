@@ -23,9 +23,17 @@ A one-screen map of a module from source: `module-info`.
   on disk the manifest does not list and listed files that are missing, and the test files with
   their classes. Python is parsed with `ast`, XML with expat and CSV with `csv`; nothing is
   imported or executed. Long lists end with `+<n> more`; `--section` prints one section
-  uncapped. An unknown module exits 1 with `module not found: <module>`. New command: nothing
-  existing changes.
-- Agent tool `oasis_module_info` (module, optional section), active in Odoo projects and in the
+  uncapped. An unknown module exits 1 with `module not found: <module>`. The manifest is the
+  first dict literal of `__manifest__.py` (a leading docstring is fine); one that cannot be
+  parsed or holds no literal dict is named in the header as `manifest: unreadable (<reason>)`.
+  An XML id written more than once is shown once with the fields of its writes merged in load
+  order (manifest `data` and `demo` order), and actions and crons end with `(written <n> times)`.
+  Writes from files the manifest does not list, which Odoo never loads, are ignored; an id
+  written only in such files is shown marked `(not loaded: file not in manifest)`. With an
+  unreadable manifest all writes merge in path order and `--section data` names the reason on
+  its first line. New command: nothing existing changes.
+- Agent tool `oasis_module_info` (module, optional section; any given section, even an empty
+  one, reaches the CLI, which reports an invalid one), active in Odoo projects and in the
   overlay of both subagents (read-only). Some lines of the prompt section were shortened to
   keep it under 1200 characters.
 - Action menu: **Modules** › "Show a module's overview from source" runs `module-info`.

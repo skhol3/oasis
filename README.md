@@ -316,10 +316,10 @@ security: 5 access rules, 2 record rules, 1 group
   access coffee.subscription.renew, res.partner: base.group_user rwc-
   rule rule_subscription_user: coffee.subscription, groups base.group_user, group_planner_manager
   rule rule_subscription_line_global: coffee.subscription.line, global
-data: 7 data files, 1 demo, 1 cron, 1 not in manifest, 1 missing
-  data: security/security.xml, security/ir.model.access.csv, views/subscription_views.xml, views/account_move_views.xml, report/subscription_report.xml, data/cron.xml, views/missing.xml
+data: 8 data files, 1 demo, 1 cron, 1 not in manifest, 1 missing
+  data: security/security.xml, security/ir.model.access.csv, views/subscription_views.xml, views/account_move_views.xml, report/subscription_report.xml, data/cron.xml, data/a_cron_override.xml, views/missing.xml
   demo: demo/demo.xml
-  cron ir_cron_renew "Renew subscriptions": every 1 days, coffee.subscription
+  cron ir_cron_renew "Renew subscriptions": every 2 weeks, coffee.subscription (written 2 times)
   not in manifest: data/unused.xml
   missing on disk: views/missing.xml
 tests: 2 files, 3 classes, 3 test methods
@@ -328,14 +328,16 @@ tests: 2 files, 3 classes, 3 test methods
 skipped: models/broken.py (Python error at line 2)
 ```
 
-- The header gives the manifest `version`, its `summary` (or `name`), `depends` and the addons root the module was found in.
+- The header gives the manifest `version`, its `summary` (or `name`), `depends` and the addons root the module was found in. The manifest is the first dict literal of `__manifest__.py` (a leading docstring or comment is fine); when the file cannot be parsed or holds no literal dict, `manifest: unreadable (<reason>)` replaces the `depends:` line and the other sections are still printed.
 - `models`: each class that defines a model (`_name`, `"_description"`, `transient` or `abstract`, `(+...)` for `_inherit` mixins) and, as `extends`, each class that extends one (`_inherit` without a new `_name`), with the number of fields the class adds or overrides and its `file:line`.
 - `views`: the base views of each model by type, then the extensions of each inherited view with their count. Only the module's own views count.
 - `menus`: the menu tree with names and XML ids; a top menu whose parent belongs to another module ends with `under <XML id>`.
-- `actions`: window actions with their `res_model`, server actions with their model, reports with their model and type, client and URL actions. An id written more than once is listed once with `(written <n> times)`.
+- `actions`: window actions with their `res_model`, server actions with their model, reports with their model and type, client and URL actions.
 - `security`: the groups the module defines, the `ir.model.access.csv` lines per model with each group and its flags (`r`ead, `w`rite, `c`reate, `u`nlink, `-` when not granted; `everyone` for a line without a group; models with the same access share a line) and record rules with their model and groups (`global` without groups). A model the module does not name elsewhere is shown as its model XML id (`mrp.model_mrp_bom_line`).
 - `data`: the manifest `data` and `demo` files in order, crons with their interval and model, XML and CSV files on disk that the manifest does not list, and listed files that do not exist.
 - `tests`: the files of `tests/` with their classes and number of test methods.
+- An XML id written more than once (a record the module writes again in another file, or twice in one) is shown once, with the fields of its writes applied in load order: the manifest `data` and `demo` files in their order, and document order within a file. So a later write that changes `res_model`, a name or a cron interval is what you see. It is listed where its first loaded write stands, and actions and crons end with `(written <n> times)`, counting loaded writes only.
+- Odoo never loads a data file the manifest does not list. Its writes are ignored for an id that a listed file also writes (in the example, `data/unused.xml` renames `action_server_renew`, which changes nothing). An id written only in unlisted files is still shown, from those files in path order, and ends with `(not loaded: file not in manifest)`; the files themselves appear under `not in manifest:`. When the manifest cannot be read, every file counts as unlisted: all writes are merged in path order and nothing is marked, and `--section data` starts with `manifest: unreadable (<reason>)`.
 - Paths are relative to the module directory, and the module's own XML ids are shown without the module prefix, as its files write them (pass `<module>.<id>` to `xmlid-info`). An empty section prints `<section>: none`; `skipped:` names Python or XML files that could not be parsed.
 - Lists stop at 10 lines, and comma-separated lists at 25 names, each ending with `+<n> more (--section <name>)`. `--section models|views|menus|actions|security|data|tests` prints only that section, uncapped.
 - Exit status: 0 when found, 1 with `module not found: <module>`, 2 for a usage error (unknown option, invalid module name or section).

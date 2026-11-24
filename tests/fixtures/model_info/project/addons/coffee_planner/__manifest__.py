@@ -11,6 +11,7 @@
         './views/account_move_views.xml',
         'report/subscription_report.xml',
         'data/cron.xml',
+        'data/a_cron_override.xml',
         'views/missing.xml',
     ],
     'demo': ['demo/demo.xml'],

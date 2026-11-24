@@ -26,8 +26,7 @@ depends, the addons root it was found in), then one section each for
   views     base views per model and type, and the extensions per inherited view (the
             module's own views only)
   menus     the menu tree (name and XML id; `under <id>` for a parent of another module)
-  actions   window actions (res_model), server actions, reports, client and URL actions; an
-            id written more than once is listed once with `(written <n> times)`
+  actions   window actions (res_model), server actions, reports, client and URL actions
   security  groups, ir.model.access.csv lines per model (groups with read, write, create,
             unlink flags: rwcu, `-` when not granted; `everyone` without a group; models with
             the same access share a line) and record rules (model and groups, or global); a
@@ -38,7 +37,15 @@ depends, the addons root it was found in), then one section each for
 Paths are relative to the module directory; XML ids of the module itself are shown without the
 module prefix. Lists stop at 10 lines (25 names in a comma-separated list) and end with the
 count of the rest; --section <name> prints only that section, uncapped.
-`skipped:` names Python or XML files that could not be parsed.
+An XML id written more than once is shown once, with the fields of its writes applied in load
+order (the manifest data and demo files in order; document order within a file) and
+`(written <n> times)` on actions and crons. Odoo never loads files the manifest does not list:
+their writes are ignored for an id written in a listed file, and an id written only in such
+files is shown from them (path order) with `(not loaded: file not in manifest)`. With an
+unreadable manifest every write counts, in path order, unmarked.
+The manifest is the first dict literal of __manifest__.py; without one the header says
+`manifest: unreadable (<reason>)` (so does the first line of --section data). `skipped:` names
+Python or XML files that could not be parsed.
 Scans the same roots as model-info (Odoo source, optional Enterprise source, the profile's
 tooling addon roots; the first module with a name wins; Odoo/Enterprise source test_* modules
 are not modules). static/, i18n/, migrations/ and upgrades/ are skipped, and tests/ is read only
@@ -87,7 +94,7 @@ class Module:
         self.name, self.root, self.directory = name, root, directory
         self.model_info, self.xml_info = model_info, xml_info
         self.skipped = []
-        self.manifest = self.read_manifest()
+        self.manifest, self.manifest_error = self.read_manifest()
         self.classes = self.read_classes()
         self.records = self.read_records()
         self.known = {entry['model'] for entry in self.classes}
@@ -98,13 +105,20 @@ class Module:
         return path.relative_to(self.directory).as_posix()
 
     def read_manifest(self):
+        """(the first top-level dict literal, None) or ({}, why it cannot be read)."""
         try:
             tree = ast.parse((self.directory / '__manifest__.py').read_bytes())
-        except (OSError, SyntaxError, ValueError):
-            return {}
-        expressions = [node for node in tree.body if isinstance(node, ast.Expr)]
-        value = self.model_info.literal(expressions[0].value) if expressions else None
-        return value if isinstance(value, dict) else {}
+        except SyntaxError as exc:
+            return {}, f'Python error at line {exc.lineno}'
+        except (OSError, ValueError):
+            return {}, 'cannot be read'
+        # A leading docstring or another expression comes before the dict in some manifests.
+        found = next((node.value for node in tree.body
+                      if isinstance(node, ast.Expr) and isinstance(node.value, ast.Dict)), None)
+        if found is None:
+            return {}, 'no dict literal'
+        value = self.model_info.literal(found)
+        return (value, None) if isinstance(value, dict) else ({}, 'the dict is not a literal')
 
     def parse_python(self, path):
         try:
@@ -169,15 +183,41 @@ class Module:
             for record in found:
                 record['module'], record['path'] = self.name, self.relative(path)
                 records.append(record)
-        # An id written more than once is listed once, at its first record, with the count.
-        unique = {}
+        return self.merge(records)
+
+    def merge(self, records):
+        """One record per XML id, listed where its first loaded write stands in file-path order,
+        with the fields of its writes applied in load order and `writes` their count.
+
+        Load order: the manifest data and demo files in their order; within a file, document
+        order. Odoo never loads a file the manifest does not list, so such writes are ignored when
+        the id has a write in a listed file. An id written only in unlisted files is kept (its
+        writes in path order) with `unloaded` set. With an unreadable manifest nothing is known to
+        be listed or unlisted: every write counts, in path order, and none is marked.
+        """
+        listed = self.manifest_files('data') + self.manifest_files('demo')
+        rank = {path: index for index, path in reversed(list(enumerate(listed)))}
+        writes = {}
         for record in records:
-            if record['id'] in unique:
-                unique[record['id']]['writes'] += 1
-            else:
-                record['writes'] = 1
-                unique[record['id']] = record
-        return list(unique.values())
+            writes.setdefault(record['id'], []).append(record)
+        loaded = {}
+        for key, group in writes.items():
+            kept = [item for item in group if item['path'] in rank]
+            loaded[key] = sorted(kept, key=lambda item: rank[item['path']]) if kept else group  # stable
+        merged = []
+        for record in records:
+            ordered = loaded[record['id']]
+            if ordered[0] is not record:
+                continue
+            result = dict(record, fields={}, writes=len(ordered),
+                          unloaded=self.manifest_error is None and record['path'] not in rank)
+            for write in ordered:
+                result['fields'].update(write['fields'])
+                for key in ('model', 'arch_root'):
+                    if write[key]:
+                        result[key] = write[key]
+            merged.append(result)
+        return merged
 
     # -- helpers -------------------------------------------------------------------------------
 
@@ -221,6 +261,15 @@ def joined(names, section, cap):
     return ', '.join(names)
 
 
+def written(record):
+    return f' (written {record["writes"]} times)' if record['writes'] > 1 else ''
+
+
+def unloaded(record):
+    """The mark of an id that only files the manifest does not list write."""
+    return ' (not loaded: file not in manifest)' if record['unloaded'] else ''
+
+
 def quoted(text):
     if not isinstance(text, str) or not text:
         return ''
@@ -261,12 +310,12 @@ def views_section(module, cap):
         return ['views: none']
     base_lines = []
     for model in sorted(bases, key=lambda name: (name == '', name)):
-        listed = [f'{xml_info.view_type(record)} {module.short(record["id"])}'
+        listed = [f'{xml_info.view_type(record)} {module.short(record["id"])}{unloaded(record)}'
                   for record in sorted(bases[model], key=xml_info.base_order)]
         base_lines.append(f'  {model or "(no model)"}: {joined(listed, "views", NAME_CAP if cap else None)}')
     extension_lines = []
     for parent in sorted(extensions):
-        listed = [module.short(record['id']) for record in extensions[parent]]
+        listed = [module.short(record['id']) + unloaded(record) for record in extensions[parent]]
         extension_lines.append(f'  extends {module.short(parent)} ({len(listed)}): '
                                f'{joined(listed, "views", NAME_CAP if cap else None)}')
     total = sum(len(items) for items in bases.values())
@@ -291,7 +340,7 @@ def menus_section(module, cap):
         parent = record['fields'].get('parent')
         if depth == 1 and parent:
             text += f' under {module.short(parent)}'
-        lines.append(text)
+        lines.append(text + unloaded(record))
         for child in children.get(record['id'], []):
             walk(child, depth + 1)
 
@@ -319,9 +368,7 @@ def actions_section(module, cap):
         text = f'  {kind} {module.short(record["id"])}: {model}{quoted(fields.get("name"))}'
         if kind == 'report' and fields.get('report_type'):
             text += ' ' + fields['report_type']
-        if record['writes'] > 1:
-            text += f' (written {record["writes"]} times)'
-        lines.append(text)
+        lines.append(text + written(record) + unloaded(record))
     if not lines:
         return ['actions: none']
     return [f'actions: {len(lines)}'] + capped(lines, 'actions', cap)
@@ -349,7 +396,7 @@ def access_lines(module):
 
 
 def security_section(module, cap):
-    groups = [f'  group {module.short(record["id"])}{quoted(record["fields"].get("name"))}'
+    groups = [f'  group {module.short(record["id"])}{quoted(record["fields"].get("name"))}{unloaded(record)}'
               for record in module.of_model('res.groups')]
     rows = access_lines(module)
     per_model = {}
@@ -367,7 +414,7 @@ def security_section(module, cap):
         names = [module.short(module.xml_info.qualify(module.name, item))
                  for item in GROUP_REF.findall(record['fields'].get('groups', ''))]
         rules.append(f'  rule {module.short(record["id"])}: {model}, '
-                     + (f'groups {", ".join(names)}' if names else 'global'))
+                     + (f'groups {", ".join(names)}' if names else 'global') + unloaded(record))
     if not groups and not rows and not rules:
         return ['security: none']
     return ([f'security: {plural(len(rows), "access rule")}, {plural(len(rules), "record rule")}, '
@@ -384,7 +431,7 @@ def data_section(module, cap):
         text = f'  cron {module.short(record["id"])}{quoted(fields.get("name"))}:'
         if fields.get('interval_number') or fields.get('interval_type'):
             text += f' every {fields.get("interval_number", "1")} {fields.get("interval_type", "?")},'
-        crons.append(f'{text} {module.model_of_ref(fields.get("model_id", ""))}')
+        crons.append(f'{text} {module.model_of_ref(fields.get("model_id", ""))}{written(record)}{unloaded(record)}')
     listed = set(data) | set(demo)
     on_disk = [module.relative(path) for path in module.xml_info.files_of(module.directory, ('.xml', '.csv'))]
     unlisted = [path for path in on_disk if path not in listed]
@@ -450,6 +497,9 @@ def header(module):
                   if isinstance(manifest.get(key), str) and manifest[key].strip()), None)
     if title:
         text += ' — ' + ' '.join(title.split())
+    if module.manifest_error:
+        # Not an empty manifest: say why there is no version, title or depends to show.
+        return [text, f'manifest: unreadable ({module.manifest_error})', f'root: {module.root}']
     depends = [item for item in manifest.get('depends', []) if isinstance(item, str)] \
         if isinstance(manifest.get('depends'), (list, tuple)) else []
     return [text, 'depends: ' + (', '.join(depends) or 'none'), f'root: {module.root}']
@@ -479,6 +529,9 @@ def main(arguments):
     module = Module(name, *found, model_info, xml_info)
     if section:
         lines = RENDER[section](module, None)
+        if section == 'data' and module.manifest_error:
+            # Without the header, say why every file shows as not in the manifest.
+            lines.insert(0, f'manifest: unreadable ({module.manifest_error})')
     else:
         lines = header(module)
         for key in SECTIONS:
