@@ -1,0 +1,752 @@
+{
+  "catalog_version": 1,
+  "project": "/work/a project",
+  "entrypoint": "/opt/oasis/oasis",
+  "server_log": "/work/a project/dev/logs/odoo19/server.log",
+  "sources": {
+    "modules": {
+      "choices": [
+        "coffee"
+      ]
+    },
+    "databases": {
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "list-databases"
+      ],
+      "waiting": "Listing databases (this may start the database service)..."
+    }
+  },
+  "groups": [
+    {
+      "id": "server",
+      "label": "Server"
+    },
+    {
+      "id": "modules",
+      "label": "Modules"
+    },
+    {
+      "id": "tests",
+      "label": "Tests"
+    },
+    {
+      "id": "maintenance",
+      "label": "Databases and maintenance"
+    }
+  ],
+  "actions": [
+    {
+      "id": "server.start",
+      "group": "server",
+      "label": "Start the server in the background",
+      "kind": "command",
+      "command": "start",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "start",
+        "--detach",
+        {
+          "input": "database",
+          "option": "-d"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "database",
+          "label": "Database",
+          "kind": "choice",
+          "source": "databases",
+          "required": false,
+          "allow_new": true,
+          "pattern": "^[A-Za-z0-9_]+$",
+          "error": "Database name must use only letters, numbers, and underscores.",
+          "default": null,
+          "hint": "Enter to start without -d"
+        }
+      ],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "server.stop",
+      "group": "server",
+      "label": "Stop the server",
+      "kind": "command",
+      "command": "stop",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "stop"
+      ],
+      "inputs": [],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "server.logs",
+      "group": "server",
+      "label": "Show the end of the server log",
+      "kind": "log",
+      "command": null,
+      "argv": [
+        "tail",
+        "-n",
+        "200",
+        "/work/a project/dev/logs/odoo19/server.log"
+      ],
+      "inputs": [],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "server.status",
+      "group": "server",
+      "label": "Show the server and database service status",
+      "kind": "command",
+      "command": "status",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "status"
+      ],
+      "inputs": [],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "server.stop_database",
+      "group": "server",
+      "label": "Stop the database service",
+      "kind": "command",
+      "command": "stop",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "stop",
+        "--database"
+      ],
+      "inputs": [],
+      "destructive": true,
+      "confirm": "yes",
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "modules.install",
+      "group": "modules",
+      "label": "Install a module",
+      "kind": "command",
+      "command": "install-module",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "install-module",
+        {
+          "input": "demo",
+          "flag": "--with-demo"
+        },
+        {
+          "input": "module"
+        },
+        {
+          "input": "database"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "module",
+          "label": "Module",
+          "kind": "choice",
+          "source": "modules",
+          "required": true,
+          "allow_new": false,
+          "pattern": null,
+          "error": null,
+          "default": null,
+          "hint": null
+        },
+        {
+          "id": "database",
+          "label": "Database",
+          "kind": "choice",
+          "source": "databases",
+          "required": false,
+          "allow_new": true,
+          "pattern": "^[A-Za-z0-9_]+$",
+          "error": "Database name must use only letters, numbers, and underscores.",
+          "default": null,
+          "hint": "Enter for cc_dev_<module>"
+        },
+        {
+          "id": "demo",
+          "label": "Load demo data",
+          "kind": "boolean",
+          "source": null,
+          "required": false,
+          "allow_new": false,
+          "pattern": null,
+          "error": null,
+          "default": false,
+          "hint": null
+        }
+      ],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "modules.update",
+      "group": "modules",
+      "label": "Update a module",
+      "kind": "command",
+      "command": "update-module",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "update-module",
+        {
+          "compact": "--compact"
+        },
+        {
+          "input": "module"
+        },
+        {
+          "input": "database"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "module",
+          "label": "Module",
+          "kind": "choice",
+          "source": "modules",
+          "required": true,
+          "allow_new": false,
+          "pattern": null,
+          "error": null,
+          "default": null,
+          "hint": null
+        },
+        {
+          "id": "database",
+          "label": "Database",
+          "kind": "choice",
+          "source": "databases",
+          "required": true,
+          "allow_new": true,
+          "pattern": "^[A-Za-z0-9_]+$",
+          "error": "Database name must use only letters, numbers, and underscores.",
+          "default": null,
+          "hint": null
+        }
+      ],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "modules.status",
+      "group": "modules",
+      "label": "Show a module's state",
+      "kind": "command",
+      "command": "module-status",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "module-status",
+        {
+          "input": "module"
+        },
+        {
+          "input": "database"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "module",
+          "label": "Module",
+          "kind": "choice",
+          "source": "modules",
+          "required": true,
+          "allow_new": false,
+          "pattern": null,
+          "error": null,
+          "default": null,
+          "hint": null
+        },
+        {
+          "id": "database",
+          "label": "Database",
+          "kind": "choice",
+          "source": "databases",
+          "required": true,
+          "allow_new": true,
+          "pattern": "^[A-Za-z0-9_]+$",
+          "error": "Database name must use only letters, numbers, and underscores.",
+          "default": null,
+          "hint": null
+        }
+      ],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "modules.init_dev",
+      "group": "modules",
+      "label": "Create a development database with role accounts",
+      "kind": "command",
+      "command": "init-dev-database",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "init-dev-database",
+        {
+          "input": "demo",
+          "flag": "--with-demo"
+        },
+        {
+          "input": "module"
+        },
+        {
+          "input": "database"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "module",
+          "label": "Module",
+          "kind": "choice",
+          "source": "modules",
+          "required": true,
+          "allow_new": false,
+          "pattern": null,
+          "error": null,
+          "default": null,
+          "hint": null
+        },
+        {
+          "id": "database",
+          "label": "New database name",
+          "kind": "text",
+          "source": null,
+          "required": true,
+          "allow_new": false,
+          "pattern": "^[A-Za-z0-9_]+$",
+          "error": "Database name must use only letters, numbers, and underscores.",
+          "default": null,
+          "hint": null
+        },
+        {
+          "id": "demo",
+          "label": "Load demo data",
+          "kind": "boolean",
+          "source": null,
+          "required": false,
+          "allow_new": false,
+          "pattern": null,
+          "error": null,
+          "default": false,
+          "hint": null
+        }
+      ],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": true
+    },
+    {
+      "id": "tests.module",
+      "group": "tests",
+      "label": "Test a module",
+      "kind": "command",
+      "command": "test-module",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "test-module",
+        {
+          "compact": "--compact"
+        },
+        {
+          "input": "module"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "module",
+          "label": "Module",
+          "kind": "choice",
+          "source": "modules",
+          "required": true,
+          "allow_new": false,
+          "pattern": null,
+          "error": null,
+          "default": null,
+          "hint": null
+        }
+      ],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "tests.class",
+      "group": "tests",
+      "label": "Test one class or method",
+      "kind": "command",
+      "command": "test-module",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "test-module",
+        {
+          "compact": "--compact"
+        },
+        {
+          "input": "only",
+          "option": "--only"
+        },
+        {
+          "input": "module"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "module",
+          "label": "Module",
+          "kind": "choice",
+          "source": "modules",
+          "required": true,
+          "allow_new": false,
+          "pattern": null,
+          "error": null,
+          "default": null,
+          "hint": null
+        },
+        {
+          "id": "only",
+          "label": "Test class (Class or Class.method)",
+          "kind": "text",
+          "source": null,
+          "required": true,
+          "allow_new": false,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+          "error": "--only takes a test class or Class.method.",
+          "default": null,
+          "hint": null
+        }
+      ],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "tests.reuse",
+      "group": "tests",
+      "label": "Test reusing the test database",
+      "kind": "command",
+      "command": "test-module",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "test-module",
+        {
+          "compact": "--compact"
+        },
+        "--reuse",
+        {
+          "input": "only",
+          "option": "--only"
+        },
+        {
+          "input": "module"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "module",
+          "label": "Module",
+          "kind": "choice",
+          "source": "modules",
+          "required": true,
+          "allow_new": false,
+          "pattern": null,
+          "error": null,
+          "default": null,
+          "hint": null
+        },
+        {
+          "id": "only",
+          "label": "Test class (Class or Class.method)",
+          "kind": "text",
+          "source": null,
+          "required": false,
+          "allow_new": false,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
+          "error": "--only takes a test class or Class.method.",
+          "default": null,
+          "hint": "Enter for every test of the module"
+        }
+      ],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "maintenance.create_database",
+      "group": "maintenance",
+      "label": "Create a database",
+      "kind": "command",
+      "command": "create-database",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "create-database",
+        {
+          "input": "database"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "database",
+          "label": "New database name",
+          "kind": "text",
+          "source": null,
+          "required": true,
+          "allow_new": false,
+          "pattern": "^[A-Za-z0-9_]+$",
+          "error": "Database name must use only letters, numbers, and underscores.",
+          "default": null,
+          "hint": null
+        }
+      ],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "maintenance.drop_database",
+      "group": "maintenance",
+      "label": "Drop a database",
+      "kind": "command",
+      "command": "drop-database",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "drop-database",
+        {
+          "input": "database"
+        },
+        {
+          "input": "terminate",
+          "flag": "--terminate"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "database",
+          "label": "Database",
+          "kind": "choice",
+          "source": "databases",
+          "required": true,
+          "allow_new": true,
+          "pattern": "^[A-Za-z0-9_]+$",
+          "error": "Database name must use only letters, numbers, and underscores.",
+          "default": null,
+          "hint": null
+        },
+        {
+          "id": "terminate",
+          "label": "Close its open sessions first (--terminate)",
+          "kind": "boolean",
+          "source": null,
+          "required": false,
+          "allow_new": false,
+          "pattern": null,
+          "error": null,
+          "default": false,
+          "hint": null
+        }
+      ],
+      "destructive": true,
+      "confirm": "database",
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "maintenance.gc",
+      "group": "maintenance",
+      "label": "List leftover test databases",
+      "kind": "command",
+      "command": "gc",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "gc"
+      ],
+      "inputs": [],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "maintenance.gc_apply",
+      "group": "maintenance",
+      "label": "Drop leftover test databases",
+      "kind": "command",
+      "command": "gc",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "gc",
+        "--apply"
+      ],
+      "inputs": [],
+      "destructive": true,
+      "confirm": "yes",
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "maintenance.doctor",
+      "group": "maintenance",
+      "label": "Check the environment (doctor)",
+      "kind": "command",
+      "command": "doctor",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "doctor"
+      ],
+      "inputs": [],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "maintenance.migrate_plan",
+      "group": "maintenance",
+      "label": "Show the workspace migration plan",
+      "kind": "command",
+      "command": "migrate",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "migrate",
+        "--plan"
+      ],
+      "inputs": [],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
+      "id": "maintenance.migrate",
+      "group": "maintenance",
+      "label": "Migrate to the workspace file",
+      "kind": "command",
+      "command": "migrate",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "migrate",
+        "--apply"
+      ],
+      "inputs": [],
+      "destructive": true,
+      "confirm": "yes",
+      "user_run": true,
+      "terminal_only": false
+    },
+    {
+      "id": "maintenance.worktree",
+      "group": "maintenance",
+      "label": "Create a linked worktree",
+      "kind": "command",
+      "command": "worktree-init",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "worktree-init",
+        {
+          "input": "feature"
+        },
+        {
+          "input": "branch"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "feature",
+          "label": "Feature name",
+          "kind": "text",
+          "source": null,
+          "required": true,
+          "allow_new": false,
+          "pattern": null,
+          "error": null,
+          "default": null,
+          "hint": null
+        },
+        {
+          "id": "branch",
+          "label": "Branch",
+          "kind": "text",
+          "source": null,
+          "required": true,
+          "allow_new": false,
+          "pattern": null,
+          "error": null,
+          "default": null,
+          "hint": null
+        }
+      ],
+      "destructive": false,
+      "confirm": null,
+      "user_run": true,
+      "terminal_only": false
+    }
+  ]
+}

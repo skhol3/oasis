@@ -9,6 +9,37 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-23
+
+An action menu to run Odoo operations by hand: `oasis menu` in a terminal and a pop-up panel in
+Gentle Shell (`alt+o`), both from one catalog; `start --detach` runs the server in the background.
+
+### Added
+
+- `oasis menu`: numbered menus of the everyday actions of a checkout (server, modules, tests,
+  databases and maintenance) that ask the inputs, show the exact command before running it and
+  ask you to type the database name or `yes` before a destructive action. It needs a terminal
+  (exit 2 without one). `oasis menu --catalog` prints the same actions as JSON for the Gentle
+  Shell panel; `tools/actions.py` is the only list of actions.
+- `start --detach [odoo options]`: starts the checkout's server in the background with its
+  output appended to `server.log` in the compact log directory (`dev/logs/odoo19/`, or
+  `<logs>/<slug or main>/` with `[tooling].logs`), prints `pid=<pid> port=<port> log=<path>`
+  and returns; a server that exits at once is reported with the end of its log (exit 1). The
+  record and `stop` are the same. Without `--detach`, `start` is unchanged.
+- Gentle Shell action panel: `alt+o` (`OASIS_MENU_KEY` changes it; empty or `off` disables it)
+  and `/oasis menu` open an overlay with the actions of `oasis menu --catalog`. It asks the inputs
+  with Pi's dialogs, confirms destructive and user-run actions as the catalog says, runs the exact
+  command in the project root and shows it with its output (compact for `test-module` and
+  `update-module`) as a session entry that is never sent to the model. No agent tool opens it.
+- The bash guard of the Gentle Shell layer blocks agents from running `oasis menu` or `odoo19
+  menu`, `--catalog` included, and the menu's scripts `tools/menu` and `tools/actions.py` when
+  they are oasis's: each is resolved against the session's directory and literal `cd`/`pushd`
+  targets in the same command, and blocked when its `tools` directory sits next to the `oasis`
+  entry point and `tools/actions.py` (the installed bundle, an oasis checkout), also when run
+  relatively. A `tools/menu` of another project is not blocked; asking only for help is allowed.
+- In the terminal menu a number picks from the list and is never taken as a new name; a listed
+  value made of digits (a database named `2024`) is taken as written.
+
 ## [0.8.0] - 2026-11-23
 
 The harness names itself oasis in what it sets and prints. Everything existing keeps working;
@@ -551,7 +582,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/skhol3/oasis/releases/tag/v0.9.0
 [0.8.0]: https://github.com/skhol3/oasis/releases/tag/v0.8.0
 [0.7.1]: https://github.com/skhol3/oasis/releases/tag/v0.7.1
 [0.7.0]: https://github.com/skhol3/oasis/releases/tag/v0.7.0

@@ -1,6 +1,8 @@
-// Classify bash commands that bypass the oasis guards. No Pi imports.
+// Classify bash commands that bypass the oasis guards. No Pi imports: the extension injects the
+// session's directory, home and a file check (GuardContext).
 // Only programs in command position count, so searching or printing their
 // names stays allowed. This is a guard rail for agents, not a sandbox.
+import { posix } from "node:path";
 
 const BLOCKED = new Set(["odoo-bin", "dropdb", "psql"]);
 // User-run only: it links environment files that agents may not create or read.
@@ -9,7 +11,36 @@ const WORKTREE_INIT_SCRIPTS = new Set([WORKTREE_INIT, "worktree_init.py"]);
 // User-run only: it rewrites the project's configuration files (profiles, odoo.conf, lock.sha256).
 export const MIGRATE = "migrate";
 const MIGRATE_SCRIPTS = new Set([MIGRATE, "migrate.py"]);
-// The entry point and its alias: worktree-init and migrate are blocked through either.
+// User-run only: the interactive action menu (its catalog included) is for the user, in a terminal
+// or the Gentle Shell panel; agents run the commands it lists directly.
+export const MENU = "menu";
+// Its scripts are blocked by what they are, not by their spelling: `tools/menu` and
+// `tools/actions.py` are common names in other projects, and the menu itself refuses to run
+// without a terminal. With a GuardContext, a script word is resolved against the session's
+// directory and the literal `cd`/`pushd` targets before it in the same command, and blocked when
+// it is an oasis menu script (see menuScript). Without one, only the installed bundle's spelling
+// counts (MENU_SCRIPT).
+const MENU_NAMES = new Set([MENU, "actions.py"]);
+const MENU_SCRIPT = /(^|\/)skills\/odoo19\/tools\/(menu|actions\.py)$/;
+const SPELLED_MENU_SCRIPT = /(^|\/)tools\/(menu|actions\.py)$/;
+// Expansion, globs or substitution leftovers: the word's path is not known from the text. A bare
+// `_` is what substitutions() leaves for `$(...)` and backticks.
+const NOT_LITERAL = /[$*?[\]{}`\\]/;
+const CHANGE_DIRECTORY = new Set(["cd", "pushd"]);
+
+/** Where the session runs, from the extension: its cwd, the home directory and a file check. */
+export interface GuardContext {
+  cwd: string;
+  home: string;
+  exists(path: string): boolean;
+}
+
+/** The session context and the directory the next command runs in (null when unknown). */
+interface Where {
+  context: GuardContext;
+  dir: string | null;
+}
+// The entry point and its alias: worktree-init, migrate and menu are blocked through either.
 const ENTRY_POINTS = new Set(["oasis", "odoo19"]);
 const SHELLS = new Set(["bash", "sh", "zsh", "dash"]);
 // Programs that run what they read from a heredoc; its body is then classified as commands.
@@ -51,6 +82,62 @@ function basename(word: string): string {
   return word.slice(word.lastIndexOf("/") + 1);
 }
 
+/** The absolute path a word names, or null when it depends on expansion or an unknown directory. */
+function literalPath(word: string, where: Where): string | null {
+  if (word === "_" || NOT_LITERAL.test(word)) return null;
+  let path = word;
+  if (path === "~" || path.startsWith("~/")) path = where.context.home + path.slice(1);
+  else if (path.startsWith("~")) return null; // ~user
+  if (!path.startsWith("/")) {
+    if (where.dir === null) return null;
+    path = posix.join(where.dir, path);
+  }
+  return posix.normalize(path);
+}
+
+/** Whether dir holds an oasis tree: the `oasis` entry point and `tools/actions.py`. */
+function oasisTree(dir: string, context: GuardContext): boolean {
+  return context.exists(posix.join(dir, "oasis")) && context.exists(posix.join(dir, "tools/actions.py"));
+}
+
+function insideOasisTree(dir: string, context: GuardContext): boolean {
+  for (let current = posix.normalize(dir); ; current = posix.dirname(current)) {
+    if (oasisTree(current, context)) return true;
+    if (current === posix.dirname(current)) return false;
+  }
+}
+
+/**
+ * Whether a word names the menu's script (`menu` or `actions.py`). Resolved to a file, it must sit
+ * in a `tools` directory whose parent is an oasis tree. When its path is unknown (expansion, an
+ * unknown `cd` target), it is blocked when spelled like the installed bundle (`.../skills/odoo19/tools/menu`)
+ * or, spelled `tools/menu` or `tools/actions.py`, when the session works inside an oasis tree. Without a context, only the installed bundle's spelling counts.
+ */
+function menuScript(word: string, where: Where | undefined): boolean {
+  if (!MENU_NAMES.has(basename(word))) return false;
+  // The installed bundle's spelling is blocked from anywhere, as before the session context,
+  // also when the rest of the path is an expansion (`$HOME/...`, `${HOME}/...`).
+  if (MENU_SCRIPT.test(word) || !where) return MENU_SCRIPT.test(word);
+  const path = literalPath(word, where);
+  if (path === null) return SPELLED_MENU_SCRIPT.test(word) && insideOasisTree(where.context.cwd, where.context);
+  const tools = posix.dirname(path);
+  return posix.basename(tools) === "tools" && oasisTree(posix.dirname(tools), where.context);
+}
+
+/**
+ * The directory after a `cd`/`pushd` segment: the literal target resolved from the current one,
+ * home without a target, null (unknown) for `-`, `+N` or anything expanded.
+ */
+function changedDirectory(args: string[], where: Where): string | null {
+  const rest = args.filter((word) => !REDIRECTION.test(word));
+  let i = 0;
+  while (i < rest.length && /^-[LPe@]+$/.test(rest[i])) i++;
+  if (rest[i] === "--") i++;
+  const target = rest[i];
+  if (target === undefined) return where.context.home;
+  if (target === "-" || /^[+-]\d+$/.test(target)) return null;
+  return literalPath(target, where);
+}
 /**
  * Whether a `#` at `index` starts a comment: at the start of a word, which an escaped character
  * (`a\ #b`, with the escaped one at `escapedAt`) does not begin.
@@ -291,10 +378,11 @@ function onlyPlan(args: string[]): boolean {
 }
 
 /** A user-run tool when words[index] runs it: its tool script, or an entry point with that command.
- * migrate's scripts count only inside a `tools` directory, since the name is common. Asking only
+ * migrate's scripts count only inside a `tools` directory, and menu's only when they are an oasis
+ * tree's (see menuScript), since the names are common. Asking only
  * for its help (`--help` or `-h` as the single argument) runs nothing and is not blocked, and
  * neither is migrate's explicit plan (see onlyPlan). */
-function userRunTool(words: string[], index: number): string | null {
+function userRunTool(words: string[], index: number, where?: Where): string | null {
   const word = words[index];
   const name = basename(word);
   const args = words.slice(index + 1);
@@ -302,9 +390,11 @@ function userRunTool(words: string[], index: number): string | null {
   let toolArgs = args;
   if (WORKTREE_INIT_SCRIPTS.has(name)) tool = WORKTREE_INIT;
   else if (MIGRATE_SCRIPTS.has(name) && /(^|\/)tools\/[^/]+$/.test(word)) tool = MIGRATE;
+  else if (menuScript(word, where)) tool = MENU;
   else if (ENTRY_POINTS.has(name)) {
     if (args.includes(WORKTREE_INIT)) tool = WORKTREE_INIT;
     else if (entryPointCommand(words, index) === MIGRATE) tool = MIGRATE;
+    else if (entryPointCommand(words, index) === MENU) tool = MENU;
     // The entry point's own `--project <dir>` and the command name are not the tool's arguments.
     const project = args.indexOf("--project");
     toolArgs = args.filter((arg, k) => arg !== tool && (project < 0 || (k !== project && k !== project + 1)));
@@ -331,7 +421,7 @@ function unwrap(words: string[], index: number): number | null | undefined {
   return skipOptions(words, i + 1, DOCKER_VALUE_OPTIONS) + 1; // the service or container
 }
 
-function classifySegment(words: string[]): string | null {
+function classifySegment(words: string[], where?: Where): string | null {
   let i = 0;
   for (;;) {
     while (i < words.length && (ASSIGNMENT.test(words[i]) || KEYWORDS.has(words[i]))) i++;
@@ -339,14 +429,14 @@ function classifySegment(words: string[]): string | null {
     const name = basename(words[i]);
     // `command -v/-V` only looks the program up.
     if (name === "command" && words.slice(i + 1).some((w) => w === "-v" || w === "-V")) return null;
-    if (name === "eval") return blockedProgram(words.slice(i + 1).join(" "));
+    if (name === "eval") return blockedIn(words.slice(i + 1).join(" "), where);
     if ((name === "source" || name === ".") && i + 1 < words.length) {
       const sourced = basename(words[i + 1]);
       return BLOCKED.has(sourced) ? sourced : null;
     }
     if (name === "find") {
       const exec = words.findIndex((w, k) => k > i && (w === "-exec" || w === "-execdir" || w === "-ok"));
-      return exec > 0 ? classifySegment(words.slice(exec + 1)) : null;
+      return exec > 0 ? classifySegment(words.slice(exec + 1), where) : null;
     }
     const next = unwrap(words, i);
     if (next === null) return null;
@@ -355,36 +445,64 @@ function classifySegment(words: string[]): string | null {
       continue;
     }
     if (BLOCKED.has(name)) return name;
-    const userRun = userRunTool(words, i);
+    const userRun = userRunTool(words, i, where);
     if (userRun) return userRun;
     if (/^python[\d.]*$/.test(name)) {
       const target = skipOptions(words, i + 1, PYTHON_VALUE_OPTIONS);
       if (words.slice(i + 1, target).some((w) => w === "-c" || w === "-m")) return null;
       if (target >= words.length) return null;
       if (basename(words[target]) === "odoo-bin") return "odoo-bin";
-      return userRunTool(words, target);
+      return userRunTool(words, target, where);
     }
     if (SHELLS.has(name)) {
       const flag = words.findIndex((w, k) => k > i && SHELL_COMMAND_FLAG.test(w));
-      if (flag > 0) return flag + 1 < words.length ? blockedProgram(words[flag + 1]) : null;
+      if (flag > 0) return flag + 1 < words.length ? blockedIn(words[flag + 1], where) : null;
       const script = skipOptions(words, i + 1, new Set());
-      return script < words.length ? userRunTool(words, script) : null;
+      return script < words.length ? userRunTool(words, script, where) : null;
     }
     return null;
   }
 }
 
-/** The blocked program a bash command would run directly, or null. */
-export function blockedProgram(command: string): string | null {
+/**
+ * Whether a blocked program is user-run and so blocked in every session (it writes configuration,
+ * links environment files or opens the interactive menu); the others are blocked only in Odoo
+ * projects, where they would bypass the database guards.
+ */
+export function blockedEverywhere(program: string): boolean {
+  return program === WORKTREE_INIT || program === MIGRATE || program === MENU;
+}
+
+/**
+ * The blocked program a bash command would run directly, or null. With the session context, the
+ * menu's scripts are judged by the file they resolve to (see menuScript).
+ */
+export function blockedProgram(command: string, context?: GuardContext): string | null {
+  return blockedIn(command, context ? { context, dir: context.cwd } : undefined);
+}
+
+function blockedIn(command: string, start: Where | undefined): string | null {
   const { text, data } = heredocs(command);
   const { outer, inner } = substitutions(text);
   for (const body of data) inner.push(...substitutions(body, false).inner);
   for (const body of inner) {
-    const found = blockedProgram(body);
+    const found = blockedIn(body, start);
     if (found) return found;
   }
+  let where = start;
   for (const words of segments(outer)) {
-    const found = classifySegment(words);
+    // A literal `cd`/`pushd` moves the later segments; `popd` makes the directory unknown.
+    let i = 0;
+    while (i < words.length && (ASSIGNMENT.test(words[i]) || KEYWORDS.has(words[i]))) i++;
+    if (where && CHANGE_DIRECTORY.has(words[i] ?? "")) {
+      where = { context: where.context, dir: changedDirectory(words.slice(i + 1), where) };
+      continue;
+    }
+    if (where && words[i] === "popd") {
+      where = { context: where.context, dir: null };
+      continue;
+    }
+    const found = classifySegment(words, where);
     if (found) return found;
   }
   return null;
@@ -395,6 +513,12 @@ export function blockReason(program: string, root: string): string {
     return (
       "migrate rewrites the project's configuration files; ask the user to run /oasis migrate in Gentle Shell " +
       "or the command in a terminal. To read the plan without changing anything, run it with only --plan."
+    );
+  }
+  if (program === MENU) {
+    return (
+      "menu is the user's interactive action menu; ask the user to run `oasis --project <root> menu` in a " +
+      "terminal or to open the oasis panel in Gentle Shell."
     );
   }
   if (program === WORKTREE_INIT) {

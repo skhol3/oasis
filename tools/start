@@ -9,8 +9,18 @@ set -Eeuo pipefail
 # A batch run (--stop-after-init) serves nothing: no server check, no port check, no record;
 # like test runs it gets a free ephemeral --http-port and a distinct free second port (explicit
 # ones are passed as given).
+# --detach, as the first argument only, runs the server in its own session instead of in the
+# foreground: stdin from /dev/null, stdout and stderr appended to the checkout's server.log (the
+# compact log directory: <logs>/<slug or main>/ with [tooling].logs, else dev/logs/odoo19/). It
+# prints pid=<pid> port=<port> log=<path> and returns (tools/runtime_state.py detach); the record,
+# the port rules and stop are the same. A batch run cannot be detached.
 source "$(dirname "$0")/common.sh"
 require_runtime
+detach=false
+if [[ ${1:-} == --detach ]]; then
+  detach=true
+  shift
+fi
 # Guard every database odoo-bin would receive, including optparse's unambiguous
 # abbreviations of --database, before the database service is touched.
 arguments=("$@")
@@ -45,6 +55,10 @@ if "$informational"; then
   exec "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "$@"
 fi
 if "$batch"; then
+  if "$detach"; then
+    printf -- '--detach starts a server; it cannot be combined with --stop-after-init.\n' >&2
+    exit 2
+  fi
   port_arguments=()
   batch_port=$explicit_port
   if [[ -z "$explicit_port" ]]; then
@@ -122,7 +136,15 @@ if [[ "${CHECKOUT_KIND:-}" == linked ]] && ! "$explicit_gevent"; then
   gevent=$found
   port_arguments+=("$ODOO_SECOND_PORT_OPTION=$gevent")
 fi
+if "$detach"; then
+  source "$(dirname "$0")/compact.sh"
+  log=$(server_log_path)
+fi
 wait_for_database
+if "$detach"; then
+  exec python3 -I -B "$(dirname "$0")/runtime_state.py" detach "$PROJECT_ROOT" "$port" "$log" \
+    "$ODOO_BIN" "$PYTHON" -- "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" "$@"
+fi
 # $$ survives exec: the record names the Odoo process itself.
 runtime_state record "$PROJECT_ROOT" "$$" "$port" "$ODOO_BIN" "$PYTHON"
 printf '%s start: http://localhost:%s (pid %s)\n' "$(program_name)" "$port" "$$" >&2

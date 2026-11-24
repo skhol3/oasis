@@ -21,6 +21,11 @@ export const SUBCOMMANDS = [
     description: "Create a worktree: worktree <feature> <branch>",
     summary: "`worktree <feature> <branch>` creates a prepared linked worktree",
   },
+  {
+    name: "menu", parameters: [],
+    description: "Open the action panel (alt+o by default)",
+    summary: "`menu` opens the action panel to run the checkout's everyday commands (alt+o by default)",
+  },
 ] as const;
 
 export type SubcommandName = (typeof SUBCOMMANDS)[number]["name"];

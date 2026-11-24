@@ -2,21 +2,24 @@
 // `oasis` entry point shipped in this repository; it changes nothing in Pi or
 // Gentle Shell and keeps every guard inside the core tools. The pre-0.4.0 names stay as
 // aliases: `/odoo19` and the inactive odoo19_* tools.
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
   parseCommand, SUBCOMMAND_SUMMARY, type SubcommandName, subcommandCompletions, USAGE,
 } from "../lib/commands.ts";
 import { withHeartbeat } from "../lib/heartbeat.ts";
-import { blockedProgram, blockReason, MIGRATE, WORKTREE_INIT } from "../lib/bash-guard.ts";
+import { blockedEverywhere, blockedProgram, blockReason } from "../lib/bash-guard.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
 import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
+import { type CatalogAction, menuShortcut } from "../lib/menu.ts";
+import { actionPanel, type ExecPurpose } from "../lib/panel.ts";
+import { MENU_ENTRY, MenuPanel, renderMenuEntry } from "../ui/menu-panel.ts";
 import {
   formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, testModuleArgs, updateModuleArgs, viewInfoArgs,
 } from "../lib/tools.ts";
@@ -34,6 +37,9 @@ const HEARTBEAT_MS = 15 * 1000;
 const TOOL_TIMEOUT_MS = 10 * 60 * 1000;
 // doctor's probes (git, docker compose, the environment's Python) each stop after 20 s.
 const DOCTOR_TIMEOUT_MS = 2 * 60 * 1000;
+// The action panel's footer status key; its commands get the test timeout (a whole suite may run).
+const MENU_STATUS = "oasis-menu";
+const MENU_TIMEOUT_MS = TEST_TIMEOUT_MS;
 
 type Result = { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
 type ToolDefinition = Parameters<ExtensionAPI["registerTool"]>[0];
@@ -258,6 +264,63 @@ export default function oasisLayer(pi: ExtensionAPI) {
     }
   }
 
+  // The action panel (alt+o or OASIS_MENU_KEY, and /oasis menu): user-run only, no agent tool opens
+  // it. lib/panel.ts decides everything (catalog, inputs, confirmation, run, result); this adapter
+  // gives it pi.exec in the project root, the Pi dialogs and the overlay, and records results as
+  // custom session entries (pi.appendEntry with an entry renderer): Pi shows them but never sends
+  // them to the model.
+  pi.registerEntryRenderer(MENU_ENTRY, renderMenuEntry);
+  const EXEC_TIMEOUTS: Record<ExecPurpose, number> = {
+    catalog: STATUS_TIMEOUT_MS, list: TOOL_TIMEOUT_MS, run: MENU_TIMEOUT_MS,
+  };
+  const openPanel = actionPanel({
+    projectRoot: (cwd) => projectRoot(cwd),
+    notProject,
+    catalogArgv: (root) => ["python3", "-B", OASIS, "--project", root, "menu", "--catalog"],
+    exec: (argv, cwd, purpose) => pi.exec(argv[0], argv.slice(1), { cwd, timeout: EXEC_TIMEOUTS[purpose] }),
+    exists: existsSync,
+    readLog,
+    appendEntry: (entry) => pi.appendEntry(MENU_ENTRY, entry),
+  });
+
+  function menu(ctx: ExtensionContext): Promise<void> {
+    return openPanel({
+      mode: ctx.mode,
+      cwd: ctx.cwd,
+      ui: {
+        pick: (catalog) => ctx.ui.custom<CatalogAction | undefined>(
+          (tui, theme, keybindings, done) => new MenuPanel(catalog, tui, theme, keybindings, done),
+          {
+            overlay: true,
+            overlayOptions: { anchor: "center", width: "80%", minWidth: 40, maxHeight: "90%" },
+            blocked: { kind: "question", message: "oasis menu" },
+          },
+        ),
+        select: (title, options) => ctx.ui.select(title, options),
+        input: (title, placeholder) => ctx.ui.input(title, placeholder),
+        confirm: (title, message) => ctx.ui.confirm(title, message),
+        notify: (message, level) => ctx.ui.notify(message, level),
+        setStatus: (text) => ctx.ui.setStatus(MENU_STATUS, text),
+      },
+    });
+  }
+
+  // OASIS_MENU_KEY (alt+o when unset; empty or `off` disables it), read when Pi loads the extension
+  // (startup and /reload). An unusable value turns the shortcut off and is reported once.
+  const shortcut = menuShortcut(process.env.OASIS_MENU_KEY);
+  if (shortcut.key) {
+    pi.registerShortcut(shortcut.key as Parameters<ExtensionAPI["registerShortcut"]>[0], {
+      description: "Open the oasis action panel",
+      handler: (ctx) => menu(ctx),
+    });
+  }
+  let shortcutNoticeShown = false;
+  pi.on("session_start", async (_event, ctx) => {
+    if (!shortcut.error || shortcutNoticeShown) return;
+    shortcutNoticeShown = true;
+    ctx.ui.notify(`oasis: ${shortcut.error}`, "warning");
+  });
+
   const COMMAND_DESCRIPTION =
     "Odoo project status: profile, addon modules, databases, git worktree and this checkout's server; " +
     SUBCOMMAND_SUMMARY;
@@ -268,6 +331,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     doctor: (ctx) => doctor(ctx),
     migrate: (ctx) => migrate(ctx),
     worktree: (ctx, args) => worktree(ctx, args[0], args[1]),
+    menu: (ctx) => menu(ctx),
   };
 
   // `/oasis`, and `/odoo19` as its alias: one handler, the same subcommands.
@@ -338,15 +402,16 @@ export default function oasisLayer(pi: ExtensionAPI) {
   });
 
   // Agent bash only: direct odoo-bin/dropdb/psql bypass the core's database guards (Odoo projects);
-  // worktree-init links environment files and migrate rewrites configuration files, so both are
-  // user-run in every session.
+  // worktree-init links environment files, migrate rewrites configuration files and menu is the
+  // user's interactive menu, so all three are user-run in every session.
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName !== "bash") return;
     const command = (event.input as { command?: unknown }).command;
     if (typeof command !== "string") return;
-    const program = blockedProgram(command);
+    // The menu's scripts are judged by the file they resolve to from the session's directory.
+    const program = blockedProgram(command, { cwd: ctx.cwd, home: homedir(), exists: existsSync });
     if (!program) return;
-    if (program === WORKTREE_INIT || program === MIGRATE) return { block: true, reason: blockReason(program, "") };
+    if (blockedEverywhere(program)) return { block: true, reason: blockReason(program, "") };
     const root = await projectRoot(ctx.cwd);
     if (root) return { block: true, reason: blockReason(program, root) };
   });

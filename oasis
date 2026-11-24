@@ -13,8 +13,8 @@ import sys
 COMMANDS = (
     'audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
     'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases',
-    'migrate', 'model-info', 'module-status', 'odoo-shell', 'start', 'status', 'stop', 'test-module',
-    'update-module', 'verify-module', 'view-info', 'worktree-init', 'xmlid-info',
+    'menu', 'migrate', 'model-info', 'module-status', 'odoo-shell', 'start', 'status', 'stop',
+    'test-module', 'update-module', 'verify-module', 'view-info', 'worktree-init', 'xmlid-info',
 )
 PROGRAMS = ('oasis', 'odoo19')
 # The invoked file. The odoo19 alias runs this file with runpy.run_path(..., init_globals=
