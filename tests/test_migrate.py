@@ -486,9 +486,11 @@ class MigrateSurfaceTests(unittest.TestCase):
         self.assertIn('ctx.ui.confirm("oasis migrate"', source)
 
     def test_readme_documents_migrate(self):
-        readme = (ROOT / 'README.md').read_text()
-        self.assertIn('### Migrating to the workspace file\n', readme)
-        self.assertIn('oasis --project /absolute/checkout migrate [--workspace <dir>] [--apply | --plan]', readme)
+        # The section moved from the README to its own topic file, linked from the README.
+        self.assertIn('](docs/migrating.md)', (ROOT / 'README.md').read_text())
+        doc = (ROOT / 'docs/migrating.md').read_text()
+        self.assertTrue(doc.startswith('# Migrating to the workspace file\n'))
+        self.assertIn('oasis --project /absolute/checkout migrate [--workspace <dir>] [--apply | --plan]', doc)
 
 
 if __name__ == '__main__':

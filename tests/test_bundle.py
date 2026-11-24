@@ -67,6 +67,61 @@ def check_example(raw):
     return data
 
 
+# Repository-only paths: install.sh does not install them, so no installed document may link to them.
+NOT_INSTALLED = ('AGENTS.md', '.gitignore', 'install.sh', 'odd')
+
+
+def documents(root):
+    """The landing README and every topic file under docs/."""
+    return [root / 'README.md', *sorted((root / 'docs').glob('*.md'))]
+
+
+def skill_documents(root):
+    """Every Markdown file of the skills: each SKILL.md and its references."""
+    return sorted(root.glob('odoo19-*/**/*.md'))
+
+
+def headings(text):
+    """Markdown headings outside fenced code blocks, as (level, title)."""
+    found, fence = [], False
+    for line in text.splitlines():
+        if line.startswith('```'):
+            fence = not fence
+        elif not fence and (match := re.match(r'(#{1,6}) (.+)$', line)):
+            found.append((len(match[1]), match[2].strip()))
+    return found
+
+
+def anchor(title):
+    """The anchor GitHub gives a heading: lowercase, punctuation dropped, spaces as hyphens."""
+    return re.sub(r'[^\w\- ]', '', title.lower()).replace(' ', '-')
+
+
+def broken_links(files, root):
+    """Relative links that do not resolve from their own file inside the installed bundle."""
+    broken = []
+    for path in files:
+        here = path.relative_to(root).as_posix()
+        for link in re.findall(r'\]\(([^)\s]+)\)', path.read_text(encoding='utf-8')):
+            if re.match(r'[a-z]+:', link):
+                continue
+            name, _, fragment = link.partition('#')
+            target = (path.parent / name).resolve() if name else path.resolve()
+            try:
+                relative = target.relative_to(root.resolve())
+            except ValueError:
+                broken.append(f'{here}: {link} (outside the bundle)')
+                continue
+            if relative.parts and relative.parts[0] in NOT_INSTALLED:
+                broken.append(f'{here}: {link} (not installed)')
+            elif not target.is_file():
+                broken.append(f'{here}: {link} (missing)')
+            elif fragment and target.suffix == '.md' and fragment not in {
+                    anchor(title) for _, title in headings(target.read_text(encoding='utf-8'))}:
+                broken.append(f'{here}: {link} (no such heading)')
+    return broken
+
+
 WORKSPACE = ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml'
 WORKSPACE_TOOLING = {key: kind for key, kind in TOOLING.items()
                      if key not in ('version', 'python_version')}
@@ -198,8 +253,25 @@ class BundleTests(unittest.TestCase):
         readme = (ROOT / 'README.md').read_text(encoding='utf-8')
         self.assertIn('not a seventh skill', readme)
         self.assertIn('/reload', readme)
-        for link in re.findall(r'\]\(([^)]+)\)', readme):
-            self.assertTrue((ROOT / link).is_file(), link)
+
+    def test_documentation_links_resolve_from_their_own_file(self):
+        files = documents(ROOT)
+        self.assertGreater(len(files), 2)
+        self.assertEqual(broken_links(files, ROOT), [])
+
+    def test_skill_links_resolve_from_their_own_file(self):
+        files = skill_documents(ROOT)
+        self.assertEqual({path.parent.name for path in files if path.name == 'SKILL.md'}, NAMES)
+        self.assertIn(ROOT / 'odoo19-environment/references/project-contract.md', files)
+        self.assertEqual(broken_links(files, ROOT), [])
+
+    def test_each_topic_file_has_one_h1_and_is_indexed(self):
+        index = (ROOT / 'docs/README.md').read_text(encoding='utf-8')
+        for path in documents(ROOT):
+            with self.subTest(path=path.name):
+                self.assertEqual([level for level, _ in headings(path.read_text(encoding='utf-8'))].count(1), 1)
+                if path.parent.name == 'docs' and path.name != 'README.md':
+                    self.assertIn(f']({path.name})', index)
 
 
 if __name__ == '__main__':
