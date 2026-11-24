@@ -30,8 +30,9 @@ gentle-shell install git:github.com/skhol3/oasis@v0.11.0
 
 ## Five-minute start
 
-1. Describe the project in a `.odoo19-agent.toml` profile, or one `oasis-workspace.toml` for every
-   checkout ([new project setup](docs/project-setup.md), [workspace file](docs/workspace-file.md)).
+1. Describe the project in one `oasis-workspace.toml` for every checkout, step by step in
+   [Setting up a new workspace](docs/new-workspace.md) ([workspace file](docs/workspace-file.md)),
+   or in a legacy `.odoo19-agent.toml` profile ([new project setup](docs/project-setup.md)).
 2. Check that oasis can work there, then that the environment matches its locks:
 
    ```bash
@@ -95,7 +96,8 @@ of a checkout and runs them by hand. [Docs →](docs/action-menu.md)
 | [Gentle Shell layer](docs/gentle-shell-layer.md) | The agent tools, prompt context, `/oasis` and aliases |
 | [Bash guard](docs/bash-guard.md) | Which agent bash commands run, wait for the user's confirmation or are blocked; `agent_destructive` |
 | [Subagents](docs/subagents.md) | The overlay that gives subagents the `oasis_*` tools |
-| [New project setup](docs/project-setup.md) | Profile, entry point and optional project wrappers |
+| [Setting up a new workspace](docs/new-workspace.md) | From an empty folder to `doctor`, a database and a test run; example tree and paths |
+| [New project setup](docs/project-setup.md) | Workspace file or profile, entry point and optional project wrappers |
 | [Checking the environment](docs/checking-environment.md) | `doctor`, `check-environment` and `lock.sha256` |
 | [Workspace file](docs/workspace-file.md) | One `oasis-workspace.toml` for every checkout |
 | [Migrating to the workspace file](docs/migrating.md) | `oasis migrate` |

@@ -431,6 +431,119 @@ class WorkspaceTests(unittest.TestCase):
         self.assert_rejected(main, f'Set either [tooling].environment or [environments] in {self.workspace}, '
                                    'not both.')
 
+    # -- paths and the environment rule (docs/new-workspace.md) -----------------------------
+
+    def line(self, name, value):
+        return f'{name}={shlex.quote(str(value))}'
+
+    def test_absolute_paths_are_accepted(self):
+        main = self.layout()
+        shared = self.scratch / 'odoo' / '19.0'
+        logs = self.scratch / 'logs' / 'acme'
+        self.workspace.write_text(WORKSPACE.replace("community = 'source/odoo'", f"community = '{shared}/source/odoo'")
+                                  .replace("environment = 'environments/acme'",
+                                           f"environment = '{shared}/environments/acme'")
+                                  .replace("logs = 'logs'", f"logs = '{logs}'")
+                                  .replace("addons_paths = ['.', 'addons']", f"addons_paths = ['.', '{shared}/oca']"))
+        # Whole lines of the output: ADDON_ROOTS spans two lines inside one quoted value.
+        text = '\n' + self.output(main)
+        for name, value in (('ODOO_SOURCE', shared / 'source/odoo'),
+                            ('PROJECT_ENVIRONMENT', shared / 'environments/acme'),
+                            ('PYTHON', shared / 'environments/acme/bin/python'),
+                            ('ODOO_BIN', shared / 'source/odoo/odoo-bin'),
+                            ('ENVIRONMENTS_DIR', shared / 'environments'),
+                            ('LOGS_DIR', logs),
+                            # An absolute addon root is the same folder for every checkout.
+                            ('ADDON_ROOTS', f'{main}\n{shared}/oca'),
+                            # Relative values keep resolving from the workspace file's directory.
+                            ('ODOO_CONFIG', self.project / 'config/odoo.conf')):
+            with self.subTest(name=name):
+                self.assertIn('\n' + self.line(name, value) + '\n', text)
+        # A named environment's path may be absolute as well.
+        self.workspace.write_text(NAMED.replace("path = 'environments/acme'",
+                                                f"path = '{shared}/environments/acme'"))
+        lines = self.assignments(main)
+        self.assertIn(self.line('PROJECT_ENVIRONMENT', shared / 'environments/acme'), lines)
+        self.assertIn('ENVIRONMENT_NAME=default', lines)
+
+    def test_environment_rule_accepts_an_environments_parent_and_refuses_the_rest(self):
+        main = self.layout()
+        accepted = (f'{self.scratch}/x/environments/acme', f'{self.scratch}/x/odoo-environments/acme',
+                    '../environments/acme')
+        for path in accepted:
+            with self.subTest(accepted=path):
+                self.workspace.write_text(WORKSPACE.replace("environment = 'environments/acme'",
+                                                            f"environment = '{path}'"))
+                self.assertIn(self.line('PROJECT_ENVIRONMENT', (self.project / path).resolve()),
+                              self.assignments(main))
+        refused = ('/opt/venvs/acme',                           # parent venvs does not end in environments
+                   'environments/acme/venv',                    # parent acme: only the direct parent counts
+                   f'{self.project}/source/odoo',               # is the Odoo source
+                   f'{self.project}/source',                    # contains the Odoo source
+                   '.')                                         # contains the checkout
+        for path in refused:
+            with self.subTest(refused=path):
+                self.workspace.write_text(WORKSPACE.replace("environment = 'environments/acme'",
+                                                            f"environment = '{path}'"))
+                self.assert_rejected(main, 'Unsafe tooling environment target.')
+
+    def test_environment_inside_a_checkout_serves_only_that_checkout(self):
+        main = self.layout(WORKSPACE.replace("environment = 'environments/acme'",
+                                             "environment = 'codigo/acme/.venv'"))
+        self.assertIn(self.line('PROJECT_ENVIRONMENT', main / '.venv'), self.assignments(main))
+        linked = self.linked()
+        self.assert_rejected(linked, 'Unsafe tooling environment target.')
+
+    def test_home_shorthand_is_not_expanded(self):
+        # TOML values are taken literally: ~ is a folder below the workspace directory.
+        main = self.layout(WORKSPACE.replace("environment = 'environments/acme'",
+                                             "environment = '~/environments/acme'"))
+        self.assertIn(self.line('PROJECT_ENVIRONMENT', self.project / '~/environments/acme'),
+                      self.assignments(main))
+
+    # -- the guide's own examples -----------------------------------------------------------
+
+    def guide_block(self, first_line):
+        """The fenced toml block of docs/new-workspace.md that starts with first_line."""
+        guide = (ROOT / 'docs' / 'new-workspace.md').read_text(encoding='utf-8')
+        match = re.search(r'^```toml\n(' + re.escape(first_line) + r'\n.*?)^```$', guide, re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(match, first_line)
+        return match.group(1)
+
+    def test_guide_workspace_resolves_to_its_example_tree(self):
+        series = self.scratch / 'odoo' / '19.0'
+        self.project = series / 'projects' / 'acme'
+        self.workspace = self.project / 'oasis-workspace.toml'
+        self.main = self.project / 'codigo' / 'acme'
+        workspace = self.guide_block('# projects/acme/oasis-workspace.toml')
+        main = self.layout(workspace)
+        linked = self.linked('acme-shop-feature', 'shop-feature')
+        for checkout, slug in ((main, ''), (linked, 'shop_feature')):
+            with self.subTest(checkout=checkout.name):
+                lines = self.assignments(checkout)
+                for name, value in (('ODOO_SOURCE', series / 'source/odoo'),
+                                    ('PROJECT_ENVIRONMENT', series / 'environments/acme'),
+                                    ('ODOO_CONFIG', self.project / 'config/odoo.conf'),
+                                    ('COMPOSE_FILE', self.project / 'config/compose.yml'),
+                                    ('REQUIREMENTS_DIR', self.project / 'config/requirements'),
+                                    ('ADDON_ROOTS', checkout), ('CHECKOUT_SLUG', slug),
+                                    ('LOGS_DIR', self.project / 'logs'), ('DATA_DIR', self.project / 'data'),
+                                    ('WORKSPACE_ROOT', self.project)):
+                    self.assertIn(self.line(name, value), lines)
+        # The named form: the guide's [environments] block in place of [tooling].environment,
+        # and the guide's oasis-checkout.toml selecting the second one in the worktree.
+        environment = re.search(r"^environment = '[^']*'\n", workspace, re.MULTILINE)
+        self.assertIsNotNone(environment, workspace)
+        named = self.guide_block('# In oasis-workspace.toml, in place of [tooling].environment:')
+        self.workspace.write_text(workspace.replace(environment.group(0), '') + '\n' + named)
+        lines = self.assignments(main)
+        self.assertIn(self.line('PROJECT_ENVIRONMENT', series / 'environments/acme'), lines)
+        self.assertIn('ENVIRONMENT_NAME=default', lines)
+        (linked / 'oasis-checkout.toml').write_text(self.guide_block('# codigo/acme-shop-feature/oasis-checkout.toml'))
+        lines = self.assignments(linked)
+        self.assertIn(self.line('PROJECT_ENVIRONMENT', series / 'environments/acme-next'), lines)
+        self.assertEqual(lines[-4:-2], ['ENVIRONMENT_NAME=next', 'PYTHON_VERSION=3.13'])
+
     # -- odoo19 entry point -----------------------------------------------------------------
 
     def invoke(self, project, *args):
