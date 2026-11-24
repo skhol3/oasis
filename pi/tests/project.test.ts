@@ -180,6 +180,7 @@ test("projectContext names the root and routes the agent to the oasis tools", ()
     "oasis_model_info",
     "oasis_view_info",
     "oasis_xmlid_info",
+    "oasis_module_info",
   ]) {
     assert.ok(text.includes(tool), tool);
   }

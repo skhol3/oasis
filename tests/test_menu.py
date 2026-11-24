@@ -20,7 +20,7 @@ import test_lifecycle as lifecycle
 ROOT = lifecycle.STAGE
 ENTRY = str((ROOT / 'oasis').resolve())
 ACTIONS = ['server.start', 'server.stop', 'server.logs', 'server.status', 'server.stop_database',
-           'modules.install', 'modules.update', 'modules.status', 'modules.init_dev',
+           'modules.install', 'modules.update', 'modules.status', 'modules.init_dev', 'modules.overview',
            'tests.module', 'tests.class', 'tests.reuse',
            'maintenance.create_database', 'maintenance.drop_database', 'maintenance.gc',
            'maintenance.gc_apply', 'maintenance.doctor', 'maintenance.migrate_plan',
@@ -170,6 +170,12 @@ class CatalogTests(MenuFixture):
                          ['maintenance.migrate', 'maintenance.worktree'])
         self.assertEqual([key for key, action in actions.items() if action['terminal_only']], ['modules.init_dev'])
         self.assertEqual(actions['maintenance.migrate_plan']['argv'], [*prefix, 'migrate', '--plan'])
+        # Read-only, from source: no database input, no confirmation.
+        self.assertEqual(actions['modules.overview'], {
+            'id': 'modules.overview', 'group': 'modules', 'label': "Show a module's overview from source",
+            'kind': 'command', 'command': 'module-info', 'argv': [*prefix, 'module-info', {'input': 'module'}],
+            'inputs': [MODULE_INPUT], 'destructive': False, 'confirm': None, 'user_run': False,
+            'terminal_only': False})
 
     def test_catalog_server_log_follows_the_configured_logs_directory(self):
         profile = self.root / '.odoo19-agent.toml'

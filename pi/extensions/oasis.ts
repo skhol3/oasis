@@ -21,7 +21,8 @@ import { type CatalogAction, menuShortcut } from "../lib/menu.ts";
 import { actionPanel, type ExecPurpose } from "../lib/panel.ts";
 import { MENU_ENTRY, MenuPanel, renderMenuEntry } from "../ui/menu-panel.ts";
 import {
-  formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, testModuleArgs, updateModuleArgs, viewInfoArgs,
+  formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, moduleInfoArgs, testModuleArgs, updateModuleArgs,
+  viewInfoArgs,
 } from "../lib/tools.ts";
 
 const OASIS = fileURLToPath(new URL("../../oasis", import.meta.url));
@@ -631,6 +632,28 @@ export default function oasisLayer(pi: ExtensionAPI) {
     }),
     async execute(_id, params, signal, _onUpdate, ctx) {
       return plain(ctx.cwd, ["xmlid-info", params.id], signal, MODEL_INFO_MAX_LINES);
+    },
+  });
+
+  registerWithAlias({
+    name: "oasis_module_info",
+    defaultActive: false,
+    label: "Odoo module info",
+    description:
+      "One-screen map of one Odoo module from source (ast, expat and csv only; no Odoo, environment or database): " +
+      "manifest, models defined and extended, views, menus, actions, security, data files, crons and tests.",
+    promptSnippet: "See a module's architecture without opening its files",
+    promptGuidelines: [
+      "Use oasis_module_info before opening a module's files to learn its models, views, menus, security and data.",
+    ],
+    parameters: Type.Object({
+      module: Type.String({ description: "Technical module name, e.g. sale_mrp" }),
+      section: Type.Optional(Type.String({
+        description: "Only this section, uncapped: models, views, menus, actions, security, data or tests",
+      })),
+    }),
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      return plain(ctx.cwd, moduleInfoArgs(params), signal, MODEL_INFO_MAX_LINES);
     },
   });
 

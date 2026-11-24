@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  formatPlain, formatTestRun, formatUpdateRun, testModuleArgs, updateModuleArgs, viewInfoArgs,
+  formatPlain, formatTestRun, formatUpdateRun, moduleInfoArgs, testModuleArgs, updateModuleArgs, viewInfoArgs,
 } from "../lib/tools.ts";
 
 const STAMP = "2026-11-16 18:00:00,123 4242";
@@ -159,4 +159,9 @@ test("viewInfoArgs forwards the optional type and module filters", () => {
   assert.deepEqual(viewInfoArgs({ model: "sale.order", module: "sale_stock", type: "list" }), [
     "view-info", "sale.order", "--type", "list", "--module", "sale_stock",
   ]);
+});
+
+test("moduleInfoArgs forwards the optional section", () => {
+  assert.deepEqual(moduleInfoArgs({ module: "sale_mrp" }), ["module-info", "sale_mrp"]);
+  assert.deepEqual(moduleInfoArgs({ module: "sale_mrp", section: "views" }), ["module-info", "sale_mrp", "--section", "views"]);
 });

@@ -379,6 +379,40 @@
       "terminal_only": true
     },
     {
+      "id": "modules.overview",
+      "group": "modules",
+      "label": "Show a module's overview from source",
+      "kind": "command",
+      "command": "module-info",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "module-info",
+        {
+          "input": "module"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "module",
+          "label": "Module",
+          "kind": "choice",
+          "source": "modules",
+          "required": true,
+          "allow_new": false,
+          "pattern": null,
+          "error": null,
+          "default": null,
+          "hint": null
+        }
+      ],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false
+    },
+    {
       "id": "tests.module",
       "group": "tests",
       "label": "Test a module",

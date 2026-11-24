@@ -10,6 +10,7 @@ test("OASIS_TOOLS lists the layer tools once each", () => {
     "oasis_find_module",
     "oasis_lint_module",
     "oasis_model_info",
+    "oasis_module_info",
     "oasis_module_status",
     "oasis_test_module",
     "oasis_test_summary",

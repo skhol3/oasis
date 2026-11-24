@@ -9,6 +9,23 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Added
+
+- `module-info <module> [--section <name>]`: a one-screen map of one module from its source,
+  without starting Odoo: manifest header (version, summary or name, depends, addons root),
+  models defined and extended with their field counts and `file:line`, base views per model and
+  type and extensions per inherited view, the menu tree, actions, security (groups, access
+  lines with their flags, record rules), data and demo files in manifest order with crons, files
+  on disk the manifest does not list and listed files that are missing, and the test files with
+  their classes. Python is parsed with `ast`, XML with expat and CSV with `csv`; nothing is
+  imported or executed. Long lists end with `+<n> more`; `--section` prints one section
+  uncapped. An unknown module exits 1 with `module not found: <module>`. New command: nothing
+  existing changes.
+- Agent tool `oasis_module_info` (module, optional section), active in Odoo projects and in the
+  overlay of both subagents (read-only). Some lines of the prompt section were shortened to
+  keep it under 1200 characters.
+- Action menu: **Modules** › "Show a module's overview from source" runs `module-info`.
+
 ## [0.9.0] - 2026-11-23
 
 An action menu to run Odoo operations by hand: `oasis menu` in a terminal and a pop-up panel in

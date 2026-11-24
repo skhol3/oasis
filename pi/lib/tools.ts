@@ -34,6 +34,10 @@ export function viewInfoArgs(params: { model: string; type?: string; module?: st
   ];
 }
 
+export function moduleInfoArgs(params: { module: string; section?: string }): string[] {
+  return ["module-info", params.module, ...(params.section ? ["--section", params.section] : [])];
+}
+
 export function keyValues(output: string): Record<string, string> {
   const values: Record<string, string> = {};
   for (const line of output.split("\n")) {

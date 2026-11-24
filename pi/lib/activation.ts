@@ -8,6 +8,7 @@ export const OASIS_TOOLS: readonly string[] = [
   "oasis_model_info",
   "oasis_view_info",
   "oasis_xmlid_info",
+  "oasis_module_info",
   "oasis_module_status",
   "oasis_check_environment",
   "oasis_lint_module",

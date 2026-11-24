@@ -25,7 +25,7 @@ NO_ENTRYPOINT = {'common.sh', 'install-module', 'start', 'status', 'stop', 'test
 ROOT_ERROR_SHELL = 'OASIS_PROJECT_ROOT must name an existing project directory.\n'
 ROOT_ERROR = 'ERROR: OASIS_PROJECT_ROOT must name an absolute existing project directory.\n'
 # Python tools that read the project root, with arguments that reach that check.
-PYTHON_TOOLS = (('model-info', ('sale.order',)), ('view-info', ('sale.order',)),
+PYTHON_TOOLS = (('model-info', ('sale.order',)), ('module-info', ('sale',)), ('view-info', ('sale.order',)),
                 ('xmlid-info', ('sale.view_order_form',)), ('lint-module', ('coffee',)),
                 ('worktree-init', ('feat', 'feature/x', '--dry-run')), ('migrate', ()), ('doctor', ()))
 
@@ -241,7 +241,7 @@ class EntryPointHelpTests(unittest.TestCase):
 
     def test_no_help_names_odoo_19_or_a_fixed_odoo19_command(self):
         commands = ('test-module', 'verify-module', 'update-module', 'odoo-shell', 'gc', 'stop',
-                    'doctor', 'migrate', 'model-info', 'view-info', 'xmlid-info', 'lint-module',
+                    'doctor', 'migrate', 'model-info', 'module-info', 'view-info', 'xmlid-info', 'lint-module',
                     'worktree-init')
         outputs = [self.run_help('oasis', '--help')]
         outputs += [self.run_help('oasis', '--project', str(self.project), command, '--help')
