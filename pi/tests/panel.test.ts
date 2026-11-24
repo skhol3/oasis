@@ -11,7 +11,7 @@ const CATALOG = readFileSync(new URL("./fixtures/catalog.json", import.meta.url)
 const ROOT = "/work/a project";
 const ENTRY = "/opt/oasis/oasis --project '/work/a project'";
 const CATALOG_ARGV = ["python3", "-B", "/opt/oasis/oasis", "--project", ROOT, "menu", "--catalog"];
-const NOT_PROJECT = "no .odoo19-agent.toml or oasis-workspace.toml at or above /elsewhere";
+const NOT_PROJECT = "no oasis-workspace.toml at or above /elsewhere";
 const NON_TUI = "warning: oasis menu: the action panel needs the interactive terminal UI; run `oasis menu` in a terminal.";
 
 type Exec = (argv: string[], purpose: ExecPurpose) => Promise<CoreResult>;

@@ -3,13 +3,17 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { findProjectRoot, findWorkspaceFile, projectContext, projectRootResolver } from "../lib/project.ts";
+import {
+  findProjectRoot, findWorkspaceFile, legacyProfile, notProject, projectContext, projectRootResolver,
+} from "../lib/project.ts";
 
 function scratch(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "oasis-pi-")));
 }
 
-test("findProjectRoot walks up to the directory holding .odoo19-agent.toml", () => {
+// tools/config.py no longer reads a legacy profile but refuses a checkout that has one: outside a
+// workspace the directory holding it stays the root, so every command shows that refusal.
+test("findProjectRoot without a workspace file walks up to a legacy profile, so its refusal shows", () => {
   const root = scratch();
   try {
     writeFileSync(join(root, ".odoo19-agent.toml"), "[tooling]\n");
@@ -140,20 +144,39 @@ test("projectRootResolver retries a failed git lookup and caches a found top lev
   }
 });
 
-test("findProjectRoot prefers a profile and never crosses one to reach a workspace file", () => {
+test("findWorkspaceFile and findProjectRoot cross a legacy profile above the checkout, as config.py does", () => {
   const { project, checkout, nested } = workspaceLayout();
   try {
-    const noGit = () => assert.fail("a profile needs no git lookup");
-    writeFileSync(join(checkout, ".odoo19-agent.toml"), "[tooling]\n");
-    assert.equal(findProjectRoot(nested, noGit), checkout);
-    rmSync(join(checkout, ".odoo19-agent.toml"));
     const codigo = join(project, "codigo");
     writeFileSync(join(codigo, ".odoo19-agent.toml"), "[tooling]\n");
-    assert.equal(findProjectRoot(nested, noGit), codigo);
-    assert.equal(findWorkspaceFile(nested), null);
+    assert.equal(findWorkspaceFile(nested), join(project, "oasis-workspace.toml"));
+    assert.equal(findWorkspaceFile(codigo), join(project, "oasis-workspace.toml"));
+    assert.equal(findProjectRoot(nested, () => checkout), checkout);
+    assert.equal(legacyProfile(checkout), null);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
+});
+
+test("findProjectRoot keeps a checkout that has its own legacy profile below a workspace file", () => {
+  const { project, checkout, nested } = workspaceLayout();
+  try {
+    const profile = join(checkout, ".odoo19-agent.toml");
+    writeFileSync(profile, "[tooling]\n");
+    // With git, the checkout is its top level; config.py refuses it there.
+    assert.equal(findProjectRoot(nested, () => checkout), checkout);
+    // Without git, the directory holding the profile, not the start directory.
+    assert.equal(findProjectRoot(nested, () => null), checkout);
+    assert.equal(findProjectRoot(nested), checkout);
+    assert.equal(legacyProfile(checkout), profile);
+    assert.equal(legacyProfile(nested), null);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test("notProject names the workspace file only", () => {
+  assert.equal(notProject("/elsewhere"), "no oasis-workspace.toml at or above /elsewhere");
 });
 
 test("findWorkspaceFile returns the nearest workspace file at or above the start directory", () => {
@@ -168,7 +191,9 @@ test("findWorkspaceFile returns the nearest workspace file at or above the start
 
 test("projectContext names the root and routes the agent to the oasis tools", () => {
   const text = projectContext("/work/coffee");
-  assert.match(text, /Odoo project root: \/work\/coffee \(profile \.odoo19-agent\.toml\)/);
+  // Without a workspace file the root holds a legacy profile, which no command reads any more.
+  assert.match(text, /Odoo project root: \/work\/coffee \(legacy \.odoo19-agent\.toml, no longer read: the user /);
+  assert.ok(text.includes("runs /oasis migrate"), text);
   for (const tool of [
     "oasis_test_module",
     "oasis_test_summary",
@@ -199,10 +224,10 @@ test("projectContext keeps the guidance of the test tools: what to pass, and whe
   assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
 });
 
-test("projectContext names the workspace file of a checkout without profile", () => {
+test("projectContext names the workspace file of the checkout", () => {
   const text = projectContext("/work/acme/codigo/acme", "/work/acme/oasis-workspace.toml");
   assert.match(text, /Odoo project root: \/work\/acme\/codigo\/acme \(workspace \/work\/acme\/oasis-workspace\.toml\)/);
-  assert.ok(!text.includes("profile .odoo19-agent.toml"));
+  assert.ok(!text.includes(".odoo19-agent.toml"), text);
   assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
 });
 

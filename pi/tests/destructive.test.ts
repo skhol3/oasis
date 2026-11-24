@@ -378,7 +378,7 @@ test("the extension's tool_call handler is toolCallRouter over the Pi effects", 
   for (const part of [
     "const routeToolCall = toolCallRouter(gateEffects);",
     "pi.on(\"tool_call\", (event, ctx) => routeToolCall(event, ctx));",
-    "agentDestructive: settingReader(profileConfig),",
+    "agentDestructive: settingReader(projectConfig),",
     "appendEntry: (entry) => pi.appendEntry(DECISION_ENTRY, entry),",
     "pi.registerEntryRenderer(DECISION_ENTRY, renderMenuEntry);",
   ]) {

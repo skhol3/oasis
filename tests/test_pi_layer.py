@@ -26,7 +26,7 @@ class PiLayerTests(unittest.TestCase):
         [summary] = re.findall(r'name: "oasis_test_summary",.*?\n  \}\);', source, re.S)
         summary = ' '.join(summary.split())
         self.assertIn('const root = await requireRoot(ctx.cwd);', summary)
-        self.assertIn('const { config, error } = await profileConfig(root);', summary)
+        self.assertIn('const { config, error } = await projectConfig(root);', summary)
         self.assertIn('formatBackgroundRun(params.module, params.output, config, '
                       '{ realpath: realpathSync, readLog }, options, MAX_LINES)', summary)
         self.assertIn('import { existsSync, readFileSync, realpathSync } from "node:fs";', source)

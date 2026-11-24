@@ -1,7 +1,7 @@
 // The agent's bash gate (S3, S4): the deny tier as before, and the ask tier, which the user
 // confirms in a dialog unless the project's [tooling].agent_destructive says deny or allow. The
 // files that hold that setting are in the ask tier too, for bash writes and the agent's edit and
-// write tools (agentFileGate). The Pi effects are injected (dialogs, appendEntry, the profile
+// write tools (agentFileGate). The Pi effects are injected (dialogs, appendEntry, the configuration
 // read), so it is tested without Pi; pi/extensions/oasis.ts only adapts ctx and pi to these
 // interfaces. No Pi imports.
 import { posix } from "node:path";
@@ -13,15 +13,15 @@ import { PROFILE_NAME, WORKSPACE_NAME } from "./project.ts";
 export const DECISION_ENTRY = "oasis-agent-decision";
 /** How long the dialog waits for an answer; no answer refuses. */
 export const ASK_TIMEOUT_MS = 2 * 60 * 1000;
-/** The values of [tooling].agent_destructive; anything else (or an unreadable profile) is ask. */
+/** The values of [tooling].agent_destructive; anything else (or an unreadable configuration) is ask. */
 export const AGENT_DESTRUCTIVE = ["ask", "deny", "allow"] as const;
 export type AgentDestructive = (typeof AGENT_DESTRUCTIVE)[number];
 
 const APPROVED = "Agent command approved";
 const REFUSED = "Agent command refused";
-// The files that hold [tooling].agent_destructive: a workspace file or a legacy profile in the
-// session's directory or above it, where tools/config.py finds them (an oasis-checkout.toml
-// refuses the key).
+// The files that hold [tooling].agent_destructive: a workspace file in the session's directory or
+// above it, where tools/config.py finds it (an oasis-checkout.toml refuses the key), and a legacy
+// profile there, which config.py no longer reads but oasis migrate converts into the workspace file.
 const SETTING_NAMES = new Set([WORKSPACE_NAME, PROFILE_NAME]);
 
 export interface GateUi {
@@ -45,7 +45,7 @@ export interface GateEffects {
   projectRoot(cwd: string): Promise<string | null>;
   home: string;
   exists(path: string): boolean;
-  /** AGENT_DESTRUCTIVE of tools/config.py for root; undefined when the profile cannot be read. */
+  /** AGENT_DESTRUCTIVE of tools/config.py for root; undefined when the configuration cannot be read. */
   agentDestructive(root: string): Promise<string | undefined>;
   /** Records a decision as a custom session entry (DECISION_ENTRY). */
   appendEntry(entry: MenuEntry): void;
@@ -275,7 +275,7 @@ export function agentFileGate(effects: GateEffects): (tool: string, path: string
   };
 }
 
-/** What tools/config.py read for a root, as the extension's profileConfig returns it. */
+/** What tools/config.py read for a root, as the extension's projectConfig returns it. */
 export type ProfileRead = (root: string) => Promise<{ config?: Record<string, string>; error?: string }>;
 
 /**

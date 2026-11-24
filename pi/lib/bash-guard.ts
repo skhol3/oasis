@@ -6,10 +6,10 @@
 import { posix } from "node:path";
 
 const BLOCKED = new Set(["odoo-bin", "dropdb", "psql"]);
-// User-run only: it links environment files that agents may not create or read.
+// User-run only: it adds a git worktree and branch for the user.
 export const WORKTREE_INIT = "worktree-init";
 const WORKTREE_INIT_SCRIPTS = new Set([WORKTREE_INIT, "worktree_init.py"]);
-// User-run only: it rewrites the project's configuration files (profiles, odoo.conf, lock.sha256).
+// User-run only: it rewrites the project's configuration files (legacy profiles, odoo.conf, lock.sha256).
 export const MIGRATE = "migrate";
 const MIGRATE_SCRIPTS = new Set([MIGRATE, "migrate.py"]);
 // User-run only: the interactive action menu (its catalog included) is for the user, in a terminal
@@ -708,7 +708,7 @@ function classifySegment(words: string[], where?: Where): Finding[] {
 
 /**
  * Whether a blocked program is user-run and so blocked in every session (it writes configuration,
- * links environment files or opens the interactive menu); the others are blocked only in Odoo
+ * adds a worktree or opens the interactive menu); the others are blocked only in Odoo
  * projects, where they would bypass the database guards.
  */
 export function blockedEverywhere(program: string): boolean {
@@ -791,8 +791,8 @@ export function blockReason(program: string, root: string): string {
   }
   if (program === WORKTREE_INIT) {
     return (
-      "worktree-init creates links to environment files; ask the user to run /oasis worktree <feature> " +
-      "<branch> in Gentle Shell or the command in a terminal."
+      "worktree-init adds a git worktree and branch for the user; ask the user to run /oasis worktree " +
+      "<feature> <branch> in Gentle Shell or the command in a terminal."
     );
   }
   return (
