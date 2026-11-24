@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -165,11 +165,82 @@ test("findProjectRoot keeps a checkout that has its own legacy profile below a w
     writeFileSync(profile, "[tooling]\n");
     // With git, the checkout is its top level; config.py refuses it there.
     assert.equal(findProjectRoot(nested, () => checkout), checkout);
-    // Without git, the directory holding the profile, not the start directory.
+    // Without git, the directory holding .git, as git finds it; the profile never picks the root.
+    writeFileSync(join(checkout, ".git"), "gitdir: /elsewhere\n");
     assert.equal(findProjectRoot(nested, () => null), checkout);
     assert.equal(findProjectRoot(nested), checkout);
     assert.equal(legacyProfile(checkout), profile);
     assert.equal(legacyProfile(nested), null);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+// Without git (or with a top level outside the workspace directory) the root is the directory
+// git would report: the nearest one holding .git, from the start directory up to the workspace
+// directory, else the start directory. A legacy profile on the way never becomes the root:
+// tools/config.py checks only <root>/.odoo19-agent.toml and crosses every other one.
+test("findProjectRoot without git crosses a legacy profile between the workspace and the checkout", () => {
+  const { project, checkout, nested } = workspaceLayout();
+  try {
+    const codigo = join(project, "codigo");
+    writeFileSync(join(codigo, ".odoo19-agent.toml"), "[tooling]\n");
+    const noGit = [undefined, () => null, () => tmpdir(), () => join(project, "..")];
+    // No .git: the start directory, as with no profile at all.
+    for (const gitTopLevel of noGit) assert.equal(findProjectRoot(nested, gitTopLevel), nested);
+    // A checkout holding .git (a directory, or a linked worktree's file): that checkout.
+    mkdirSync(join(checkout, ".git"));
+    for (const gitTopLevel of noGit) assert.equal(findProjectRoot(nested, gitTopLevel), checkout);
+    assert.equal(legacyProfile(checkout), null);
+    // Started in the directory holding the profile, that directory is the root and config.py refuses it.
+    for (const gitTopLevel of noGit) assert.equal(findProjectRoot(codigo, gitTopLevel), codigo);
+    // The workspace directory itself may be the checkout.
+    rmSync(join(checkout, ".git"), { recursive: true });
+    mkdirSync(join(project, ".git"));
+    for (const gitTopLevel of noGit) assert.equal(findProjectRoot(nested, gitTopLevel), project);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+  // A repository holding the workspace directory: its .git, above the workspace, is not a root
+  // (the workspace file is below it), with or without git reporting that top level.
+  const outer = scratch();
+  try {
+    mkdirSync(join(outer, ".git"));
+    const workspace = join(outer, "ws");
+    const codigo = join(workspace, "codigo");
+    const start = join(codigo, "acme", "addons");
+    mkdirSync(start, { recursive: true });
+    writeFileSync(join(workspace, "oasis-workspace.toml"), "workspace_version = 1\n");
+    writeFileSync(join(codigo, ".odoo19-agent.toml"), "[tooling]\n");
+    for (const gitTopLevel of [() => outer, () => null]) assert.equal(findProjectRoot(start, gitTopLevel), start);
+  } finally {
+    rmSync(outer, { recursive: true, force: true });
+  }
+});
+
+// The extension's before_agent_start handler names the workspace file only for a root without its
+// own legacy profile: projectContext then says the profile is no longer read.
+test("before_agent_start passes projectContext the workspace file, or null for a root with a legacy profile", () => {
+  const source = readFileSync(new URL("../extensions/oasis.ts", import.meta.url), "utf8");
+  const handler = source.match(/pi\.on\("before_agent_start", async \(event, ctx\) => \{[^]*?\n {2}\}\);\n/);
+  assert.ok(handler, "before_agent_start handler");
+  const flat = handler[0].split(/\s+/).join(" ");
+  for (const part of [
+    "const root = await projectRoot(ctx.cwd); if (!root) return;",
+    "const workspace = legacyProfile(root) ? null : findWorkspaceFile(root);",
+    "const context = projectContext(root, workspace, pi.getActiveTools(), await projectVersion(root));",
+  ]) {
+    assert.ok(flat.includes(part), part);
+  }
+  // What each branch gives projectContext.
+  const { project, checkout } = workspaceLayout();
+  try {
+    const workspace = join(project, "oasis-workspace.toml");
+    assert.equal(legacyProfile(checkout) ? null : findWorkspaceFile(checkout), workspace);
+    assert.ok(projectContext(checkout, workspace).includes(`(workspace ${workspace}).`));
+    writeFileSync(join(checkout, ".odoo19-agent.toml"), "[tooling]\n");
+    assert.equal(legacyProfile(checkout) ? null : findWorkspaceFile(checkout), null);
+    assert.match(projectContext(checkout, null), /\(legacy \.odoo19-agent\.toml, no longer read: the user runs \/oasis migrate\)/);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }

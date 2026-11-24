@@ -81,6 +81,24 @@ class ConfigCliTests(unittest.TestCase):
                                 env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'OASIS_ENTRYPOINT': '/x/odoo19'})
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', refusal(profile, 'odoo19')))
 
+    def test_release_check_needs_the_file_and_the_series(self):
+        # Its only caller, common.sh require_source, always passes the series.
+        release = self.root / 'release.py'
+        release.write_text('version_info = (19, 0, 0, "final", 0)\n')
+        usage = ('ERROR: Usage: config.py <absolute-project-root>\n'
+                 '       config.py --release <release.py> <series>\n')
+        for args, expected in ((('--release', str(release), '19.0'), (0, '', '')),
+                               (('--release', str(release), '18.0'), (2, '', '')),
+                               (('--release', str(release)), (2, '', usage)),
+                               (('--release',), (2, '', usage)),
+                               (('--release', str(release), '19.0', 'extra'), (2, '', usage)),
+                               (('relative',), (2, '', usage)),
+                               ((), (2, '', usage))):
+            with self.subTest(args=args):
+                result = subprocess.run([sys.executable, '-B', str(READER), *args], capture_output=True, text=True,
+                                        env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+                self.assertEqual((result.returncode, result.stdout, result.stderr), expected)
+
     def test_wrong_version_rejected_without_emitting_assignments(self):
         self.workspace.write_text(WORKSPACE.replace('odoo_version = "19.0"', 'odoo_version = "18.0"'))
         result = self.run_reader()

@@ -32,6 +32,15 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- `oasis migrate` on a checkout that is already migrated says what configures it: `nothing to
+  migrate: <checkout> has no .odoo19-agent.toml; it is already configured by <workspace file>`
+  (still exit 0). A legacy profile it cannot read is refused naming the file: `Cannot read
+  <profile>: <reason>.`, `Invalid TOML in <profile>.` or `Invalid tooling configuration:
+  <profile> has no [tooling] table.` (exit 2).
+- In Gentle Shell without git (or when git's top level is outside the workspace directory), the
+  project root is the nearest directory holding `.git` below the workspace file, else the
+  session directory; a leftover `.odoo19-agent.toml` between the workspace and the checkout no
+  longer becomes the root.
 - Gentle Shell: a profile above the checkout no longer stops the search for
   `oasis-workspace.toml`, as in `tools/config.py`. A checkout with its own `.odoo19-agent.toml`
   is still found, and its prompt context says the file is no longer read and that the user runs
@@ -88,6 +97,9 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Fixed
 
+- `worktree-init` refuses a workspace file above the main checkout that the new worktree could
+  not read (invalid TOML, unreadable, or writable by group or others), with the error every
+  command gives for it (exit 2), instead of creating the worktree.
 - `bootstrap` creates the environment with the Python the configuration declares (3.12 for a
   profile and `[tooling].environment`, else the selected named environment's `python`), and
   `--preview` names it in `planned_action=create_python_<version>_and_sync_lock`. It works in a

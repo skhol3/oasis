@@ -363,7 +363,8 @@ class MigrateTests(unittest.TestCase):
                 with self.subTest(args=args, checkout=checkout.name):
                     result = self.migrate(*args, project=checkout)
                     self.assertEqual((result.returncode, result.stdout, result.stderr),
-                                     (0, f'nothing to migrate: {checkout} has no .odoo19-agent.toml\n', ''))
+                                     (0, f'nothing to migrate: {checkout} has no .odoo19-agent.toml; it is already '
+                                         f'configured by {self.project}/oasis-workspace.toml\n', ''))
         self.assertEqual(self.tree(), before)
 
     def test_explicit_workspace_above_the_default(self):
@@ -395,6 +396,27 @@ class MigrateTests(unittest.TestCase):
                                 f'({self.main}, {self.feature}).\n')
         self.assert_refused(('--workspace', 'relative'),
                             'ERROR: --workspace requires an absolute existing directory.\n')
+
+    def test_an_unreadable_or_invalid_profile_is_refused_naming_it(self):
+        profile = self.main / '.odoo19-agent.toml'
+        for text, stderr in (('[tooling\n', f'ERROR: Invalid TOML in {profile}.\n'),
+                             ("tooling = 'x'\n", f'ERROR: Invalid tooling configuration: {profile} has no [tooling] table.\n')):
+            with self.subTest(text=text):
+                profile.write_text(text)
+                self.assert_refused((), stderr)
+                self.assert_refused(('--apply',), stderr)
+        if os.geteuid() == 0:
+            return  # root reads a 000 file
+        profile.write_text(PROFILE)
+        before = self.tree()
+        profile.chmod(0o000)
+        try:
+            result = self.migrate('--apply')
+        finally:
+            profile.chmod(0o644)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', f'ERROR: Cannot read {profile}: Permission denied.\n'))
+        self.assertEqual(self.tree(), before)
 
     def test_existing_workspace_file_is_never_replaced(self):
         (self.project / 'oasis-workspace.toml').write_text('# hand-written\n')

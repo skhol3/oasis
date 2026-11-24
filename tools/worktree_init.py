@@ -108,15 +108,21 @@ def workspace_dir(config, main, new):
     """The directory of the workspace file the main checkout reads, which must be above new.
 
     The new worktree needs nothing but `git worktree add`, provided it finds the same
-    workspace file, so that file must be in a directory above the new folder.
+    workspace file, so that file must be in a directory above the new folder, trusted and
+    readable TOML (config.InvalidConfig otherwise, as every command reports it).
     """
-    workspace = config.find_workspace(main)
+    try:
+        workspace = config.find_workspace(main)
+    except OSError as exc:
+        raise Refused(f'Cannot search {main} and above for {config.WORKSPACE_NAME}: '
+                      f'{exc.strerror or exc}.') from exc
     if workspace is None:
         raise Refused(f'The main checkout {main} has no {config.WORKSPACE_NAME} at or above it; '
                       'prepare the worktree by hand.')
     if not new.is_relative_to(workspace.parent):
         raise Refused(f'The new worktree {new} would not be under the workspace {workspace.parent}; '
                       'prepare the worktree by hand.')
+    config.read_toml(config.trusted(workspace))
     return workspace.parent
 
 
@@ -137,6 +143,8 @@ def main():
         values = config.load(root)
     except config.InvalidConfig as exc:
         return fail(str(exc))
+    except OSError as exc:  # older Pythons: Path.is_file raises on a directory it cannot search
+        return fail(f'Cannot read the configuration of {root}: {exc.strerror or exc}.')
     if values['CHECKOUT_KIND'] == 'none' or not values['CHECKOUT_MAIN_ROOT']:
         return fail('worktree-init needs a git checkout.')
     main_root = Path(values['CHECKOUT_MAIN_ROOT'])
@@ -194,7 +202,7 @@ def main():
 
     try:
         workspace = workspace_dir(config, main_root, new)
-    except Refused as exc:
+    except (Refused, config.InvalidConfig) as exc:
         return fail(str(exc))
 
     header = [f'worktree: {new}', f'branch: {branch_line}', f'slug: {feature}', f'workspace: {workspace}']

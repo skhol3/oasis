@@ -49,31 +49,34 @@ export function notProject(cwd: string): string {
   return `no ${WORKSPACE_NAME} at or above ${cwd}`;
 }
 
-/** The nearest directory holding a legacy profile at or above `start`, up to `last` included. */
-function nearestProfile(start: string, last?: string): string | null {
+/** The nearest directory holding `name` at or above `start`, up to `last` included. */
+function nearestHolding(name: string, start: string, last?: string): string | null {
   for (const directory of ancestors(start)) {
-    if (existsSync(join(directory, PROFILE_NAME))) return directory;
+    if (existsSync(join(directory, name))) return directory;
     if (directory === last) break;
   }
   return null;
 }
 
 /**
- * Checkout root for `start`. Under a workspace file: the real git top level of `start`; without
- * git (or when the top level is not inside the real workspace directory, where the workspace file
- * would not be found again), the nearest directory below the workspace that holds a legacy
- * profile, else `start` itself. Without a workspace file: the nearest directory holding a legacy
- * profile, so tools/config.py's refusal (run oasis migrate) shows there; else null.
+ * Checkout root for `start`: the directory passed to tools/config.py as the project. Under a
+ * workspace file: the real git top level of `start`; without git (or when the top level is not
+ * inside the real workspace directory, where the workspace file would not be found again), the
+ * directory git would report, the nearest one holding `.git` from `start` up to the workspace
+ * directory, else `start` itself. A legacy profile never picks the root there: config.py checks
+ * only `<root>/.odoo19-agent.toml`, so one in a directory between the workspace and the checkout
+ * is crossed, with git or without. Without a workspace file: the nearest directory holding a
+ * legacy profile, so config.py's refusal (run oasis migrate) shows there; else null.
  */
 export function findProjectRoot(start: string, gitTopLevel?: GitTopLevel): string | null {
   // Real paths, as tools/config.py resolves the checkout and git reports its top level: a
   // symlinked session directory still finds its workspace and resolves to the checkout root.
   const fallback = real(start);
   const workspace = findWorkspaceFile(fallback);
-  if (!workspace) return nearestProfile(fallback);
+  if (!workspace) return nearestHolding(PROFILE_NAME, fallback);
   const base = real(dirname(workspace));
   const top = gitTopLevel?.(fallback);
-  const withoutGit = () => nearestProfile(fallback, base) ?? fallback;
+  const withoutGit = () => nearestHolding(".git", fallback, base) ?? fallback;
   if (!top) return withoutGit();
   const checkout = real(top);
   const inside = relative(base, checkout);

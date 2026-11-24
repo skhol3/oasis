@@ -138,15 +138,18 @@ def checkouts_of(root: Path, values: dict) -> list[tuple[Path, str]]:
 def legacy_load(config, checkout: Path) -> dict:
     """tools/config.py's assignments for a checkout configured by its legacy profile, as
     config.py read it: the same validation, every path resolved from the checkout, an empty
-    WORKSPACE_ROOT and no named environment."""
+    WORKSPACE_ROOT and no named environment. Errors name the profile."""
+    profile = checkout / PROFILE
     try:
-        with (checkout / PROFILE).open('rb') as stream:
+        with profile.open('rb') as stream:
             document = tomllib.load(stream)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise config.InvalidConfig('Invalid tooling configuration.') from exc
+    except OSError as exc:
+        raise config.InvalidConfig(f'Cannot read {profile}: {exc.strerror or exc}.') from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise config.InvalidConfig(f'Invalid TOML in {profile}.') from exc
     tooling = document.get('tooling')
     if not isinstance(tooling, dict):
-        raise config.InvalidConfig('Invalid tooling configuration.')
+        raise config.InvalidConfig(f'Invalid tooling configuration: {profile} has no [tooling] table.')
     if tooling.get('version') != LEGACY_VERSION or tooling.get('python_version') != LEGACY_PYTHON:
         raise config.InvalidConfig(f'Tooling requires Odoo {LEGACY_VERSION} and Python {LEGACY_PYTHON}.')
     return config.assignments(document, checkout, checkout, None, '')
@@ -692,7 +695,9 @@ def main(arguments: list[str]) -> int:
                 others = []
             if others:
                 raise Refused(f'{root} has no {PROFILE}; run migrate from {others[0]}.')
-            print(f'nothing to migrate: {root} has no {PROFILE}')
+            covering = config.find_workspace(root)
+            print(f'nothing to migrate: {root} has no {PROFILE}'
+                  + (f'; it is already configured by {covering}' if covering is not None else ''))
             return 0
         plan = make_plan(root, workspace, config, reader, time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()))
     except Refused as exc:

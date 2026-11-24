@@ -516,7 +516,8 @@ def main() -> int:
     if len(sys.argv) == 4 and sys.argv[1] == '--release':
         return 0 if release_is(Path(sys.argv[2]), sys.argv[3]) else 2
     if len(sys.argv) != 2 or not Path(sys.argv[1]).is_absolute():
-        print('ERROR: Usage: config.py <absolute-project-root>', file=sys.stderr)
+        print('ERROR: Usage: config.py <absolute-project-root>\n'
+              '       config.py --release <release.py> <series>', file=sys.stderr)
         return 2
     try:
         values = load(Path(sys.argv[1]).resolve())

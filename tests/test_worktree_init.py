@@ -268,5 +268,50 @@ class WorktreeInitTests(unittest.TestCase):
                             f'ERROR: The main checkout {main} has no oasis-workspace.toml at or above it; '
                             'prepare the worktree by hand.\n')
 
+    def linked_with_its_own_workspace(self):
+        """A linked worktree that reads a workspace file of its own, so only worktree-init reads the
+        one above the main checkout (the one the new worktree would read)."""
+        main = self.repository()
+        first = self.scratch / 'proj-one'
+        self.assertEqual(self.invoke(main, 'one', 'one').returncode, 0)
+        (first / 'oasis-workspace.toml').write_text(WORKSPACE.replace("'source/odoo'", "'../source/odoo'"))
+        return first
+
+    def test_an_invalid_or_unreadable_workspace_of_the_main_checkout_is_refused(self):
+        first = self.linked_with_its_own_workspace()
+        workspace = self.scratch / 'oasis-workspace.toml'
+        workspace.write_text('workspace_version = \n')
+        self.assert_refused(first, ('two', 'two'), f'ERROR: Invalid TOML in {workspace}.\n')
+        workspace.write_text(WORKSPACE)
+        workspace.chmod(0o666)
+        self.assert_refused(first, ('two', 'two'),
+                            f'ERROR: Refusing untrusted workspace file {workspace}: '
+                            f'{workspace} is writable by group or others.\n')
+        if os.geteuid() != 0:  # root reads a 000 file
+            workspace.chmod(0o000)
+            try:
+                self.assert_refused(first, ('two', 'two'), f'ERROR: Invalid TOML in {workspace}.\n')
+            finally:
+                workspace.chmod(0o644)
+
+    @unittest.skipIf(os.geteuid() == 0, 'root reads every directory')
+    def test_an_unreadable_parent_of_the_main_checkout_workspace_gives_one_error_line(self):
+        # The workspace file above the main checkout links into a directory nobody may search.
+        first = self.linked_with_its_own_workspace()
+        locked = self.scratch / 'locked'
+        locked.mkdir()
+        (locked / 'oasis-workspace.toml').write_text(WORKSPACE)
+        workspace = self.scratch / 'oasis-workspace.toml'
+        workspace.unlink()
+        workspace.symlink_to(locked / 'oasis-workspace.toml')
+        locked.chmod(0o000)
+        self.addCleanup(locked.chmod, 0o700)
+        before = (self.snapshot(), self.branches(self.main), self.worktrees(self.main))
+        result = self.invoke(first, 'two', 'two')
+        self.assertEqual((result.returncode, result.stdout), (2, ''), result.stderr)
+        self.assertRegex(result.stderr, r'\AERROR: [^\n]+\n\Z')
+        self.assertEqual((self.snapshot(), self.branches(self.main), self.worktrees(self.main)), before)
+
+
 if __name__ == '__main__':
     unittest.main()
