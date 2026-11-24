@@ -23,7 +23,7 @@ Then install the Gentle Shell layer from a release tag (see the [changelog](CHAN
 `/reload` open sessions:
 
 ```bash
-gentle-shell install git:github.com/skhol3/oasis@v0.10.1
+gentle-shell install git:github.com/skhol3/oasis@v0.11.0
 ```
 
 [Docs →](docs/install.md) · [Gentle Shell package →](docs/gentle-shell-layer.md#installing-the-package)
