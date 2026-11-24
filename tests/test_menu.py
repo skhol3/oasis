@@ -1136,6 +1136,17 @@ class DetachTests(MenuFixture):
         self.addCleanup(self.kill, third)
         self.assertEqual(len(self.odoo_lines()), 3)
 
+    def test_start_without_a_database_from_the_menu_is_remembered(self):
+        self.env.update(FAKE_SERVE='1', FAKE_DATABASES='cc_dev_coffee', FAKE_EXISTS='1')
+        result = self.terminal('1\n1\n-\n\n\ny\n')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn(self.command('start', '--detach') + NO_CONF_DATABASE, result.stdout)
+        pid = int(re.search(r'pid=(\d+) ', self.record()).group(1))
+        self.addCleanup(self.kill, pid)
+        memory = json.loads(self.state_file().read_text())
+        self.assertEqual(memory['last']['action'], 'server.run')
+        self.assertEqual(memory['last']['answers']['database'], '')
+
     def test_catalog_restarts_a_running_server_and_keeps_its_port(self):
         self.env['FAKE_SERVE'] = '1'
         other = self.port + 1

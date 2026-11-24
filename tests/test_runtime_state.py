@@ -322,7 +322,6 @@ class RuntimeStateHelperTests(unittest.TestCase):
         self.assertIsNone(module.read_live(directory))
         self.assertFalse(self.record_path().exists())
 
-    @unittest.skipUnless(privileged_port_is_refused(), 'port 1 is bindable here (root or sysctl)')
     def test_remember_keeps_the_last_menu_action_private_and_it_survives_stop(self):
         # v0.12.0 (S6): menu.json next to server.json; S3: the last database of the start / restart flow.
         path = state_dir(self.xdg, self.root) / 'menu.json'
@@ -384,6 +383,7 @@ class RuntimeStateHelperTests(unittest.TestCase):
                 with mock.patch.dict(os.environ, {'XDG_RUNTIME_DIR': str(self.xdg)}):
                     self.assertEqual(state.read_menu(str(self.root)), {'last': None, 'database': None})
 
+    @unittest.skipUnless(privileged_port_is_refused(), 'port 1 is bindable here (root or sysctl)')
     def test_an_unbindable_port_is_reported_without_traceback(self):
         result = self.helper('port', '127.0.0.1', '1', '1')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
