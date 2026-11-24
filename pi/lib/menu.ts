@@ -42,6 +42,8 @@ export interface CatalogAction {
   confirm: "database" | "yes" | null;
   user_run: boolean;
   terminal_only: boolean;
+  /** A log action that keeps showing what the server writes (the panel's live view). */
+  follow: boolean;
 }
 
 export interface Catalog {
@@ -264,6 +266,34 @@ export function menuOutput(
   }
   const body = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
   return body ? limitLines(body, OUTPUT_MAX_LINES) : NO_OUTPUT;
+}
+
+/** This checkout's server as the extension reads it from `runtime_state.py show` (StatusInput). */
+export interface ServerState {
+  server?: { pid: number; port: number } | null;
+  serverError?: string;
+}
+
+/** The panel header's server line: running on its port and pid, stopped, or unknown with the reason. */
+export function serverLine(state: ServerState): string {
+  if (state.server) return `server: running on port ${state.server.port} (pid ${state.server.pid})`;
+  if (state.server === null) return "server: stopped";
+  const reason = (state.serverError ?? "").split("\n").map((line) => line.trim()).filter(Boolean).at(-1)
+    ?.replace(/^ERROR: /, "");
+  return reason ? `server: unknown (${plainLine(reason)})` : "server: unknown";
+}
+
+/** The last `count` lines of a log text, without terminal control sequences (plainLine). */
+export function lastLines(text: string, count: number): string[] {
+  const lines = text.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines.slice(Math.max(0, lines.length - count)).map(plainLine);
+}
+
+/** What the live log view shows in `height` rows: the last lines, or a placeholder for an empty log. */
+export function logView(lines: string[], height: number): string[] {
+  if (lines.length === 0) return ["(the server log is empty)"];
+  return lines.slice(Math.max(0, lines.length - height));
 }
 
 /** A panel result as stored in the session (a custom entry, never sent to the model). */

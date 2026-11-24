@@ -30,6 +30,22 @@ STATE = lifecycle.STAGE / 'tools' / 'runtime_state.py'
 # (the shape of a real Odoo launch) and stays alive until killed; odoo-bin is a sleeping script.
 SERVE = f'if [ -n "${{FAKE_SERVE:-}}" ]; then exec "{sys.executable}" "$@"; fi\n'
 SLEEPER = 'import time\nwhile True:\n    time.sleep(0.1)\n'
+# A fake odoo-bin for stop --force: FAKE_TERM=ignore makes it ignore SIGTERM (exit: it dies of it),
+# and it starts a child (`<odoo-bin> --fake-child`) that always ignores SIGTERM and writes its pid
+# to FAKE_CHILD once it does.
+STUBBORN = '''import os, signal, subprocess, sys, time
+if sys.argv[1:] == ['--fake-child']:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    with open(os.environ['FAKE_CHILD'], 'w') as stream:
+        stream.write(str(os.getpid()))
+    while True:
+        time.sleep(0.1)
+if os.environ.get('FAKE_TERM') == 'ignore':
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+subprocess.Popen([sys.executable, sys.argv[0], '--fake-child'])
+while True:
+    time.sleep(0.1)
+'''
 
 
 bindable = lifecycle.bindable
@@ -731,11 +747,136 @@ class ServerLifecycleTests(unittest.TestCase):
             f'docker compose --env-file {self.config_dir}/runtime-env -f {self.config_dir}/compose.yml stop db\n'))
 
     def test_stop_usage(self):
-        result = self.invoke(self.root, 'stop', '--all')
-        self.assertEqual((result.returncode, result.stdout),  (2, ''))
-        self.assertIn('Usage: ', result.stderr)
-        self.assertIn('[--database]', result.stderr)
+        for args in (('--all',), ('--force', '--database'), ('--database', '--force'), ('--force', '--force')):
+            with self.subTest(args=args):
+                result = self.invoke(self.root, 'stop', *args)
+                self.assertEqual((result.returncode, result.stdout), (2, ''))
+                self.assertIn('Usage: ', result.stderr)
+                self.assertIn('[--database | --force]', result.stderr)
+                self.unchanged()
+        result = self.invoke(self.root, 'stop', '--help')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertIn('[--database | --force]', result.stdout)
+        self.assertIn('--force', result.stdout.split('\n', 1)[1])
         self.unchanged()
+
+    def running(self, pid):
+        """Whether pid still runs this test's fake odoo-bin (a zombie does not run)."""
+        try:
+            stat_line = Path(f'/proc/{pid}/stat').read_text()
+            argv = Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0')
+        except OSError:
+            return False
+        return stat_line[stat_line.rindex(')') + 2] != 'Z' and os.fsencode(str(self.source / 'odoo-bin')) in argv
+
+    def kill_fake(self, pid):
+        """SIGKILL pid only while it runs this test's fake odoo-bin (never a reused pid)."""
+        if self.running(pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def stubborn(self, term):
+        """A foreground fake server (STUBBORN, FAKE_TERM=term) and the pid of its child."""
+        (self.source / 'odoo-bin').write_text(STUBBORN)
+        child_file = Path(self.scratch.name) / 'child.pid'
+        self.env.update(FAKE_TERM=term, FAKE_CHILD=str(child_file), OASIS_STOP_TIMEOUT='1')
+        process = self.serve(self.root)
+        deadline = time.monotonic() + 20
+        while not (child_file.exists() and child_file.read_text()):
+            self.assertLess(time.monotonic(), deadline, 'the fake child never started')
+            time.sleep(0.05)
+        child = int(child_file.read_text())
+        self.addCleanup(self.kill_fake, child)
+        self.assertTrue(self.running(child))
+        return process, child
+
+    def test_stop_without_force_still_gives_up_after_the_timeout(self):
+        # SIGTERM only, exit 1 after the timeout, server and record left as they are; it suggests --force.
+        process, child = self.stubborn('ignore')
+        before = (state_dir(self.xdg, self.root) / 'server.json').read_bytes()
+        result = self.invoke(self.root, 'stop')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (1, '', f'Odoo did not stop within 1 s: pid {process.pid}, port {self.port}; run oasis stop --force.\n'))
+        self.assertTrue(self.running(process.pid))
+        self.assertTrue(self.running(child))
+        self.assertEqual((state_dir(self.xdg, self.root) / 'server.json').read_bytes(), before)
+
+    def test_stop_force_kills_a_server_and_a_child_that_ignore_sigterm(self):
+        process, child = self.stubborn('ignore')
+        result = self.invoke(self.root, 'stop', '--force')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
+            f'Killed Odoo for this checkout after 1 s (SIGKILL to its session): pid {process.pid}, '
+            f'port {self.port}.\n'), ''))
+        self.assertEqual(process.wait(5), -signal.SIGKILL)
+        deadline = time.monotonic() + 5
+        while self.running(child):
+            self.assertLess(time.monotonic(), deadline, 'the child survived stop --force')
+            time.sleep(0.05)
+        self.assertIsNone(self.record(self.root))
+        result = self.invoke(self.root, 'status')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, 'server: stopped\n', ''))
+
+    def test_stop_force_kills_session_members_that_outlive_the_server(self):
+        process, child = self.stubborn('exit')
+        result = self.invoke(self.root, 'stop', '--force')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
+            f'Stopped Odoo for this checkout: pid {process.pid}, port {self.port}; killed 1 process(es) of '
+            'its session that outlived it.\n'), ''))
+        self.assertEqual(process.wait(5), -signal.SIGTERM)
+        deadline = time.monotonic() + 5
+        while self.running(child):
+            self.assertLess(time.monotonic(), deadline, 'the child survived stop --force')
+            time.sleep(0.05)
+        self.assertIsNone(self.record(self.root))
+
+    def test_stop_force_without_a_server_and_with_a_server_that_stops(self):
+        result = self.invoke(self.root, 'stop', '--force')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, 'No Odoo server running for this checkout.\n', ''))
+        process = self.serve(self.root)
+        result = self.invoke(self.root, 'stop', '--force')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, f'Stopped Odoo for this checkout: pid {process.pid}, port {self.port}.\n', ''))
+        self.assertEqual(process.wait(5), -signal.SIGTERM)
+        self.assertIsNone(self.record(self.root))
+
+    def test_status_lists_the_servers_of_every_checkout_of_the_repository(self):
+        self.linked_layout()
+        main = self.serve(self.main, '-d', 'cc_dev_coffee')
+        linked = self.serve(self.linked)
+        linked_port = self.record(self.linked)['port']
+        # A live server of a checkout outside this repository is not listed.
+        elsewhere = Path(self.scratch.name) / 'elsewhere'
+        elsewhere.mkdir()
+        sleeper = subprocess.Popen([sys.executable, str(self.source / 'odoo-bin')])
+        self.addCleanup(sleeper.wait)
+        self.addCleanup(sleeper.kill)
+        recorded = subprocess.run([sys.executable, '-B', str(STATE), 'record', str(elsewhere), str(sleeper.pid),
+                                   str(self.port + 9), str(self.source / 'odoo-bin')],
+                                  capture_output=True, text=True, env=self.env)
+        self.assertEqual((recorded.returncode, recorded.stderr), (0, ''))
+        lines = {self.main: f'  {self.main}: pid {main.pid}, port {self.port}, database cc_dev_coffee',
+                 self.linked: f'  {self.linked}: pid {linked.pid}, port {linked_port}'}
+        for root, process, port in ((self.main, main, self.port), (self.linked, linked, linked_port)):
+            with self.subTest(root=root):
+                result = self.invoke(root, 'status')
+                listed = [lines[self.main] + (' (this checkout)' if root == self.main else ''),
+                          lines[self.linked] + (' (this checkout)' if root == self.linked else '')]
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
+                    f'server: running pid {process.pid} port {port}\nrepository servers: 2\n'
+                    + ''.join(line + '\n' for line in listed)), ''))
+                self.assertTrue(self.commands.read_text().endswith(' ps\n'))
+        # A stopped checkout lists the servers of the others.
+        self.assertEqual(self.invoke(self.linked, 'stop').returncode, 0)
+        result = self.invoke(self.linked, 'status')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, f'server: stopped\nrepository servers: 1\n{lines[self.main]}\n', ''))
+        self.assertEqual(self.invoke(self.main, 'stop').returncode, 0)
+        result = self.invoke(self.main, 'status')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, 'server: stopped\nrepository servers: 0\n', ''))
 
 
 class TestRunPortTests(unittest.TestCase):

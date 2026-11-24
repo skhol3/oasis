@@ -87,6 +87,11 @@ test("allowed commands run without a dialog, an entry or reading the setting", a
   for (const command of [
     "oasis --project /work/shop test-module coffee", "oasis --project /work/shop gc --apply",
     "oasis --project /work/shop stop", "oasis --project /work/shop trash restore shop_dev_old_trash_20261124_101500",
+    // S6: restart, stop --force and status act on the checkout's own server.
+    "oasis --project /work/shop restart", "oasis --project /work/shop restart -d shop_dev_x --workers=0",
+    "oasis --project /work/shop restart --database shop_dev_x", "oasis --project /work/shop stop --force",
+    "oasis --project /work/shop status", "~/.agents/skills/odoo19/tools/stop --force",
+    "~/.agents/skills/odoo19/tools/restart",
     "oasis --project /work/shop drop-database --help", "git status",
   ]) {
     assert.equal(await run.gate(command), undefined, command);

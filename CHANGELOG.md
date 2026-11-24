@@ -40,6 +40,30 @@ names) may still change in a minor release; every such change is listed here und
   `oasis-checkout.toml` refuses it; an invalid value fails with `Invalid tooling
   agent_destructive: use ask, deny or allow.` `tools/config.py` prints it last as
   `AGENT_DESTRUCTIVE=<value>`.
+- `restart [odoo options]` (new command): stops this checkout's server as `stop` does, then starts
+  it as `start --detach [odoo options]`, keeping the port the stopped server had unless the options
+  name one (`-p`, `--http-port`), and the database its record names unless they name one (`-d`,
+  `--database`); a server started without a database restarts without one. What `start` would refuse (database guards, an invalid or busy
+  explicit port, `--stop-after-init`; `--detach` and informational options print the usage) is
+  refused before the server is stopped (exit 2); a server that does not stop is left running and
+  `restart` exits 1 after `stop`'s message with `Nothing was restarted: Odoo is still running for
+  this checkout.` See `docs/servers-and-ports.md`.
+- `stop --force`: after the graceful 20 s, SIGKILL to the server and every process of it still
+  running (the members of its session and of the process group it leads, and their descendants;
+  never the caller or its parents), then the record is removed: `Killed Odoo for this checkout
+  after 20 s (SIGKILL to its session): pid <pid>, port <port>.`, or `Stopped ...; killed <n>
+  process(es) of its session that outlived it.` when only those were left.
+- `status` in a git checkout lists the live servers of every checkout of the repository after its
+  own line: `repository servers: <n>` and one `  <checkout>: pid <pid>, port <port>[, database
+  <database>][ (this checkout)]` line each. A project outside git prints only its own line, as
+  before. `start` records the database it is given with `-d`/`--database` for that list.
+- Action menu and panel: *Restart the server* (optional database) and *Follow the server log*
+  (`tail -n 200 -f` until Ctrl+C in the terminal menu; in the Gentle Shell panel a live overlay
+  that reads the end of `server.log` again every second while open). The panel header shows the
+  checkout's server: `server: running on port <port> (pid <pid>)`, `server: stopped` or `server:
+  unknown (<reason>)`. The catalog's actions carry a `follow` key (true only for the live log).
+- Gentle Shell: `restart`, `stop --force` and `status` stay in the allow tier (they act on the
+  checkout's own server).
 
 ### Changed
 
@@ -53,6 +77,9 @@ names) may still change in a minor release; every such change is listed here und
   database to the trash*.
 - `doctor` prints `PASS agent_destructive=<value>` after `odoo_version` when the configuration
   loads.
+- `stop`: when Odoo does not stop within 20 s the message names the remedy: `Odoo did not stop
+  within 20 s: pid <pid>, port <port>; run oasis stop --force.` (`odoo19` through the alias). The
+  exit status stays 1.
 - Contract: names ending in `_trash_<8 digits>_<6 digits>` are reserved for the trash; every
   command that takes a database refuses them (exit 2), `drop-database` and `module-status`
   included. The `gc` usage line names `--trash`.
@@ -95,6 +122,14 @@ names) may still change in a minor release; every such change is listed here und
   `oasis --proj /p drop-database <name>` ran without the dialog. Every unambiguous prefix of
   `--project` now takes its value like `--project`.
 - `odoo-shell` refuses extra arguments with its usage (exit 2) instead of ignoring them.
+- `start --detach` read only `--http-interface` itself as the address to probe: an abbreviation
+  Odoo accepts (`--http-int=127.0.0.2`, `--http-i 127.0.0.2`) made it wait on the conf's address
+  and stop a healthy server. Every unambiguous prefix down to `--http-i`, with `=` or a separate
+  value, now counts, for the probe and the port check.
+- `start --detach`: a server that did not listen in time was stopped with SIGTERM to its session
+  and SIGKILL only when the server itself survived, so members of its session that ignore SIGTERM
+  or outlive it were left running. After the 5 s grace every process of the server still running
+  now gets SIGKILL.
 
 ## [0.10.1] - 2026-11-24
 

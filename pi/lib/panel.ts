@@ -4,7 +4,7 @@
 import { withHeartbeat } from "./heartbeat.ts";
 import {
   askInputs, type Catalog, type CatalogAction, confirmRun, fillTemplate, type MenuEntry, menuOutput, parseCatalog,
-  type Prompter, shellJoin, sources, terminalCommand,
+  type Prompter, type ServerState, serverLine, shellJoin, sources, terminalCommand,
 } from "./menu.ts";
 import type { CoreResult } from "./tools.ts";
 
@@ -16,9 +16,12 @@ const NOT_RUN = "could not run";
 /** What a command is run for: the timeout the adapter gives it. */
 export type ExecPurpose = "catalog" | "list" | "run";
 
-/** The panel's dialogs: the Prompter questions plus the overlay picker and the footer status. */
+/** The panel's dialogs: the Prompter questions plus the overlays (picker, live log) and the footer status. */
 export interface PanelUi extends Prompter {
-  pick(catalog: Catalog): Promise<CatalogAction | undefined>;
+  /** The picker; `header` is the server line of the checkout (serverLine). */
+  pick(catalog: Catalog, header: string): Promise<CatalogAction | undefined>;
+  /** The live view of the server log at `path`, refreshed while open; resolves when the user closes it. */
+  follow(path: string, title: string): Promise<void>;
   setStatus(text: string | undefined): void;
 }
 
@@ -41,6 +44,8 @@ export interface PanelEffects {
   readLog(path: string): string;
   /** Records a result as a custom session entry (shown to the user, never sent to the model). */
   appendEntry(entry: MenuEntry): void;
+  /** This checkout's server record (`runtime_state.py show`); may reject when it cannot be read. */
+  serverState(root: string): Promise<ServerState>;
   heartbeatMs?: number;
 }
 
@@ -86,7 +91,13 @@ export function actionPanel(effects: PanelEffects): (ctx: PanelContext) => Promi
       return;
     }
     const catalog = parseCatalog(listed.stdout);
-    const action = await ui.pick(catalog);
+    let header: string;
+    try {
+      header = serverLine(await effects.serverState(root));
+    } catch (error) {
+      header = serverLine({ serverError: message(error) });
+    }
+    const action = await ui.pick(catalog, header);
     if (!action) return;
     if (action.terminal_only) {
       effects.appendEntry({ label: action.label, command: terminalCommand(action), note: TERMINAL_ONLY, output: "" });
@@ -94,6 +105,11 @@ export function actionPanel(effects: PanelEffects): (ctx: PanelContext) => Promi
     }
     if (action.kind === "log" && !effects.exists(catalog.server_log)) {
       ui.notify(`oasis menu: no server log yet: ${catalog.server_log}`, "warning");
+      return;
+    }
+    if (action.follow) {
+      // A live view, not a run: nothing is executed or recorded.
+      await ui.follow(catalog.server_log, action.label);
       return;
     }
     const choices = sources(catalog, {

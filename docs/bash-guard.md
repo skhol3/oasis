@@ -29,7 +29,7 @@ flowchart TD
 
 | Tier | Commands | What happens |
 |------|----------|--------------|
-| Allow | Every other `oasis`/`odoo19` command: `test-module`, `verify-module`, `install-module`, `update-module`, `create-database`, `start`, `stop` (this checkout's server), `gc`, `gc --apply`, `gc --trash` (the list), `trash`, `trash restore`, ...; any command's `--help` or `-h` alone | Runs |
+| Allow | Every other `oasis`/`odoo19` command: `test-module`, `verify-module`, `install-module`, `update-module`, `create-database`, `start`, `restart`, `stop` and `stop --force` (this checkout's server), `status`, `gc`, `gc --apply`, `gc --trash` (the list), `trash`, `trash restore`, ...; any command's `--help` or `-h` alone | Runs |
 | Ask | `drop-database <name>`, `stop --database`, `gc --apply --trash`; changes to the files that hold the setting (see [The setting files](#the-setting-files)) | Runs after the user confirms it in a dialog (see [The dialog](#the-dialog)), unless `[tooling].agent_destructive` says `deny` or `allow` |
 | Deny | `worktree-init`, `migrate` (except `--plan`), `menu` in every session; direct `odoo-bin`, `dropdb` and `psql` in Odoo projects | Blocked; only the user runs it |
 

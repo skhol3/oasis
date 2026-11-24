@@ -1,17 +1,22 @@
 // The action panel's TUI pieces, on the public Pi extension API only: the group and action picker
-// shown with ctx.ui.custom as an overlay, and the renderer of the result entries. The logic they
-// show (rows, selection, scrolling, entry lines) is in lib/menu.ts, tested without Pi.
+// and the live server log view, shown with ctx.ui.custom as overlays, and the renderer of the result
+// entries. The logic they show (rows, selection, scrolling, entry lines, log lines, server line) is
+// in lib/menu.ts, tested without Pi.
 import type { EntryRenderer, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, type Keybinding, Text, truncateToWidth, type TUI, visibleWidth } from "@earendil-works/pi-tui";
 import {
-  type Catalog, type CatalogAction, entryLines, type MenuEntry, moveSelection, type PickerRow, pickerRows,
-  shellJoin, terminalCommand, visibleStart,
+  type Catalog, type CatalogAction, entryLines, lastLines, logView, type MenuEntry, moveSelection, type PickerRow,
+  pickerRows, shellJoin, terminalCommand, visibleStart,
 } from "../lib/menu.ts";
 
 export const MENU_ENTRY = "oasis-menu-result";
 const PREVIEW_LINES = 20;
-// Border, title, blank line, command preview, hint and border around the list.
-const CHROME_ROWS = 7;
+// Border, title, server line, blank line, command preview, hint and border around the list.
+const CHROME_ROWS = 8;
+// The live log view: border with title, blank line, hint and border around the lines.
+const LOG_CHROME_ROWS = 5;
+/** How often the live log view reads the end of the log again while it is open. */
+export const LOG_REFRESH_MS = 1000;
 
 /** What the highlighted action would run, as the panel shows it under the list. */
 function preview(action: CatalogAction): string {
@@ -22,6 +27,7 @@ function preview(action: CatalogAction): string {
 /** The group and action picker: up/down/page keys move, enter chooses, escape closes. */
 export class MenuPanel implements Component {
   private readonly catalog: Catalog;
+  private readonly header: string;
   private readonly tui: TUI;
   private readonly theme: Theme;
   private readonly keybindings: KeybindingsManager;
@@ -32,10 +38,11 @@ export class MenuPanel implements Component {
   private cache: { width: number; lines: string[] } | undefined;
 
   constructor(
-    catalog: Catalog, tui: TUI, theme: Theme, keybindings: KeybindingsManager,
+    catalog: Catalog, header: string, tui: TUI, theme: Theme, keybindings: KeybindingsManager,
     done: (action: CatalogAction | undefined) => void,
   ) {
     this.catalog = catalog;
+    this.header = header;
     this.tui = tui;
     this.theme = theme;
     this.keybindings = keybindings;
@@ -81,6 +88,7 @@ export class MenuPanel implements Component {
     this.start = visibleStart(this.rows.length, this.selected, height, this.start);
     const title = truncateToWidth(`─ oasis menu: ${this.catalog.project} `, inner + 2);
     const lines = [theme.fg("border", `╭${title}${"─".repeat(Math.max(0, inner + 2 - visibleWidth(title)))}╮`)];
+    lines.push(frame(theme.fg(this.header.startsWith("server: running") ? "success" : "muted", this.header)));
     for (const [offset, row] of this.rows.slice(this.start, this.start + height).entries()) {
       if (row.kind === "group") {
         lines.push(frame(theme.fg("accent", theme.bold(row.text))));
@@ -104,6 +112,81 @@ export class MenuPanel implements Component {
 
   invalidate(): void {
     this.cache = undefined;
+  }
+}
+
+/**
+ * The live server log view: the last lines of the log that fit, read again every LOG_REFRESH_MS while
+ * it is open (the timer stops when Pi disposes it); escape or enter closes it.
+ */
+export class LogPanel implements Component {
+  private readonly title: string;
+  private readonly read: () => string;
+  private readonly tui: TUI;
+  private readonly theme: Theme;
+  private readonly keybindings: KeybindingsManager;
+  private readonly done: () => void;
+  private readonly timer: ReturnType<typeof setInterval>;
+  private text: string;
+  private cache: { width: number; lines: string[] } | undefined;
+
+  constructor(title: string, read: () => string, tui: TUI, theme: Theme, keybindings: KeybindingsManager,
+    done: () => void) {
+    this.title = title;
+    this.read = read;
+    this.tui = tui;
+    this.theme = theme;
+    this.keybindings = keybindings;
+    this.done = done;
+    this.text = read();
+    this.timer = setInterval(() => this.refresh(), LOG_REFRESH_MS);
+  }
+
+  private refresh(): void {
+    const text = this.read();
+    if (text === this.text) return;
+    this.text = text;
+    this.invalidate();
+    this.tui.requestRender();
+  }
+
+  private height(): number {
+    return Math.max(5, Math.floor(this.tui.terminal.rows * 0.9) - LOG_CHROME_ROWS);
+  }
+
+  handleInput(data: string): void {
+    if (this.keybindings.matches(data, "tui.select.cancel") || this.keybindings.matches(data, "tui.select.confirm")) {
+      this.dispose();
+      this.done();
+    }
+  }
+
+  render(width: number): string[] {
+    if (this.cache?.width === width) return this.cache.lines;
+    const theme = this.theme;
+    const inner = Math.max(1, width - 4);
+    const frame = (content: string) => {
+      const fitted = truncateToWidth(content, inner);
+      const pad = " ".repeat(Math.max(0, inner - visibleWidth(fitted)));
+      return `${theme.fg("border", "│")} ${fitted}${pad} ${theme.fg("border", "│")}`;
+    };
+    const height = this.height();
+    const title = truncateToWidth(`─ oasis: ${this.title} (live) `, inner + 2);
+    const lines = [theme.fg("border", `╭${title}${"─".repeat(Math.max(0, inner + 2 - visibleWidth(title)))}╮`)];
+    for (const line of logView(lastLines(this.text, height), height)) lines.push(frame(line));
+    lines.push(frame(""));
+    lines.push(frame(theme.fg("dim", `esc close · refreshes every ${LOG_REFRESH_MS / 1000} s`)));
+    lines.push(theme.fg("border", `╰${"─".repeat(inner + 2)}╯`));
+    this.cache = { width, lines };
+    return lines;
+  }
+
+  invalidate(): void {
+    this.cache = undefined;
+  }
+
+  dispose(): void {
+    clearInterval(this.timer);
   }
 }
 

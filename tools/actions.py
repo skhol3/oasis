@@ -16,9 +16,11 @@ Catalog (JSON, stable keys):
                    it runs, since it may start the database service}
   groups           [{id, label}] in menu order
   actions          [{id, group, label, kind, command, argv, inputs, destructive, confirm, user_run,
-                   terminal_only}] in menu order
+                   terminal_only, follow}] in menu order
 An action's kind is `command` (argv runs an oasis command) or `log` (argv shows the end of
-server_log). inputs are asked in order: {id, label, kind (choice | text | boolean), source
+server_log); follow is true for the log action that keeps showing what the server writes (argv
+is `tail -n 200 -f <server_log>`; the terminal menu runs it until Ctrl+C, the panel shows the end
+of server_log and refreshes it while open), false for every other action. inputs are asked in order: {id, label, kind (choice | text | boolean), source
 (modules | databases | null: where the choices come from), required, allow_new (a choice may also
 be typed), pattern (a regular expression a typed value must match, or null), error (the message
 when it does not), default (booleans: false), hint (what an empty answer means, or null)}.
@@ -59,7 +61,8 @@ HELP = '''Shows the oasis actions of this checkout as numbered menus in a termin
 action and its inputs (modules from the checkout's addon roots, databases from list-databases,
 which may start the database service). The exact command is shown before it runs; destructive
 actions run only after you type the database name or yes. One action per run; the exit status is
-the command's. It needs a terminal on stdin and exits 2 without one.
+the command's (following the server log runs until Ctrl+C, then exits 0). It needs a terminal on
+stdin and exits 2 without one.
 --catalog prints the actions as JSON (for the Gentle Shell panel) and runs nothing.
 '''
 
@@ -113,10 +116,10 @@ def flag(id, name):
 
 
 def action(id, label, command, template=(), inputs=(), *, confirm=None, user_run=False, terminal_only=False,
-           kind='command'):
+           kind='command', follow=False):
     return {'id': id, 'group': id.split('.', 1)[0], 'label': label, 'kind': kind, 'command': command,
             'argv': list(template), 'inputs': list(inputs), 'destructive': confirm is not None,
-            'confirm': confirm, 'user_run': user_run, 'terminal_only': terminal_only}
+            'confirm': confirm, 'user_run': user_run, 'terminal_only': terminal_only, 'follow': follow}
 
 
 def actions(values: dict, class_filter: bool) -> list[dict]:
@@ -137,8 +140,11 @@ def actions(values: dict, class_filter: bool) -> list[dict]:
         action('server.start', 'Start the server in the background', 'start',
                ['--detach', option('database', '-d')],
                [database(required=False, hint='Enter to start without -d')]),
+        action('server.restart', 'Restart the server', 'restart', [option('database', '-d')],
+               [database(required=False, hint='Enter to keep the database of the running server')]),
         action('server.stop', 'Stop the server', 'stop'),
         action('server.logs', 'Show the end of the server log', None, kind='log'),
+        action('server.follow', 'Follow the server log', None, kind='log', follow=True),
         action('server.status', 'Show the server and database service status', 'status'),
         action('server.stop_database', 'Stop the database service', 'stop', ['--database'], confirm='yes'),
         action('modules.install', 'Install a module', 'install-module',
@@ -199,7 +205,7 @@ def catalog(config, log_dirs, root: Path) -> dict:
     listed = []
     for item in actions(values, class_filter):
         if item['kind'] == 'log':
-            item['argv'] = ['tail', '-n', LOG_LINES, server_log]
+            item['argv'] = ['tail', '-n', LOG_LINES, *(['-f'] if item['follow'] else []), server_log]
         else:
             item['argv'] = [*prefix, item['command'], *item['argv']]
         listed.append(item)
@@ -352,6 +358,15 @@ class Terminal:
             answers[item['id']] = self.answer(item, answers)
         argv = build(chosen, answers)
         print('Command: ' + shlex.join(argv), flush=True)
+        if chosen['follow']:
+            # Until Ctrl+C, which ends tail too (the same process group): the normal way out.
+            print(f"Following {self.data['server_log']}; press Ctrl+C to stop.", flush=True)
+            try:
+                status = subprocess.run(argv).returncode
+            except KeyboardInterrupt:
+                print('\nStopped following the server log.', flush=True)
+                return 0
+            return status if status >= 0 else 128 - status
         if chosen['confirm'] == 'database':
             if self.ask('Type the database name to confirm: ') != answers.get('database'):
                 print('Not confirmed: nothing ran.')

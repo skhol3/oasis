@@ -3,15 +3,23 @@
 
 Usage:
   runtime_state.py show <project_root>       pid=<pid> port=<port> when a live server is recorded
-  runtime_state.py record <project_root> <pid> <port> <odoo_bin> [<python>]
-  runtime_state.py detach <project_root> <port> <log> <odoo_bin> <python> <interface> -- <odoo argument>...
+  runtime_state.py database <project_root>   the database the live server was started with, if any
+  runtime_state.py record <project_root> <pid> <port> <odoo_bin> [<python> [<database>]]
+  runtime_state.py detach <project_root> <port> <log> <odoo_bin> <python> <interface> <database> --
+                          <odoo argument>...
                                              start <python> <odoo_bin> <arguments> in a new
                                              session with stdin from /dev/null and stdout and
                                              stderr appended to <log> (0600), record it, and
                                              print pid=<pid> port=<port> log=<log> once it
                                              listens on <interface> (see below)
-  runtime_state.py stop <project_root>       SIGTERM this checkout's server, wait up to 20 s
+  runtime_state.py stop <project_root> [--force] [--program oasis|odoo19]
+                                             SIGTERM this checkout's server, wait up to 20 s;
+                                             with --force, then SIGKILL its session (see below);
+                                             the program the timeout message names (oasis)
   runtime_state.py others <project_root>     live servers of the other checkouts, one per line
+  runtime_state.py servers <project_root>    live servers of every checkout of the project's git
+                                             repository, one `<checkout>: pid <pid>, port <port>[,
+                                             database <database>][ (this checkout)]` line each
   runtime_state.py port <interface> <first> <last> [<excluded>...]
                                              first port in [first, last] free on the interface
                                              (exit 1 when none; exit 2 and `Cannot bind port
@@ -34,7 +42,8 @@ Usage:
                                              `compose up` of that compose file (created 0600)
 
 State lives in ${XDG_RUNTIME_DIR, or /tmp}/oasis-<uid>/<first 16 hex of sha256(realpath
-project_root)>/server.json ({pid, port, started_at, project_root, odoo_bin, python}); both directories
+project_root)>/server.json ({pid, port, started_at, project_root, odoo_bin, python, database}, the
+last two optional: database is the one start was given with -d or --database); both directories
 are 0700 and refused when they are symlinks, not directories or owned by another user. Never
 inside a repository or a shared directory. A record is live while its pid is a process of this
 user whose command line (/proc, Linux) is the Odoo launch: argv[1] is the recorded odoo-bin
@@ -62,6 +71,19 @@ listen in time is stopped (SIGTERM to its session, SIGKILL after STOP_GRACE seco
 removed, and the command prints `Odoo did not listen on <host>:<port> within <s> s and was stopped;
 the end of <log>:` and those lines, then exits 1.
 
+The processes of a server are the recorded process, the members of the session and of the process
+group it leads, and their descendants (of this user, started after it; never this process or its
+ancestors). Stopping a detached server that does not listen sends SIGTERM to its session and, after
+STOP_GRACE seconds (OASIS_STOP_GRACE, for the tests only), SIGKILL to every one of them still
+running, so members that ignore SIGTERM or outlive the server do not stay. `stop` sends SIGTERM to
+the server and waits STOP_TIMEOUT seconds (OASIS_STOP_TIMEOUT, for the tests only) for it to end
+(exit 1 when it does not, with `Odoo did not stop within <s> s: pid <pid>, port <port>; run
+<program> stop --force.`); `stop --force` waits for it and its processes, then sends SIGKILL to
+every one still running and removes the record once the server is gone.
+
+Repository servers (status): the live records, of this checkout and the others, whose checkout is
+one of the worktrees `git worktree list` names for the project root, or inside one.
+
 Compose lock: `compose-<first 16 hex of sha256(realpath compose_file)>.lock` (0600) directly in
 the user root, shared by every checkout of this user whose profile names that compose file.
 This helper only creates and checks it (a regular file of the current user); common.sh holds
@@ -79,6 +101,7 @@ import secrets
 import signal
 import socket
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -89,6 +112,9 @@ GRACE = 10
 DETACH_WAIT = 30.0
 DETACH_TAIL = 20
 STOP_GRACE = 5
+# How long stop --force waits for the processes it sent SIGKILL to.
+KILL_WAIT = 5
+GIT_TIMEOUT = 20
 # Addresses that mean every interface: the probe connects to the loopback instead.
 ANY_INTERFACE = {'', '0.0.0.0', '::'}
 RUNS = 'runs'
@@ -287,13 +313,15 @@ def live_record(project_root):
     return read_live(directory) if directory else None
 
 
-def write_record(project_root, pid, port, odoo_bin, python=None):
+def write_record(project_root, pid, port, odoo_bin, python=None, database=None):
     directory = state_dir(project_root, create=True)
     record = {'pid': pid, 'port': port,
               'started_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
               'project_root': os.path.realpath(project_root), 'odoo_bin': odoo_bin}
     if python:
         record['python'] = python
+    if database:
+        record['database'] = database
     descriptor, temporary = tempfile.mkstemp(prefix='.server-', dir=directory)
     try:
         with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
@@ -349,33 +377,108 @@ def accepts(host, port):
         return False
 
 
-def end_session(pid):
-    """Stop the detached server and whatever it started in its session, then reap it."""
-    for signum, wait in ((signal.SIGTERM, STOP_GRACE), (signal.SIGKILL, None)):
+def process_info(pid):
+    """(state, ppid, pgid, sid, start time) of a process of this user (/proc/<pid>/stat), or None."""
+    try:
+        if os.stat(f'/proc/{pid}').st_uid != os.getuid():
+            return None
+        with open(f'/proc/{pid}/stat', 'rb') as stream:
+            raw = stream.read()
+        # The command name may hold spaces and parentheses: the fields follow the last `)`.
+        fields = raw[raw.rindex(b')') + 2:].split()
+        return fields[0].decode(), int(fields[1]), int(fields[2]), int(fields[3]), int(fields[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def server_processes(leader, started):
+    """{pid: start time} of the server's processes (see the docstring); started is the start time
+    of the leader, so a reused pid, or a process older than the server, never counts."""
+    table = {}
+    for name in os.listdir('/proc'):
+        if name.isdigit():
+            info = process_info(int(name))
+            if info is not None:
+                table[int(name)] = info
+    current = table.get(leader)
+    if current is not None and current[4] != started:
+        return {}
+    newer = {pid: info for pid, info in table.items() if info[4] >= started}
+    members = {pid for pid, info in newer.items() if leader in (pid, info[2], info[3])}
+    while True:
+        children = {pid for pid, info in newer.items() if info[1] in members} - members
+        if not children:
+            break
+        members |= children
+    ancestor, seen = os.getpid(), set()
+    while ancestor > 0 and ancestor not in seen:
+        seen.add(ancestor)
+        members.discard(ancestor)
+        info = table.get(ancestor)
+        ancestor = info[1] if info else 0
+    return {pid: table[pid][4] for pid in members}
+
+
+def running(processes):
+    """The processes still running: the same start time, and not a zombie."""
+    left = {}
+    for pid, started in processes.items():
+        info = process_info(pid)
+        if info is not None and info[4] == started and info[0] != 'Z':
+            left[pid] = started
+    return left
+
+
+def kill_all(processes):
+    """SIGKILL every one of the processes that still runs."""
+    for pid in running(processes):
         try:
-            os.killpg(pid, signum)
+            os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
-            # Not a session leader yet (setsid still to run): the process alone.
-            try:
-                os.kill(pid, signum)
-            except ProcessLookupError:
-                pass
-        deadline = time.monotonic() + (wait or 0)
-        while True:
-            done, _status = os.waitpid(pid, os.WNOHANG) if wait else os.waitpid(pid, 0)
-            if done:
-                return
-            if time.monotonic() >= deadline:
-                break
+            pass
+
+
+def seconds(name, default):
+    """A wait in seconds from the environment variable name (for the tests only), else default."""
+    try:
+        wait = float(os.environ.get(name, ''))
+    except ValueError:
+        return default
+    return wait if math.isfinite(wait) and wait >= 0 else default
+
+
+def end_session(pid):
+    """Stop the detached server and whatever it started in its session, then reap it.
+
+    SIGTERM to the session, then SIGKILL to every process of the server still running after the
+    grace: the leader when it ignores SIGTERM, and members that ignore it or outlive the leader.
+    The leader, a child of this process, is reaped only at the end, so its pid (the members'
+    session id) cannot be reused meanwhile.
+    """
+    info = process_info(pid)
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        # Not a session leader yet (setsid still to run): the process alone.
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    if info is not None:
+        deadline = time.monotonic() + seconds('OASIS_STOP_GRACE', STOP_GRACE)
+        while running(server_processes(pid, info[4])) and time.monotonic() < deadline:
             time.sleep(0.05)
+        kill_all(server_processes(pid, info[4]))
+    else:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    os.waitpid(pid, 0)
 
 
 def detach_wait():
-    try:
-        wait = float(os.environ.get('OASIS_DETACH_WAIT', ''))
-    except ValueError:
-        return DETACH_WAIT
-    return wait if math.isfinite(wait) and wait >= 0 else DETACH_WAIT
+    return seconds('OASIS_DETACH_WAIT', DETACH_WAIT)
 
 
 def tail(path, offset, count):
@@ -389,7 +492,7 @@ def tail(path, offset, count):
     return text.splitlines()[-count:]
 
 
-def detach(project_root, port, log, odoo_bin, python, interface, arguments):
+def detach(project_root, port, log, odoo_bin, python, interface, arguments, database=None):
     """Start Odoo in a new session writing to log, record it and report it (see the docstring)."""
     try:
         descriptor = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -414,7 +517,7 @@ def detach(project_root, port, log, odoo_bin, python, interface, arguments):
                 os._exit(127)
     os.close(descriptor)
     try:
-        write_record(project_root, pid, port, odoo_bin, python)
+        write_record(project_root, pid, port, odoo_bin, python, database)
     except BaseException:
         # An unrecorded server could never be stopped with stop: end it.
         os.kill(pid, signal.SIGTERM)
@@ -447,24 +550,60 @@ def detach(project_root, port, log, odoo_bin, python, interface, arguments):
     return 1
 
 
-def stop(project_root):
+def recorded_database(record):
+    """The database a record names, when it is a valid name; else None."""
+    database = record.get('database')
+    return database if isinstance(database, str) and DATABASE.fullmatch(database) else None
+
+
+def stop(project_root, force=False, program='oasis'):
+    """SIGTERM the checkout's server and wait for it; with force, SIGKILL what is left (docstring)."""
     record = live_record(project_root)
     if record is None:
         print('No Odoo server running for this checkout.')
         return 0
     pid, port = record['pid'], record['port']
+    info = process_info(pid) if force else None
+    # Taken before SIGTERM: the descendants of the server, which may outlive it.
+    processes = server_processes(pid, info[4]) if info is not None else {}
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
-    deadline = time.monotonic() + STOP_TIMEOUT
-    while is_live(record):
+    timeout = seconds('OASIS_STOP_TIMEOUT', STOP_TIMEOUT)
+    deadline = time.monotonic() + timeout
+    left = {}
+    while True:
+        if info is not None:
+            processes.update(server_processes(pid, info[4]))
+            left = running(processes)
+        if not is_live(record) and not left:
+            break
         if time.monotonic() >= deadline:
-            print(f'Odoo did not stop within {STOP_TIMEOUT} s: pid {pid}, port {port}.', file=sys.stderr)
-            return 1
+            if not force:
+                print(f'Odoo did not stop within {timeout:g} s: pid {pid}, port {port}; run {program} stop --force.',
+                      file=sys.stderr)
+                return 1
+            break
         time.sleep(0.1)
-    read_live(checkout_dir(project_root))
-    print(f'Stopped Odoo for this checkout: pid {pid}, port {port}.')
+    if not left:
+        read_live(checkout_dir(project_root))
+        print(f'Stopped Odoo for this checkout: pid {pid}, port {port}.')
+        return 0
+    kill_all(processes)
+    deadline = time.monotonic() + KILL_WAIT
+    while running(left) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if pid in running(left):
+        print(f'Odoo is still running after SIGKILL: pid {pid}, port {port}.', file=sys.stderr)
+        return 1
+    remove_record_of(project_root, pid)
+    if pid in left:
+        print(f'Killed Odoo for this checkout after {timeout:g} s (SIGKILL to its session): pid {pid}, '
+              f'port {port}.')
+    else:
+        print(f'Stopped Odoo for this checkout: pid {pid}, port {port}; killed {len(left)} process(es) of '
+              'its session that outlived it.')
     return 0
 
 
@@ -487,6 +626,39 @@ def others(project_root):
         if record is not None:
             found.append(record)
     return found
+
+
+def worktrees(project_root):
+    """The real paths of the worktrees of project_root's git repository; empty when git fails."""
+    env = {key: value for key, value in os.environ.items()
+           if key not in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE')}
+    try:
+        result = subprocess.run(['git', '-C', str(project_root), 'worktree', 'list', '--porcelain'],
+                                capture_output=True, text=True, env=env, timeout=GIT_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    return [os.path.realpath(line[len('worktree '):]) for line in result.stdout.splitlines()
+            if line.startswith('worktree ')]
+
+
+def repository_servers(project_root):
+    """(record, own) for the live servers of every checkout of the repository, by checkout path."""
+    trees = worktrees(project_root)
+    own = live_record(project_root)
+    found = [(record, False) for record in others(project_root)] + ([(own, True)] if own else [])
+    inside = [(record, mine) for record, mine in found
+              if any(record['project_root'] == tree or record['project_root'].startswith(tree.rstrip('/') + '/')
+                     for tree in trees)]
+    return sorted(inside, key=lambda item: item[0]['project_root'])
+
+
+def server_line(record, own):
+    database = recorded_database(record)
+    shown = f', database {database}' if database else ''
+    return (f"{record['project_root']}: pid {record['pid']}, port {record['port']}{shown}"
+            + (' (this checkout)' if own else ''))
 
 
 def run_database_name(namespace, module, token=None):
@@ -736,16 +908,29 @@ def main(argv):
             if record is not None:
                 print(f"pid={record['pid']} port={record['port']}")
             return 0
-        if command == 'record' and len(args) in (4, 5):
+        if command == 'record' and len(args) in (4, 5, 6):
             write_record(args[0], integer(args[1]), integer(args[2]), *args[3:])
             return 0
-        if command == 'stop' and len(args) == 1:
-            return stop(args[0])
-        if command == 'detach' and len(args) >= 7 and args[6] == '--':
-            return detach(args[0], integer(args[1]), args[2], args[3], args[4], args[5], args[7:])
+        if command == 'database' and len(args) == 1:
+            record = live_record(args[0])
+            if record is not None and recorded_database(record):
+                print(recorded_database(record))
+            return 0
+        if command == 'stop' and args:
+            rest, program = args[1:], 'oasis'
+            if len(rest) >= 2 and rest[-2] == '--program' and rest[-1] in ('oasis', 'odoo19'):
+                rest, program = rest[:-2], rest[-1]
+            if rest in ([], ['--force']):
+                return stop(args[0], force=bool(rest), program=program)
+        if command == 'detach' and len(args) >= 8 and args[7] == '--':
+            return detach(args[0], integer(args[1]), args[2], args[3], args[4], args[5], args[8:], args[6])
         if command == 'others' and len(args) == 1:
             for record in others(args[0]):
                 print(f"{record['project_root']} (port {record['port']}, pid {record['pid']})")
+            return 0
+        if command == 'servers' and len(args) == 1:
+            for record, own in repository_servers(args[0]):
+                print(server_line(record, own))
             return 0
         if command == 'port' and len(args) >= 3:
             port = free_port(args[0], integer(args[1]), integer(args[2]), {integer(a) for a in args[3:]})
@@ -781,7 +966,7 @@ def main(argv):
         return 2
     except ValueError:
         pass
-    print('ERROR: Usage: runtime_state.py show|record|detach|stop|others|port|ephemeral-port|run-name|'
+    print('ERROR: Usage: runtime_state.py show|database|record|detach|stop|others|servers|port|ephemeral-port|run-name|'
           'run-lock|run-unlock|run-owned|compose-lock ...', file=sys.stderr)
     return 2
 

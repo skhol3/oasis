@@ -19,7 +19,8 @@ import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
 import { type CatalogAction, menuShortcut } from "../lib/menu.ts";
 import { actionPanel, type ExecPurpose } from "../lib/panel.ts";
-import { MENU_ENTRY, MenuPanel, renderMenuEntry } from "../ui/menu-panel.ts";
+import { readTail } from "../lib/log-tail.ts";
+import { LogPanel, MENU_ENTRY, MenuPanel, renderMenuEntry } from "../ui/menu-panel.ts";
 import {
   formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, moduleInfoArgs, testModuleArgs, updateModuleArgs,
   viewInfoArgs,
@@ -267,9 +268,10 @@ export default function oasisLayer(pi: ExtensionAPI) {
 
   // The action panel (alt+o or OASIS_MENU_KEY, and /oasis menu): user-run only, no agent tool opens
   // it. lib/panel.ts decides everything (catalog, inputs, confirmation, run, result); this adapter
-  // gives it pi.exec in the project root, the Pi dialogs and the overlay, and records results as
-  // custom session entries (pi.appendEntry with an entry renderer): Pi shows them but never sends
-  // them to the model.
+  // gives it pi.exec in the project root, the Pi dialogs and the overlays (the picker, with the
+  // checkout's server state from runtime_state in its header, and the live server log, which reads
+  // the end of server.log again every second while open), and records results as custom session
+  // entries (pi.appendEntry with an entry renderer): Pi shows them but never sends them to the model.
   pi.registerEntryRenderer(MENU_ENTRY, renderMenuEntry);
   const EXEC_TIMEOUTS: Record<ExecPurpose, number> = {
     catalog: STATUS_TIMEOUT_MS, list: TOOL_TIMEOUT_MS, run: MENU_TIMEOUT_MS,
@@ -282,6 +284,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     exists: existsSync,
     readLog,
     appendEntry: (entry) => pi.appendEntry(MENU_ENTRY, entry),
+    serverState: (root) => serverState(root),
   });
 
   function menu(ctx: ExtensionContext): Promise<void> {
@@ -289,13 +292,18 @@ export default function oasisLayer(pi: ExtensionAPI) {
       mode: ctx.mode,
       cwd: ctx.cwd,
       ui: {
-        pick: (catalog) => ctx.ui.custom<CatalogAction | undefined>(
-          (tui, theme, keybindings, done) => new MenuPanel(catalog, tui, theme, keybindings, done),
+        pick: (catalog, header) => ctx.ui.custom<CatalogAction | undefined>(
+          (tui, theme, keybindings, done) => new MenuPanel(catalog, header, tui, theme, keybindings, done),
           {
             overlay: true,
             overlayOptions: { anchor: "center", width: "80%", minWidth: 40, maxHeight: "90%" },
             blocked: { kind: "question", message: "oasis menu" },
           },
+        ),
+        follow: (path, title) => ctx.ui.custom<void>(
+          (tui, theme, keybindings, done) => new LogPanel(title, () => readTail(path), tui, theme, keybindings,
+            () => done()),
+          { overlay: true, overlayOptions: { anchor: "center", width: "90%", minWidth: 40, maxHeight: "90%" } },
         ),
         select: (title, options) => ctx.ui.select(title, options),
         input: (title, placeholder) => ctx.ui.input(title, placeholder),

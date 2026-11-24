@@ -2,15 +2,19 @@
 set -Eeuo pipefail
 source "$(dirname "$0")/oasis_env.sh"
 usage() {
-  printf 'Usage: %s [--database]\n' "$(usage_name)"
+  printf 'Usage: %s [--database | --force]\n' "$(usage_name)"
 }
 case $# in
   0) mode=server ;;
   1) case $1 in
        --database) mode=database ;;
+       --force) mode=force ;;
        --help)
          usage
-         printf 'Stops the Odoo server that start runs for this checkout (SIGTERM, waits up to 20 s).\n'
+         printf 'Stops the Odoo server that start runs for this checkout (SIGTERM, waits up to 20 s;\n'
+         printf 'when it does not stop in time, exits 1 and suggests --force).\n'
+         printf -- '--force then sends SIGKILL to the server and every process of its session that is\n'
+         printf 'still running, and removes its record.\n'
          printf -- '--database stops the Compose database service, only when no other checkout has\n'
          printf 'a running Odoo server. It never stops another checkout'\''s Odoo.\n'
          exit 0 ;;
@@ -21,7 +25,10 @@ esac
 source "$(dirname "$0")/common.sh"
 require_runtime
 if [[ "$mode" == server ]]; then
-  exec python3 -I -B "$(dirname "$0")/runtime_state.py" stop "$PROJECT_ROOT"
+  exec python3 -I -B "$(dirname "$0")/runtime_state.py" stop "$PROJECT_ROOT" --program "$(program_name)"
+fi
+if [[ "$mode" == force ]]; then
+  exec python3 -I -B "$(dirname "$0")/runtime_state.py" stop "$PROJECT_ROOT" --force --program "$(program_name)"
 fi
 # The database service is shared by every checkout: refuse while another one serves.
 others=$(runtime_state others "$PROJECT_ROOT")

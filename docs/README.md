@@ -18,7 +18,7 @@ One topic per file. Start from the group that matches what you are doing; the
 | Documentation | Purpose |
 | --- | --- |
 | [Action menu](action-menu.md) | `oasis menu` and the Gentle Shell panel (`alt+o`) |
-| [Servers and ports per checkout](servers-and-ports.md) | `start`, `stop`, `status`, ports and the database service |
+| [Servers and ports per checkout](servers-and-ports.md) | `start`, `restart`, `stop`, `status`, ports and the database service |
 | [Tests and test databases](testing.md) | `test-module`, `verify-module`, `--only`, `--reuse` and compact evidence |
 | [Disposable test databases](disposable-test-databases.md) | Per-run databases and `gc` after interrupted runs |
 | [Database trash](trash.md) | `drop-database` moves to the trash; `trash`, `trash restore` and `gc --trash` |

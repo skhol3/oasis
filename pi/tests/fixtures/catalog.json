@@ -72,7 +72,44 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
+    },
+    {
+      "id": "server.restart",
+      "group": "server",
+      "label": "Restart the server",
+      "kind": "command",
+      "command": "restart",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "restart",
+        {
+          "input": "database",
+          "option": "-d"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "database",
+          "label": "Database",
+          "kind": "choice",
+          "source": "databases",
+          "required": false,
+          "allow_new": true,
+          "pattern": "^[A-Za-z0-9_]+$",
+          "error": "Database name must use only letters, numbers, and underscores.",
+          "default": null,
+          "hint": "Enter to keep the database of the running server"
+        }
+      ],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "server.stop",
@@ -90,7 +127,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "server.logs",
@@ -108,7 +146,28 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
+    },
+    {
+      "id": "server.follow",
+      "group": "server",
+      "label": "Follow the server log",
+      "kind": "log",
+      "command": null,
+      "argv": [
+        "tail",
+        "-n",
+        "200",
+        "-f",
+        "/work/a project/dev/logs/odoo19/server.log"
+      ],
+      "inputs": [],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false,
+      "follow": true
     },
     {
       "id": "server.status",
@@ -126,7 +185,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "server.stop_database",
@@ -145,7 +205,8 @@
       "destructive": true,
       "confirm": "yes",
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "modules.install",
@@ -210,7 +271,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "modules.update",
@@ -262,7 +324,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "modules.status",
@@ -311,7 +374,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "modules.init_dev",
@@ -376,7 +440,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": true
+      "terminal_only": true,
+      "follow": false
     },
     {
       "id": "modules.overview",
@@ -410,7 +475,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "tests.module",
@@ -447,7 +513,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "tests.class",
@@ -500,7 +567,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "tests.reuse",
@@ -554,7 +622,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "maintenance.create_database",
@@ -588,7 +657,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "maintenance.drop_database",
@@ -638,7 +708,8 @@
       "destructive": true,
       "confirm": "database",
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "maintenance.trash",
@@ -656,7 +727,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "maintenance.trash_restore",
@@ -691,7 +763,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "maintenance.trash_empty",
@@ -728,7 +801,8 @@
       "destructive": true,
       "confirm": "yes",
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "maintenance.gc",
@@ -746,7 +820,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "maintenance.gc_apply",
@@ -765,7 +840,8 @@
       "destructive": true,
       "confirm": "yes",
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "maintenance.doctor",
@@ -783,7 +859,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "maintenance.migrate_plan",
@@ -802,7 +879,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": false,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "maintenance.migrate",
@@ -821,7 +899,8 @@
       "destructive": true,
       "confirm": "yes",
       "user_run": true,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     },
     {
       "id": "maintenance.worktree",
@@ -870,7 +949,8 @@
       "destructive": false,
       "confirm": null,
       "user_run": true,
-      "terminal_only": false
+      "terminal_only": false,
+      "follow": false
     }
   ]
 }

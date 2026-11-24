@@ -92,7 +92,10 @@ class PiLayerTests(unittest.TestCase):
         self.assertIn('catalogArgv: (root) => ["python3", "-B", OASIS, "--project", root, "menu", "--catalog"],', flat)
         self.assertIn('exec: (argv, cwd, purpose) => pi.exec(argv[0], argv.slice(1), '
                       '{ cwd, timeout: EXEC_TIMEOUTS[purpose] }),', flat)
-        self.assertIn('new MenuPanel(catalog, tui, theme, keybindings, done)', flat)
+        self.assertIn('new MenuPanel(catalog, header, tui, theme, keybindings, done)', flat)
+        # S6: the header's server state comes from runtime_state; the live log reads only the end of server.log.
+        self.assertIn('serverState: (root) => serverState(root),', flat)
+        self.assertIn('new LogPanel(title, () => readTail(path), tui, theme, keybindings, () => done()),', flat)
         self.assertIn('overlay: true,', flat)
         self.assertIn('mode: ctx.mode, cwd: ctx.cwd,', flat)
         # alt+o unless OASIS_MENU_KEY says otherwise, and /oasis menu; no agent tool opens the panel.

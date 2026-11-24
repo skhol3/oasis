@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+# restart [odoo options]: stops this checkout's server as `stop` does, then starts it again in the
+# background as `start --detach [odoo options]` (the same one-server record, log and port rules).
+# Without an explicit -p/--http-port the new server keeps the port of the stopped one, and without
+# -d/--database (or an abbreviation) the database its record names, if any; a checkout without a
+# running server gets start's port and no database. What start would refuse (a database guard, an
+# invalid or busy explicit port, --stop-after-init) is refused before the server is stopped, and so
+# are --detach (implied) and informational options. A server that does not stop is left running:
+# nothing starts and restart exits with stop's status (1).
+source "$(dirname "$0")/oasis_env.sh"
+usage() {
+  printf 'Usage: %s restart [odoo options]\n' "$(usage_name)"
+}
+if [[ $# -eq 1 && ( $1 == --help || $1 == -h ) ]]; then
+  usage
+  printf 'Stops the Odoo server of this checkout (as stop: SIGTERM, waits up to 20 s), then starts\n'
+  printf 'it in the background with the given Odoo options (as start --detach). It keeps the port\n'
+  printf 'and the database the stopped server had unless the options name others (-p or\n'
+  printf -- '--http-port, -d or --database); a server started without a database restarts without\n'
+  printf 'one. When the server does not stop, nothing is restarted (exit 1): run stop --force first.\n'
+  exit 0
+fi
+for argument in "$@"; do
+  if [[ "$argument" == -- ]]; then break; fi
+  if [[ "$argument" == --detach ]]; then
+    usage >&2
+    exit 2
+  fi
+done
+source "$(dirname "$0")/common.sh"
+require_runtime
+source "$(dirname "$0")/server_args.sh"
+parse_server_arguments "$@"
+if "$informational"; then
+  usage >&2
+  exit 2
+fi
+if "$batch"; then
+  printf 'restart starts a server; it cannot be combined with --stop-after-init.\n' >&2
+  exit 2
+fi
+server=$(runtime_state show "$PROJECT_ROOT")
+old_port='' old_database=''
+if [[ -n "$server" ]]; then
+  read -r _ old_port <<< "$server"
+  old_port=${old_port#port=}
+  if [[ -z "$explicit_database" ]]; then
+    old_database=$(runtime_state database "$PROJECT_ROOT")
+    # Still a database of this checkout's namespace: refused before the server is stopped.
+    if [[ -n "$old_database" ]]; then require_working_database_name "$old_database"; fi
+  fi
+fi
+if [[ -n "$explicit_port" ]]; then
+  if ! valid_port "$explicit_port"; then
+    printf 'Invalid HTTP port: %s\n' "$explicit_port" >&2
+    exit 2
+  fi
+  # Another port than the running server's must be free before that server is stopped.
+  if (( 10#$explicit_port != ${old_port:-0} )); then
+    interface=$(server_interface)
+    if ! probe $(( 10#$explicit_port )) $(( 10#$explicit_port )); then
+      busy $(( 10#$explicit_port )) 'pass another --http-port'
+      exit 2
+    fi
+  fi
+fi
+stop_status=0
+python3 -I -B "$(dirname "$0")/runtime_state.py" stop "$PROJECT_ROOT" --program "$(program_name)" ||
+  stop_status=$?
+if (( stop_status != 0 )); then
+  # stop's message already names the remedy (stop --force).
+  printf 'Nothing was restarted: Odoo is still running for this checkout.\n' >&2
+  exit "$stop_status"
+fi
+kept=()
+if [[ -z "$explicit_port" && -n "$old_port" ]]; then
+  kept+=("--http-port=$old_port")
+fi
+if [[ -n "$old_database" ]]; then
+  kept+=(-d "$old_database")
+fi
+exec bash "$(dirname "$0")/start" --detach "${kept[@]}" "$@"
