@@ -124,9 +124,11 @@ checkout.
 
 5. Create the Python environment, with the same `python`, and install the locked packages into
    it. The environment's folder sits in `environments/`, which is what the
-   [environment rule](#the-python-environment) asks for.
+   [environment rule](#the-python-environment) asks for. Each block sets `python` itself, so it
+   also works in a new shell.
 
    ```bash
+   python=3.12
    uv venv --python "$python" ~/odoo/19.0/environments/acme
    uv pip sync --python ~/odoo/19.0/environments/acme/bin/python \
      ~/odoo/19.0/projects/acme/config/requirements/dev.txt

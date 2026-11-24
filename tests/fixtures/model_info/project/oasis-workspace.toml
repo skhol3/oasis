@@ -1,9 +1,10 @@
-# Test-only synthetic project for model-info; modelled on tests/fixture-profile.toml.
+# Test-only synthetic project for model-info; modelled on tests/fixture-workspace.toml.
 # Not a template or default for a real project. The environment, config, environment
 # file and compose paths intentionally do not exist: model-info must not need them.
+workspace_version = 1
+odoo_version = '19.0'
+
 [tooling]
-version = '19.0'
-python_version = '3.12'
 community = '../source/odoo'
 environment = '.venv'
 config = 'dev/odoo.conf'

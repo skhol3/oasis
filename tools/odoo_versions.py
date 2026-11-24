@@ -6,6 +6,8 @@ configured series (ODOO_SECOND_PORT_OPTION, ODOO_DEMO_OFF_ARGS) for the shell to
 
 Keys:
 - python: lowest and highest supported Python minor version, inclusive ("3.10", "3.14").
+- python_default: the Python of a workspace that sets [tooling].environment instead of named
+  [environments] (a named environment declares its own); within the range above.
 - postgres_min: lowest supported PostgreSQL major version.
 - second_port_option: the option of the second (gevent/longpolling) server port.
 - demo_off_args: the options that install without demo data. 19.0 loads no demo data unless
@@ -36,6 +38,7 @@ import sys
 CAPABILITIES = {
     '19.0': {
         'python': ('3.10', '3.14'),
+        'python_default': '3.12',
         'postgres_min': 13,
         'second_port_option': '--gevent-port',
         'demo_off_args': ['--without-demo'],

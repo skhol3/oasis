@@ -32,6 +32,14 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- `doctor` prints `PASS configuration=workspace` and warns about `addons_path` or `data_dir` in
+  every checkout's `odoo.conf`.
+- On the main checkout, `list-databases`, `gc` and `trash` still stop (exit 2) when a linked
+  worktree's slug cannot be read; the message now ends with `Fix <worktree>/oasis-checkout.toml,
+  then run the command again.`, and a worktree that still has a legacy profile stops them with
+  the refusal above.
+- The Python of a workspace with `[tooling].environment` is the series' `python_default` in
+  `tools/odoo_versions.py` (3.12 on 19.0, unchanged).
 - The Gentle Shell panel's start / restart is one form whose last lines are the filled command,
   drawn again after every answer and wrapped; every other panel action shows its filled command
   in a Yes/No confirmation before running (destructive ones keep their typed confirmation).
@@ -52,6 +60,20 @@ names) may still change in a minor release; every such change is listed here und
   `.odoo19-agent.toml` profile as the alternative; the README's five-minute start and the
   documentation index link to the guide. Tests pin the paths, the environment rule and the
   guide's examples.
+
+### Removed
+
+- The legacy per-checkout profile `.odoo19-agent.toml` is no longer read (contract change). A
+  checkout that still has one, even next to an `oasis-workspace.toml`, is refused before any
+  command runs (exit 2): `<checkout>/.odoo19-agent.toml is the old profile format, no longer
+  read: run oasis migrate --plan to see its conversion to oasis-workspace.toml, then oasis
+  migrate --apply.` `oasis migrate` (and `--plan`) still read and convert it; `doctor` reports it
+  as one `FAIL configuration`. A profile above a checkout no longer ends the search for the
+  workspace file. Without a workspace file the error is `Missing tooling configuration: no
+  oasis-workspace.toml at or above <checkout>.`
+- `worktree-init`'s profile layouts (copying the profile, linking `dev/` entries and the
+  environment file, rewriting a copied `odoo.conf`): it only runs `git worktree add` below the
+  workspace file, and refuses a main checkout that finds none.
 
 ### Fixed
 

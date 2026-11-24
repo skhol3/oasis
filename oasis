@@ -24,16 +24,21 @@ PROGRAMS = ('oasis', 'odoo19')
 INVOKED = Path(globals().get('ALIAS_PATH') or __file__)
 
 
-def below_workspace(tools: Path, root: Path) -> bool:
-    """Whether tools/config.py finds a workspace file for root (its finder, not a copy)."""
+# Commands that run in a checkout that still has the legacy profile: migrate converts it, doctor
+# reports it as one FAIL. Every other command is refused before it runs.
+LEGACY_COMMANDS = ('migrate', 'doctor')
+
+
+def configuration_reader(tools: Path):
+    """tools/config.py as a module (its finder and messages, not a copy), or None when missing."""
     reader = tools / 'config.py'
     if not reader.is_file():
-        return False
+        return None
     sys.dont_write_bytecode = True  # never leave __pycache__ in the installed bundle
     spec = importlib.util.spec_from_file_location('oasis_config', reader)
     config = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(config)
-    return config.find_workspace(root) is not None
+    return config
 
 
 def program_name() -> str:
@@ -51,8 +56,7 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('--project', metavar='/absolute/project',
-                        help=('absolute path to an existing checkout with .odoo19-agent.toml '
-                              'or below an oasis-workspace.toml'))
+                        help='absolute path to an existing checkout at or below an oasis-workspace.toml')
     parser.add_argument('command', nargs='?', help='public command to run')
     parser.add_argument('arguments', nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -64,9 +68,15 @@ def main() -> int:
         return 2
     root = Path(args.project).resolve()
     tools = Path(__file__).resolve().parent / 'tools'
-    profile = root / '.odoo19-agent.toml'
-    if not profile.is_file() and not below_workspace(tools, root):
-        print(f'ERROR: Missing tooling configuration: {profile}', file=sys.stderr)
+    config = configuration_reader(tools)
+    if config is not None and (root / config.PROFILE_NAME).is_file():
+        if args.command not in LEGACY_COMMANDS:
+            print(f'ERROR: {config.legacy_profile_refusal(root / config.PROFILE_NAME, prog)}', file=sys.stderr)
+            return 2
+    elif config is None or config.find_workspace(root) is None:
+        message = (config.missing_configuration(root) if config is not None
+                   else f'Missing tooling configuration: no oasis-workspace.toml at or above {root}.')
+        print(f'ERROR: {message}', file=sys.stderr)
         return 2
     tool = tools / args.command
     if not tool.is_file() or not tool.resolve().is_relative_to(tools):

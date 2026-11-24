@@ -4,6 +4,7 @@ Every project lives in a fresh system temp directory. git runs with explicit -c 
 an empty global configuration and a ceiling at the scratch directory, so it never reads or
 writes the user's configuration or a real project.
 """
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -21,7 +22,8 @@ os.umask(0o022)
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'odoo19'
 READER = ROOT / 'tools' / 'config.py'
-LEGACY_PROFILE = (ROOT / 'tests' / 'fixture-profile.toml').read_text()
+# A legacy profile: no longer read, only refused (and converted by oasis migrate).
+LEGACY_PROFILE = "[tooling]\nversion = '19.0'\npython_version = '3.12'\n"
 MODEL_INFO = ROOT / 'tests' / 'fixtures' / 'model_info'
 GIT = ['git', '-c', 'user.name=oasis tests', '-c', 'user.email=tests@example.invalid',
        '-c', 'init.defaultBranch=main', '-c', 'commit.gpgsign=false']
@@ -41,9 +43,6 @@ dev_prefix = 'acme_dev_'
 test_prefix = 'acme_test_'
 logs = 'logs'
 '''
-LEGACY_TAIL = ["WORKSPACE_ROOT=''", 'ODOO_VERSION=19.0', 'ODOO_SECOND_PORT_OPTION=--gevent-port',
-               'ODOO_DEMO_OFF_ARGS=--without-demo', "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12', "DATA_DIR=''",
-               'AGENT_DESTRUCTIVE=ask']
 CHECKOUT_ONLY = 'oasis-checkout.toml may only set [tooling].checkout_slug and [tooling].environment: '
 # The same workspace with named environments instead of [tooling].environment.
 NAMED = WORKSPACE.replace("environment = 'environments/acme'\n", '') + '''
@@ -164,7 +163,7 @@ class WorkspaceTests(unittest.TestCase):
         (linked / 'oasis-checkout.toml').write_text("[tooling]\nagent_destructive = 'allow'\n")
         self.assert_rejected(linked, CHECKOUT_ONLY + 'tooling.agent_destructive')
 
-    def test_linked_worktree_needs_no_profile_copy(self):
+    def test_linked_worktree_needs_no_copy_of_the_workspace_file(self):
         self.layout()
         linked = self.linked()
         self.assertFalse((linked / '.odoo19-agent.toml').exists())
@@ -249,38 +248,28 @@ class WorkspaceTests(unittest.TestCase):
         finally:
             self.scratch.chmod(mode)
 
-    def test_legacy_profile_in_the_checkout_wins(self):
-        main = self.layout()
-        (main / '.odoo19-agent.toml').write_text(LEGACY_PROFILE)
-        # A checkout file is not read in legacy mode.
-        (main / 'oasis-checkout.toml').write_text("[odoo]\nversion = '18.0'\n")
-        lines = self.assignments(main)
-        self.assertEqual(lines[-8:], LEGACY_TAIL)
-        self.assertIn('PROJECT_ENVIRONMENT=' + shlex.quote(str((main / '../../environments/example').resolve())),
-                      lines)
-        self.assertIn('ODOO_CONFIG=' + shlex.quote(str(main / 'dev/odoo.conf')), lines)
-        self.assertIn("DEV_PREFIX=cc_dev_", lines)
+    def refusal(self, profile):
+        return (f'{profile} is the old profile format, no longer read: run oasis migrate --plan to see its '
+                'conversion to oasis-workspace.toml, then oasis migrate --apply.')
 
-    def test_legacy_profile_keeps_its_rules_in_a_writable_checkout(self):
+    def test_a_legacy_profile_in_the_checkout_is_refused_next_to_the_workspace(self):
         main = self.layout()
-        (main / '.odoo19-agent.toml').write_text(LEGACY_PROFILE)
-        expected = self.output(main)
-        mode = stat.S_IMODE(main.stat().st_mode)
-        main.chmod(mode | stat.S_IWGRP)
-        try:
-            self.assertEqual(self.output(main), expected)
-        finally:
-            main.chmod(mode)
+        profile = main / '.odoo19-agent.toml'
+        profile.write_text(LEGACY_PROFILE)
+        self.assert_rejected(main, self.refusal(profile))
+        # The checkout file does not change that.
+        (main / 'oasis-checkout.toml').write_text("[tooling]\ncheckout_slug = 'mrp_2'\n")
+        self.assert_rejected(main, self.refusal(profile))
 
-    def test_a_profile_on_the_way_stops_discovery(self):
+    def test_a_profile_on_the_way_no_longer_stops_discovery(self):
         main = self.layout()
         (self.project / 'codigo' / '.odoo19-agent.toml').write_text(LEGACY_PROFILE)
-        self.assert_rejected(main, f'Missing tooling configuration: {main / ".odoo19-agent.toml"}')
+        self.assertEqual(self.output(main), self.expected(main, 'main', ''))
 
-    def test_without_any_file_the_missing_profile_error_stays(self):
+    def test_without_a_workspace_file_the_missing_configuration_error_names_the_checkout(self):
         main = self.layout()
         self.workspace.unlink()
-        self.assert_rejected(main, f'Missing tooling configuration: {main / ".odoo19-agent.toml"}')
+        self.assert_rejected(main, f'Missing tooling configuration: no oasis-workspace.toml at or above {main}.')
 
     def test_unsupported_workspace_version_is_refused(self):
         main = self.layout()
@@ -310,7 +299,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assert_rejected(main, f'[tooling].checkout_slug belongs in a checkout\'s oasis-checkout.toml, '
                                    f'not in {self.workspace}.')
 
-    def test_workspace_tooling_keeps_the_profile_validation(self):
+    def test_workspace_tooling_keeps_its_validation(self):
         main = self.layout()
         self.workspace.write_text(WORKSPACE.replace("test_prefix = 'acme_test_'", "test_prefix = 'other_test_'"))
         self.assert_rejected(main, 'Unsafe tooling database prefixes.')
@@ -318,6 +307,21 @@ class WorkspaceTests(unittest.TestCase):
         self.assert_rejected(main, 'Conflicting advisory and tooling values: odoo.version.')
         self.workspace.write_text(WORKSPACE + "[odoo]\nversion = '19.0'\n")
         self.assertEqual(self.output(main), self.expected(main, 'main', ''))
+
+    def test_single_environment_python_comes_from_the_series_table(self):
+        # [tooling].environment declares no Python: config.py takes the series' python_default
+        # from tools/odoo_versions.py, not a value of its own.
+        main = self.layout()
+        spec = importlib.util.spec_from_file_location('oasis_config_under_test', READER)
+        config = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(config)
+        table = config.versions().CAPABILITIES['19.0']
+        self.assertEqual(config.load(main)['PYTHON_VERSION'], '3.12')
+        table['python_default'] = '3.13'
+        try:
+            self.assertEqual(config.load(main)['PYTHON_VERSION'], '3.13')
+        finally:
+            table['python_default'] = '3.12'
 
     def test_shipped_example_is_accepted(self):
         example = ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml'
@@ -518,6 +522,15 @@ class WorkspaceTests(unittest.TestCase):
         self.assertIn('--python-version "$python"', guide)
         # Checking the installed packages against the locks is --full; --quick skips it.
         self.assertIn('check-environment --full', guide)
+        # Each block that uses "$python" sets it first: a block pasted in a new shell works alone.
+        blocks = re.findall(r'^ *```bash\n(.*?)^ *```$', guide, re.MULTILINE | re.DOTALL)
+        using = [block for block in blocks if '"$python"' in block]
+        self.assertGreaterEqual(len(using), 2)
+        for block in using:
+            with self.subTest(block=block.splitlines()[0].strip()):
+                lines = [line.strip() for line in block.splitlines()]
+                first_use = next(index for index, line in enumerate(lines) if '"$python"' in line)
+                self.assertTrue(any(re.fullmatch(r'python=3\.\d+', line) for line in lines[:first_use]), block)
 
     def test_guide_workspace_resolves_to_its_example_tree(self):
         series = self.scratch / 'odoo' / '19.0'
@@ -559,7 +572,7 @@ class WorkspaceTests(unittest.TestCase):
         return subprocess.run([sys.executable, '-B', str(CLI), '--project', str(project), *args],
                               capture_output=True, text=True, env=self.env, cwd=self.scratch)
 
-    def test_entry_point_runs_a_command_in_a_checkout_without_profile(self):
+    def test_entry_point_runs_a_command_in_a_linked_worktree(self):
         self.layout()
         shutil.copytree(MODEL_INFO / 'source', self.project / 'source')
         linked = self.linked()
@@ -572,12 +585,12 @@ class WorkspaceTests(unittest.TestCase):
         # coffee_shop comes from the checkout's addons, resolved from the checkout root.
         self.assertIn('extended by (2): coffee_loyalty, coffee_shop(+mail.activity.mixin)\n', result.stdout)
 
-    def test_entry_point_keeps_the_error_without_profile_or_workspace(self):
+    def test_entry_point_reports_a_missing_workspace_file(self):
         main = self.layout()
         self.workspace.unlink()
         result = self.invoke(main, 'model-info', 'coffee.order')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'ERROR: Missing tooling configuration: {main / ".odoo19-agent.toml"}\n'))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            2, '', f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above {main}.\n'))
 
     # -- worktree-init ----------------------------------------------------------------------
 

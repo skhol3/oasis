@@ -10,6 +10,9 @@ to .odoo19-agent.toml.bak-<stamp>. Every checkout must then load the same config
 before (tools/config.py, and the addons path and data directory of its Odoo command line); on
 any mismatch every change is undone and the exit status is 1. The content of odoo.conf and of
 the environment file is never printed.
+
+The only reader of the legacy profile: tools/config.py refuses a checkout that has one, so
+legacy_load reads it here with the rules config.py applied to it before v0.12.0.
 """
 import configparser
 import errno
@@ -25,6 +28,9 @@ import time
 import tomllib
 
 PROFILE = '.odoo19-agent.toml'
+# What a legacy profile had to declare: the profile format only ever served this series.
+LEGACY_VERSION = '19.0'
+LEGACY_PYTHON = '3.12'
 # Migrated sections; the advisory ones stay in the profile backups.
 MIGRATED = ('tooling', 'development')
 # [tooling] keys a workspace derives (from odoo_version) or keeps per checkout (oasis-checkout.toml).
@@ -127,6 +133,23 @@ def checkouts_of(root: Path, values: dict) -> list[tuple[Path, str]]:
     if root not in [path for path, _kind in found]:
         raise Refused(f'git does not list {root} as a worktree of its repository.')
     return found
+
+
+def legacy_load(config, checkout: Path) -> dict:
+    """tools/config.py's assignments for a checkout configured by its legacy profile, as
+    config.py read it: the same validation, every path resolved from the checkout, an empty
+    WORKSPACE_ROOT and no named environment."""
+    try:
+        with (checkout / PROFILE).open('rb') as stream:
+            document = tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise config.InvalidConfig('Invalid tooling configuration.') from exc
+    tooling = document.get('tooling')
+    if not isinstance(tooling, dict):
+        raise config.InvalidConfig('Invalid tooling configuration.')
+    if tooling.get('version') != LEGACY_VERSION or tooling.get('python_version') != LEGACY_PYTHON:
+        raise config.InvalidConfig(f'Tooling requires Odoo {LEGACY_VERSION} and Python {LEGACY_PYTHON}.')
+    return config.assignments(document, checkout, checkout, None, '')
 
 
 def read_profile(path: Path) -> dict:
@@ -305,7 +328,7 @@ def toml_table(name: str, table: dict) -> str:
 def make_plan(root: Path, workspace_argument, config, reader, stamp: str) -> dict:
     """Every line to print, every change to make and what verification needs; nothing is written."""
     try:
-        values = config.load(root)
+        values = legacy_load(config, root)
     except config.InvalidConfig as exc:
         raise Refused(str(exc)) from exc
     checkouts = checkouts_of(root, values)
@@ -316,7 +339,7 @@ def make_plan(root: Path, workspace_argument, config, reader, stamp: str) -> dic
         if (path / PROFILE).is_file():
             profiles[path] = read_profile(path / PROFILE)
             try:
-                before[path] = config.load(path)
+                before[path] = legacy_load(config, path)
                 effective_before[path] = effective(reader, before[path])
             except config.InvalidConfig as exc:
                 raise Refused(f'{path}: {exc}') from exc
@@ -350,8 +373,6 @@ def make_plan(root: Path, workspace_argument, config, reader, stamp: str) -> dic
                 break
             if (parent / config.WORKSPACE_NAME).is_file():
                 raise Refused(f'{parent / config.WORKSPACE_NAME} would be found before {workspace} from {path}.')
-            if parent != path and (parent / PROFILE).is_file():
-                raise Refused(f'{parent / PROFILE} would end the search for {workspace} from {path}.')
 
     document = profiles[root]
     tooling = {}

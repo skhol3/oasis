@@ -2,8 +2,10 @@
 """Parse project-owned tooling paths into literal shell assignments, not shell code.
 
 The caller must supply the project (checkout) root; this module never discovers it from its
-own (global installation) location. A checkout without `.odoo19-agent.toml` reads the nearest
-`oasis-workspace.toml` above it. Path declarations do not grant access consent.
+own (global installation) location. A checkout reads the nearest `oasis-workspace.toml` at or
+above it, with its own optional `oasis-checkout.toml`. A checkout that still has the legacy
+profile `.odoo19-agent.toml` is refused: only tools/migrate.py reads that file, to convert it.
+Path declarations do not grant access consent.
 """
 import ast
 import functools
@@ -70,20 +72,28 @@ PATHS = {
 }
 
 
+# The legacy per-checkout profile: never read here, only refused (legacy_profile_refusal).
 PROFILE_NAME = '.odoo19-agent.toml'
 WORKSPACE_NAME = 'oasis-workspace.toml'
 CHECKOUT_NAME = 'oasis-checkout.toml'
 WORKSPACE_VERSION = 1
-# The Python of a profile, and of a workspace that sets [tooling].environment instead of
-# named [environments]; a named environment declares its own within the Odoo series' range.
-LEGACY_PYTHON = '3.12'
-LEGACY_VERSION = '19.0'
 DEFAULT_ENVIRONMENT = 'default'
 MISSING = object()
 
 
 class InvalidConfig(ValueError):
     pass
+
+
+def legacy_profile_refusal(profile: Path, program: str) -> str:
+    """Why a checkout with the legacy profile is refused, and the fix (`oasis migrate`)."""
+    return (f'{profile} is the old profile format, no longer read: run {program} migrate --plan to see '
+            f'its conversion to {WORKSPACE_NAME}, then {program} migrate --apply.')
+
+
+def missing_configuration(root: Path) -> str:
+    """The error of a checkout without a workspace file at or above it."""
+    return f'Missing tooling configuration: no {WORKSPACE_NAME} at or above {root}.'
 
 
 SLUG = re.compile(r'[a-z0-9][a-z0-9_]{0,19}')
@@ -145,8 +155,8 @@ def checkout_identity(root: Path, override: str | None) -> tuple[str, Path | Non
 
     Without any `.git` at or above root the project is outside git (kind `none`). A `.git`
     file is a linked worktree's gitfile: its slug and namespace guard must not be lost, so
-    only a profile slug lets it continue (kind `linked`, main checkout unknown). A `.git`
-    directory (or anything else) stops with the reason.
+    only a checkout slug (oasis-checkout.toml) lets it continue (kind `linked`, main checkout
+    unknown). A `.git` directory (or anything else) stops with the reason.
     """
     try:
         return git_checkout(root)
@@ -178,12 +188,9 @@ def derived_slug(top: Path, main: Path) -> str:
 def find_workspace(root: Path) -> Path | None:
     """The nearest workspace file at or above root, or None.
 
-    Searched like git searches `.git`, up to the filesystem root. A directory that holds a
-    legacy profile (root included) ends the search: that profile's checkout owns the tree.
+    Searched like git searches `.git`, up to the filesystem root.
     """
     for directory in (root, *root.parents):
-        if (directory / PROFILE_NAME).is_file():
-            return None
         candidate = directory / WORKSPACE_NAME
         if candidate.is_file():
             return candidate
@@ -248,8 +255,9 @@ def workspace_document(workspace: Path, selected=None) -> tuple[dict, str]:
         # One slug for every checkout would give them all one database namespace.
         raise InvalidConfig("[tooling].checkout_slug belongs in a checkout's oasis-checkout.toml, "
                             f'not in {workspace}.')
-    # Derived: the Odoo series from odoo_version, Python from the named environment.
-    tooling = {**tooling, 'version': odoo, 'python_version': LEGACY_PYTHON}
+    # Derived: the Odoo series from odoo_version, Python from the named environment, else the
+    # series' default (tools/odoo_versions.py python_default).
+    tooling = {**tooling, 'version': odoo, 'python_version': versions().capability(odoo, 'python_default')}
     name = ''
     if 'environments' in document or selected is not None:
         name, environment, python = named_environment(document, workspace, odoo, selected)
@@ -302,35 +310,28 @@ def checkout_overrides(root: Path) -> dict:
     return dict(document.get('tooling', {}))
 
 
-def configuration(root: Path) -> tuple[dict, Path, Path | None]:
-    """The document that configures root, the directory its paths resolve from, and the
-    workspace file (None for a legacy profile). workspace_configuration() also names the
-    selected environment.
+def configuration(root: Path) -> tuple[dict, Path, Path]:
+    """The document that configures root, the directory its paths resolve from (the workspace
+    directory) and the workspace file. workspace_configuration() also names the selected
+    environment.
 
-    Legacy profile in root, read as before; otherwise the trusted workspace file above root
-    with the checkout's overrides. Tools that read their own sections ([development],
-    lint_rcfile) use this, so they see the same file and base as load().
+    The trusted workspace file at or above root with the checkout's overrides. Tools that read
+    their own sections ([development], lint_rcfile) use this, so they see the same file and base
+    as load().
     """
-    profile = root / PROFILE_NAME
-    if profile.is_file():
-        try:
-            with profile.open('rb') as stream:
-                document = tomllib.load(stream)
-        except (OSError, tomllib.TOMLDecodeError) as exc:
-            # Kept generic by design: legacy profiles keep their exact messages; only the new
-            # workspace and checkout files name the file in read_toml.
-            raise InvalidConfig('Invalid tooling configuration.') from exc
-        return document, root, None
     document, base, workspace, _name = workspace_configuration(root)
     return document, base, workspace
 
 
 def workspace_configuration(root: Path) -> tuple[dict, Path, Path, str]:
-    """configuration() for a checkout without a profile, plus the selected environment name."""
+    """configuration() plus the selected environment name; a legacy profile in root is refused
+    first, also next to a workspace file."""
     profile = root / PROFILE_NAME
+    if profile.is_file():
+        raise InvalidConfig(legacy_profile_refusal(profile, program_name()))
     workspace = find_workspace(root)
     if workspace is None:
-        raise InvalidConfig(f'Missing tooling configuration: {profile}')
+        raise InvalidConfig(missing_configuration(root))
     overrides = checkout_overrides(root)
     # The checkout's environment is a name of [environments], not the [tooling] path.
     selected = overrides.pop('environment', None)
@@ -341,13 +342,16 @@ def workspace_configuration(root: Path) -> tuple[dict, Path, Path, str]:
 
 def load(root: Path) -> dict[str, str]:
     """Validated assignments for root (see configuration)."""
-    if (root / PROFILE_NAME).is_file():
-        document, base, workspace = configuration(root)
-        name = ''
-    else:
-        document, base, workspace, name = workspace_configuration(root)
-    output = resolve(document, root, base, legacy=workspace is None)
-    # Appended last, so the previous assignments stay unchanged; empty for a profile.
+    document, base, workspace, name = workspace_configuration(root)
+    return assignments(document, root, base, workspace, name)
+
+
+def assignments(document: dict, root: Path, base: Path, workspace: Path | None, name: str) -> dict[str, str]:
+    """The assignments of a configuration document whose [tooling] carries version and
+    python_version. workspace None (WORKSPACE_ROOT empty) is only tools/migrate.py's reading of
+    a legacy profile, to compare a checkout before and after converting it."""
+    output = resolve(document, root, base)
+    # Appended last, so the previous assignments stay unchanged.
     output['WORKSPACE_ROOT'] = str(workspace.parent) if workspace is not None else ''
     # Appended after it: the Odoo series and the options that differ between series, which
     # tools render instead of writing them (odoo_versions.py), then the selected environment.
@@ -369,8 +373,8 @@ AGENT_DESTRUCTIVE = ('ask', 'deny', 'allow')
 
 
 def agent_destructive(tooling: dict) -> str:
-    """[tooling].agent_destructive, `ask` when absent. The user sets it in the profile or the
-    workspace file; oasis-checkout.toml refuses it (CHECKOUT_KEYS)."""
+    """[tooling].agent_destructive, `ask` when absent. The user sets it in the workspace file;
+    oasis-checkout.toml refuses it (CHECKOUT_KEYS)."""
     value = tooling.get('agent_destructive', 'ask')
     if not isinstance(value, str) or value not in AGENT_DESTRUCTIVE:
         raise InvalidConfig('Invalid tooling agent_destructive: use ask, deny or allow.')
@@ -387,12 +391,11 @@ def optional_path(tooling: dict, key: str, base: Path) -> str:
     return str((base / value).resolve())
 
 
-def resolve(document: dict, root: Path, base: Path, legacy: bool = True) -> dict[str, str]:
+def resolve(document: dict, root: Path, base: Path) -> dict[str, str]:
     """Validated assignments for the checkout root.
 
-    Paths resolve from base (the profile's checkout, or the workspace directory), except
-    addons_paths, which always resolve from the checkout root. A workspace document
-    (legacy=False) has its version and Python checked by workspace_document already.
+    Paths resolve from base (the workspace directory), except addons_paths, which always
+    resolve from the checkout root. workspace_document has checked the version and Python.
     """
     try:
         tooling = document['tooling']
@@ -400,8 +403,6 @@ def resolve(document: dict, root: Path, base: Path, legacy: bool = True) -> dict
         raise InvalidConfig('Invalid tooling configuration.') from exc
     if not isinstance(tooling, dict):
         raise InvalidConfig('Invalid tooling configuration.')
-    if legacy and (tooling.get('version') != LEGACY_VERSION or tooling.get('python_version') != LEGACY_PYTHON):
-        raise InvalidConfig(f'Tooling requires Odoo {LEGACY_VERSION} and Python {LEGACY_PYTHON}.')
     for section, advisory, consumed in (
             ('odoo', 'version', 'version'), ('odoo', 'community', 'community'),
             ('environment', 'config', 'config'), ('database', 'test_prefix', 'test_prefix')):
@@ -468,12 +469,12 @@ def resolve(document: dict, root: Path, base: Path, legacy: bool = True) -> dict
                                        or not SLUG.fullmatch(override)):
         raise InvalidConfig('Invalid tooling checkout slug.')
     kind, top, main = checkout_identity(root, override)
-    # A profile slug wins for every kind; only a linked worktree derives one.
+    # A checkout file's slug wins for every kind; only a linked worktree derives one.
     output['CHECKOUT_KIND'] = kind
     output['CHECKOUT_SLUG'] = (override if override is not None
                                else derived_slug(top, main) if kind == 'linked' else '')
     # The main checkout's work tree: a linked worktree may keep its dev/logs linked there.
-    # Empty when git failed in a linked worktree with a profile slug (main checkout unknown).
+    # Empty when git failed in a linked worktree with a checkout slug (main checkout unknown).
     output['CHECKOUT_MAIN_ROOT'] = (str(main) if kind == 'linked' and main is not None
                                     else str(root) if kind == 'main' else '')
     slug = output['CHECKOUT_SLUG']
@@ -511,9 +512,9 @@ def release_is(path: Path, version: str) -> bool:
 
 
 def main() -> int:
-    # --release <release.py> [<series>]: the series defaults to the legacy profile's.
-    if len(sys.argv) in (3, 4) and sys.argv[1] == '--release':
-        return 0 if release_is(Path(sys.argv[2]), sys.argv[3] if len(sys.argv) == 4 else LEGACY_VERSION) else 2
+    # --release <release.py> <series>: whether that Odoo source declares the series.
+    if len(sys.argv) == 4 and sys.argv[1] == '--release':
+        return 0 if release_is(Path(sys.argv[2]), sys.argv[3]) else 2
     if len(sys.argv) != 2 or not Path(sys.argv[1]).is_absolute():
         print('ERROR: Usage: config.py <absolute-project-root>', file=sys.stderr)
         return 2

@@ -34,7 +34,9 @@ class GlobalCliTests(unittest.TestCase):
             shutil.copyfile(ROOT / program, self.bundle / program)
         self.project = self.temp / 'a project'
         self.project.mkdir()
-        (self.project / '.odoo19-agent.toml').write_text('[tooling]\nversion = "19.0"\n')
+        # The entry point finds the workspace file with the packaged tools/config.py.
+        shutil.copyfile(ROOT / 'tools' / 'config.py', tools / 'config.py')
+        (self.project / 'oasis-workspace.toml').write_text('workspace_version = 1\n')
         self.log = self.temp / 'calls.json'
         self.fake = ('#!/bin/bash\nFAKE_TOOL="$0" exec python3 -c '\
                      "'import json, os, sys; "
@@ -156,13 +158,33 @@ class GlobalCliTests(unittest.TestCase):
                 (('--project', 'relative', 'status'), 'ERROR: --project requires an absolute existing project directory.\n'),
                 (('--project', str(absent), 'status'), 'ERROR: --project requires an absolute existing project directory.\n')):
             self.assert_no_calls(self.invoke(*args), error)
-        (self.project / '.odoo19-agent.toml').unlink()
+        (self.project / 'oasis-workspace.toml').unlink()
         self.assert_no_calls(self.invoke('--project', str(self.project), 'status'),
-                             f'ERROR: Missing tooling configuration: {self.project / ".odoo19-agent.toml"}\n')
+                             f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above {self.project}.\n')
 
-    def test_checkout_below_a_workspace_file_dispatches_without_profile(self):
-        shutil.copyfile(ROOT / 'tools' / 'config.py', self.bundle / 'tools' / 'config.py')
-        (self.project / '.odoo19-agent.toml').unlink()
+    def test_a_legacy_profile_is_refused_before_dispatch_except_for_migrate_and_doctor(self):
+        profile = self.project / '.odoo19-agent.toml'
+        profile.write_text('[tooling]\nversion = "19.0"\n')
+        for program in PROGRAMS:
+            with self.subTest(program=program):
+                self.assert_no_calls(self.invoke('--project', str(self.project), 'status', program=program), (
+                    f'ERROR: {profile} is the old profile format, no longer read: run {program} migrate --plan to '
+                    f'see its conversion to oasis-workspace.toml, then {program} migrate --apply.\n'))
+        # Without the workspace file next to it, the same refusal (not the missing configuration).
+        (self.project / 'oasis-workspace.toml').unlink()
+        self.assertIn('is the old profile format', self.invoke('--project', str(self.project), 'list-databases').stderr)
+        # migrate converts it and doctor reports it: both still run.
+        for command in ('migrate', 'doctor'):
+            with self.subTest(command=command):
+                result = self.invoke('--project', str(self.project), command, '--plan')
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (17, 'delegated\n', 'delegated error\n'))
+                self.assertEqual(json.loads(self.log.read_text()), {
+                    'argv': ['--plan'], 'root': str(self.project), 'stdin': '', 'tool': command})
+                self.log.unlink()
+
+    def test_checkout_below_a_workspace_file_dispatches(self):
+        (self.project / 'oasis-workspace.toml').unlink()
         checkout = self.project / 'codigo' / 'shop'
         checkout.mkdir(parents=True)
         (self.project / 'oasis-workspace.toml').write_text('workspace_version = 1\n')
@@ -172,10 +194,10 @@ class GlobalCliTests(unittest.TestCase):
         self.assertEqual(json.loads(self.log.read_text()), {
             'argv': ['--quick'], 'root': str(checkout), 'stdin': '', 'tool': 'status'})
         self.log.unlink()
-        # A profile on the way up ends the search: the checkout is neither legacy nor in a workspace.
+        # A legacy profile above the checkout is not read and no longer ends the search.
         (self.project / 'codigo' / '.odoo19-agent.toml').write_text('[tooling]\n')
-        self.assert_no_calls(self.invoke('--project', str(checkout), 'status'),
-                             f'ERROR: Missing tooling configuration: {checkout / ".odoo19-agent.toml"}\n')
+        result = self.invoke('--project', str(checkout), 'status')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (17, 'delegated\n', 'delegated error\n'))
 
     def test_rejects_unknown_internal_and_pathlike_before_dispatch(self):
         for name in ('unknown', 'config.py', 'common.sh', 'audit_dependencies.py',
@@ -202,16 +224,17 @@ class GlobalCliTests(unittest.TestCase):
         self.assertIn('Missing project wrappers alone are not a blocker', lifecycle)
         self.assertIn('mise', troubleshooting)
 
-    def test_existing_config_guards_reject_bad_profile_before_effects(self):
-        for name in ('common.sh', 'oasis_env.sh', 'config.py', 'status'):
+    def test_existing_config_guards_reject_bad_workspace_before_effects(self):
+        for name in ('common.sh', 'oasis_env.sh', 'config.py', 'odoo_versions.py', 'status'):
             shutil.copyfile(ROOT / 'tools' / name, self.bundle / 'tools' / name)
-        profile = self.project / '.odoo19-agent.toml'
+        workspace = self.project / 'oasis-workspace.toml'
         for text, error in (
-                ('[tooling]\nversion = "18.0"\n', 'ERROR: Tooling requires Odoo 19.0 and Python 3.12.\n'),
-                ('[tooling]\nversion = "19.0"\npython_version = "3.12"\n'
+                ('workspace_version = 1\nodoo_version = "18.0"\n[tooling]\n',
+                 f'ERROR: Unsupported odoo_version "18.0" in {workspace}; supported: 19.0.\n'),
+                ('workspace_version = 1\nodoo_version = "19.0"\n[tooling]\n'
                  'dev_prefix = "unsafe"\ntest_prefix = "unsafe"\n',
                  'ERROR: Unsafe tooling database prefixes.\n')):
-            profile.write_text(text)
+            workspace.write_text(text)
             self.assert_no_calls(self.invoke('--project', str(self.project), 'status'), error)
 
 

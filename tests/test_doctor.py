@@ -67,7 +67,8 @@ class DoctorTests(unittest.TestCase):
         self.setUp_fixture()
         self.port = lifecycle.free_port()
         self.conf = self.root / 'dev/odoo.conf'
-        self.conf.write_text(lifecycle.conf_text(f'http_port = {self.port}\nadmin_passwd = {MARKER}\n'))
+        # No location options: oasis passes them to Odoo for a workspace checkout.
+        self.conf.write_text(f'[options]\nhttp_port = {self.port}\nadmin_passwd = {MARKER}\n')
         (self.root / 'dev/compose.yml').write_text(COMPOSE)
         (self.root / 'dev/.env').write_text(f'ODOO_DB_PASSWORD={MARKER}\n')
         executable(self.bindir / 'docker', DOCKER)
@@ -88,7 +89,7 @@ class DoctorTests(unittest.TestCase):
                                               else path.stat().st_mode)
                 for path in sorted(base.rglob('*')) if path != self.commands}
 
-    def expected(self, *changed, omit=(), mode='legacy', extra=()):
+    def expected(self, *changed, omit=(), mode='workspace', extra=()):
         """The all-pass report with some lines replaced (by check name), omitted or added."""
         lines = [f'PASS configuration={mode}', 'PASS odoo_version=19.0', 'PASS agent_destructive=ask',
                  'PASS git=2.47.1', 'PASS docker',
@@ -120,8 +121,8 @@ class DoctorTests(unittest.TestCase):
         return result
 
     def workspace_mode(self):
-        """The same fixture as a workspace checkout: no profile, the workspace two levels up."""
-        (self.root / '.odoo19-agent.toml').unlink()
+        """The same fixture with its workspace file two levels up instead of in the checkout."""
+        (self.root / 'oasis-workspace.toml').unlink()
         workspace = self.root.parents[1]
         (workspace / 'oasis-workspace.toml').write_text(WORKSPACE)
         (workspace / 'oasis-workspace.toml').chmod(0o644)
@@ -130,8 +131,8 @@ class DoctorTests(unittest.TestCase):
 
     # -- all checks pass ------------------------------------------------------------------------
 
-    def test_legacy_profile_passes_every_check(self):
-        self.assert_report('PASS configuration=legacy\nPASS odoo_version=19.0\nPASS agent_destructive=ask\n'
+    def test_workspace_file_in_the_checkout_passes_every_check(self):
+        self.assert_report('PASS configuration=workspace\nPASS odoo_version=19.0\nPASS agent_destructive=ask\n'
                            'PASS git=2.47.1\n'
                            'PASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
                            'PASS python=3.12\nPASS odoo_release=19.0\nPASS odoo_conf\nPASS compose\n'
@@ -149,7 +150,7 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(os.listdir(self.runtime.name), [])
 
     def test_agent_destructive_setting_is_shown(self):
-        profile = self.root / '.odoo19-agent.toml'
+        profile = self.root / 'oasis-workspace.toml'
         for value in ('deny', 'allow'):
             with self.subTest(value=value):
                 self.commands.unlink(missing_ok=True)
@@ -168,8 +169,16 @@ class DoctorTests(unittest.TestCase):
 
     # -- failures and warnings ------------------------------------------------------------------
 
-    def test_configuration_error_fails_and_skips_the_checks_that_need_it(self):
+    def test_legacy_profile_is_one_fail_naming_the_fix(self):
         profile = self.root / '.odoo19-agent.toml'
+        profile.write_text('[tooling]\n')
+        self.assert_report(f'FAIL configuration={profile} is the old profile format, no longer read: run oasis '
+                           'migrate --plan to see its conversion to oasis-workspace.toml, then oasis migrate --apply.\n'
+                           'PASS git=2.47.1\nPASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
+                           'doctor_failures=1\n')
+
+    def test_configuration_error_fails_and_skips_the_checks_that_need_it(self):
+        profile = self.root / 'oasis-workspace.toml'
         profile.write_text(profile.read_text().replace("dev_prefix = 'cc_dev_'", "dev_prefix = 'unsafe'"))
         self.assert_report('FAIL configuration=Unsafe tooling database prefixes.\nPASS git=2.47.1\n'
                            'PASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
@@ -226,10 +235,6 @@ class DoctorTests(unittest.TestCase):
         self.conf.write_text(lifecycle.conf_text(f'http_port = {self.port}\ndata_dir = /srv/oasis-fixture\n'))
         self.assert_report(self.expected('WARN odoo_conf=addons_path,data_dir', mode='workspace',
                                          extra=('PASS data_dir',)))
-
-    def test_legacy_conf_holding_addons_path_passes(self):
-        self.assertIn('addons_path', self.conf.read_text())
-        self.assert_report(self.expected())
 
     def test_compose_without_top_level_name_fails(self):
         # An indented name belongs to another mapping.

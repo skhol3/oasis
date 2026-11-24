@@ -16,14 +16,15 @@ SPEC.loader.exec_module(odoo_versions)
 class CapabilityTableTests(unittest.TestCase):
     def test_only_odoo_19_is_supported_with_its_capabilities(self):
         self.assertEqual(odoo_versions.CAPABILITIES, {'19.0': {
-            'python': ('3.10', '3.14'), 'postgres_min': 13, 'second_port_option': '--gevent-port',
+            'python': ('3.10', '3.14'), 'python_default': '3.12', 'postgres_min': 13,
+            'second_port_option': '--gevent-port',
             'demo_off_args': ['--without-demo'], 'test_tags_implies_stop': True, 'test_class_filter': True,
             'dev_option': '--dev', 'dev_features': ['access', 'qweb', 'reload', 'replica', 'xml'],
             'dev_all': ['access', 'qweb', 'reload', 'xml'], 'dev_reload_packages': ['inotify', 'watchdog']}})
         self.assertEqual(odoo_versions.supported(), ['19.0'])
 
     def test_capability_reads_one_key(self):
-        for key, value in (('python', ('3.10', '3.14')), ('postgres_min', 13),
+        for key, value in (('python', ('3.10', '3.14')), ('python_default', '3.12'), ('postgres_min', 13),
                            ('second_port_option', '--gevent-port'), ('demo_off_args', ['--without-demo']),
                            ('test_tags_implies_stop', True), ('dev_option', '--dev'),
                            ('dev_features', ['access', 'qweb', 'reload', 'replica', 'xml']),
@@ -53,6 +54,13 @@ class CapabilityTableTests(unittest.TestCase):
                 self.assertEqual(bool(packages), 'reload' in features)
         odoo_versions.capability('19.0', 'dev_features').append('pdb')
         self.assertNotIn('pdb', odoo_versions.capability('19.0', 'dev_features'))
+
+    def test_default_python_lies_in_the_series_range(self):
+        # The Python of a workspace that sets [tooling].environment instead of named environments.
+        for version in odoo_versions.supported():
+            with self.subTest(version=version):
+                self.assertTrue(odoo_versions.python_supported(
+                    version, odoo_versions.capability(version, 'python_default')))
 
     def test_unknown_version_is_a_clear_error(self):
         for version, shown in (('12.0', '"12.0"'), ('15.0', '"15.0"'), ('19', '"19"'), (19.0, '19.0'),
@@ -93,9 +101,9 @@ class VersionNeutralToolsTests(unittest.TestCase):
         self.assertEqual(found, [])
 
     # The series itself is read from the configuration (ODOO_VERSION) or the table: besides
-    # odoo_versions.py, only the legacy profile contract in config.py may name it.
+    # odoo_versions.py, only the legacy profile contract that migrate converts may name it.
     SERIES = re.compile(r"(?<![\w.])19\.0(?!\d)|\(19, 0\)|release_is_19")
-    ALLOWED = {('tools/config.py', "LEGACY_VERSION = '19.0'")}
+    ALLOWED = {('tools/migrate.py', "LEGACY_VERSION = '19.0'")}
 
     def test_no_tool_names_the_odoo_series(self):
         found = []

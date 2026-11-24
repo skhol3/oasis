@@ -12,9 +12,11 @@ The odoo.conf carries an admin_passwd marker that must never be printed; the env
 file is named neutrally (runtime-env) and is never opened.
 """
 import hashlib
+import importlib.util
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import socket
 import stat
@@ -187,6 +189,23 @@ class MigrateTests(unittest.TestCase):
         return subprocess.run([sys.executable, '-B', str(program), '--project', str(project or self.main),
                                'migrate', *args], capture_output=True, text=True, env=self.env, cwd=self.scratch)
 
+    def legacy_reader(self, checkout):
+        """What migrate reads for a checkout before converting it (config.py refuses a profile)."""
+        spec = importlib.util.spec_from_file_location('oasis_migrate_under_test', ROOT / 'tools' / 'migrate.py')
+        migrate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migrate)
+        previous = {key: os.environ.get(key) for key in self.env}
+        os.environ.update(self.env)
+        try:
+            values = migrate.legacy_load(migrate.sibling('config'), checkout)
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+        return [f'{name}={shlex.quote(value)}' for name, value in values.items()]
+
     def reader(self, checkout):
         result = subprocess.run([sys.executable, '-B', str(READER), str(checkout)],
                                 capture_output=True, text=True, env=self.env)
@@ -262,7 +281,12 @@ class MigrateTests(unittest.TestCase):
     # -- apply ----------------------------------------------------------------------------------
 
     def test_apply_writes_the_workspace_and_keeps_every_configuration_equivalent(self):
-        before = {checkout: self.reader(checkout) for checkout in (self.main, self.feature)}
+        before = {checkout: self.legacy_reader(checkout) for checkout in (self.main, self.feature)}
+        for checkout in (self.main, self.feature):
+            refused = subprocess.run([sys.executable, '-B', str(READER), str(checkout)],
+                                     capture_output=True, text=True, env=self.env)
+            self.assertEqual((refused.returncode, refused.stdout), (2, ''))
+            self.assertIn('is the old profile format, no longer read', refused.stderr)
         original_conf = self.conf.read_bytes()
         hashes = [line.split()[0] for line in self.lock.read_text().splitlines()]
         tree = self.tree()

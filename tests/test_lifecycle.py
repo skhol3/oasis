@@ -10,7 +10,21 @@ import tempfile
 import unittest
 
 STAGE = Path(__file__).resolve().parents[1]
-PROFILE = (Path(__file__).resolve().parent / 'fixture-profile.toml').read_text()
+WORKSPACE = (Path(__file__).resolve().parent / 'fixture-workspace.toml').read_text()
+CHECKOUT_SLUG = re.compile(r'^checkout_slug = .*\n', re.MULTILINE)
+
+
+def write_config(root, text):
+    """Write a fixture configuration into the checkout root: the workspace text as
+    oasis-workspace.toml, except its [tooling].checkout_slug line (a workspace file refuses it),
+    which becomes the checkout's oasis-checkout.toml; without one, no checkout file is left."""
+    slugs = CHECKOUT_SLUG.findall(text)
+    (root / 'oasis-workspace.toml').write_text(CHECKOUT_SLUG.sub('', text))
+    checkout = root / 'oasis-checkout.toml'
+    if slugs:
+        checkout.write_text('[tooling]\n' + ''.join(slugs))
+    elif checkout.exists():
+        checkout.unlink()
 
 
 def free_port():
@@ -107,7 +121,7 @@ class LifecycleTests(unittest.TestCase):
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name) / 'workspace/projects/a project'
         self.root.mkdir(parents=True)
-        (self.root / '.odoo19-agent.toml').write_text(PROFILE)
+        (self.root / 'oasis-workspace.toml').write_text(WORKSPACE)
         self.source = (self.root / '../../source/odoo').resolve()
         self.python = (self.root / '../../environments/example/bin/python').resolve()
         self.source.mkdir(parents=True, exist_ok=True)
@@ -227,13 +241,23 @@ exit 0
         self.unchanged()
 
     def test_missing_config_and_bad_release_precede_external_commands(self):
-        (self.root / '.odoo19-agent.toml').unlink()
+        (self.root / 'oasis-workspace.toml').unlink()
         result = self.invoke('status')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', 'ERROR: Missing tooling configuration: ' +
-                          str(self.root / '.odoo19-agent.toml') + '\n'))
+                         (2, '', f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above {self.root}.\n'))
         self.unchanged()
-        (self.root / '.odoo19-agent.toml').write_text(PROFILE)
+        # A legacy profile is refused before anything runs, with the fix, also next to a workspace.
+        profile = self.root / '.odoo19-agent.toml'
+        profile.write_text('[tooling]\n')
+        refusal = (f'ERROR: {profile} is the old profile format, no longer read: run oasis migrate --plan to see '
+                   'its conversion to oasis-workspace.toml, then oasis migrate --apply.\n')
+        for workspace in (False, True):
+            if workspace:
+                (self.root / 'oasis-workspace.toml').write_text(WORKSPACE)
+            result = self.invoke('status')
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', refusal))
+            self.unchanged()
+        profile.unlink()
         (self.source / 'odoo/release.py').write_text('version_info = (18, 0)\n')
         result = self.invoke('status')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
@@ -445,8 +469,8 @@ exit 0
                 self.assertEqual(self.commands.read_text(), before)
 
     def test_custom_prefixes_and_verify_distinct_names(self):
-        path = self.root / '.odoo19-agent.toml'
-        path.write_text(PROFILE.replace('cc_dev_', 'demo_dev_').replace('cc_test_', 'demo_test_'))
+        path = self.root / 'oasis-workspace.toml'
+        path.write_text(WORKSPACE.replace('cc_dev_', 'demo_dev_').replace('cc_test_', 'demo_test_'))
         result = self.invoke('install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertIn('-d demo_dev_coffee -i coffee', self.commands.read_text())
@@ -470,8 +494,8 @@ exit 0
         self.assertIn(f'-d {tests}_update -u coffee --stop-after-init', log)
 
     def configure_test_database(self, value='cc_test_shared'):
-        path = self.root / '.odoo19-agent.toml'
-        path.write_text(PROFILE.replace('test_prefix =', f'test_database = "{value}"\ntest_prefix ='))
+        path = self.root / 'oasis-workspace.toml'
+        path.write_text(WORKSPACE.replace('test_prefix =', f'test_database = "{value}"\ntest_prefix ='))
 
     def test_configured_test_database_and_explicit_override(self):
         self.configure_test_database()
