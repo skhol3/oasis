@@ -7,7 +7,7 @@ One topic per file. Start from the group that matches what you are doing; the
 
 | Documentation | Purpose |
 | --- | --- |
-| [Install or update](install.md) | `install.sh`, release tags and what gets installed |
+| [Install or update](install.md) | Which install does what: `install.sh` (skills and CLI) and the package (tools, `/oasis`, panel) |
 | [Setting up a new workspace](new-workspace.md) | From an empty folder to `doctor`, a database and a test run; example tree and paths |
 | [New project: deliberate setup](project-setup.md) | Workspace file, entry point and optional project wrappers |
 | [Checking the environment](checking-environment.md) | `doctor`, `check-environment` and `lock.sha256` |
@@ -35,7 +35,7 @@ One topic per file. Start from the group that matches what you are doing; the
 | --- | --- |
 | [Gentle Shell layer](gentle-shell-layer.md) | Agent tools, their output and the prompt context |
 | [Bash guard](bash-guard.md) | Which agent bash commands run, wait for the user's confirmation or are blocked; `agent_destructive` |
-| [Subagents](subagents.md) | The overlay that gives subagents the `oasis_*` tools |
+| [Subagents](subagents.md) | The overlay that gives Gentle Shell subagents the `oasis_*` tools |
 | [Static inspection without starting Odoo](static-inspection.md) | `model-info`, `view-info`, `xmlid-info` and `module-info` |
 | [Lint one module without starting Odoo](lint-module.md) | `lint-module` with the project's Pylint rcfile |
 | [Project capability contract](../odoo19-environment/references/project-contract.md) | What the tools read from `[tooling]` |

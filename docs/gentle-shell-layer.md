@@ -1,14 +1,16 @@
 # Gentle Shell layer
 
-A thin Pi package (`package.json`, `pi/`) layered over Gentle Shell. It changes nothing in Gentle Shell or Pi; its goal is fewer tokens in Odoo work by wrapping the guarded `oasis` core with compact output. Install it from a release tag, so the sessions load a fixed copy that work in a local checkout cannot change:
+A thin Pi package (`package.json`, `pi/`) layered over Gentle Shell. It changes nothing in Gentle Shell or Pi; its goal is fewer tokens in Odoo work by wrapping the guarded `oasis` core with compact output.
 
 ## Installing the package
 
+Install it from a release tag (`<tag>`, for example `v0.12.1`; see the [changelog](../CHANGELOG.md)), so the sessions load a fixed copy that work in a local checkout cannot change, then `/reload` open sessions:
+
 ```bash
-gentle-shell install git:github.com/skhol3/oasis@v0.11.0
+gentle-shell install git:github.com/skhol3/oasis@<tag>
 ```
 
-To move to a newer release, remove the old entry and install the new tag (`gentle-shell list` shows the installed entry), then `/reload` open sessions:
+To move to another release, remove the installed entry and install the new tag (`gentle-shell list` shows the installed entry), then `/reload` open sessions:
 
 ```bash
 gentle-shell remove git:github.com/skhol3/oasis@<installed tag>
@@ -19,7 +21,7 @@ Installing a local checkout (`gentle-shell install /absolute/path/to/oasis`) loa
 
 ## What the layer adds
 
-Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shell and Pi already scan. The layer adds:
+The package does not bring the skills: they come from `./install.sh` into `~/.agents/skills`, which Gentle Shell already scans (see [Install or update](install.md)). The layer adds:
 
 - [Test runs](#test-runs): `oasis_test_module`, `oasis_test_summary`, `oasis_module_status`,
   `oasis_check_environment` and `oasis_lint_module`.
@@ -66,16 +68,16 @@ A bash guard blocks the agent from running some commands directly and asks the u
 ### The /oasis command
 
 - `/oasis`: a quick status with the configuration (or its error), addon modules, configured databases, git worktree, checkout identity and this checkout's server (`server: running on port <port> (pid <pid>)` or `server: stopped`, read from the runtime record). It never starts services or queries databases.
-- `/oasis setup` installs the subagent overlay (see [Subagents](subagents.md)).
+- `/oasis setup` installs the subagent overlay, which is for Gentle Shell only (see [Subagents](subagents.md)).
 - `/oasis doctor` shows the `oasis doctor` report (see [Checking the environment](checking-environment.md)); there is no agent tool for it.
 - `/oasis worktree <feature> <branch>` creates a linked worktree below the workspace file after confirmation (see [Preparing a linked worktree](checkouts-and-worktrees.md#preparing-a-linked-worktree)).
 - `/oasis migrate` shows the `oasis migrate` plan and applies it after confirmation (see [Migrating to the workspace file](migrating.md)).
 - `/oasis menu` (or `alt+o`) opens the action panel (see [Gentle Shell panel](action-menu.md#gentle-shell-panel) under [Action menu](action-menu.md)).
-- Typing `/oasis ` offers its subcommands (`setup`, `doctor`, `migrate`, `worktree`, `menu`).
+- Typing `/oasis ` offers its subcommands (`setup`, `doctor`, `migrate`, `worktree`, `menu`). Before the space, from two letters of the name (`/oa`, `/oasis`, `/od`, `/odoo`), the suggestions also list `/oasis <subcommand>` (and `/odoo19 <subcommand>`) with the same descriptions, right after the command itself; Tab inserts `/oasis <subcommand> `, Enter runs it at once (`/oasis worktree` still needs its two arguments). The layer adds them with `ctx.ui.addAutocompleteProvider` on top of the existing provider, once per session; every other completion is that provider's, unchanged.
 
 ## Activation and aliases
 
-The `oasis_*` tools are active only in sessions started inside an Odoo 19 project (a directory with `oasis-workspace.toml` at or above it), so other projects pay no tokens for them; `/oasis` is available everywhere.
+The `oasis_*` tools are active only in sessions started inside an Odoo project (a directory with `oasis-workspace.toml` at or above it), so other projects pay no tokens for them; `/oasis` is available everywhere.
 
 Aliases from before 0.4.0: `/odoo19` runs the same command as `/oasis` (same subcommands), and each `oasis_*` tool is also registered as an `odoo19_*` alias with the same parameters and implementation. The aliases are never activated by the layer, so they cost no tokens; an overlay or allowlist that still names them keeps working, and `/oasis setup` reports such an overlay as outdated.
 
