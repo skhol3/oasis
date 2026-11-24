@@ -87,24 +87,25 @@ export function projectRootResolver(
 }
 
 const TOOL_LINES: Record<string, string> = {
-  oasis_test_module: "run one module's tests; result line and failures only, logs stay on disk.",
-  oasis_test_summary: "the same summary for a background compact run (pass what it printed).",
+  oasis_test_module: "run one module's tests; result line and failures only.",
+  oasis_test_summary: "the same summary for a background compact run.",
   oasis_update_module: "update a module in a database; errors and warnings only.",
   oasis_module_status: "a module's state in a database.",
   oasis_check_environment: "environment diagnostics (quick by default).",
-  oasis_lint_module: "Pylint for one module without starting Odoo.",
+  oasis_lint_module: "Pylint one module without starting Odoo.",
   oasis_find_module: "module names from a functional name; no ls/grep.",
-  oasis_model_info: "a model's definition, extensions, fields and methods; use before reading Odoo files.",
+  oasis_model_info: "a model's definition, extensions, fields, methods; before reading Odoo files.",
   oasis_view_info: "a model's views and extensions; no XML search.",
-  oasis_xmlid_info: "an XML id's definition, extensions and references.",
-  oasis_module_info: "a module's models, views, menus, security, data and tests.",
+  oasis_xmlid_info: "an XML id's definition, extensions, references.",
+  oasis_module_info: "a module's models, views, menus, security, data, tests.",
 };
 
 /**
  * Compact system-prompt section for a detected project; `workspace` names its workspace file.
  * `tools` are the session's tools: only the oasis tools among them are named, and a session with
  * none (a subagent without the overlay) is pointed to the CLI. Omitted: every oasis tool.
- * `version` is the configured Odoo series ("19.0"); it names the project and its skills.
+ * `version` is the configured Odoo series ("19.0"); it names the project and its skills. The last
+ * line names the commands the bash guard asks the user about (docs/bash-guard.md).
  */
 export function projectContext(
   root: string,
@@ -119,9 +120,9 @@ export function projectContext(
   const names = Object.keys(TOOL_LINES).filter((name) => !tools || tools.includes(name));
   const routing = names.length > 0
     ? [
-        "Prefer the oasis tools over raw shell; they apply the profile guards and return compact output:",
+        "Prefer the oasis tools to raw shell (profile guards, compact output):",
         ...names.map((name) => `- ${name}: ${TOOL_LINES[name]}`),
-        "Open the logs a tool reports only when its summary is not enough. Do not browse the Odoo source tree to learn",
+        "Open reported logs only if the summary falls short. Do not browse the Odoo source tree to learn",
       ]
     : [
         "This session has no oasis tools. Instead of raw odoo-bin, psql or dropdb, run the guarded CLI:",
@@ -132,5 +133,6 @@ export function projectContext(
     `${odoo} project root: ${root} (${source}).`,
     ...routing,
     `framework APIs; load the matching ${skills} skill first.`,
+    "drop-database, stop --database, gc --apply --trash ask the user; never bypass a refusal.",
   ].join("\n");
 }

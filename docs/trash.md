@@ -40,7 +40,9 @@ Then it renames the filestore directory to `<data_dir>/filestore/<trash name>` a
 database to its trash name. The rename and the database comment `oasis-trash
 original=<name>` are one transaction (`ALTER DATABASE ... RENAME TO ...; COMMENT ON DATABASE
 ...`). When the rename fails, the filestore moves back and the command prints `Cannot move
-<name> to the trash; nothing changed.` (exit 1). On success it prints:
+<name> to the trash; nothing changed.` (exit 1); when the filestore cannot move back either, it
+prints `Cannot move <name> to the trash; its filestore stays at the trash path of <trash
+name>.` (exit 1), and the database keeps its name. On success it prints:
 
 ```text
 Database moved to trash: cc_dev_coffee -> cc_dev_coffee_trash_20261123_142501
@@ -85,8 +87,10 @@ trashed=1
 ```
 
 `trash restore <trash name>` renames the filestore and then the database back, and clears the
-comment: `Database restored from trash: <trash name> -> <original>`. It refuses, changing
-nothing:
+comment: `Database restored from trash: <trash name> -> <original>`. When the database rename
+fails, the filestore moves back: `Cannot restore <trash name>; nothing changed.` (exit 1); when it
+cannot move back, `Cannot restore <trash name>; its filestore stays at the path of <original>.`
+(exit 1), and the database stays in the trash. It refuses, changing nothing:
 
 - a name without the trash suffix, or not a trash entry of this checkout: `Not a trash database
   of this checkout: <name>` (exit 2); a name outside the checkout's namespace gets the usual
@@ -101,12 +105,16 @@ nothing:
 ## Emptying the trash
 
 `gc --trash` lists the entries of this checkout's trash dropped at least `--older-than <days>`
-days ago (a whole number, default 7; `0` takes every entry), one `expired <name>` line each, then
-`expired=<n>`; it changes nothing. With `--apply` it closes their sessions, drops them and removes
-their filestores, printing `dropped <name>`; a failed drop prints `failed <name>` on stderr and
-keeps that entry's filestore, and the next entry is still dropped. The run ends with
-`dropped=<n>` and `failed=<m>` and exits 1 when `m` is not 0. `--older-than` without `--trash`,
-and `--trash` with `--all-checkouts`, print the usage (exit 2).
+days ago (a whole number from 0 to 36500, default 7; `0` takes every entry), one `expired <name>`
+line each, then `expired=<n>`; it changes nothing. With `--apply` it closes their sessions, drops
+them and removes their filestores, printing `dropped <name>`; a failed drop prints `failed <name>`
+on stderr and keeps that entry's filestore, and the next entry is still dropped. When the
+database is dropped but its filestore cannot be removed (not a directory, no permission), the
+entry is not reported as dropped: stderr says why, then `Database <name> was dropped, but its
+filestore is left: <path>; remove it by hand.` and `failed <name>`, and it counts as failed. The
+run ends with `dropped=<n>` and `failed=<m>` and exits 1 when `m` is not 0. `--older-than`
+without `--trash` or with a value that is not a whole number up to 36500, and `--trash` with
+`--all-checkouts`, print the usage (exit 2) before any database query.
 
 Plain `gc` and `gc --apply` never touch the trash: they handle only orphaned disposable test
 databases (see [Disposable test databases](disposable-test-databases.md)).

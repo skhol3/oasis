@@ -17,8 +17,10 @@ names) may still change in a minor release; every such change is listed here und
   its filestore path exists, with open sessions (exit 3), or when the name is not a trash entry
   of this checkout. See `docs/trash.md`.
 - `gc --trash [--older-than <days>]` lists the trash entries dropped at least `<days>` days ago
-  (default 7); with `--apply` it drops them and their filestores (`dropped=<n>`, `failed=<m>`).
-  Plain `gc` and `gc --apply` are unchanged and never touch the trash.
+  (0 to 36500, default 7; other values print the usage, exit 2, before any query); with `--apply`
+  it drops them and their filestores (`dropped=<n>`, `failed=<m>`). A database dropped whose
+  filestore cannot be removed counts as failed, and stderr names the filestore path to remove by
+  hand. Plain `gc` and `gc --apply` are unchanged and never touch the trash.
 - Action menu and panel: *List trash*, *Restore from trash* and *Empty trash* (`gc --apply
   --trash`, typed `yes`).
 - Gentle Shell ask tier: before the agent's `drop-database <name>`, `stop --database` or `gc
@@ -28,6 +30,11 @@ names) may still change in a minor release; every such change is listed here und
   reason that tells the agent to ask the user; `drop-database` needs a literal database name.
   Each decision is recorded as an *Agent command approved/refused* session entry that is never
   sent to the model. The deny tier is unchanged. See `docs/bash-guard.md`.
+- The ask tier also covers the files that hold `[tooling].agent_destructive`: Pi `edit` and
+  `write` tool calls and bash writes (redirection, `tee`, `sed -i`, `mv` or `cp` onto it) to an
+  `oasis-workspace.toml` or `.odoo19-agent.toml` in the session's directory or above it show a
+  dialog that names the file (type `yes`); no dialog blocks them. The prompt context names the
+  commands that ask the user. The workspace and profile examples document `agent_destructive`.
 - `[tooling].agent_destructive` (`ask`, the default, `deny` or `allow`) in the workspace file or
   the profile decides that tier: `deny` blocks those commands, `allow` runs them without a dialog.
   `oasis-checkout.toml` refuses it; an invalid value fails with `Invalid tooling
@@ -49,6 +56,14 @@ names) may still change in a minor release; every such change is listed here und
 - Contract: names ending in `_trash_<8 digits>_<6 digits>` are reserved for the trash; every
   command that takes a database refuses them (exit 2), `drop-database` and `module-status`
   included. The `gc` usage line names `--trash`.
+
+### Fixed
+
+- Bash guard: a line is judged on every command it holds. Outside an Odoo project, `psql -l;
+  oasis --project <root> migrate --apply` (any line where `worktree-init`, `migrate` or `menu`
+  follows another denied program) ran, because only the first denied program counted; it is now
+  blocked with the reason of the user-run tool. Single commands and the reasons in Odoo projects
+  are unchanged.
 
 ## [0.10.1] - 2026-11-24
 

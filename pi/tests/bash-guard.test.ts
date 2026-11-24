@@ -469,10 +469,13 @@ test("the extension passes the session cwd, the home directory and a file check 
   // The extension gives the gate (lib/destructive.ts) its home and file check, and each call its cwd;
   // the gate classifies with them.
   const source = readFileSync(new URL("../extensions/oasis.ts", import.meta.url), "utf8");
-  assert.match(source, /agentGate\(\{[^]*?home: homedir\(\),\s+exists: existsSync,/);
-  assert.match(source, /return gate\(command, \{\s+cwd: ctx\.cwd,/);
+  assert.match(source, /const gateEffects: GateEffects = \{[^]*?home: homedir\(\),\s+exists: existsSync,/);
+  assert.match(source, /const gate = agentGate\(gateEffects\);/);
+  assert.match(source, /const gateContext = \(ctx: ExtensionContext\): GateContext => \(\{\s+cwd: ctx\.cwd,/);
+  assert.match(source, /return gate\(command, gateContext\(ctx\)\);/);
   const gate = readFileSync(new URL("../lib/destructive.ts", import.meta.url), "utf8");
-  assert.match(gate, /classifyBash\(command, \{ cwd: ctx\.cwd, home: effects\.home, exists: effects\.exists \}\)/);
+  assert.match(gate,
+    /classifyBash\(command, \{\s+cwd: ctx\.cwd, home: effects\.home, exists: effects\.exists, settingFile: settingFiles\(effects, ctx\.cwd\),\s+\}\)/);
 });
 
 // S3 tiers: the ask commands (drop-database, stop --database, gc --apply --trash) through the entry
@@ -503,7 +506,7 @@ test("classifyBash finds the ask commands through the entry points and their lau
     ["oasis --project /p drop-database a_dev_x && oasis --project /p stop --database", [DROP("a_dev_x"), STOP]],
   ];
   for (const [command, asks] of cases) {
-    assert.deepEqual(classifyBash(command), { program: null, asks }, command);
+    assert.deepEqual(classifyBash(command), { program: null, programs: [], asks }, command);
   }
 });
 
@@ -518,11 +521,11 @@ test("classifyBash finds the ask commands through the oasis tool scripts, judged
     [`${SOURCE}/tools`, "./drop-database cc_dev_x", [DROP("cc_dev_x")]],
   ];
   for (const [cwd, command, asks] of cases) {
-    assert.deepEqual(classifyBash(command, at(cwd)), { program: null, asks }, `${cwd}: ${command}`);
+    assert.deepEqual(classifyBash(command, at(cwd)), { program: null, programs: [], asks }, `${cwd}: ${command}`);
   }
   // Without the session context only the installed bundle's spelling counts, as for the menu.
-  assert.deepEqual(classifyBash("~/.agents/skills/odoo19/tools/stop --database"), { program: null, asks: [STOP] });
-  assert.deepEqual(classifyBash("./tools/stop --database"), { program: null, asks: [] });
+  assert.deepEqual(classifyBash("~/.agents/skills/odoo19/tools/stop --database"), { program: null, programs: [], asks: [STOP] });
+  assert.deepEqual(classifyBash("./tools/stop --database"), { program: null, programs: [], asks: [] });
 });
 
 test("classifyBash allows every other oasis command, help alone and unrelated scripts", () => {
@@ -555,7 +558,7 @@ test("classifyBash allows every other oasis command, help alone and unrelated sc
     ["/work/shop", "~/.agents/skills/odoo19/tools/drop-database --help"],
   ];
   for (const [cwd, command] of allowed) {
-    assert.deepEqual(classifyBash(command, at(cwd)), { program: null, asks: [] }, `${cwd}: ${command}`);
+    assert.deepEqual(classifyBash(command, at(cwd)), { program: null, programs: [], asks: [] }, `${cwd}: ${command}`);
   }
 });
 
@@ -580,4 +583,75 @@ test("the deny tier is unchanged: blockedProgram ignores the ask commands and st
     assert.equal(classifyBash(command).program, program, command);
   }
   assert.deepEqual(classifyBash("oasis --project /p drop-database cc_dev_x; psql -l").asks, [DROP("cc_dev_x")]);
+});
+
+test("classifyBash lists every denied program of a line, in order; program stays the first", () => {
+  const cases: [string, string[]][] = [
+    ["psql -l; oasis --project /p migrate --apply", ["psql", "migrate"]],
+    ["dropdb x && oasis --project /p menu", ["dropdb", "menu"]],
+    ["echo $(oasis --project /p worktree-init f b); odoo-bin -d x", ["worktree-init", "odoo-bin"]],
+    ["oasis --project /p drop-database cc_dev_x; psql -l | psql x", ["psql", "psql"]],
+    ["psql -l", ["psql"]],
+    ["oasis --project /p migrate --apply", ["migrate"]],
+    ["git status", []],
+  ];
+  for (const [command, programs] of cases) {
+    const found = classifyBash(command);
+    assert.deepEqual(found.programs, programs, command);
+    assert.equal(found.program, programs[0] ?? null, command);
+    assert.equal(blockedProgram(command), programs[0] ?? null, command);
+  }
+});
+
+// S4 hole: the files that hold [tooling].agent_destructive. The extension decides which paths those
+// are (lib/destructive.ts); here a fixed check stands in for it.
+const SETTING_FILES = new Set(["/work/shop/oasis-workspace.toml", "/work/shop/.odoo19-agent.toml"]);
+const SETTING_NAMES = new Set(["oasis-workspace.toml", ".odoo19-agent.toml"]);
+const guarded = (cwd: string) => ({
+  ...at(cwd),
+  settingFile: (path: string | null, word: string) =>
+    path === null ? (SETTING_NAMES.has(word.slice(word.lastIndexOf("/") + 1)) ? word : null)
+      : SETTING_FILES.has(path) ? path : null,
+});
+const EDIT = (file: string) => ({ command: "edit", file });
+
+test("classifyBash finds bash writes to the setting files: redirection, tee, sed -i, mv and cp onto them", () => {
+  const workspace = EDIT("/work/shop/oasis-workspace.toml");
+  const profile = EDIT("/work/shop/.odoo19-agent.toml");
+  const cases: [string, object[]][] = [
+    ["echo \"agent_destructive = 'allow'\" >> ../oasis-workspace.toml", [workspace]],
+    ["printf x >/work/shop/.odoo19-agent.toml", [profile]],
+    ["cat a 2>/dev/null > /work/shop/oasis-workspace.toml", [workspace]],
+    ["echo x &> /work/shop/oasis-workspace.toml", [workspace]],
+    ["echo x >| /work/shop/oasis-workspace.toml", [workspace]],
+    ["tee -a /work/shop/oasis-workspace.toml < new.toml", [workspace]],
+    ["cat new | sudo tee ../.odoo19-agent.toml >/dev/null", [profile]],
+    ["sed -i \"s/ask/allow/\" ../oasis-workspace.toml", [workspace]],
+    ["sed -i.bak -e s/ask/allow/ /work/shop/.odoo19-agent.toml", [profile]],
+    ["sed --in-place s/a/b/ ../oasis-workspace.toml", [workspace]],
+    ["mv /tmp/x /work/shop/oasis-workspace.toml", [workspace]],
+    ["cp -f /tmp/oasis-workspace.toml /work/shop/", [workspace]],
+    ["cp -t /work/shop /tmp/.odoo19-agent.toml", [profile]],
+    ["cd .. && echo x > oasis-workspace.toml", [workspace]],
+    ["bash -c 'echo x > /work/shop/oasis-workspace.toml'", [workspace]],
+    ["echo x > $ROOT/oasis-workspace.toml", [EDIT("$ROOT/oasis-workspace.toml")]],
+    ["oasis --project /p stop --database > ../oasis-workspace.toml", [STOP, workspace]],
+  ];
+  for (const [command, asks] of cases) {
+    assert.deepEqual(classifyBash(command, guarded("/work/shop/addons")), { program: null, programs: [], asks }, command);
+  }
+  for (const command of [
+    "cat ../oasis-workspace.toml",
+    "grep agent_destructive ../oasis-workspace.toml > /tmp/found",
+    "sed -n 1p ../oasis-workspace.toml",
+    "cp ../oasis-workspace.toml /tmp/copy.toml",
+    "echo x > /tmp/oasis-workspace.toml.bak",
+    "git diff ../oasis-workspace.toml",
+    "echo x > notes.md 2>&1",
+    "tee -a log.txt < ../oasis-workspace.toml",
+  ]) {
+    assert.deepEqual(classifyBash(command, guarded("/work/shop/addons")), { program: null, programs: [], asks: [] }, command);
+  }
+  // Without the extension's check nothing is a setting file.
+  assert.deepEqual(classifyBash("echo x > /work/shop/oasis-workspace.toml", at("/work/shop")).asks, []);
 });

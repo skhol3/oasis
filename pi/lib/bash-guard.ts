@@ -32,11 +32,18 @@ const DATABASE_NAME = /^[A-Za-z0-9_]+$/;
 const NOT_LITERAL = /[$*?[\]{}`\\]/;
 const CHANGE_DIRECTORY = new Set(["cd", "pushd"]);
 
-/** Where the session runs, from the extension: its cwd, the home directory and a file check. */
+/**
+ * Where the session runs, from the extension: its cwd, the home directory and a file check.
+ * `settingFile` names the file that holds [tooling].agent_destructive a bash write reaches: called
+ * with the write target's absolute path, or null when the text does not tell it, and the word as
+ * written; it returns the file to name in the dialog, or null when the target is not such a file.
+ * Without it, no write is an ask command.
+ */
 export interface GuardContext {
   cwd: string;
   home: string;
   exists(path: string): boolean;
+  settingFile?(path: string | null, word: string): string | null;
 }
 
 /** The session context and the directory the next command runs in (null when unknown). */
@@ -431,7 +438,8 @@ function userRunTool(words: string[], index: number, where?: Where): string | nu
 export type AskAction =
   | { command: "drop-database"; database: string | null }
   | { command: "stop --database" }
-  | { command: "gc --apply --trash" };
+  | { command: "gc --apply --trash" }
+  | { command: "edit"; file: string };
 
 /**
  * The ask command words[index] runs: drop-database, stop --database or gc --apply --trash, through
@@ -472,6 +480,92 @@ function toolFinding(words: string[], index: number, where?: Where): Finding[] {
   if (program) return [{ program }];
   const ask = askAction(words, index, where);
   return ask ? [{ ask }] : [];
+}
+
+// A redirection to a file: `>`, `>>`, `2>`, `&>` (segments() leaves `>` of `&>` and `>|`), with
+// its target in the word or, when bare, in the next word. `>&2` duplicates a descriptor instead.
+const OUTPUT_REDIRECTION = /^\d*>>?(.*)$/;
+
+/** The words a simple command writes through redirections, and the command's other words. */
+function redirections(words: string[]): { targets: string[]; rest: string[] } {
+  const targets: string[] = [];
+  const rest: string[] = [];
+  for (let k = 0; k < words.length; k++) {
+    const match = OUTPUT_REDIRECTION.exec(words[k]);
+    if (!match) {
+      // An input redirection (`<`, `<<<`) reads its target, which is not the command's word either.
+      if (/^\d*<+$/.test(words[k])) k++;
+      else if (!REDIRECTION.test(words[k])) rest.push(words[k]);
+      continue;
+    }
+    const target = match[1].replace(/^\|/, "");
+    if (target === "" && match[1] === "") {
+      if (k + 1 < words.length) targets.push(words[++k]);
+    } else if (!target.startsWith("&")) {
+      targets.push(target);
+    }
+  }
+  return { targets, rest };
+}
+
+/** The operands of a command (its words that are not options; all of them after `--`). */
+function operands(args: string[]): string[] {
+  const end = args.indexOf("--");
+  const before = (end < 0 ? args : args.slice(0, end)).filter((word) => !word.startsWith("-"));
+  return end < 0 ? before : [...before, ...args.slice(end + 1)];
+}
+
+/** The files `tee`, `sed -i`, `mv` and `cp` at words[index] write (as words). */
+function writtenFiles(words: string[], index: number): string[] {
+  const name = basename(words[index]);
+  const args = words.slice(index + 1);
+  if (name === "tee") return operands(args);
+  if (name === "sed") {
+    const inPlace = args.some((word) => /^-[A-Za-z]*i/.test(word) || word.startsWith("--in-place"));
+    return inPlace ? operands(args) : [];
+  }
+  if (name !== "mv" && name !== "cp") return [];
+  let target: string | undefined;
+  const rest: string[] = [];
+  for (let k = 0; k < args.length; k++) {
+    const word = args[k];
+    if (word === "-t" || word === "--target-directory") target = args[++k];
+    else if (word.startsWith("--target-directory=")) target = word.slice("--target-directory=".length);
+    else if (/^-t./.test(word)) target = word.slice(2);
+    else rest.push(word);
+  }
+  const files = operands(rest);
+  const destination = target ?? files.pop();
+  if (destination === undefined) return [];
+  // Onto the destination, or into it when it is a directory.
+  return [destination, ...files.map((source) => `${destination.replace(/\/+$/, "")}/${basename(source)}`)];
+}
+
+/**
+ * The setting files (GuardContext.settingFile) one simple command writes: through its
+ * redirections, or as `tee`, `sed -i`, `mv` or `cp`, also behind wrappers. `carried` is a target
+ * the previous segment's bare redirection left (`>|`: segments() splits at the `|`).
+ */
+function settingWrites(words: string[], where: Where | undefined, carried: string | undefined): Finding[] {
+  const settingFile = where?.context.settingFile;
+  if (!where || !settingFile) return [];
+  const { targets, rest } = redirections(words);
+  if (carried !== undefined) targets.unshift(carried);
+  let i = 0;
+  for (;;) {
+    while (i < rest.length && (ASSIGNMENT.test(rest[i]) || KEYWORDS.has(rest[i]))) i++;
+    if (i >= rest.length) break;
+    const next = unwrap(rest, i);
+    if (next === undefined) targets.push(...writtenFiles(rest, i));
+    if (typeof next !== "number") break;
+    i = next;
+  }
+  const found: Finding[] = [];
+  for (const word of targets) {
+    const file = settingFile(literalPath(word, where), word);
+    if (file !== null) found.push({ ask: { command: "edit", file } });
+  }
+  return found;
 }
 
 /**
@@ -554,18 +648,26 @@ export function blockedProgram(command: string, context?: GuardContext): string 
 }
 
 /**
- * The tiers of a bash command: `program` is the first denied program it runs (blockedProgram), or
- * null; `asks` lists the ask commands it runs, in order. Neither: allowed.
+ * The tiers of a bash command: `programs` are the denied programs it runs, in order, and `program`
+ * the first of them (blockedProgram), or null; `asks` lists the ask commands it runs, in order, a
+ * setting file once (see GuardContext.settingFile). Neither: allowed.
  */
-export function classifyBash(command: string, context?: GuardContext): { program: string | null; asks: AskAction[] } {
+export function classifyBash(
+  command: string, context?: GuardContext,
+): { program: string | null; programs: string[]; asks: AskAction[] } {
   const findings = findingsIn(command, context ? { context, dir: context.cwd } : undefined);
-  let program: string | null = null;
+  const programs: string[] = [];
   const asks: AskAction[] = [];
+  const edited = new Set<string>();
   for (const found of findings) {
-    if ("ask" in found) asks.push(found.ask);
-    else program ??= found.program;
+    if (!("ask" in found)) programs.push(found.program);
+    else if (found.ask.command !== "edit") asks.push(found.ask);
+    else if (!edited.has(found.ask.file)) {
+      edited.add(found.ask.file);
+      asks.push(found.ask);
+    }
   }
-  return { program, asks };
+  return { program: programs[0] ?? null, programs, asks };
 }
 
 /** Every finding of a command in the order bash would reach it: substitutions first, then the segments. */
@@ -576,7 +678,12 @@ function findingsIn(command: string, start: Where | undefined): Finding[] {
   for (const body of data) inner.push(...substitutions(body, false).inner);
   for (const body of inner) findings.push(...findingsIn(body, start));
   let where = start;
+  let carried: string | undefined;
   for (const words of segments(outer)) {
+    // A bare `>` ending the previous segment writes to this one's first word (`>|`).
+    const target = carried;
+    carried = /^\d*>>?$/.test(words[words.length - 1]) ? "" : undefined;
+    const own = target === undefined ? words : words.slice(1);
     // A literal `cd`/`pushd` moves the later segments; `popd` makes the directory unknown.
     let i = 0;
     while (i < words.length && (ASSIGNMENT.test(words[i]) || KEYWORDS.has(words[i]))) i++;
@@ -588,7 +695,7 @@ function findingsIn(command: string, start: Where | undefined): Finding[] {
       where = { context: where.context, dir: null };
       continue;
     }
-    findings.push(...classifySegment(words, where));
+    findings.push(...classifySegment(words, where), ...settingWrites(own, where, target === undefined ? undefined : words[0]));
   }
   return findings;
 }

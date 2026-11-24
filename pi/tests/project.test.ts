@@ -225,3 +225,12 @@ test("projectContext names the configured Odoo series and its skills", () => {
   assert.match(unknown, /^Odoo project root: /);
   assert.ok(!/odoo\d+-\*/.test(unknown), unknown);
 });
+
+test("projectContext tells the agent which oasis commands ask the user, and stays compact", () => {
+  const line = "drop-database, stop --database, gc --apply --trash ask the user; never bypass a refusal.";
+  for (const tools of [undefined, ["read", "bash"]]) {
+    const text = projectContext("/work/acme/codigo/acme", "/work/acme/oasis-workspace.toml", tools, "19.0");
+    assert.ok(text.split("\n").includes(line), text);
+    assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
+  }
+});

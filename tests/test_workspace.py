@@ -346,6 +346,16 @@ class WorkspaceTests(unittest.TestCase):
         self.assertIn('PROJECT_ENVIRONMENT=' + shlex.quote(str(self.project / 'environments/acme')), lines)
         self.assertRegex(raw, r"(?m)^#\s+environment = '[a-z_]+'$")
 
+    def test_shipped_example_documents_agent_destructive(self):
+        # Uncommenting the documented agent_destructive line with each value is accepted.
+        raw = (ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml').read_text()
+        self.assertIn("# agent_destructive = 'ask'\n", raw)
+        main = self.layout(raw)
+        for value in ('ask', 'deny', 'allow'):
+            with self.subTest(value=value):
+                self.workspace.write_text(raw.replace("# agent_destructive = 'ask'\n", f"agent_destructive = '{value}'\n"))
+                self.assertEqual(self.output(main).splitlines()[-1], f'AGENT_DESTRUCTIVE={value}')
+
     # -- named environments -----------------------------------------------------------------
 
     def test_named_environments_use_default_without_a_selection(self):

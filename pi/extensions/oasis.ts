@@ -11,7 +11,7 @@ import {
   parseCommand, SUBCOMMAND_SUMMARY, type SubcommandName, subcommandCompletions, USAGE,
 } from "../lib/commands.ts";
 import { withHeartbeat } from "../lib/heartbeat.ts";
-import { agentGate, DECISION_ENTRY } from "../lib/destructive.ts";
+import { agentFileGate, agentGate, DECISION_ENTRY, type GateContext, type GateEffects } from "../lib/destructive.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
@@ -408,9 +408,12 @@ export default function oasisLayer(pi: ExtensionAPI) {
   // session. Ask tier: drop-database, stop --database and gc --apply --trash run after the user
   // types the database name or `yes` in a dialog, unless the session project's
   // [tooling].agent_destructive (read through config.py, never from a tool argument) says deny or
-  // allow. Each ask decision is a custom session entry: Pi shows it but never sends it to the model.
+  // allow. The files that hold that setting (an oasis-workspace.toml or .odoo19-agent.toml in the
+  // session's directory or above it) are in the ask tier too: bash writes to them and Pi's edit and
+  // write tool calls on them. Each ask decision is a custom session entry: Pi shows it but never
+  // sends it to the model.
   pi.registerEntryRenderer(DECISION_ENTRY, renderMenuEntry);
-  const gate = agentGate({
+  const gateEffects: GateEffects = {
     projectRoot: (cwd) => projectRoot(cwd),
     home: homedir(),
     exists: existsSync,
@@ -422,17 +425,26 @@ export default function oasisLayer(pi: ExtensionAPI) {
       }
     },
     appendEntry: (entry) => pi.appendEntry(DECISION_ENTRY, entry),
+    realpath: realpathSync,
+  };
+  const gate = agentGate(gateEffects);
+  const fileGate = agentFileGate(gateEffects);
+  const gateContext = (ctx: ExtensionContext): GateContext => ({
+    cwd: ctx.cwd,
+    hasUI: ctx.hasUI,
+    signal: ctx.signal,
+    ui: { input: (title, placeholder, options) => ctx.ui.input(title, placeholder, options) },
   });
   pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName === "edit" || event.toolName === "write") {
+      const path = (event.input as { path?: unknown }).path;
+      if (typeof path !== "string") return;
+      return fileGate(event.toolName, path, gateContext(ctx));
+    }
     if (event.toolName !== "bash") return;
     const command = (event.input as { command?: unknown }).command;
     if (typeof command !== "string") return;
-    return gate(command, {
-      cwd: ctx.cwd,
-      hasUI: ctx.hasUI,
-      signal: ctx.signal,
-      ui: { input: (title, placeholder, options) => ctx.ui.input(title, placeholder, options) },
-    });
+    return gate(command, gateContext(ctx));
   });
 
   // Each tool is registered under its oasis_* name and, always inactive, under its odoo19_* alias

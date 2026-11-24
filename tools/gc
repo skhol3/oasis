@@ -18,7 +18,8 @@ for (( index = 0; index < ${#arguments[@]}; index++ )); do
     --older-than)
       index=$(( index + 1 ))
       older_than=${arguments[index]:-}
-      if [[ ! "$older_than" =~ ^[0-9]+$ ]]; then usage >&2; exit 2; fi ;;
+      # 0 to 36500 days (tools/trash.py MAX_DAYS), checked before any query.
+      if [[ ! "$older_than" =~ ^[0-9]{1,9}$ ]] || (( 10#$older_than > 36500 )); then usage >&2; exit 2; fi ;;
     --help)
       usage
       printf 'Lists the disposable test databases (<test_prefix>...<module>_r<6 hex>, and their _update\n'
@@ -33,9 +34,11 @@ for (( index = 0; index < ${#arguments[@]}; index++ )); do
       printf 'touched. A checkout with a slug may drop only its own namespace: run --apply --all-checkouts\n'
       printf 'from the main checkout.\n'
       printf -- '--trash lists the trash entries of this checkout (see trash --help) dropped at least <days>\n'
-      printf 'days ago (--older-than, default 7), one expired <name> line each, then expired=<n>; with --apply\n'
-      printf 'it closes their sessions, drops them and removes their filestores (dropped <name>, failed <name> on\n'
-      printf 'stderr, then dropped=<n> failed=<m>, exit 1 when m > 0). Without --trash the trash is never touched.\n'
+      printf 'days ago (--older-than, 0 to 36500, default 7), one expired <name> line each, then expired=<n>; with\n'
+      printf -- '--apply it closes their sessions, drops them and removes their filestores (dropped <name>, failed\n'
+      printf '<name> on stderr, then dropped=<n> failed=<m>, exit 1 when m > 0). A database dropped whose filestore\n'
+      printf 'cannot be removed counts as failed: stderr names the filestore path to remove by hand.\n'
+      printf 'Without --trash the trash is never touched.\n'
       exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
@@ -59,7 +62,8 @@ if "$trash"; then
   for database in "${expired_list[@]}"; do
     [[ -n "$database" ]] || continue
     if "$apply"; then
-      # drop_trash_database repeats the namespace and trash-name guards.
+      # drop_trash_database repeats the namespace and trash-name guards. A filestore left after
+      # the drop (purge exit 3) is a failure too; purge named its path on stderr.
       if trash_helper purge "$ODOO_CONFIG" "$database" </dev/null; then
         printf 'dropped %s\n' "$database"
         count=$(( count + 1 ))

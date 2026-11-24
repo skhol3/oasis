@@ -57,6 +57,9 @@ sql = rest[-1]
 if sql.startswith('ALTER DATABASE'):
     found = re.fullmatch(r'ALTER DATABASE "(\w+)" RENAME TO "(\w+)"; COMMENT ON DATABASE "(\w+)" IS (NULL|\'[^\']*\')', sql)
     if not found or found.group(2) != found.group(3) or os.environ.get('FAKE_RENAME_FAILS'):
+        if os.environ.get('FAKE_RENAME_BLOCKS'):
+            # Something takes the path the filestore would move back to while the rename fails.
+            os.makedirs(os.environ['FAKE_RENAME_BLOCKS'], exist_ok=True)
         print('ERROR:  rename failed', file=sys.stderr)
         raise SystemExit(1)
     old, new, comment = found.group(1), found.group(2), found.group(4)
@@ -271,6 +274,71 @@ class DropToTrashTests(TrashFixture):
         self.assertTrue((store / 'ab/file').is_file())
         self.assertEqual(self.snapshot(), before)
 
+    def test_a_failed_rename_whose_filestore_cannot_move_back_says_where_it_is(self):
+        self.seed({'cc_dev_coffee': {}})
+        self.filestore('cc_dev_coffee')
+        self.env['FAKE_RENAME_FAILS'] = '1'
+        self.env['FAKE_RENAME_BLOCKS'] = str(self.data / 'filestore/cc_dev_coffee')
+        result = self.cli('drop-database', 'cc_dev_coffee')
+        self.assertEqual(result.returncode, 1)
+        trash = re.search(r'^trash=(\S+)$', result.stdout, re.M).group(1)
+        self.assertEqual(result.stderr, 'ERROR:  rename failed\n'
+                                        f'Filestore path already exists: {self.data}/filestore/cc_dev_coffee\n'
+                                        'Cannot move cc_dev_coffee to the trash; its filestore stays at the trash '
+                                        f'path of {trash}.\n')
+        self.assertEqual(self.databases(), {'cc_dev_coffee': {'size': 8_000_000, 'comment': None, 'sessions': 0}})
+        self.assertEqual((self.data / 'filestore' / trash / 'ab/file').read_text(), 'attachment\n')
+
+    def window(self, original, seconds=120):
+        """Trash names of original for every second from just before now to `seconds` later, so
+        the name a drop computes is one of them."""
+        start = datetime.now(timezone.utc) - timedelta(seconds=2)
+        return [f'{original}_trash_{stamp_of(start + timedelta(seconds=step))}' for step in range(seconds)]
+
+    def test_a_taken_trash_name_is_refused_before_the_plan(self):
+        taken = self.window('cc_dev_coffee')
+        self.seed({'cc_dev_coffee': {}, **{name: {} for name in taken}})
+        self.filestore('cc_dev_coffee')
+        before = self.snapshot()
+        result = self.cli('drop-database', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout), (2, ''))
+        found = re.fullmatch(r'Trash name already exists: (cc_dev_coffee_trash_\d{8}_\d{6})\n', result.stderr)
+        self.assertIsNotNone(found, result.stderr)
+        self.assertIn(found.group(1), taken)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.mutations(), [])
+
+    def test_a_taken_trash_filestore_path_is_refused_before_the_plan(self):
+        self.seed({'cc_dev_coffee': {}})
+        self.filestore('cc_dev_coffee')
+        taken = self.window('cc_dev_coffee')
+        for name in taken:
+            (self.data / 'filestore' / name).mkdir()
+        before = self.snapshot()
+        result = self.cli('drop-database', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout), (2, ''))
+        found = re.fullmatch(f'Filestore path already exists: {re.escape(str(self.data))}/filestore/'
+                             r'(cc_dev_coffee_trash_\d{8}_\d{6})\n', result.stderr)
+        self.assertIsNotNone(found, result.stderr)
+        self.assertIn(found.group(1), taken)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.mutations(), [])
+
+    def test_a_namespace_too_long_to_shorten_is_refused(self):
+        dev, test = 'c' * 30 + '_dev_', 'c' * 30 + '_test_'
+        (self.root / '.odoo19-agent.toml').write_text(
+            lifecycle.PROFILE.replace("'cc_dev_'", f"'{dev}'").replace("'cc_test_'", f"'{test}'"))
+        self.assertEqual(len(dev), 35)
+        original = dev + 'coffeeshop'
+        self.seed({original: {}})
+        self.filestore(original)
+        before = self.snapshot()
+        result = self.cli('drop-database', original)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            2, '', f'Database prefix and checkout slug leave no room for a trash name: {dev}\n'))
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.mutations(), [])
+
     def test_a_long_name_is_shortened_with_a_hash_to_63_bytes_and_restores(self):
         original = 'cc_dev_' + 'a' * 50 + 'bcdefg'
         self.assertEqual(len(original), 63)
@@ -437,6 +505,27 @@ class TrashListAndRestoreTests(TrashFixture):
                 self.assertEqual(self.snapshot(), before)
                 self.assertEqual(self.mutations(), [])
 
+    def test_a_failed_restore_rename_moves_the_filestore_back(self):
+        self.env['FAKE_RENAME_FAILS'] = '1'
+        before = self.snapshot()
+        result = self.cli('trash', 'restore', self.old)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (1, '', f'ERROR:  rename failed\nCannot restore {self.old}; nothing changed.\n'))
+        self.assertEqual((self.data / 'filestore' / self.old / 'ab/file').read_text(), 'attachment\n')
+        self.assertEqual(self.snapshot(), before)
+
+    def test_a_failed_restore_whose_filestore_cannot_move_back_says_where_it_is(self):
+        self.env['FAKE_RENAME_FAILS'] = '1'
+        self.env['FAKE_RENAME_BLOCKS'] = str(self.data / 'filestore' / self.old)
+        databases = self.databases()
+        result = self.cli('trash', 'restore', self.old)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', (
+            'ERROR:  rename failed\n'
+            f'Filestore path already exists: {self.data}/filestore/{self.old}\n'
+            f'Cannot restore {self.old}; its filestore stays at the path of cc_dev_coffee.\n')))
+        self.assertEqual(self.databases(), databases)
+        self.assertEqual((self.data / 'filestore/cc_dev_coffee/ab/file').read_text(), 'attachment\n')
+
     def test_help(self):
         result = self.cli('trash', '--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
@@ -467,7 +556,9 @@ class GcTrashTests(TrashFixture):
                 ((), f'expired {self.old}\nexpired=1\n'),
                 (('--older-than', '1'), f'expired {self.old}\nexpired {self.recent}\nexpired=2\n'),
                 (('--older-than', '0'), f'expired {self.old}\nexpired {self.recent}\nexpired=2\n'),
-                (('--older-than', '30'), 'expired=0\n')):
+                (('--older-than', '30'), 'expired=0\n'),
+                (('--older-than', '36500'), 'expired=0\n'),
+                (('--older-than', '007'), f'expired {self.old}\nexpired=1\n')):
             with self.subTest(args=args):
                 result = self.gc('--trash', *args)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, stdout, ''))
@@ -494,6 +585,21 @@ class GcTrashTests(TrashFixture):
         self.assertIn(self.old, self.filestores())
         self.assertNotIn(self.recent, self.filestores())
 
+    def test_a_filestore_left_after_the_drop_is_reported_with_its_path(self):
+        store = self.data / 'filestore' / self.old
+        for path in sorted(store.rglob('*'), reverse=True):
+            path.unlink() if path.is_file() else path.rmdir()
+        store.rmdir()
+        store.write_text('not a directory\n')
+        result = self.gc('--apply', '--trash', '--older-than', '1')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            1, f'dropped {self.recent}\ndropped=1\nfailed=1\n',
+            f'Filestore of {self.old} is not a directory; not removed: {store}\n'
+            f'Database {self.old} was dropped, but its filestore is left: {store}; remove it by hand.\n'
+            f'failed {self.old}\n'))
+        self.assertNotIn(self.old, self.databases())
+        self.assertEqual(store.read_text(), 'not a directory\n')
+
     def test_plain_gc_and_gc_apply_are_unchanged_by_the_trash(self):
         before = self.snapshot()
         result = self.gc()
@@ -509,13 +615,18 @@ class GcTrashTests(TrashFixture):
     def test_usage(self):
         usage = f'Usage: {ENTRY} gc [--apply] [--all-checkouts] | gc [--apply] --trash [--older-than <days>]\n'
         for args in (('--older-than', '3'), ('--trash', '--older-than'), ('--trash', '--older-than', 'x'),
-                     ('--trash', '--older-than', '-1'), ('--trash', '--all-checkouts'), ('--force',)):
+                     ('--trash', '--older-than', '-1'), ('--trash', '--older-than', '36501'),
+                     ('--trash', '--older-than', '99999999999999999999'),
+                     ('--apply', '--trash', '--older-than', '1000000000'), ('--trash', '--all-checkouts'),
+                     ('--force',)):
             with self.subTest(args=args):
                 before = self.snapshot()
+                calls = len(self.calls())
                 result = self.gc(*args)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', usage))
                 self.assertEqual(self.snapshot(), before)
-                self.assertEqual(self.calls(), [])
+                # Refused before any query.
+                self.assertEqual(self.calls()[calls:], [])
         result = self.gc('--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertTrue(result.stdout.startswith(usage))

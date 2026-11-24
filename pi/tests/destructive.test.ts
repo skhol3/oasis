@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { blockReason } from "../lib/bash-guard.ts";
 import type { MenuEntry } from "../lib/menu.ts";
-import { agentGate, ASK_TIMEOUT_MS, type GateContext, type GateEffects } from "../lib/destructive.ts";
+import { agentFileGate, agentGate, ASK_TIMEOUT_MS, type GateContext, type GateEffects } from "../lib/destructive.ts";
 
 // The bash gate (S3, S4) with every Pi effect faked: what it blocks, asks and records.
 const ROOT = "/work/shop";
@@ -17,6 +17,9 @@ interface Setup {
   setting?: string | undefined;
   hasUI?: boolean;
   answers?: (string | undefined)[];
+  /** realpath of the file system: identity unless given. */
+  realpath?: (path: string) => string;
+  cwd?: string;
 }
 
 function harness(options: Setup = {}) {
@@ -33,10 +36,11 @@ function harness(options: Setup = {}) {
       return "setting" in options ? options.setting : "ask";
     },
     appendEntry: (entry) => entries.push(entry),
+    realpath: options.realpath ?? ((path) => path),
   };
   const signal = new AbortController().signal;
   const ctx: GateContext = {
-    cwd: `${ROOT}/addons`,
+    cwd: options.cwd ?? `${ROOT}/addons`,
     hasUI: options.hasUI ?? true,
     signal,
     ui: {
@@ -48,7 +52,12 @@ function harness(options: Setup = {}) {
     },
   };
   const gate = agentGate(effects);
-  return { gate: (command: string) => gate(command, ctx), entries, prompts, settingsRead, signal };
+  const fileGate = agentFileGate(effects);
+  return {
+    gate: (command: string) => gate(command, ctx),
+    file: (tool: string, path: string) => fileGate(tool, path, ctx),
+    entries, prompts, settingsRead, signal,
+  };
 }
 
 test("the deny tier blocks exactly as before, without a dialog or an entry", async () => {
@@ -213,6 +222,11 @@ test("the extension adapts Pi to the gate: hasUI, a timed input dialog, the prof
   const flat = block.split(/\s+/).join(" ");
   for (const part of [
     "pi.registerEntryRenderer(DECISION_ENTRY, renderMenuEntry);",
+    "realpath: realpathSync,",
+    "if (event.toolName === \"edit\" || event.toolName === \"write\") {",
+    "const path = (event.input as { path?: unknown }).path;",
+    "return fileGate(event.toolName, path, gateContext(ctx));",
+    "return gate(command, gateContext(ctx));",
     "appendEntry: (entry) => pi.appendEntry(DECISION_ENTRY, entry),",
     "return (await profileConfig(root)).config?.AGENT_DESTRUCTIVE;",
     "hasUI: ctx.hasUI, signal: ctx.signal,",
@@ -223,5 +237,130 @@ test("the extension adapts Pi to the gate: hasUI, a timed input dialog, the prof
   // Decisions are entries, never messages for the model; the logic has no Pi imports.
   assert.ok(!/sendMessage|sendUserMessage/.test(block));
   const lib = readFileSync(new URL("../lib/destructive.ts", import.meta.url), "utf8");
-  assert.deepEqual([...lib.matchAll(/ from "([^"]+)";/g)].map((match) => match[1]), ["./bash-guard.ts", "./menu.ts"]);
+  assert.deepEqual([...lib.matchAll(/ from "([^"]+)";/g)].map((match) => match[1]),
+    ["node:path", "./bash-guard.ts", "./menu.ts", "./project.ts"]);
+});
+
+test("a line is judged on every denied program: user-run tools anywhere on it block in every session", async () => {
+  const outside = harness({ root: null });
+  assert.deepEqual(await outside.gate("psql -l; oasis --project /p migrate --apply"),
+    { block: true, reason: blockReason("migrate", "") });
+  assert.deepEqual(await outside.gate("dropdb x && oasis --project /p menu"), { block: true, reason: blockReason("menu", "") });
+  assert.deepEqual(await outside.gate("odoo-bin --version | oasis --project /p worktree-init f b"),
+    { block: true, reason: blockReason("worktree-init", "") });
+  // Single commands keep their tier: odoo-bin, dropdb and psql run outside Odoo projects.
+  for (const command of ["psql -l", "dropdb x", "odoo-bin --version", "psql -l; dropdb x"]) {
+    assert.equal(await outside.gate(command), undefined, command);
+  }
+  // In an Odoo project the first denied program still gives the reason, as before.
+  const inProject = harness();
+  assert.deepEqual(await inProject.gate("psql -l; oasis --project /p migrate --apply"),
+    { block: true, reason: blockReason("psql", ROOT) });
+  assert.deepEqual(await inProject.gate("psql -l"), { block: true, reason: blockReason("psql", ROOT) });
+  assert.deepEqual(await inProject.gate("oasis --project /p migrate --apply; psql -l"),
+    { block: true, reason: blockReason("migrate", "") });
+  for (const run of [inProject, outside]) assert.deepEqual([run.prompts, run.entries], [[], []]);
+});
+
+const WORKSPACE = `${ROOT}/oasis-workspace.toml`;
+const NOTE = "(it holds [tooling].agent_destructive)";
+
+test("the agent's edit and write of a setting file ask to type yes, naming the file, and are recorded", async () => {
+  for (const [tool, path, file] of [
+    ["edit", "../oasis-workspace.toml", WORKSPACE],
+    ["write", `${ROOT}/.odoo19-agent.toml`, `${ROOT}/.odoo19-agent.toml`],
+    ["edit", "@../oasis-workspace.toml", WORKSPACE],
+    ["write", "/work/oasis-workspace.toml", "/work/oasis-workspace.toml"],
+    ["edit", "./.odoo19-agent.toml", `${ROOT}/addons/.odoo19-agent.toml`],
+  ] as const) {
+    const run = harness({ answers: ["yes"] });
+    assert.equal(await run.file(tool, path), undefined, path);
+    assert.equal(run.prompts.length, 1, path);
+    assert.equal(run.prompts[0].title,
+      `oasis: the agent wants to call\n\n${tool} ${path}\n\n` +
+        `Type yes to allow editing ${file} ${NOTE}. Esc, another answer or no answer within ${SECONDS} s refuses.`);
+    assert.deepEqual(run.prompts[0].options, { timeout: ASK_TIMEOUT_MS, signal: run.signal });
+    assert.deepEqual(run.entries, [{ label: "Agent command approved", command: `${tool} ${path}`, note: "typed yes", output: "" }]);
+  }
+});
+
+test("a refused, unanswered or dialog-less edit of a setting file is blocked and recorded", async () => {
+  const path = "../oasis-workspace.toml";
+  const wrong = harness({ answers: ["allow"] });
+  assert.deepEqual(await wrong.file("edit", path), {
+    block: true,
+    reason: `The user's answer did not confirm editing ${WORKSPACE}; nothing changed. Do not retry it: ask the user ` +
+      "whether to make the change.",
+  });
+  assert.deepEqual(wrong.entries, [{ label: "Agent command refused", command: `edit ${path}`, note: "wrong answer", output: "" }]);
+  const none = harness({ answers: [undefined] });
+  assert.equal((await none.file("write", path))?.block, true);
+  assert.equal(none.entries[0].note, "no answer");
+  const headless = harness({ hasUI: false });
+  assert.deepEqual(await headless.file("edit", path), {
+    block: true,
+    reason: `editing ${WORKSPACE} needs the user's confirmation in a dialog, and this session has none (a subagent or a ` +
+      "headless run); nothing changed. Ask the user to make the change or to confirm it from an interactive session.",
+  });
+  assert.deepEqual(headless.prompts, []);
+  assert.deepEqual(headless.entries, [{ label: "Agent command refused", command: `edit ${path}`, note: "no dialog", output: "" }]);
+  const denied = harness({ setting: "deny" });
+  assert.deepEqual(await denied.file("edit", path), {
+    block: true,
+    reason: `editing ${WORKSPACE} is denied to agents by [tooling].agent_destructive = "deny" in this project's ` +
+      "configuration; nothing changed. Ask the user to make the change.",
+  });
+  // allow never lets the agent change its own permission: the dialog still runs, and without a
+  // UI the edit is refused.
+  const allowedHeadless = harness({ setting: "allow", hasUI: false });
+  assert.equal((await allowedHeadless.file("edit", path) as { block: boolean }).block, true);
+  assert.deepEqual(allowedHeadless.entries, [{ label: "Agent command refused", command: `edit ${path}`, note: "no dialog", output: "" }]);
+  const allowedDialog = harness({ setting: "allow", answers: ["yes"] });
+  assert.equal(await allowedDialog.file("edit", path), undefined);
+  assert.equal(allowedDialog.prompts.length, 1);
+  assert.deepEqual(allowedDialog.entries.map((entry) => entry.label), ["Agent command approved"]);
+});
+
+test("other files, setting names below the session directory and symlinks are judged by the file they reach", async () => {
+  const run = harness();
+  for (const path of [
+    `${ROOT}/addons/coffee/models/sale.py`, `${ROOT}/dev/odoo.conf`, `${ROOT}/oasis-checkout.toml`,
+    `${ROOT}/addons/coffee/oasis-workspace.toml`, "/tmp/oasis-workspace.toml", `${ROOT}/oasis-workspace.toml.bak`,
+  ]) {
+    assert.equal(await run.file("write", path), undefined, path);
+  }
+  assert.deepEqual([run.prompts, run.entries, run.settingsRead], [[], [], []]);
+  // A link (or a linked directory) that reaches a setting file is that file.
+  const linked = harness({
+    hasUI: false,
+    realpath: (path) => (path === "/tmp/link.toml" ? WORKSPACE : path.replace(/^\/tmp\/dir\//, `${ROOT}/`)),
+  });
+  for (const path of ["/tmp/link.toml", "/tmp/dir/.odoo19-agent.toml"]) {
+    assert.equal((await linked.file("edit", path))?.block, true, path);
+  }
+  assert.match(linked.entries[0].command, /^edit \/tmp\/link\.toml$/);
+  // A session directory reached through a link: the files above its real path count too.
+  const real = harness({ cwd: "/home/u/shop/addons", hasUI: false, realpath: (path) => path.replace("/home/u/shop", ROOT) });
+  assert.equal((await real.file("write", `${ROOT}/oasis-workspace.toml`))?.block, true);
+});
+
+test("bash writes to a setting file go through the same dialog, in the order bash reaches them", async () => {
+  const command = `oasis --project /work/shop stop --database && echo "agent_destructive = 'allow'" >> ${WORKSPACE}`;
+  const run = harness({ answers: ["yes", "yes"] });
+  assert.equal(await run.gate(command), undefined);
+  assert.equal(run.prompts.length, 2);
+  assert.equal(run.prompts[1].title,
+    `oasis: the agent wants to run\n\n${command}\n\n` +
+      `Type yes to allow editing ${WORKSPACE} ${NOTE}. Esc, another answer or no answer within ${SECONDS} s refuses.`);
+  assert.deepEqual(run.entries, [{ label: "Agent command approved", command, note: "typed yes, yes", output: "" }]);
+  const refused = harness({ answers: ["no"] });
+  assert.deepEqual(await refused.gate(`sed -i s/ask/allow/ ${WORKSPACE}`), {
+    block: true,
+    reason: `The user's answer did not confirm editing ${WORKSPACE}; nothing changed. Do not retry it: ask the user ` +
+      "whether to make the change.",
+  });
+  // Reading a setting file is not an edit.
+  const read = harness();
+  assert.equal(await read.gate(`cat ${WORKSPACE}; grep agent_destructive ../oasis-workspace.toml`), undefined);
+  assert.deepEqual(read.prompts, []);
 });

@@ -39,6 +39,10 @@ test_prefix = 'sample_test_'
 # evidence go to <logs>/<slug, or main for the main checkout>/run-*;
 # without it they stay under dev/logs/odoo19. Point every checkout at the same one.
 # logs = '../logs'
+# Optional: what the Gentle Shell layer does when an agent runs drop-database, stop --database
+# or gc --apply --trash, or changes this file: 'ask' (the default) shows the user a dialog
+# first, 'deny' blocks them, 'allow' runs them without a dialog. Only the user sets it.
+# agent_destructive = 'ask'
 
 # Optional advisory command discovery, never shell strings or authorization.
 # Expand ~ for the current user; use an absolute --project root as separate args.

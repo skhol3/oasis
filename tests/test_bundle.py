@@ -218,6 +218,16 @@ class BundleTests(unittest.TestCase):
         for phrase in ('`logs`', '`LOGS_DIR`', '`<logs>/<slug, or main for the main checkout>/run-*`'):
             self.assertIn(phrase, contract)
 
+    def test_agent_destructive_is_documented_but_not_set_in_the_examples(self):
+        for path in (CONFIG, WORKSPACE):
+            with self.subTest(path=path.name):
+                raw = path.read_text(encoding='utf-8')
+                self.assertNotIn('agent_destructive', tomllib.loads(raw)['tooling'])
+                self.assertEqual(re.findall(r"^# agent_destructive = '([^']*)'$", raw, re.MULTILINE), ['ask'])
+                comment = raw[:raw.index("# agent_destructive = 'ask'")].rsplit('\n\n', 1)[-1]
+                for value in ("'ask'", "'deny'", "'allow'"):
+                    self.assertIn(value, comment)
+
     def test_workspace_example_schema_and_negative_examples(self):
         raw = WORKSPACE.read_text(encoding='utf-8')
         data = check_workspace_example(raw)

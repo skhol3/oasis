@@ -14,11 +14,14 @@ Usage:
   trash.py list <project_root> <dev_prefix> <test_prefix> <slug>
   trash.py expired <project_root> <dev_prefix> <test_prefix> <slug> <days>
       read `<name>\\t<bytes>\\t<comment>` rows (common.sh list_trash_databases) on stdin; list
-      prints this checkout's trash, expired the names dropped at least <days> days ago
+      prints this checkout's trash, expired the names dropped at least <days> days ago (0 to
+      MAX_DAYS; tools/gc refuses other values before any query)
   trash.py original <project_root> <dev_prefix> <test_prefix> <slug> <trash name> <comment>
       prints the name the trash database had; exit 2 when it is not this checkout's trash
   trash.py purge <odoo.conf> <trash name>
-      drops a trash database (common.sh drop_trash_database) and removes its filestore
+      drops a trash database (common.sh drop_trash_database) and removes its filestore; exit 1
+      when the database is not dropped, 3 when it is dropped but its filestore is left (its path
+      on stderr, to remove by hand)
 
 Trash name: `<original>_trash_<YYYYMMDD>_<HHMMSS>` (the drop time in UTC). When that exceeds 63
 bytes, the original part becomes its first 34 bytes, `_` and 6 hex of the SHA-256 of the
@@ -62,6 +65,7 @@ STAMP = '%Y%m%d_%H%M%S'
 TRASH = re.compile(r'[A-Za-z0-9_]+_trash_(\d{8}_\d{6})')
 DATABASE = re.compile(r'[A-Za-z0-9_]+')
 COMMENT = 'oasis-trash original='
+MAX_DAYS = 36500  # gc --older-than: 100 years; larger values would overflow the date arithmetic
 USAGE = ('Usage: trash.py name <dev> <test> <slug> <database> | filestore|move-filestore <odoo.conf> <from> <to> | '
          'size <bytes> | list <root> <dev> <test> <slug> | expired <root> <dev> <test> <slug> <days> | '
          'original <root> <dev> <test> <slug> <name> <comment> | purge <odoo.conf> <name>')
@@ -193,11 +197,19 @@ def move_filestore(conf, source, target):
 
 
 def purge(conf, name):
-    """Drop a trash database, then remove its filestore; 0 when the database is gone."""
+    """Drop a trash database, then remove its filestore: 0 when both are gone, 1 when the
+    database is not dropped, 3 when it is dropped but its filestore is left (its path on stderr)."""
     if test_temp.database_step('drop_trash_database', name) != 0:
         return 1
-    test_temp.remove_filestore(conf, name)
-    return 0
+    if test_temp.remove_filestore(conf, name):
+        return 0
+    try:
+        path = test_temp.filestore_path(conf, name)
+    except odoo_addons_path.ConfError:
+        path = None
+    print(f'Database {name} was dropped, but its filestore is left: {path or f"<data_dir>/filestore/{name}"}; '
+          'remove it by hand.', file=sys.stderr)
+    return 3
 
 
 def main(argv):
@@ -232,7 +244,7 @@ def main(argv):
                           f'age={age(when, now)} size={human_size(size)}')
                 print(f'trashed={len(found)}')
                 return 0
-            if not args[4].isdigit():
+            if not (args[4].isascii() and args[4].isdigit()) or int(args[4]) > MAX_DAYS:
                 raise Refused(USAGE)
             limit = now - timedelta(days=int(args[4]))
             for name, _original, when, _size in found:
