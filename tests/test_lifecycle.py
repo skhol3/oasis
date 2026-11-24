@@ -187,9 +187,19 @@ exit 0
     def test_wrong_odoo_runtime_rejects_before_docker(self):
         self.python.write_text(self.python.read_text().replace('Odoo Server 19.0', 'Odoo Server 119.0'))
         result = self.invoke('install-module', 'coffee')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', 'Odoo runtime 19.0 is required.\n'))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+            f'Odoo runtime 19.0 is required; {self.source / "odoo-bin"} reports: Odoo Server 119.0.\n'
+            'Point [tooling].community at an Odoo 19.0 source, then check it with oasis doctor.\n')))
         self.unchanged()
+
+    def test_odoo_shell_refuses_extra_arguments_with_its_usage(self):
+        usage = 'Usage: ' + str(self.root / 'dev/scripts/odoo-shell') + ' <database>\n'
+        self.env['FAKE_EXISTS'] = '1'
+        for args in (('cc_dev_coffee', 'extra'), ('cc_dev_coffee', '--', 'x'), ('--help', 'extra'), ()):
+            with self.subTest(args=args):
+                result = self.invoke('odoo-shell', *args, input='print(42)\n')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', usage))
+                self.unchanged()
 
     def test_invalid_module_rejects_before_docker(self):
         result = self.invoke('install-module', "coffee';DROP")

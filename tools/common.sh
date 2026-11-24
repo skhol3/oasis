@@ -84,7 +84,9 @@ require_runtime() {
   # The configured series as a whole number in what odoo-bin --version prints.
   series="(^|[^0-9])${ODOO_VERSION//./\\.}([^0-9]|\$)"
   if [[ ! "$odoo_version" =~ $series ]]; then
-    printf 'Odoo runtime %s is required.\n' "$ODOO_VERSION" >&2
+    printf 'Odoo runtime %s is required; %s reports: %s.\n' "$ODOO_VERSION" "$ODOO_BIN" "${odoo_version%%$'\n'*}" >&2
+    printf 'Point [tooling].community at an Odoo %s source, then check it with %s doctor.\n' \
+      "$ODOO_VERSION" "$(program_name)" >&2
     return 2
   fi
 }
@@ -454,7 +456,9 @@ require_free_disposable_database() {
   # Outside the condition, so an unavailable service fails instead of looking free.
   wait_for_database >/dev/null
   if database_exists "$database"; then
-    printf 'Disposable test database already exists: %s\n' "$database" >&2
+    printf 'Disposable test database already exists: %s; it was left as it is.\n' "$database" >&2
+    printf 'Run the command again for a new name; %s gc --apply drops what interrupted runs left.\n' \
+      "$(program_name)" >&2
     return 2
   fi
 }

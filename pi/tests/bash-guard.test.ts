@@ -466,13 +466,11 @@ test("with the session context the entry points, migrate and worktree-init are u
 });
 
 test("the extension passes the session cwd, the home directory and a file check to the guard", () => {
-  // The extension gives the gate (lib/destructive.ts) its home and file check, and each call its cwd;
-  // the gate classifies with them.
+  // The extension gives the gates (lib/destructive.ts) its home and file check; toolCallRouter gives
+  // each call its cwd (pi/tests/destructive.test.ts proves it by behaviour). The gate classifies with them.
   const source = readFileSync(new URL("../extensions/oasis.ts", import.meta.url), "utf8");
   assert.match(source, /const gateEffects: GateEffects = \{[^]*?home: homedir\(\),\s+exists: existsSync,/);
-  assert.match(source, /const gate = agentGate\(gateEffects\);/);
-  assert.match(source, /const gateContext = \(ctx: ExtensionContext\): GateContext => \(\{\s+cwd: ctx\.cwd,/);
-  assert.match(source, /return gate\(command, gateContext\(ctx\)\);/);
+  assert.match(source, /const routeToolCall = toolCallRouter\(gateEffects\);/);
   const gate = readFileSync(new URL("../lib/destructive.ts", import.meta.url), "utf8");
   assert.match(gate,
     /classifyBash\(command, \{\s+cwd: ctx\.cwd, home: effects\.home, exists: effects\.exists, settingFile: settingFiles\(effects, ctx\.cwd\),\s+\}\)/);
@@ -483,31 +481,80 @@ test("the extension passes the session cwd, the home directory and a file check 
 const DROP = (database: string | null) => ({ command: "drop-database", database });
 const STOP = { command: "stop --database" };
 const PURGE = { command: "gc --apply --trash" };
+// An ask command with the project it targets: the entry point's --project, a tool script's
+// OASIS_PROJECT_ROOT or ODOO19_PROJECT_ROOT; null when the text does not tell it.
+const AT = (action: object, project: string | null) => ({ ...action, project });
 
 test("classifyBash finds the ask commands through the entry points and their launchers", () => {
   const cases: [string, object[]][] = [
-    ["oasis --project /p drop-database cc_dev_x", [DROP("cc_dev_x")]],
-    ["odoo19 --project /p drop-database cc_test_x --terminate", [DROP("cc_test_x")]],
-    ["oasis --project=/p drop-database 'cc_dev_x'", [DROP("cc_dev_x")]],
-    ["~/.agents/skills/odoo19/oasis --project /p drop-database cc_dev_x 2>&1 | tail -5", [DROP("cc_dev_x")]],
-    ["python3 -B /opt/oasis/oasis --project /p drop-database cc_dev_x", [DROP("cc_dev_x")]],
-    ["cd /p && timeout 60 oasis --project /p drop-database cc_dev_x", [DROP("cc_dev_x")]],
-    ["bash -c 'odoo19 --project /p drop-database cc_dev_x'", [DROP("cc_dev_x")]],
-    ["echo $(oasis --project /p drop-database cc_dev_x)", [DROP("cc_dev_x")]],
-    ["oasis --project /p drop-database $DB", [DROP(null)]],
-    ["oasis --project /p drop-database \"$(cat name)\"", [DROP(null)]],
-    ["oasis --project /p drop-database", [DROP(null)]],
-    ["oasis --project /p drop-database --terminate", [DROP(null)]],
-    ["oasis --project /p stop --database", [STOP]],
-    ["env A=1 python3 odoo19 --project /p stop --database", [STOP]],
-    ["oasis --project /p gc --apply --trash", [PURGE]],
-    ["oasis --project /p gc --trash --older-than 0 --apply", [PURGE]],
-    ["sudo -u me odoo19 --project /p gc --apply --trash --older-than 3", [PURGE]],
-    ["oasis --project /p drop-database a_dev_x && oasis --project /p stop --database", [DROP("a_dev_x"), STOP]],
+    ["oasis --project /p drop-database cc_dev_x", [AT(DROP("cc_dev_x"), "/p")]],
+    ["odoo19 --project /p drop-database cc_test_x --terminate", [AT(DROP("cc_test_x"), "/p")]],
+    ["oasis --project=/p drop-database 'cc_dev_x'", [AT(DROP("cc_dev_x"), "/p")]],
+    ["~/.agents/skills/odoo19/oasis --project /p drop-database cc_dev_x 2>&1 | tail -5", [AT(DROP("cc_dev_x"), "/p")]],
+    ["python3 -B /opt/oasis/oasis --project /p drop-database cc_dev_x", [AT(DROP("cc_dev_x"), "/p")]],
+    ["cd /p && timeout 60 oasis --project /p drop-database cc_dev_x", [AT(DROP("cc_dev_x"), "/p")]],
+    ["bash -c 'odoo19 --project /p drop-database cc_dev_x'", [AT(DROP("cc_dev_x"), "/p")]],
+    ["echo $(oasis --project /p drop-database cc_dev_x)", [AT(DROP("cc_dev_x"), "/p")]],
+    ["oasis --project /p drop-database $DB", [AT(DROP(null), "/p")]],
+    ["oasis --project /p drop-database \"$(cat name)\"", [AT(DROP(null), "/p")]],
+    ["oasis --project /p drop-database", [AT(DROP(null), "/p")]],
+    ["oasis --project /p drop-database --terminate", [AT(DROP(null), "/p")]],
+    ["oasis --project /p stop --database", [AT(STOP, "/p")]],
+    ["env A=1 python3 odoo19 --project /p stop --database", [AT(STOP, "/p")]],
+    ["oasis --project /p gc --apply --trash", [AT(PURGE, "/p")]],
+    ["oasis --project /p gc --trash --older-than 0 --apply", [AT(PURGE, "/p")]],
+    ["sudo -u me odoo19 --project /p gc --apply --trash --older-than 3", [AT(PURGE, "/p")]],
+    ["oasis --project /p drop-database a_dev_x && oasis --project /p stop --database", [AT(DROP("a_dev_x"), "/p"), AT(STOP, "/p")]],
   ];
   for (const [command, asks] of cases) {
     assert.deepEqual(classifyBash(command), { program: null, programs: [], asks }, command);
   }
+});
+
+test("classifyBash names the project an ask command targets, as the entry point and the tools read it", () => {
+  const OTHER = "/work/other";
+  const cases: [string, object[]][] = [
+    ["oasis --project /work/other drop-database cc_dev_x", [AT(DROP("cc_dev_x"), OTHER)]],
+    ["odoo19 --project=/work/other stop --database", [AT(STOP, OTHER)]],
+    // argparse takes an unambiguous prefix of --project, and the last one given.
+    ["oasis --proj /work/other gc --apply --trash", [AT(PURGE, OTHER)]],
+    ["oasis --p=/work/other drop-database cc_dev_x", [AT(DROP("cc_dev_x"), OTHER)]],
+    ["oasis --project /work/shop --project /work/other stop --database", [AT(STOP, OTHER)]],
+    ["oasis --project /work/other/./addons/.. stop --database", [AT(STOP, OTHER)]],
+    ["oasis --project ~/shop stop --database", [AT(STOP, "/home/u/shop")]],
+    ["oasis --project $P drop-database cc_dev_x", [AT(DROP("cc_dev_x"), null)]],
+    ["oasis --project \"$(pwd)\" stop --database", [AT(STOP, null)]],
+    ["oasis --project=~/shop stop --database", [AT(STOP, null)]],
+    ["oasis --project", []],
+    ["oasis stop --database", [STOP]],
+    ["ODOO19_PROJECT_ROOT=/work/other ~/.agents/skills/odoo19/tools/drop-database cc_dev_x", [AT(DROP("cc_dev_x"), OTHER)]],
+    ["env OASIS_PROJECT_ROOT=/work/other ~/.agents/skills/odoo19/tools/stop --database", [AT(STOP, OTHER)]],
+    ["OASIS_PROJECT_ROOT= ODOO19_PROJECT_ROOT=/work/other bash ~/.agents/skills/odoo19/tools/gc --apply --trash",
+      [AT(PURGE, OTHER)]],
+    ["ODOO19_PROJECT_ROOT=/work/shop OASIS_PROJECT_ROOT=/work/other ~/.agents/skills/odoo19/tools/stop --database",
+      [AT(STOP, OTHER)]],
+    ["OASIS_PROJECT_ROOT=\"$P\" ~/.agents/skills/odoo19/tools/stop --database", [AT(STOP, null)]],
+    ["OASIS_PROJECT_ROOT=../other ~/.agents/skills/odoo19/tools/stop --database", [AT(STOP, OTHER)]],
+    ["~/.agents/skills/odoo19/tools/drop-database cc_dev_x", [DROP("cc_dev_x")]],
+  ];
+  for (const [command, asks] of cases) {
+    assert.deepEqual(classifyBash(command, at("/work/shop")), { program: null, programs: [], asks }, command);
+  }
+});
+
+test("the entry point's --project abbreviations do not hide its command from either tier", () => {
+  for (const [command, programs] of [
+    ["oasis --proj /p migrate --apply", ["migrate"]],
+    ["odoo19 --pro=/p menu", ["menu"]],
+    ["oasis --p /p menu --catalog", ["menu"]],
+    // The plan of migrate stays readable, as with --project.
+    ["oasis --proj /p migrate --plan", []],
+  ] as const) {
+    assert.deepEqual(classifyBash(command).programs, programs, command);
+  }
+  assert.deepEqual(classifyBash("oasis --proj /p drop-database cc_dev_x").asks, [AT(DROP("cc_dev_x"), "/p")]);
+  // Other options are not --project: their next word is the command, as before.
+  assert.deepEqual(classifyBash("oasis -v menu").programs, ["menu"]);
 });
 
 test("classifyBash finds the ask commands through the oasis tool scripts, judged like the menu's", () => {
@@ -582,7 +629,7 @@ test("the deny tier is unchanged: blockedProgram ignores the ask commands and st
     assert.equal(blockedProgram(command), program, command);
     assert.equal(classifyBash(command).program, program, command);
   }
-  assert.deepEqual(classifyBash("oasis --project /p drop-database cc_dev_x; psql -l").asks, [DROP("cc_dev_x")]);
+  assert.deepEqual(classifyBash("oasis --project /p drop-database cc_dev_x; psql -l").asks, [AT(DROP("cc_dev_x"), "/p")]);
 });
 
 test("classifyBash lists every denied program of a line, in order; program stays the first", () => {
@@ -635,7 +682,7 @@ test("classifyBash finds bash writes to the setting files: redirection, tee, sed
     ["cd .. && echo x > oasis-workspace.toml", [workspace]],
     ["bash -c 'echo x > /work/shop/oasis-workspace.toml'", [workspace]],
     ["echo x > $ROOT/oasis-workspace.toml", [EDIT("$ROOT/oasis-workspace.toml")]],
-    ["oasis --project /p stop --database > ../oasis-workspace.toml", [STOP, workspace]],
+    ["oasis --project /p stop --database > ../oasis-workspace.toml", [AT(STOP, "/p"), workspace]],
   ];
   for (const [command, asks] of cases) {
     assert.deepEqual(classifyBash(command, guarded("/work/shop/addons")), { program: null, programs: [], asks }, command);

@@ -12,8 +12,11 @@ set -Eeuo pipefail
 # --detach, as the first argument only, runs the server in its own session instead of in the
 # foreground: stdin from /dev/null, stdout and stderr appended to the checkout's server.log (the
 # compact log directory: <logs>/<slug or main>/ with [tooling].logs, else dev/logs/odoo19/). It
-# prints pid=<pid> port=<port> log=<path> and returns (tools/runtime_state.py detach); the record,
-# the port rules and stop are the same. A batch run cannot be detached.
+# prints pid=<pid> port=<port> log=<path> and returns once the server accepts connections on its
+# HTTP interface (tools/runtime_state.py detach): --http-interface when given, else the odoo.conf
+# http_interface, 127.0.0.1 for none, 0.0.0.0 or ::. A server that does not listen in time is
+# stopped and its record removed (exit 1). The record, the port rules and stop are the same. A
+# batch run cannot be detached.
 source "$(dirname "$0")/common.sh"
 require_runtime
 detach=false
@@ -25,6 +28,8 @@ fi
 # abbreviations of --database, before the database service is touched.
 arguments=("$@")
 explicit_port=''
+explicit_interface=''
+interface_given=false
 explicit_gevent=false
 informational=false
 batch=false
@@ -42,6 +47,11 @@ for (( index = 0; index < ${#arguments[@]}; index++ )); do
       (( index += 1 )) ;;
     -p*) explicit_port=${arguments[index]#-p} ;;
     --http-port=*) explicit_port=${arguments[index]#*=} ;;
+    --http-interface)
+      interface_given=true
+      explicit_interface=${arguments[index + 1]:-}
+      (( index += 1 )) ;;
+    --http-interface=*) interface_given=true; explicit_interface=${arguments[index]#*=} ;;
     "$ODOO_SECOND_PORT_OPTION") explicit_gevent=true; (( index += 1 )) ;;
     "$ODOO_SECOND_PORT_OPTION"=*) explicit_gevent=true ;;
     -h|--help|--version) informational=true ;;
@@ -87,14 +97,32 @@ probe() {
   if (( status == 2 )); then exit 2; fi
   return "$status"
 }
+# busy <port> <what to pass>: why the port is busy and what to do. A live record of another
+# checkout on that port names its checkout (runtime_state others); otherwise it is another process.
+busy() {
+  local port=$1 pass=$2 line
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^(.*)\ \(port\ ([0-9]+),\ pid\ ([0-9]+)\)$ && "${BASH_REMATCH[2]}" == "$port" ]]; then
+      printf 'Port %s is in use by checkout %s (pid %s); %s or run %s stop in that checkout.\n' \
+        "$port" "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}" "$pass" "$(program_name)" >&2
+      return
+    fi
+  done < <(runtime_state others "$PROJECT_ROOT" 2>/dev/null || true)
+  printf 'Port %s is in use by another process; %s or stop that process.\n' "$port" "$pass" >&2
+}
 server=$(runtime_state show "$PROJECT_ROOT")
 if [[ -n "$server" ]]; then
   read -r running_pid running_port <<< "$server"
-  printf 'Odoo is already running for this checkout: pid %s, port %s.\n' \
-    "${running_pid#pid=}" "${running_port#port=}" >&2
+  printf 'Odoo is already running for this checkout: pid %s, port %s; run %s stop first.\n' \
+    "${running_pid#pid=}" "${running_port#port=}" "$(program_name)" >&2
   exit 2
 fi
-interface=$(odoo_conf_option http_interface)
+# The address Odoo binds: an explicit --http-interface wins over the conf's http_interface.
+if "$interface_given"; then
+  interface=$explicit_interface
+else
+  interface=$(odoo_conf_option http_interface)
+fi
 port_arguments=()
 if [[ -n "$explicit_port" ]]; then
   if [[ ! "$explicit_port" =~ ^[0-9]{1,5}$ ]] || (( 10#$explicit_port < 1 || 10#$explicit_port > 65535 )); then
@@ -103,7 +131,7 @@ if [[ -n "$explicit_port" ]]; then
   fi
   port=$(( 10#$explicit_port ))
   if ! probe "$port" "$port"; then
-    printf 'Port %s is in use; pass another --http-port or stop the other server.\n' "$port" >&2
+    busy "$port" 'pass another --http-port'
     exit 2
   fi
 else
@@ -119,7 +147,7 @@ else
   else
     port=$conf_port
     if ! probe "$port" "$port"; then
-      printf 'Port %s is in use; pass --http-port or stop the other server.\n' "$port" >&2
+      busy "$port" 'pass --http-port'
       exit 2
     fi
   fi
@@ -143,7 +171,7 @@ fi
 wait_for_database
 if "$detach"; then
   exec python3 -I -B "$(dirname "$0")/runtime_state.py" detach "$PROJECT_ROOT" "$port" "$log" \
-    "$ODOO_BIN" "$PYTHON" -- "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" "$@"
+    "$ODOO_BIN" "$PYTHON" "$interface" -- "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" "$@"
 fi
 # $$ survives exec: the record names the Odoo process itself.
 runtime_state record "$PROJECT_ROOT" "$$" "$port" "$ODOO_BIN" "$PYTHON"

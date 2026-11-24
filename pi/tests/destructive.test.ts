@@ -2,7 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { blockReason } from "../lib/bash-guard.ts";
 import type { MenuEntry } from "../lib/menu.ts";
-import { agentFileGate, agentGate, ASK_TIMEOUT_MS, type GateContext, type GateEffects } from "../lib/destructive.ts";
+import {
+  agentFileGate, agentGate, ASK_TIMEOUT_MS, type GateContext, type GateEffects, settingReader, toolCallRouter,
+} from "../lib/destructive.ts";
 
 // The bash gate (S3, S4) with every Pi effect faked: what it blocks, asks and records.
 const ROOT = "/work/shop";
@@ -20,6 +22,10 @@ interface Setup {
   /** realpath of the file system: identity unless given. */
   realpath?: (path: string) => string;
   cwd?: string;
+  /** projectRoot of a directory (the session's and every target's); default: `root` for any. */
+  roots?: (dir: string) => string | null;
+  /** AGENT_DESTRUCTIVE per project root; a root not listed gets `setting`. */
+  settings?: Record<string, string | undefined>;
 }
 
 function harness(options: Setup = {}) {
@@ -28,11 +34,12 @@ function harness(options: Setup = {}) {
   const settingsRead: string[] = [];
   const answers = [...(options.answers ?? [])];
   const effects: GateEffects = {
-    projectRoot: async () => (options.root === undefined ? ROOT : options.root),
+    projectRoot: async (dir) => (options.roots ? options.roots(dir) : options.root === undefined ? ROOT : options.root),
     home: "/home/u",
     exists: () => false,
     agentDestructive: async (root) => {
       settingsRead.push(root);
+      if (options.settings && root in options.settings) return options.settings[root];
       return "setting" in options ? options.setting : "ask";
     },
     appendEntry: (entry) => entries.push(entry),
@@ -213,29 +220,165 @@ test("the dialog and the entry show the command without terminal control sequenc
   assert.equal(run.entries[0].command, "oasis --project /work/shop stop --database # hidden");
 });
 
-test("the extension adapts Pi to the gate: hasUI, a timed input dialog, the profile setting and entries", async () => {
+// L7: the project an ask command targets (`--project`, or a tool script's OASIS_PROJECT_ROOT or
+// ODOO19_PROJECT_ROOT) has a say too: the stricter of its setting and the session's decides.
+const OTHER = "/work/other";
+const OTHER_DROP = "oasis --project /work/other drop-database other_dev_old";
+const roots = (dir: string) => (dir === OTHER || dir.startsWith(`${OTHER}/`) ? OTHER : dir.startsWith(ROOT) ? ROOT : null);
+
+test("the stricter of the session's and the target project's agent_destructive decides: deny > ask > allow", async () => {
+  // allow here, ask there: the dialog runs, and without a UI the command is refused.
+  const ask = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "ask" }, hasUI: false });
+  assert.deepEqual(await ask.gate(OTHER_DROP), {
+    block: true,
+    reason: "drop-database other_dev_old needs the user's confirmation in a dialog, and this session has none (a " +
+      "subagent or a headless run); nothing ran. Ask the user to run it or to confirm it from an interactive session.",
+  });
+  assert.deepEqual(ask.settingsRead, [ROOT, OTHER]);
+  const asked = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "ask" }, answers: ["other_dev_old"] });
+  assert.equal(await asked.gate(OTHER_DROP), undefined);
+  assert.equal(asked.prompts.length, 1);
+  assert.deepEqual(asked.entries, [{ label: "Agent command approved", command: OTHER_DROP, note: "typed other_dev_old", output: "" }]);
+  // deny there blocks, naming that project.
+  const denied = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "deny" } });
+  assert.deepEqual(await denied.gate(OTHER_DROP), {
+    block: true,
+    reason: "drop-database other_dev_old is denied to agents by [tooling].agent_destructive = \"deny\" in the " +
+      "configuration of /work/other; nothing ran. Ask the user to run it.",
+  });
+  assert.deepEqual(denied.entries, [{ label: "Agent command refused", command: OTHER_DROP, note: "agent_destructive = deny", output: "" }]);
+  // deny here wins over allow there, with the reason of this project.
+  const here = harness({ roots, settings: { [ROOT]: "deny", [OTHER]: "allow" } });
+  assert.match((await here.gate(OTHER_DROP) as { reason: string }).reason, /in this project's configuration; nothing ran/);
+  // ask here stays ask with allow there; allow in both runs without a dialog.
+  const stays = harness({ roots, settings: { [ROOT]: "ask", [OTHER]: "allow" }, hasUI: false });
+  assert.equal(stays.entries.length, 0);
+  assert.equal((await stays.gate(OTHER_DROP))?.block, true);
+  assert.equal(stays.entries[0].note, "no dialog");
+  const both = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "allow" }, hasUI: false });
+  assert.equal(await both.gate(OTHER_DROP), undefined);
+  assert.deepEqual(both.entries, [{ label: "Agent command approved", command: OTHER_DROP, note: "agent_destructive = allow", output: "" }]);
+  // The session's own project as the target is read once.
+  const own = harness({ roots, settings: { [ROOT]: "allow" }, hasUI: false });
+  assert.equal(await own.gate(DROP), undefined);
+  assert.deepEqual(own.settingsRead, [ROOT]);
+});
+
+test("a target whose setting cannot be read, outside a project or not literal counts as ask", async () => {
+  for (const [command, setup] of [
+    [OTHER_DROP, { settings: { [ROOT]: "allow", [OTHER]: undefined } }],
+    ["oasis --project /tmp/elsewhere stop --database", { settings: { [ROOT]: "allow" } }],
+    ["oasis --project $TARGET stop --database", { settings: { [ROOT]: "allow" } }],
+    ["oasis --proj /work/other gc --apply --trash", { settings: { [ROOT]: "allow", [OTHER]: "ask" } }],
+    ["ODOO19_PROJECT_ROOT=/work/other ~/.agents/skills/odoo19/tools/stop --database", { settings: { [ROOT]: "allow" } }],
+    ["OASIS_PROJECT_ROOT=$P ~/.agents/skills/odoo19/tools/stop --database", { settings: { [ROOT]: "allow" } }],
+    // Set elsewhere on the line: the tool reads a root the text does not tell.
+    ["export OASIS_PROJECT_ROOT=/work/other; ~/.agents/skills/odoo19/tools/stop --database", { settings: { [ROOT]: "allow" } }],
+  ] as const) {
+    const run = harness({ roots, hasUI: false, ...setup });
+    assert.deepEqual(await run.gate(command), {
+      block: true,
+      reason: `${command.includes(" gc ") ? "gc --apply --trash" : command.includes("drop-database") ? "drop-database other_dev_old"
+        : "stop --database"} needs the user's confirmation in a ` +
+        "dialog, and this session has none (a subagent or a headless run); nothing ran. Ask the user to run it or to " +
+        "confirm it from an interactive session.",
+    }, command);
+    assert.deepEqual(run.entries.map((entry) => entry.note), ["no dialog"], command);
+  }
+  // A literal tool-script root that is allowed there, as here, runs.
+  const allowed = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "allow" }, hasUI: false });
+  assert.equal(await allowed.gate("env OASIS_PROJECT_ROOT=/work/other ~/.agents/skills/odoo19/tools/stop --database"), undefined);
+  // deny there blocks a tool script too.
+  const denied = harness({ roots, settings: { [ROOT]: "ask", [OTHER]: "deny" } });
+  assert.match((await denied.gate("ODOO19_PROJECT_ROOT=/work/other ~/.agents/skills/odoo19/tools/stop --database") as
+    { reason: string }).reason, /in the configuration of \/work\/other;/);
+});
+
+// The extension's tool_call handler is toolCallRouter: Pi's event and context in, the gates' result out.
+function piContext(options: { hasUI?: boolean; answers?: (string | undefined)[] } = {}) {
+  const prompts: { title: string; options: unknown }[] = [];
+  const answers = [...(options.answers ?? [])];
+  // Pi's ui is an object whose methods may use `this`.
+  const ui = {
+    answers,
+    async input(this: { answers: (string | undefined)[] }, title: string, _placeholder?: string, dialog?: unknown) {
+      prompts.push({ title, options: dialog });
+      return this.answers.shift();
+    },
+    notify() {},
+  };
+  const signal = new AbortController().signal;
+  return { ctx: { cwd: `${ROOT}/addons`, hasUI: options.hasUI ?? true, signal, mode: "tui", ui }, prompts, signal };
+}
+
+function router(setting = "ask") {
+  const entries: MenuEntry[] = [];
+  const route = toolCallRouter({
+    projectRoot: async () => ROOT, home: "/home/u", exists: () => false,
+    agentDestructive: async () => setting, appendEntry: (entry) => entries.push(entry), realpath: (path) => path,
+  });
+  return { route, entries };
+}
+
+test("toolCallRouter sends bash to the bash gate and edit or write to the file gate, with Pi's context", async () => {
+  const { route, entries } = router();
+  const headless = piContext({ hasUI: false });
+  assert.equal((await route({ toolName: "bash", input: { command: STOP } }, headless.ctx))?.block, true);
+  assert.equal(entries.at(-1)?.note, "no dialog");
+  const pi = piContext({ answers: ["yes", "no"] });
+  assert.equal(await route({ toolName: "write", input: { path: WORKSPACE, content: "x" } }, pi.ctx), undefined);
+  assert.deepEqual(pi.prompts[0].options, { timeout: ASK_TIMEOUT_MS, signal: pi.signal });
+  assert.ok(pi.prompts[0].title.includes(`\n\nwrite ${WORKSPACE}\n\n`), pi.prompts[0].title);
+  assert.deepEqual(await route({ toolName: "edit", input: { path: "../oasis-workspace.toml" } }, pi.ctx), {
+    block: true,
+    reason: `The user's answer did not confirm editing ${WORKSPACE}; nothing changed. Do not retry it: ask the user ` +
+      "whether to make the change.",
+  });
+  assert.deepEqual(entries.map((entry) => [entry.label, entry.command]), [
+    ["Agent command refused", STOP], ["Agent command approved", `write ${WORKSPACE}`],
+    ["Agent command refused", "edit ../oasis-workspace.toml"],
+  ]);
+});
+
+test("toolCallRouter leaves other tools and malformed inputs alone, and reads nothing for them", async () => {
+  const { route, entries } = router();
+  const pi = piContext();
+  for (const event of [
+    { toolName: "read", input: { path: WORKSPACE } }, { toolName: "grep", input: { pattern: "psql" } },
+    { toolName: "bash", input: { command: 42 } }, { toolName: "bash", input: {} },
+    { toolName: "edit", input: { path: ["x"] } }, { toolName: "write", input: {} },
+    { toolName: "bash", input: { command: "git status" } }, { toolName: "edit", input: { path: "models/sale.py" } },
+  ]) {
+    assert.equal(await route(event, pi.ctx), undefined, JSON.stringify(event));
+  }
+  assert.deepEqual([pi.prompts, entries], [[], []]);
+  // The deny tier still answers through the router.
+  assert.deepEqual(await route({ toolName: "bash", input: { command: "psql -l" } }, pi.ctx),
+    { block: true, reason: blockReason("psql", ROOT) });
+});
+
+test("settingReader returns AGENT_DESTRUCTIVE of config.py, and undefined (ask) when it cannot be read", async () => {
+  const read = settingReader(async (root) => {
+    if (root === "/fails") throw new Error("spawn failed");
+    if (root === "/broken") return { error: "Invalid tooling configuration." };
+    return { config: root === "/old" ? { ODOO_VERSION: "19.0" } : { AGENT_DESTRUCTIVE: "allow" } };
+  });
+  assert.equal(await read("/work/shop"), "allow");
+  for (const root of ["/fails", "/broken", "/old"]) assert.equal(await read(root), undefined, root);
+});
+
+test("the extension's tool_call handler is toolCallRouter over the Pi effects", async () => {
   const { readFileSync } = await import("node:fs");
-  const source = readFileSync(new URL("../extensions/oasis.ts", import.meta.url), "utf8");
-  const start = source.indexOf("  // Agent bash only; lib/destructive.ts decides.");
-  assert.ok(start > 0);
-  const block = source.slice(start, source.indexOf("  // Each tool is registered under its oasis_* name", start));
-  const flat = block.split(/\s+/).join(" ");
+  const flat = readFileSync(new URL("../extensions/oasis.ts", import.meta.url), "utf8").split(/\s+/).join(" ");
   for (const part of [
-    "pi.registerEntryRenderer(DECISION_ENTRY, renderMenuEntry);",
-    "realpath: realpathSync,",
-    "if (event.toolName === \"edit\" || event.toolName === \"write\") {",
-    "const path = (event.input as { path?: unknown }).path;",
-    "return fileGate(event.toolName, path, gateContext(ctx));",
-    "return gate(command, gateContext(ctx));",
+    "const routeToolCall = toolCallRouter(gateEffects);",
+    "pi.on(\"tool_call\", (event, ctx) => routeToolCall(event, ctx));",
+    "agentDestructive: settingReader(profileConfig),",
     "appendEntry: (entry) => pi.appendEntry(DECISION_ENTRY, entry),",
-    "return (await profileConfig(root)).config?.AGENT_DESTRUCTIVE;",
-    "hasUI: ctx.hasUI, signal: ctx.signal,",
-    "ui: { input: (title, placeholder, options) => ctx.ui.input(title, placeholder, options) },",
+    "pi.registerEntryRenderer(DECISION_ENTRY, renderMenuEntry);",
   ]) {
     assert.ok(flat.includes(part), part);
   }
-  // Decisions are entries, never messages for the model; the logic has no Pi imports.
-  assert.ok(!/sendMessage|sendUserMessage/.test(block));
   const lib = readFileSync(new URL("../lib/destructive.ts", import.meta.url), "utf8");
   assert.deepEqual([...lib.matchAll(/ from "([^"]+)";/g)].map((match) => match[1]),
     ["node:path", "./bash-guard.ts", "./menu.ts", "./project.ts"]);

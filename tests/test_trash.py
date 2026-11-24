@@ -48,6 +48,10 @@ if 'dropdb' in script:
     if os.environ.get('FAKE_DROP_FAILS_FOR') == name:
         print('drop failed', file=sys.stderr)
         raise SystemExit(1)
+    if os.environ.get('FAKE_DROP_BREAKS_CONF'):
+        # The conf becomes unreadable after the drop: the filestore path cannot be resolved.
+        with open(os.environ['FAKE_DROP_BREAKS_CONF'], 'w') as stream:
+            stream.write('no section header\n')
     databases.pop(name, None)
     save()
     raise SystemExit(0)
@@ -599,6 +603,20 @@ class GcTrashTests(TrashFixture):
             f'failed {self.old}\n'))
         self.assertNotIn(self.old, self.databases())
         self.assertEqual(store.read_text(), 'not a directory\n')
+
+    def test_a_filestore_whose_path_cannot_be_resolved_is_reported_with_the_literal_path(self):
+        conf = self.root / 'dev/odoo.conf'
+        self.env['FAKE_DROP_BREAKS_CONF'] = str(conf)
+        result = self.gc('--apply', '--trash')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            1, 'dropped=0\nfailed=1\n',
+            f'Cannot read data_dir from {conf}: invalid configuration file. Filestore of {self.old} not removed.\n'
+            f'Database {self.old} was dropped, but its filestore is left: <data_dir>/filestore/{self.old}; '
+            'remove it by hand.\n'
+            f'failed {self.old}\n'))
+        self.assertNotIn(self.old, self.databases())
+        # The filestore is never guessed at, so it stays where it was.
+        self.assertIn(self.old, self.filestores())
 
     def test_plain_gc_and_gc_apply_are_unchanged_by_the_trash(self):
         before = self.snapshot()

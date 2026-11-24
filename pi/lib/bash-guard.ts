@@ -370,11 +370,43 @@ function skipOptions(words: string[], index: number, valueOptions: Set<string>):
   return index;
 }
 
-/** The index of the entry point's command: the first word after its options (`--project <dir>` takes a value). */
-function entryPointCommandIndex(words: string[], index: number): number {
+/**
+ * Whether a word is the entry point's --project option without its value: argparse also takes an
+ * unambiguous prefix of it (`--p` to `--project`; its other option is --help).
+ */
+function projectOption(word: string): boolean {
+  return word.length >= 3 && "--project".startsWith(word);
+}
+
+/**
+ * The entry point's options before its command: the index of the command (the first word after
+ * them; --project and its prefixes take a value, `--project=<dir>` holds it) and the --project
+ * value argparse keeps (the last one given), undefined without one.
+ */
+function entryPointOptions(words: string[], index: number): { command: number; project?: string; joined: boolean } {
   let i = index + 1;
-  while (i < words.length && words[i].startsWith("-")) i += words[i] === "--project" ? 2 : 1;
-  return i;
+  let project: string | undefined;
+  let joined = false;
+  while (i < words.length && words[i].startsWith("-")) {
+    const word = words[i];
+    const equals = word.indexOf("=");
+    if (equals > 0 && projectOption(word.slice(0, equals))) {
+      project = word.slice(equals + 1);
+      joined = true;
+      i += 1;
+    } else if (projectOption(word)) {
+      project = words[i + 1];
+      joined = false;
+      i += 2;
+    } else {
+      i += 1;
+    }
+  }
+  return { command: i, project, joined };
+}
+
+function entryPointCommandIndex(words: string[], index: number): number {
+  return entryPointOptions(words, index).command;
 }
 
 function entryPointCommand(words: string[], index: number): string | undefined {
@@ -422,8 +454,9 @@ function userRunTool(words: string[], index: number, where?: Where): string | nu
     if (args.includes(WORKTREE_INIT)) tool = WORKTREE_INIT;
     else if (entryPointCommand(words, index) === MIGRATE) tool = MIGRATE;
     else if (entryPointCommand(words, index) === MENU) tool = MENU;
-    // The entry point's own `--project <dir>` and the command name are not the tool's arguments.
-    const project = args.indexOf("--project");
+    // The entry point's own `--project <dir>` (or a prefix of it, see projectOption) and the command
+    // name are not the tool's arguments.
+    const project = args.findIndex(projectOption);
     toolArgs = args.filter((arg, k) => arg !== tool && (project < 0 || (k !== project && k !== project + 1)));
   }
   if (!tool || onlyHelp(toolArgs) || (tool === MIGRATE && onlyPlan(toolArgs))) return null;
@@ -436,10 +469,52 @@ function userRunTool(words: string[], index: number, where?: Where): string | nu
  * argument when it is a literal database name, else null (the user could not confirm it).
  */
 export type AskAction =
-  | { command: "drop-database"; database: string | null }
-  | { command: "stop --database" }
-  | { command: "gc --apply --trash" }
+  | ({ command: "drop-database"; database: string | null } & Target)
+  | ({ command: "stop --database" } & Target)
+  | ({ command: "gc --apply --trash" } & Target)
   | { command: "edit"; file: string };
+
+/**
+ * The project an ask command names (see targetOf): an absolute path, null when the text does not
+ * tell it (an expansion), absent when the command names none (the session's project applies).
+ */
+export interface Target {
+  project?: string | null;
+}
+
+// The variables a tool script reads its project root from (tools/oasis_env.sh oasis_variable):
+// OASIS_PROJECT_ROOT when it is not empty, else ODOO19_PROJECT_ROOT.
+const ROOT_VARIABLES = ["OASIS_PROJECT_ROOT", "ODOO19_PROJECT_ROOT"];
+
+/** A target path as written: absolute (normalized), or null when the text does not tell it. */
+function targetPath(value: string, where: Where | undefined, tilde: boolean): string | null {
+  // ` _ ` is what substitutions() leaves of `$(...)` inside quotes.
+  if ((!tilde && value.startsWith("~")) || /(^|\s)_(\s|$)/.test(value)) return null;
+  if (where) return literalPath(value, where);
+  return LITERAL_PATH.test(value) ? posix.normalize(value) : null;
+}
+
+/**
+ * The project the ask command at words[index] targets: the entry point's --project value, or the
+ * root variable a tool script gets from the assignments before it (`VAR=<dir> tool`, `env VAR=<dir>
+ * tool`; the last one of each name counts). Bash expands `~` in an assignment, not in `--project=~`.
+ */
+function targetOf(words: string[], index: number, where: Where | undefined): Target {
+  if (ENTRY_POINTS.has(basename(words[index]))) {
+    const { project, joined } = entryPointOptions(words, index);
+    if (project === undefined) return {};
+    return { project: targetPath(project, where, !joined) };
+  }
+  const values = new Map<string, string>();
+  for (const word of words.slice(0, index)) {
+    const equals = word.indexOf("=");
+    if (ASSIGNMENT.test(word) && ROOT_VARIABLES.includes(word.slice(0, equals))) {
+      values.set(word.slice(0, equals), word.slice(equals + 1));
+    }
+  }
+  const value = ROOT_VARIABLES.map((name) => values.get(name)).find((found) => found !== undefined && found !== "");
+  return value === undefined ? {} : { project: targetPath(value, where, true) };
+}
 
 /**
  * The ask command words[index] runs: drop-database, stop --database or gc --apply --trash, through
@@ -451,7 +526,7 @@ function askAction(words: string[], index: number, where?: Where): AskAction | n
   let tool: string | undefined;
   let args: string[];
   if (ENTRY_POINTS.has(name)) {
-    const command = entryPointCommandIndex(words, index);
+    const command = entryPointOptions(words, index).command;
     tool = words[command];
     args = words.slice(command + 1);
   } else if (oasisScript(word, ASK_SCRIPTS, where)) {
@@ -462,12 +537,13 @@ function askAction(words: string[], index: number, where?: Where): AskAction | n
   }
   const rest = args.filter((arg) => !REDIRECTION.test(arg));
   if (onlyHelp(rest)) return null;
+  const target = targetOf(words, index, where);
   if (tool === "drop-database") {
     const database = rest[0];
-    return { command: tool, database: database !== undefined && DATABASE_NAME.test(database) ? database : null };
+    return { command: tool, database: database !== undefined && DATABASE_NAME.test(database) ? database : null, ...target };
   }
-  if (tool === "stop" && rest.includes("--database")) return { command: "stop --database" };
-  if (tool === "gc" && rest.includes("--apply") && rest.includes("--trash")) return { command: "gc --apply --trash" };
+  if (tool === "stop" && rest.includes("--database")) return { command: "stop --database", ...target };
+  if (tool === "gc" && rest.includes("--apply") && rest.includes("--trash")) return { command: "gc --apply --trash", ...target };
   return null;
 }
 

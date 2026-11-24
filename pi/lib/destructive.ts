@@ -83,6 +83,49 @@ function setting(value: string | undefined): AgentDestructive {
   return AGENT_DESTRUCTIVE.find((known) => known === value) ?? "ask";
 }
 
+// How strict a mode is: the stricter of two decides.
+const STRICTNESS: Record<AgentDestructive, number> = { allow: 0, ask: 1, deny: 2 };
+// A tool script whose root variable is set elsewhere on the line reads a root the text does not tell.
+const ROOT_VARIABLE = /\b(?:OASIS|ODOO19)_PROJECT_ROOT\b/;
+
+/**
+ * The mode of one tool call's ask actions: the stricter of the session project's setting and the
+ * setting of every project they target (AskAction project). A target that is not literal, not an
+ * Odoo project or whose configuration cannot be read counts as ask. `from` is the target project
+ * whose setting decided, null when the session's did.
+ */
+async function strictestMode(
+  effects: GateEffects, asks: AskAction[], root: string | null, text: string,
+): Promise<{ mode: AgentDestructive; from: string | null }> {
+  const read = new Map<string, AgentDestructive>();
+  const modeOf = async (project: string): Promise<AgentDestructive> => {
+    const known = read.get(project);
+    if (known) return known;
+    const mode = setting(await effects.agentDestructive(project));
+    read.set(project, mode);
+    return mode;
+  };
+  let mode: AgentDestructive = root ? await modeOf(root) : "ask";
+  let from: string | null = null;
+  const unknownRoot = ROOT_VARIABLE.test(text);
+  for (const action of asks) {
+    if (action.command === "edit") continue;
+    let target = action.project;
+    if (target === undefined) {
+      if (!unknownRoot) continue;
+      target = null;
+    }
+    const project = target === null ? null : await effects.projectRoot(target);
+    if (project !== null && project === root) continue;
+    const candidate = project === null ? "ask" : await modeOf(project);
+    if (STRICTNESS[candidate] > STRICTNESS[mode]) {
+      mode = candidate;
+      from = project;
+    }
+  }
+  return { mode, from };
+}
+
 /**
  * The setting file a write reaches from a session in cwd (GuardContext.settingFile): a path named
  * oasis-workspace.toml or .odoo19-agent.toml in cwd or above it, as written or as its real path
@@ -126,9 +169,10 @@ function toolPath(path: string, cwd: string, home: string): string {
 }
 
 /**
- * The ask tier: the project's setting decides the ask actions of one tool call and, for ask, one
- * dialog each, in order; every decision is recorded. `intro` says what the agent wants (`run` a
- * bash command, `call` a tool) and `text` shows it. `root` is the session's project when known.
+ * The ask tier: the strictest setting of the session's project and of the projects the actions
+ * target (strictestMode) decides the ask actions of one tool call and, for ask, one dialog each,
+ * in order; every decision is recorded. `intro` says what the agent wants (`run` a bash command,
+ * `call` a tool) and `text` shows it. `known` is the session's project when known.
  */
 function asker(effects: GateEffects) {
   const timeout = effects.timeoutMs ?? ASK_TIMEOUT_MS;
@@ -143,7 +187,7 @@ function asker(effects: GateEffects) {
       return { block: true, reason };
     };
     const root = known === undefined ? await effects.projectRoot(ctx.cwd) : known;
-    const mode = root ? setting(await effects.agentDestructive(root)) : "ask";
+    const { mode, from } = await strictestMode(effects, asks, root, text);
     const first = label(asks[0]);
     const { nothing, user } = outcome(asks[0]);
     // allow never covers an edit of the setting files: the agent may not change its own permission
@@ -153,8 +197,9 @@ function asker(effects: GateEffects) {
       return undefined;
     }
     if (mode === "deny") {
+      const where = from === null ? "this project's configuration" : `the configuration of ${from}`;
       return refuse("agent_destructive = deny",
-        `${first} is denied to agents by [tooling].agent_destructive = "deny" in this project's configuration; ` +
+        `${first} is denied to agents by [tooling].agent_destructive = "deny" in ${where}; ` +
           `${nothing}. Ask the user to ${user}.`);
     }
     if (asks.some((action) => action.command === "drop-database" && action.database === null)) {
@@ -227,5 +272,60 @@ export function agentFileGate(effects: GateEffects): (tool: string, path: string
     const file = settingFiles(effects, ctx.cwd)(target, path);
     if (file === null) return undefined;
     return ask([{ command: "edit", file }], "call", shown(`${tool} ${path}`), ctx);
+  };
+}
+
+/** What tools/config.py read for a root, as the extension's profileConfig returns it. */
+export type ProfileRead = (root: string) => Promise<{ config?: Record<string, string>; error?: string }>;
+
+/**
+ * GateEffects.agentDestructive over a config.py read: AGENT_DESTRUCTIVE when the configuration
+ * loads; undefined (so ask) when it reports an error, lacks the key or the read throws.
+ */
+export function settingReader(read: ProfileRead): (root: string) => Promise<string | undefined> {
+  return async (root) => {
+    try {
+      return (await read(root)).config?.AGENT_DESTRUCTIVE;
+    } catch {
+      return undefined;
+    }
+  };
+}
+
+/** Pi's tool_call event, as far as the gates read it. */
+export interface ToolCallEvent {
+  toolName: string;
+  input: unknown;
+}
+
+/** Pi's ExtensionContext, as far as the gates read it: ui.input is called as a method of ui. */
+export interface ToolCallContext {
+  cwd: string;
+  hasUI: boolean;
+  signal?: AbortSignal;
+  ui: GateUi;
+}
+
+/**
+ * The extension's tool_call handler: an agent bash command goes to agentGate, an edit or write tool
+ * call to agentFileGate with its path, with the session's cwd, hasUI, abort signal and input dialog;
+ * any other tool, or an input without a string command or path, is left alone.
+ */
+export function toolCallRouter(effects: GateEffects): (event: ToolCallEvent, ctx: ToolCallContext) => Promise<GateResult> {
+  const gate = agentGate(effects);
+  const fileGate = agentFileGate(effects);
+  return async (event, ctx) => {
+    const context: GateContext = {
+      cwd: ctx.cwd,
+      hasUI: ctx.hasUI,
+      signal: ctx.signal,
+      ui: { input: (title, placeholder, options) => ctx.ui.input(title, placeholder, options) },
+    };
+    const input = (event.input ?? {}) as { command?: unknown; path?: unknown };
+    if (event.toolName === "edit" || event.toolName === "write") {
+      return typeof input.path === "string" ? fileGate(event.toolName, input.path, context) : undefined;
+    }
+    if (event.toolName !== "bash") return undefined;
+    return typeof input.command === "string" ? gate(input.command, context) : undefined;
   };
 }

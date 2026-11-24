@@ -11,7 +11,7 @@ import {
   parseCommand, SUBCOMMAND_SUMMARY, type SubcommandName, subcommandCompletions, USAGE,
 } from "../lib/commands.ts";
 import { withHeartbeat } from "../lib/heartbeat.ts";
-import { agentFileGate, agentGate, DECISION_ENTRY, type GateContext, type GateEffects } from "../lib/destructive.ts";
+import { DECISION_ENTRY, type GateEffects, settingReader, toolCallRouter } from "../lib/destructive.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
@@ -402,50 +402,28 @@ export default function oasisLayer(pi: ExtensionAPI) {
     return { systemPrompt: `${event.systemPrompt}\n\n<oasis>\n${context}\n</oasis>` };
   });
 
-  // Agent bash only; lib/destructive.ts decides. Deny tier: direct odoo-bin/dropdb/psql bypass the
-  // core's database guards (Odoo projects); worktree-init links environment files, migrate rewrites
-  // configuration files and menu is the user's interactive menu, so all three are user-run in every
-  // session. Ask tier: drop-database, stop --database and gc --apply --trash run after the user
-  // types the database name or `yes` in a dialog, unless the session project's
+  // Agent bash, edit and write tool calls; lib/destructive.ts decides (toolCallRouter). Deny tier:
+  // direct odoo-bin/dropdb/psql bypass the core's database guards (Odoo projects); worktree-init
+  // links environment files, migrate rewrites configuration files and menu is the user's interactive
+  // menu, so all three are user-run in every session. Ask tier: drop-database, stop --database and
+  // gc --apply --trash run after the user types the database name or `yes` in a dialog, unless
   // [tooling].agent_destructive (read through config.py, never from a tool argument) says deny or
-  // allow. The files that hold that setting (an oasis-workspace.toml or .odoo19-agent.toml in the
-  // session's directory or above it) are in the ask tier too: bash writes to them and Pi's edit and
-  // write tool calls on them. Each ask decision is a custom session entry: Pi shows it but never
-  // sends it to the model.
+  // allow: the stricter of the session project's and the target project's (`--project`, or a tool
+  // script's OASIS_PROJECT_ROOT or ODOO19_PROJECT_ROOT). The files that hold that setting (an
+  // oasis-workspace.toml or .odoo19-agent.toml in the session's directory or above it) are in the
+  // ask tier too: bash writes to them and Pi's edit and write tool calls on them. Each ask decision
+  // is a custom session entry: Pi shows it but never sends it to the model.
   pi.registerEntryRenderer(DECISION_ENTRY, renderMenuEntry);
   const gateEffects: GateEffects = {
     projectRoot: (cwd) => projectRoot(cwd),
     home: homedir(),
     exists: existsSync,
-    agentDestructive: async (root) => {
-      try {
-        return (await profileConfig(root)).config?.AGENT_DESTRUCTIVE;
-      } catch {
-        return undefined; // unreadable: ask
-      }
-    },
+    agentDestructive: settingReader(profileConfig),
     appendEntry: (entry) => pi.appendEntry(DECISION_ENTRY, entry),
     realpath: realpathSync,
   };
-  const gate = agentGate(gateEffects);
-  const fileGate = agentFileGate(gateEffects);
-  const gateContext = (ctx: ExtensionContext): GateContext => ({
-    cwd: ctx.cwd,
-    hasUI: ctx.hasUI,
-    signal: ctx.signal,
-    ui: { input: (title, placeholder, options) => ctx.ui.input(title, placeholder, options) },
-  });
-  pi.on("tool_call", async (event, ctx) => {
-    if (event.toolName === "edit" || event.toolName === "write") {
-      const path = (event.input as { path?: unknown }).path;
-      if (typeof path !== "string") return;
-      return fileGate(event.toolName, path, gateContext(ctx));
-    }
-    if (event.toolName !== "bash") return;
-    const command = (event.input as { command?: unknown }).command;
-    if (typeof command !== "string") return;
-    return gate(command, gateContext(ctx));
-  });
+  const routeToolCall = toolCallRouter(gateEffects);
+  pi.on("tool_call", (event, ctx) => routeToolCall(event, ctx));
 
   // Each tool is registered under its oasis_* name and, always inactive, under its odoo19_* alias
   // with the same parameters and implementation, for overlays and allowlists that name the old

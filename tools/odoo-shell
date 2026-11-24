@@ -10,7 +10,8 @@ fi
 source "$(dirname "$0")/common.sh"
 database=${1:-}
 require_runtime
-if [[ -z "$database" ]]; then
+# One argument only: anything after the database would be ignored by the shell.
+if [[ -z "$database" || $# -ne 1 ]]; then
   printf 'Usage: %s <database>\n' "$(usage_name)" >&2
   exit 2
 fi

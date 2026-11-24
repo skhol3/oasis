@@ -17,7 +17,7 @@ flowchart TD
     E -->|yes| Y["Blocked: use the guarded<br/>oasis command instead"]
     E -->|no| ASK{"drop-database, stop --database,<br/>gc --apply --trash, or a write to<br/>a file that holds agent_destructive?"}
     ASK -->|no| OK
-    ASK -->|yes| S{"[tooling].agent_destructive<br/>of the session's project"}
+    ASK -->|yes| S{"[tooling].agent_destructive: the stricter<br/>of the session's and the target project's"}
     S -->|allow| OK
     S -->|deny| Z["Blocked: ask the user to run it"]
     S -->|"ask (default)"| Q{"Dialog: the user types the<br/>database name or yes"}
@@ -39,7 +39,10 @@ through oasis's own tool scripts `tools/drop-database`, `tools/stop` and `tools/
 the menu's scripts (see [Action menu](action-menu.md)): the installed bundle's from anywhere, an
 oasis checkout's when the path resolves to it. `tools/stop` or `tools/gc` of another project is not
 oasis's and runs. When one command holds a denied program and an ask command, the deny tier
-decides first, exactly as before.
+decides first, exactly as before. The entry points' `--project` is also recognized as argparse
+takes it: `--project=<dir>` and its unambiguous prefixes (`--proj <dir>`, `--p=<dir>`), so
+`oasis --proj /p migrate --apply` is blocked and `oasis --proj /p drop-database <name>` asks,
+like their `--project` forms.
 
 A command line is judged on every command it holds, not only the first denied one: `psql -l;
 oasis --project /p migrate --apply` is blocked outside an Odoo project too, because `migrate` is
@@ -86,9 +89,16 @@ Type shop_dev_old to allow drop-database shop_dev_old. Esc, another answer or no
 agent_destructive = 'ask'    # default: the dialog; 'deny' blocks them; 'allow' runs them without a dialog
 ```
 
-- The layer reads it through `tools/config.py` (`AGENT_DESTRUCTIVE=...`) for the session's
-  project at each ask command, so a change applies to the next command. A session outside an
-  Odoo project, or a profile that cannot be read, uses `ask`.
+- The layer reads it through `tools/config.py` (`AGENT_DESTRUCTIVE=...`) at each ask command, so
+  a change applies to the next command, for the session's project and for the project the command
+  targets: the entry point's `--project <dir>`, or the `OASIS_PROJECT_ROOT` (else
+  `ODOO19_PROJECT_ROOT`) assigned before a tool script (`OASIS_PROJECT_ROOT=<dir> <tool>`, `env
+  OASIS_PROJECT_ROOT=<dir> <tool>`). The stricter of the two decides (`deny` over `ask` over
+  `allow`), so `oasis --project <other> drop-database <name>` from an `allow` project still asks
+  or is denied when the other project says so; a refusal by the target names it (`... = "deny" in
+  the configuration of <root>`). A session outside an Odoo project, a profile that cannot be read,
+  and a target that is not literal (`--project "$DIR"`), not an Odoo project, unreadable, or set
+  elsewhere on the line (`export OASIS_PROJECT_ROOT=...; <tool>`) count as `ask`.
 - `deny` turns the ask tier into deny; `allow` lets those commands run without a dialog (each run
   is still recorded). Neither changes the allow or deny tiers.
 - Only the user sets it: `oasis-checkout.toml` refuses the key, no tool or command argument

@@ -87,12 +87,12 @@ export function projectRootResolver(
 }
 
 const TOOL_LINES: Record<string, string> = {
-  oasis_test_module: "run one module's tests; result line and failures only.",
-  oasis_test_summary: "the same summary for a background compact run.",
-  oasis_update_module: "update a module in a database; errors and warnings only.",
+  oasis_test_module: "run a module's tests; only result and failures, full logs stay on disk.",
+  oasis_test_summary: "the same for a background run; pass what test-module --compact printed.",
+  oasis_update_module: "update a module in a database; errors/warnings only.",
   oasis_module_status: "a module's state in a database.",
-  oasis_check_environment: "environment diagnostics (quick by default).",
-  oasis_lint_module: "Pylint one module without starting Odoo.",
+  oasis_check_environment: "environment checks, quick by default.",
+  oasis_lint_module: "Pylint a module without starting Odoo.",
   oasis_find_module: "module names from a functional name; no ls/grep.",
   oasis_model_info: "a model's definition, extensions, fields, methods; before reading Odoo files.",
   oasis_view_info: "a model's views and extensions; no XML search.",
@@ -120,14 +120,14 @@ export function projectContext(
   const names = Object.keys(TOOL_LINES).filter((name) => !tools || tools.includes(name));
   const routing = names.length > 0
     ? [
-        "Prefer the oasis tools to raw shell (profile guards, compact output):",
+        "Prefer oasis tools to raw shell (guarded, compact):",
         ...names.map((name) => `- ${name}: ${TOOL_LINES[name]}`),
-        "Open reported logs only if the summary falls short. Do not browse the Odoo source tree to learn",
+        "Read logs only if a summary falls short. Do not browse Odoo source for",
       ]
     : [
         "This session has no oasis tools. Instead of raw odoo-bin, psql or dropdb, run the guarded CLI:",
         `\`oasis --project ${root} <command>\` (test-module --compact, module-status, check-environment --quick,`,
-        "lint-module, model-info). Do not browse the Odoo source tree to learn",
+        "lint-module, model-info). Do not browse Odoo source for",
       ];
   return [
     `${odoo} project root: ${root} (${source}).`,

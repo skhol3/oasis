@@ -4,11 +4,12 @@
 Usage:
   runtime_state.py show <project_root>       pid=<pid> port=<port> when a live server is recorded
   runtime_state.py record <project_root> <pid> <port> <odoo_bin> [<python>]
-  runtime_state.py detach <project_root> <port> <log> <odoo_bin> <python> -- <odoo argument>...
+  runtime_state.py detach <project_root> <port> <log> <odoo_bin> <python> <interface> -- <odoo argument>...
                                              start <python> <odoo_bin> <arguments> in a new
                                              session with stdin from /dev/null and stdout and
                                              stderr appended to <log> (0600), record it, and
-                                             print pid=<pid> port=<port> log=<log> (see below)
+                                             print pid=<pid> port=<port> log=<log> once it
+                                             listens on <interface> (see below)
   runtime_state.py stop <project_root>       SIGTERM this checkout's server, wait up to 20 s
   runtime_state.py others <project_root>     live servers of the other checkouts, one per line
   runtime_state.py port <interface> <first> <last> [<excluded>...]
@@ -53,10 +54,13 @@ whatever the interpreter), so a reused pid does not keep an orphan alive.
 
 Detached server (start --detach): the record names the new process, written right after it is
 forked. The command then waits up to DETACH_WAIT seconds (OASIS_DETACH_WAIT, for the tests only),
-returning as soon as 127.0.0.1:<port> accepts connections; a server still alive at the end counts
-as started. One that exits meanwhile has its record removed, and the command prints
-`Odoo exited at once with status <n>; the end of <log>:` and the last DETACH_TAIL lines it wrote,
-then exits 1.
+returning as soon as <interface>:<port> accepts connections (the address Odoo binds: start passes
+--http-interface or the odoo.conf http_interface; 127.0.0.1 for none, 0.0.0.0 or ::). One that
+exits meanwhile has its record removed, and the command prints `Odoo exited at once with status
+<n>; the end of <log>:` and the last DETACH_TAIL lines it wrote, then exits 1. One that does not
+listen in time is stopped (SIGTERM to its session, SIGKILL after STOP_GRACE seconds), its record
+removed, and the command prints `Odoo did not listen on <host>:<port> within <s> s and was stopped;
+the end of <log>:` and those lines, then exits 1.
 
 Compose lock: `compose-<first 16 hex of sha256(realpath compose_file)>.lock` (0600) directly in
 the user root, shared by every checkout of this user whose profile names that compose file.
@@ -82,8 +86,11 @@ import time
 RECORD = 'server.json'
 STOP_TIMEOUT = 20
 GRACE = 10
-DETACH_WAIT = 10.0
+DETACH_WAIT = 30.0
 DETACH_TAIL = 20
+STOP_GRACE = 5
+# Addresses that mean every interface: the probe connects to the loopback instead.
+ANY_INTERFACE = {'', '0.0.0.0', '::'}
 RUNS = 'runs'
 RUN_NAME_BYTES = 56
 RUN_DATABASE = re.compile(r'[A-Za-z0-9_]+_r[0-9a-f]{6}(?:_update)?')
@@ -328,12 +335,39 @@ def close_inherited_descriptors():
                 pass
 
 
-def accepts(port):
+def probe_host(interface):
+    """The address a detached server is probed on: its HTTP interface, the loopback for any."""
+    interface = interface.strip()
+    return '127.0.0.1' if interface in ANY_INTERFACE else interface
+
+
+def accepts(host, port):
     try:
-        with socket.create_connection(('127.0.0.1', port), timeout=0.2):
+        with socket.create_connection((host, port), timeout=0.2):
             return True
     except OSError:
         return False
+
+
+def end_session(pid):
+    """Stop the detached server and whatever it started in its session, then reap it."""
+    for signum, wait in ((signal.SIGTERM, STOP_GRACE), (signal.SIGKILL, None)):
+        try:
+            os.killpg(pid, signum)
+        except ProcessLookupError:
+            # Not a session leader yet (setsid still to run): the process alone.
+            try:
+                os.kill(pid, signum)
+            except ProcessLookupError:
+                pass
+        deadline = time.monotonic() + (wait or 0)
+        while True:
+            done, _status = os.waitpid(pid, os.WNOHANG) if wait else os.waitpid(pid, 0)
+            if done:
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
 
 
 def detach_wait():
@@ -355,7 +389,7 @@ def tail(path, offset, count):
     return text.splitlines()[-count:]
 
 
-def detach(project_root, port, log, odoo_bin, python, arguments):
+def detach(project_root, port, log, odoo_bin, python, interface, arguments):
     """Start Odoo in a new session writing to log, record it and report it (see the docstring)."""
     try:
         descriptor = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -386,21 +420,31 @@ def detach(project_root, port, log, odoo_bin, python, arguments):
         os.kill(pid, signal.SIGTERM)
         os.waitpid(pid, 0)
         raise
-    deadline = time.monotonic() + detach_wait()
+    host = probe_host(interface)
+    wait = detach_wait()
+    deadline = time.monotonic() + wait
     while True:
         done, status = os.waitpid(pid, os.WNOHANG)
         if done:
             remove_record_of(project_root, pid)
             print(f'Odoo exited at once with status {os.waitstatus_to_exitcode(status)}; the end of {log}:',
                   file=sys.stderr)
-            for line in tail(log, offset, DETACH_TAIL):
-                print(line, file=sys.stderr)
-            return 1
-        if accepts(port) or time.monotonic() >= deadline:
+            break
+        if accepts(host, port):
+            print(f'pid={pid} port={port} log={log}')
+            return 0
+        if time.monotonic() >= deadline:
+            # Nothing listens: a server that cannot be reached is not started; never leave it unrecorded.
+            end_session(pid)
+            remove_record_of(project_root, pid)
+            address = f'[{host}]' if ':' in host else host
+            print(f'Odoo did not listen on {address}:{port} within {wait:g} s and was stopped; the end of {log}:',
+                  file=sys.stderr)
             break
         time.sleep(0.05)
-    print(f'pid={pid} port={port} log={log}')
-    return 0
+    for line in tail(log, offset, DETACH_TAIL):
+        print(line, file=sys.stderr)
+    return 1
 
 
 def stop(project_root):
@@ -697,8 +741,8 @@ def main(argv):
             return 0
         if command == 'stop' and len(args) == 1:
             return stop(args[0])
-        if command == 'detach' and len(args) >= 6 and args[5] == '--':
-            return detach(args[0], integer(args[1]), args[2], args[3], args[4], args[6:])
+        if command == 'detach' and len(args) >= 7 and args[6] == '--':
+            return detach(args[0], integer(args[1]), args[2], args[3], args[4], args[5], args[7:])
         if command == 'others' and len(args) == 1:
             for record in others(args[0]):
                 print(f"{record['project_root']} (port {record['port']}, pid {record['pid']})")

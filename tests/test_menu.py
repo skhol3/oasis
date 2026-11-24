@@ -10,6 +10,7 @@ import os
 import re
 import shlex
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -39,8 +40,32 @@ ONLY_INPUT = {'id': 'only', 'label': 'Test class (Class or Class.method)', 'kind
 WAITING = 'Listing databases (this may start the database service)...'
 NO_TERMINAL = ('oasis menu needs a terminal (stdin is not a TTY); run it yourself, or print the '
                'actions as JSON with --catalog.\n')
-# A fake odoo-bin that says it serves and stays alive until killed.
-SERVING = 'import time\nprint("serving", flush=True)\nwhile True:\n    time.sleep(0.1)\n'
+# A fake odoo-bin that listens like Odoo (on --http-interface, else the conf's http_interface;
+# 127.0.0.1 for none, 0.0.0.0 or ::, so a test never listens beyond loopback), says it serves and
+# stays alive until killed. FAKE_LISTEN_HOST overrides the address, FAKE_NO_LISTEN binds nothing.
+SERVING = r'''import configparser, os, socket, sys, time
+args, host, port = sys.argv[1:], None, None
+for index, arg in enumerate(args):
+    if arg.startswith('--http-port='):
+        port = int(arg.split('=', 1)[1])
+    elif arg == '--http-interface':
+        host = args[index + 1]
+    elif arg.startswith('--http-interface='):
+        host = arg.split('=', 1)[1]
+if host is None and '-c' in args:
+    conf = configparser.RawConfigParser()
+    conf.read(args[args.index('-c') + 1])
+    host = conf.get('options', 'http_interface', fallback='')
+host = os.environ.get('FAKE_LISTEN_HOST') or (host if host not in ('', '0.0.0.0', '::') else '127.0.0.1')
+if not os.environ.get('FAKE_NO_LISTEN'):
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind((host, port))
+    listener.listen()
+print("serving", flush=True)
+while True:
+    time.sleep(0.1)
+'''
 SERVE = f'if [ -n "${{FAKE_SERVE:-}}" ]; then exec "{sys.executable}" "$@"; fi\n'
 DIE = 'if [ -n "${FAKE_DIE:-}" ]; then echo "address already in use" >&2; exit 3; fi\n'
 
@@ -396,7 +421,8 @@ class DetachTests(MenuFixture):
         self.assertEqual(self.server_log.parent.stat().st_mode & 0o777, 0o700)
         result = self.start('--detach')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'Odoo is already running for this checkout: pid {pid}, port {self.port}.\n'))
+                         (2, '', f'Odoo is already running for this checkout: pid {pid}, port {self.port}; '
+                          'run oasis stop first.\n'))
         result = self.invoke('stop')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, f'Stopped Odoo for this checkout: pid {pid}, port {self.port}.\n', ''))
@@ -418,6 +444,62 @@ class DetachTests(MenuFixture):
                           'address already in use\n'))
         self.assertEqual(self.record(), '')
         self.assertEqual(self.server_log.read_text(), 'address already in use\n')
+
+    def fake_servers(self):
+        """The pids of the processes that run this test's fake odoo-bin."""
+        target = os.fsencode(str(self.source / 'odoo-bin'))
+        found = []
+        for entry in Path('/proc').iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                argv = (entry / 'cmdline').read_bytes().split(b'\0')
+            except OSError:
+                continue
+            if target in argv:
+                found.append(int(entry.name))
+        return found
+
+    def test_detach_fails_and_stops_a_server_that_does_not_listen_in_time(self):
+        self.env.update(FAKE_SERVE='1', FAKE_NO_LISTEN='1', OASIS_DETACH_WAIT='2')
+        result = self.start('--detach')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', (
+            f'Odoo did not listen on 127.0.0.1:{self.port} within 2 s and was stopped; the end of '
+            f'{self.server_log}:\nserving\n')))
+        self.assertEqual(self.record(), '')
+        self.assertEqual(self.fake_servers(), [])
+        # Nothing is left behind: the next start works.
+        del self.env['FAKE_NO_LISTEN']
+        result = self.start('--detach')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.detached(result, self.server_log)
+
+    def test_detach_probes_the_configured_http_interface(self):
+        try:
+            with socket.socket() as probe:
+                probe.bind(('127.0.0.2', 0))
+        except OSError:
+            self.skipTest('127.0.0.2 is not a local address here')
+        # A probe of the wrong address would wait the whole 20 s, then fail.
+        self.env.update(FAKE_SERVE='1', OASIS_DETACH_WAIT='20')
+        conf = self.root / 'dev/odoo.conf'
+        for options, args in (
+                ('http_interface = 127.0.0.2\n', ()),
+                ('', ('--http-interface', '127.0.0.2')),
+                ('http_interface = 127.0.0.1\n', ('--http-interface=127.0.0.2',)),
+                ('http_interface = 0.0.0.0\n', ()),
+                ('http_interface = ::\n', ()),
+                ('http_interface =\n', ())):
+            with self.subTest(options=options, args=args):
+                conf.write_text(lifecycle.conf_text(f'http_port = {self.port}\n{options}'))
+                began = time.monotonic()
+                result = self.start('--detach', *args)
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                self.assertLess(time.monotonic() - began, 10, 'start waited on an address Odoo does not use')
+                pid = self.detached(result, self.server_log)
+                result = self.invoke('stop')
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (0, f'Stopped Odoo for this checkout: pid {pid}, port {self.port}.\n', ''))
 
     def test_detach_writes_to_the_configured_logs_directory(self):
         profile = self.root / '.odoo19-agent.toml'

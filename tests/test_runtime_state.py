@@ -447,7 +447,7 @@ class ServerLifecycleTests(unittest.TestCase):
         with busy(self.port):
             result = self.invoke(self.root, 'start')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'Port {self.port} is in use; pass --http-port or stop the other server.\n'))
+                         (2, '', f'Port {self.port} is in use by another process; pass --http-port or stop that process.\n'))
         self.unchanged()
         self.assertIsNone(self.record(self.root))
 
@@ -466,7 +466,8 @@ class ServerLifecycleTests(unittest.TestCase):
             self.commands.unlink()
             result = self.invoke(self.root, 'start', '--http-port', str(explicit))
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'Port {explicit} is in use; pass another --http-port or stop the other server.\n'))
+                         (2, '', f'Port {explicit} is in use by another process; pass another --http-port or stop that '
+                          'process.\n'))
         self.unchanged()
 
     def test_start_help_goes_straight_to_odoo(self):
@@ -484,7 +485,7 @@ class ServerLifecycleTests(unittest.TestCase):
         result = self.invoke(self.root, 'start', '--http-port', str(self.port + 1))
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (2, '', f'Odoo is already running for this checkout: pid {process.pid}, '
-                          f'port {self.port}.\n'))
+                          f'port {self.port}; run oasis stop first.\n'))
         self.assertEqual(self.commands.read_text(), before)
 
     def test_status_shows_this_checkout_server(self):
@@ -670,6 +671,31 @@ class ServerLifecycleTests(unittest.TestCase):
                     f'--http-port={self.port + 1}', *given])])
                 self.commands.unlink()
                 (state_dir(self.xdg, self.linked) / 'server.json').unlink(missing_ok=True)
+
+    def test_a_busy_port_names_the_checkout_whose_server_holds_it(self):
+        self.linked_layout()
+        # The linked worktree's server holds the main checkout's conf port (explicit -p).
+        linked = self.serve(self.linked, '-p', str(self.port))
+        self.assertEqual(self.record(self.linked)['port'], self.port)
+        with busy(self.port):
+            self.commands.unlink()
+            result = self.invoke(self.main, 'start')
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+                f'Port {self.port} is in use by checkout {self.linked} (pid {linked.pid}); pass --http-port '
+                'or run oasis stop in that checkout.\n')))
+            self.unchanged()
+            result = self.invoke(self.main, 'start', f'--http-port={self.port}')
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+                f'Port {self.port} is in use by checkout {self.linked} (pid {linked.pid}); pass another '
+                '--http-port or run oasis stop in that checkout.\n')))
+            self.unchanged()
+            # Another port of a recorded server does not name it.
+            with busy(self.port + 3):
+                result = self.invoke(self.main, 'start', f'--http-port={self.port + 3}')
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+                f'Port {self.port + 3} is in use by another process; pass another --http-port or stop that '
+                'process.\n')))
+        self.assertIsNone(self.record(self.main))
 
     def test_stop_terminates_only_this_checkout_and_database_waits_for_others(self):
         self.linked_layout()

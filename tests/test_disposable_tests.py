@@ -115,6 +115,10 @@ def shortened(namespace, module):
     return namespace + module[:room] + '_' + hashlib.sha256(module.encode()).hexdigest()[:4]
 
 
+# What a refused disposable name tells the user to do (common.sh require_free_disposable_database).
+REMEDY = 'Run the command again for a new name; oasis gc --apply drops what interrupted runs left.'
+
+
 class DisposableFixture(unittest.TestCase):
     setUp_fixture = lifecycle.LifecycleTests.setUp
     invoke = lifecycle.LifecycleTests.invoke
@@ -314,7 +318,8 @@ class DisposableTestModuleTests(DisposableFixture):
         self.assertEqual(kind, 'exists')
         self.assertRegex(database, '^cc_test_coffee' + RUN + '$')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'Disposable test database already exists: {database}\n'))
+                         (2, '', f'Disposable test database already exists: {database}; it was left as it is.\n'
+                          f'{REMEDY}\n'))
         self.assertEqual(self.run_locks(), [])
 
     def test_a_failed_create_never_drops_the_name_and_removes_only_its_lock(self):
@@ -539,7 +544,8 @@ class DisposableVerifyModuleTests(DisposableFixture):
         [(_, database)] = self.events()
         self.assertRegex(database, '^cc_test_coffee' + RUN + '$')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'Disposable test database already exists: {database}\n'))
+                         (2, '', f'Disposable test database already exists: {database}; it was left as it is.\n'
+                          f'{REMEDY}\n'))
         self.assertEqual(self.run_locks(), [])
 
     def test_signals_drop_both_databases_and_leave_no_locks(self):

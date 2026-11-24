@@ -56,6 +56,32 @@ names) may still change in a minor release; every such change is listed here und
 - Contract: names ending in `_trash_<8 digits>_<6 digits>` are reserved for the trash; every
   command that takes a database refuses them (exit 2), `drop-database` and `module-status`
   included. The `gc` usage line names `--trash`.
+- `start --detach` waits for the server on its HTTP interface (`--http-interface`, else the
+  `http_interface` of `odoo.conf`; `127.0.0.1` for none, empty, `0.0.0.0` or `::`) instead of
+  always `127.0.0.1`, for up to 30 s instead of 10 s. A server that does not listen in time no
+  longer counts as started: it is stopped (SIGTERM to its session, SIGKILL 5 s later), its record
+  is removed and `start` exits 1 with `Odoo did not listen on <address>:<port> within 30 s and was
+  stopped; the end of <log>:` and the last lines of its log. An explicit `--http-interface` is
+  also the address the port check probes.
+- Messages name the remedy (exit codes unchanged): `Odoo is already running for this checkout:
+  pid <pid>, port <port>; run oasis stop first.`; a busy port says `Port <port> is in use by
+  checkout <path> (pid <pid>); pass [another] --http-port or run oasis stop in that checkout.` when
+  another checkout's live server record names it, else `Port <port> is in use by another process;
+  pass [another] --http-port or stop that process.`; a wrong Odoo runtime prints `Odoo runtime
+  <series> is required; <odoo-bin> reports: <its version>.` and `Point [tooling].community at an
+  Odoo <series> source, then check it with oasis doctor.`; an existing disposable name prints
+  `Disposable test database already exists: <name>; it was left as it is.` and `Run the command
+  again for a new name; oasis gc --apply drops what interrupted runs left.` (`odoo19` through the
+  alias).
+- Gentle Shell ask tier: the mode is the stricter (`deny` over `ask` over `allow`) of the session
+  project's `[tooling].agent_destructive` and that of the project the command targets (the entry
+  point's `--project <dir>`, or `OASIS_PROJECT_ROOT`/`ODOO19_PROJECT_ROOT` assigned before a tool
+  script). A target that is not literal, not an Odoo project, unreadable or set elsewhere on the
+  line counts as `ask`; a refusal by the target names it. Before, `oasis --project <other>
+  drop-database <name>` from an `allow` project skipped the other project's `ask` or `deny`.
+- Prompt context: the `oasis_test_module` line says that full logs stay on disk and the
+  `oasis_test_summary` line to pass what `test-module --compact` printed (lost when the section
+  was shortened); other lines were shortened to stay under 1200 characters.
 
 ### Fixed
 
@@ -64,6 +90,11 @@ names) may still change in a minor release; every such change is listed here und
   follows another denied program) ran, because only the first denied program counted; it is now
   blocked with the reason of the user-run tool. Single commands and the reasons in Odoo projects
   are unchanged.
+- Bash guard: an abbreviated `--project` of the entry points (`oasis --proj <dir> ...`, which
+  argparse accepts) hid the command from both tiers, so `oasis --proj /p migrate --apply` ran and
+  `oasis --proj /p drop-database <name>` ran without the dialog. Every unambiguous prefix of
+  `--project` now takes its value like `--project`.
+- `odoo-shell` refuses extra arguments with its usage (exit 2) instead of ignoring them.
 
 ## [0.10.1] - 2026-11-24
 
