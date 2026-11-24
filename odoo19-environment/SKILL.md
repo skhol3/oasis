@@ -11,11 +11,11 @@ metadata:
 
 Use for Odoo 19 runtime/dependency discovery and diagnostics. Not for running module commands (`odoo19-module-lifecycle`). A project's instructions may supply the complete contract without the optional template.
 
-A checkout without `.odoo19-agent.toml` may read the nearest `oasis-workspace.toml` above it ([example](assets/oasis-workspace.example.toml)): paths from that file, `addons_paths` from the checkout. A checkout's own profile always wins.
+A checkout reads the nearest `oasis-workspace.toml` at or above it ([example](assets/oasis-workspace.example.toml)): paths from that file, `addons_paths` from the checkout. A checkout that still has the file of earlier versions is refused until the user runs `oasis migrate`.
 
 ## Hard Rules
 
-- Treat `[odoo]`, `[environment]`, `[database]`, `[commands]` in `.odoo19-agent.toml` as advisory. Only installed `~/.agents/skills/odoo19/tools` consume optional `[tooling]`; it is path/guard input, never access consent or automatic setup.
+- Treat `[odoo]`, `[environment]`, `[database]`, `[commands]` in `oasis-workspace.toml` as advisory. Only installed `~/.agents/skills/odoo19/tools` consume optional `[tooling]`; it is path/guard input, never access consent or automatic setup.
 - Use only an isolated project environment; never modify shared virtualenvs or global packages.
 - Do not read or log runtime configuration contents if they may contain secrets. Never place secrets in the template.
 - Paths outside the workspace require exact per-target human consent before access, even if declared in configuration.
@@ -26,7 +26,7 @@ A checkout without `.odoo19-agent.toml` may read the nearest `oasis-workspace.to
 | Situation | Action |
 | --- | --- |
 | Several outcomes requested (resources, install/update, demo data, accounts, startup) | Treat each separately; none implies another |
-| Choosing an operation | Consult installed help and declarative profiles; prefer supported end-to-end capabilities |
+| Choosing an operation | Consult installed help and the project's declarations; prefer supported end-to-end capabilities |
 | Precondition unmet (target, namespace, existing resource, human interaction) | Never delete or replace resources without explicit authorization; explain the gap first |
 | Before module lifecycle work | Confirm Odoo 19 with matching `release.py` and permitted runtime checks |
 | Project wrapper missing | Use the installed `~/.agents/skills/odoo19/oasis` entry point (alias `odoo19`); with no guarded interface, report unavailable |
@@ -48,4 +48,4 @@ Report confirmed version evidence, isolated environment status, diagnostics, ski
 
 - [Project capability contract](references/project-contract.md).
 - [Operation selection rules](references/operation-selection.md).
-- [Optional example](assets/odoo19-agent.example.toml).
+- [Example workspace file](assets/oasis-workspace.example.toml).

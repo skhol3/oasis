@@ -7,7 +7,7 @@ Two commands, for two questions:
 
 ## The declared Python
 
-The environment's Python is the one the configuration declares: 3.12 for a profile and for a workspace with `[tooling].environment`, else the `python` of the selected named environment (see [Workspace file](workspace-file.md#checkout-file-and-named-environments)). `bootstrap` creates a missing environment with it (`bootstrap --preview` prints `planned_action=create_python_<version>_and_sync_lock`) and refuses an existing one with another Python; `check-environment` reports `PASS python_version=<version>`, and on a mismatch stops with exit 2 before any other check:
+The environment's Python is the one the configuration declares: the series' default for a workspace with `[tooling].environment` (`python_default` in `tools/odoo_versions.py`, 3.12 on 19.0), else the `python` of the selected named environment (see [Workspace file](workspace-file.md#checkout-file-and-named-environments)). `bootstrap` creates a missing environment with it (`bootstrap --preview` prints `planned_action=create_python_<version>_and_sync_lock`) and refuses an existing one with another Python; `check-environment` reports `PASS python_version=<version>`, and on a mismatch stops with exit 2 before any other check:
 
 ```text
 Python 3.13 is required; found 3.12.
@@ -26,7 +26,7 @@ Move /home/you/odoo/19.0/environments/acme-next away and run oasis bootstrap --a
 
 | Check | Passes when | Otherwise |
 | --- | --- | --- |
-| `configuration` | the profile or workspace file loads; the value is `legacy` or `workspace` | `FAIL configuration=<error>`; the checks after `proc` are left out |
+| `configuration` | the workspace file loads; the value is `workspace` | `FAIL configuration=<error>` (a checkout that still has the file of earlier versions gives the refusal that names `oasis migrate`, see [Migrating](migrating.md)); the checks after `proc` are left out |
 | `odoo_version` | always, when the configuration loads (only supported series load) | |
 | `agent_destructive` | always, when the configuration loads: the value of `[tooling].agent_destructive` (`ask`, `deny` or `allow`; `ask` when absent), see [Bash guard](bash-guard.md#the-setting) | an invalid value fails `configuration` |
 | `git` | `git --version` reports 2.31 or newer | `FAIL git=missing`, `FAIL git=<version> minimum=2.31` |

@@ -1,6 +1,12 @@
 # Migrating to the workspace file
 
-`oasis migrate` converts the `.odoo19-agent.toml` of every checkout of a repository into one `oasis-workspace.toml`, keeping every profile as a backup. Run it yourself, from any checkout that has a profile, in Gentle Shell or in a terminal:
+Earlier versions configured each checkout with its own `.odoo19-agent.toml` profile. Since 0.12.0 no command reads it: a checkout that still has one is refused before anything runs (exit 2), also next to an `oasis-workspace.toml`, with
+
+```text
+ERROR: <checkout>/.odoo19-agent.toml is the old profile format, no longer read: run oasis migrate --plan to see its conversion to oasis-workspace.toml, then oasis migrate --apply.
+```
+
+and `doctor` reports the same text as one `FAIL configuration=...`. On the main checkout, `list-databases`, `gc` and the trash also stop when a linked worktree still has one, since its slug can no longer be read. If you have one, migrate it: `oasis migrate`, the only command that still reads the profile, converts the `.odoo19-agent.toml` of every checkout of a repository into one `oasis-workspace.toml`, keeping every profile as a backup. Run it yourself, from any checkout that has a profile, in Gentle Shell or in a terminal:
 
 ```text
 /oasis migrate
@@ -14,7 +20,7 @@
 
 - Without `--apply` it prints the plan and changes nothing; the plan ends with `dry run: nothing changed; run with --apply to migrate`. `--plan` asks for that plan explicitly and can never apply: with `--apply` it is a usage error (exit 2). It is the one form an agent may run (see the [bash guard](bash-guard.md)). `/oasis migrate` (or `/odoo19 migrate`) shows the plan and runs `migrate --apply` after confirmation. Agents cannot run it: the bash guard blocks it, the dry run included.
 - Checkouts: every worktree that `git worktree list` reports (outside git, the checkout alone). A missing worktree stops it with `Worktree <path> is missing; restore it or run git worktree prune.`
-- Workspace directory: by default the deepest directory above every checkout and the profile's `odoo.conf` (`<project>` in the [workspace layout](workspace-file.md)). `--workspace <dir>` names another one; it must be an absolute existing directory above every checkout (`Refusing --workspace <dir>: it is not above every checkout (<checkouts>).`). An existing `oasis-workspace.toml` there is never replaced (`<file> already exists.`); a directory the trust rule would refuse, and a nearer `oasis-workspace.toml` or `.odoo19-agent.toml` between a checkout and that directory, are refused too.
+- Workspace directory: by default the deepest directory above every checkout and the profile's `odoo.conf` (`<project>` in the [workspace layout](workspace-file.md)). `--workspace <dir>` names another one; it must be an absolute existing directory above every checkout (`Refusing --workspace <dir>: it is not above every checkout (<checkouts>).`). An existing `oasis-workspace.toml` there is never replaced (`<file> already exists.`); a directory the trust rule would refuse, and a nearer `oasis-workspace.toml` between a checkout and that directory, are refused too.
 - Agreement: every profile must give the same `[tooling]` and `[development]` values, paths resolved from its checkout, except `checkout_slug`. Otherwise it stops with `Cannot migrate: the profiles of the checkouts disagree on <section>.<key>, ...` (keys only, never values).
 
 ## The plan
@@ -24,7 +30,7 @@
   - `write <checkout>/oasis-checkout.toml` (mode 0600) with `[tooling].checkout_slug`, for each checkout whose profile sets one.
   - `back up <odoo.conf> as odoo.conf.bak-<stamp>` (a 0600 copy) and `remove addons_path and data_dir from <odoo.conf>` (or just one of them): only those lines of `[options]`, every other line kept. A `data_dir` moves to `[tooling].data_dir` (`; data_dir moves to [tooling].data_dir`; it must be an absolute path) unless the profile sets one. oasis then passes both on the command line (see [Path-free odoo.conf](path-free-odoo-conf.md)). The content of `odoo.conf` is never printed.
   - `rewrite <requirements>/lock.sha256: <n> entries relative to its directory, hashes unchanged` for a legacy lock that matches from the checkout; otherwise `keep <lock>: <reason>` (already relative, or not matching: regenerate it).
-  - `rename <checkout>/.odoo19-agent.toml to .odoo19-agent.toml.bak-<stamp>` for every checkout, since a profile wins over the workspace file. `<stamp>` is the UTC time, `YYYYMMDDTHHMMSSZ`.
+  - `rename <checkout>/.odoo19-agent.toml to .odoo19-agent.toml.bak-<stamp>` for every checkout, since a checkout that has one is refused. `<stamp>` is the UTC time, `YYYYMMDDTHHMMSSZ`.
   - `not migrated: <sections> (kept in the profile backups)` for advisory sections such as `[odoo]`, `[environment]` or `[commands]`.
 
 ## Verification and exit status

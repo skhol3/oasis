@@ -32,6 +32,14 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- Gentle Shell: a profile above the checkout no longer stops the search for
+  `oasis-workspace.toml`, as in `tools/config.py`. A checkout with its own `.odoo19-agent.toml`
+  is still found, and its prompt context says the file is no longer read and that the user runs
+  `/oasis migrate`. "Not an Odoo project" now reads `no oasis-workspace.toml at or above <cwd>`.
+- `/oasis` status: `configuration: <error>` instead of `profile: <error>`, and `slug <slug>
+  (oasis-checkout.toml)` instead of `(profile)`.
+- The bash guard's reason for `worktree-init` says it adds a git worktree and branch for the user
+  (it no longer links environment files).
 - `doctor` prints `PASS configuration=workspace` and warns about `addons_path` or `data_dir` in
   every checkout's `odoo.conf`.
 - On the main checkout, `list-databases`, `gc` and `trash` still stop (exit 2) when a linked
@@ -74,6 +82,9 @@ names) may still change in a minor release; every such change is listed here und
 - `worktree-init`'s profile layouts (copying the profile, linking `dev/` entries and the
   environment file, rewriting a copied `odoo.conf`): it only runs `git worktree add` below the
   workspace file, and refuses a main checkout that finds none.
+- The example profile `odoo19-environment/assets/odoo19-agent.example.toml`; the workspace
+  example `assets/oasis-workspace.example.toml` replaces it, and the documentation describes only
+  the workspace file (the old format appears only in docs/migrating.md).
 
 ### Fixed
 
