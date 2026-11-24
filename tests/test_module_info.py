@@ -227,8 +227,9 @@ tests: none
 ''', project=project)
 
     def test_readme_example_is_the_fixture_output(self):
-        readme = (ROOT / 'README.md').read_text()
-        self.assertIn('```text\n' + PLANNER.replace(str(ADDONS), '/work/coffee/addons') + '```\n', readme)
+        # The module overview moved from the README to the static inspection topic file.
+        doc = (ROOT / 'docs/static-inspection.md').read_text()
+        self.assertIn('```text\n' + PLANNER.replace(str(ADDONS), '/work/coffee/addons') + '```\n', doc)
 
     def test_the_first_module_with_a_name_wins(self):
         # The project also has a `coffee` module; the Odoo source is scanned first. Its manifest

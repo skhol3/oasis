@@ -1,0 +1,9 @@
+# Subagents
+
+Gentle Shell subagents (for example `gentle-ai-worker` and `gentle-ai-verify`) receive only the tools in their allowlist, so they do not see the `oasis_*` tools by default. oasis ships an overlay template, [`pi/agent-overlays/oasis.json`](../pi/agent-overlays/oasis.json), that adds the tools to both agents; `oasis_update_module` goes to the worker only, because the verify agent stays read-only. Run `/oasis setup` once in Gentle Shell (it asks before writing); oasis reminds you at session start when the overlay is missing or outdated.
+
+- `/oasis setup` writes only `agent-overlays.d/oasis.json` under the Gentle AI config home (`$GENTLE_PI_CONFIG_HOME` when it is an absolute path, else `~/.gentle-shell/gentle-ai`). It works outside an Odoo project, does nothing when the overlay is already up to date, and only the user can run it: no agent tool triggers it. Start a new session or `/reload` afterwards.
+- That folder is user configuration: Gentle Shell updates do not replace it. Run `/oasis setup` again after an oasis update that changes the template.
+- If Gentle AI renames an agent, the overlay entry for the old name only produces a notice until an oasis update renames it.
+- `oasis_test_module` runs each test on a new disposable database of the checkout's `<test_prefix>` namespace and drops it at the end (an explicit `database` or a configured `test_database` is reset and reused instead), so a verify subagent with the overlay can do so too. Its summary line then ends with `database_lifecycle=disposable dropped=<yes|no>`. There is no agent tool for `oasis gc`: removing leftovers is up to the user.
+- Without the overlay, subagents can still run the core through bash: `python3 /absolute/path/to/oasis/oasis --project <project root> <command>` (for example `test-module --compact <module>`).

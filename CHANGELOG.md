@@ -9,6 +9,19 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-24
+
+Documentation only: the README is a landing page and the detail lives in docs/.
+
+### Changed
+
+- Documentation: the README is a landing page (what oasis is, install or update, a five-minute
+  start, one paragraph per feature with a "Docs →" link and a documentation table), and the
+  detail moved, unchanged, to one topic per file under `docs/`, indexed by reader in
+  `docs/README.md`. Mermaid diagrams show what the bash guard blocks, how checkouts and
+  worktrees get their databases, ports and logs, and the life of a test database. The README
+  "Contract change in …" notes moved to the 0.3.0, 0.4.0 and 0.8.0 sections of this changelog.
+
 ## [0.10.0] - 2026-11-24
 
 A one-screen map of a module from source: `module-info`.
@@ -72,7 +85,7 @@ Gentle Shell (`alt+o`), both from one catalog; `start --detach` runs the server 
 ## [0.8.0] - 2026-11-23
 
 The harness names itself oasis in what it sets and prints. Everything existing keeps working;
-see the contract note in the README.
+see the contract note under Changed.
 
 ### Added
 
@@ -100,6 +113,26 @@ see the contract note in the README.
   `[tooling].logs`, otherwise `dev/logs/odoo19/` of the checkout (and of the main checkout in a
   linked worktree). A path elsewhere is refused even when it looks like a run log, and so is a
   run directory or log file that is a symlink leading outside those locations.
+- Contract change in 0.8.0: the harness names itself `oasis` in what it sets and prints.
+  - Environment variables: the tools read `OASIS_PROJECT_ROOT`, `OASIS_ENTRYPOINT`,
+    `OASIS_TOOLS_DIR` (project wrappers) and `OASIS_COMPOSE_LOCK_TIMEOUT` (tests) first, and
+    the legacy `ODOO19_*` name when the `OASIS_*` one is unset or empty. The entry point and
+    the project wrappers set both names with the same value. Errors name `OASIS_PROJECT_ROOT`.
+    The variables that pass only between `test-module --compact` and the run it starts are now
+    `OASIS_RUN_RESULT` and `OASIS_REUSE_RESULT`, without a legacy name.
+  - Logs: with `[tooling].logs`, compact runs go to `<logs>/<main|slug>/run-*` instead of
+    `<logs>/odoo19/<main|slug>/run-*`; existing directories are never moved or deleted, and
+    `oasis_test_summary` accepts the run logs of both layouts. Without `[tooling].logs` nothing
+    changes (`dev/logs/odoo19/`).
+  - Texts: no message, help or usage says "Odoo 19" (`Unsupported oasis command: <name>`,
+    `oasis tools are not installed: <path>`), and help or messages that tell you to run a
+    command name the invoked entry point (`oasis gc --apply`, or `odoo19 gc --apply` through
+    the alias), as does the `start` banner.
+  - Gentle Shell: the extension is `pi/extensions/oasis.ts`; the prompt section and its tag are
+    `oasis` and the status message type is `oasis-status`.
+  - Unchanged: the install directory `~/.agents/skills/odoo19`, the `odoo19-*` skill names, the
+    `odoo19` alias, the `odoo19_*` tool aliases, `/odoo19`, the legacy profile name
+    `.odoo19-agent.toml`, and every option and exit code.
 
 ### Fixed
 
@@ -351,6 +384,11 @@ profile per checkout, a path-free `odoo.conf`, a per-version capability table, t
   `/oasis setup` runs again. The prompt context and the bash guard's messages name `oasis`;
   the guard also blocks `oasis ... worktree-init`. The install directory and the `odoo19-*`
   skill names are unchanged.
+- Contract change in 0.4.0: the entry point is `oasis`, the Gentle Shell tools are `oasis_*`
+  and the command is `/oasis`. `odoo19` (identical commands, options, exit codes and output),
+  `/odoo19` and the inactive `odoo19_*` tools stay as aliases; the install directory
+  `~/.agents/skills/odoo19` and the `odoo19-*` skill names are unchanged. Run `/oasis setup` to
+  move the subagent overlay to the `oasis_*` names.
 
 ## [0.3.0] - 2026-11-18
 
@@ -477,6 +515,14 @@ checkout, disposable test databases and `/odoo19 worktree` to create a worktree.
   writes no `odoo.conf` or `dev/`. Other layouts keep the previous behaviour. The README
   recommends the shared layout (`<project>/codigo/<checkouts>`, `<project>/config/`,
   `<project>/data/`).
+- Contract change in 0.3.0: `stop` used to stop every Compose service; use `stop --database`
+  for PostgreSQL.
+- Contract change in 0.3.0: `test-module` and `verify-module` without an explicit or configured
+  test database used to reset and reuse `<test_prefix>[<slug>_]<module>` (and `..._update`);
+  they now run on disposable databases dropped at the end of each run. Pass that name
+  explicitly, or set `test_database`, to keep a reusable destination. Names ending in
+  `_r<6 hex>` (optionally `_update`) are now reserved for disposable runs and refused by the
+  commands that create or reuse a database. New public command: `gc`.
 
 ### Fixed
 
@@ -611,7 +657,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/skhol3/oasis/releases/tag/v0.10.1
 [0.10.0]: https://github.com/skhol3/oasis/releases/tag/v0.10.0
 [0.9.0]: https://github.com/skhol3/oasis/releases/tag/v0.9.0
 [0.8.0]: https://github.com/skhol3/oasis/releases/tag/v0.8.0

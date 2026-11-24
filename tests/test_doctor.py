@@ -274,9 +274,10 @@ class DoctorSurfaceTests(unittest.TestCase):
         self.assertNotIn('oasis_doctor', source)
 
     def test_readme_explains_doctor_and_check_environment(self):
-        readme = (ROOT / 'README.md').read_text()
-        self.assertIn('## Checking the environment\n', readme)
-        section = readme.split('## Checking the environment\n', 1)[1].split('\n## ', 1)[0]
+        # The section moved from the README to its own topic file, linked from the README.
+        self.assertIn('](docs/checking-environment.md)', (ROOT / 'README.md').read_text())
+        section = (ROOT / 'docs/checking-environment.md').read_text()
+        self.assertTrue(section.startswith('# Checking the environment\n'))
         self.assertIn('oasis --project /absolute/project doctor', section)
         self.assertIn('check-environment', section)
         self.assertIn('doctor_failures=', section)

@@ -188,16 +188,18 @@ class GlobalCliTests(unittest.TestCase):
                              f'oasis tools are not installed: {self.bundle / "tools/status"}\n')
 
     def test_staged_guidance_describes_full_path_and_optional_wrappers(self):
-        readme = (ROOT / 'README.md').read_text()
+        # The setup and tool-manager sections moved from the README to their topic files.
+        setup = (ROOT / 'docs/project-setup.md').read_text()
+        troubleshooting = (ROOT / 'docs/troubleshooting.md').read_text()
         environment = (ROOT / 'odoo19-environment/SKILL.md').read_text()
         lifecycle = (ROOT / 'odoo19-module-lifecycle/SKILL.md').read_text()
         example = ('~/.agents/skills/odoo19/oasis --project /absolute/project '
                    'check-environment --quick')
-        self.assertIn(example, readme)
+        self.assertIn(example, setup)
         self.assertIn(example, environment)
-        self.assertIn('Alternatively, if the project wants legacy local CLI entrypoints', readme)
+        self.assertIn('Alternatively, if the project wants legacy local CLI entrypoints', setup)
         self.assertIn('Missing project wrappers alone are not a blocker', lifecycle)
-        self.assertIn('mise', readme)
+        self.assertIn('mise', troubleshooting)
 
     def test_existing_config_guards_reject_bad_profile_before_effects(self):
         for name in ('common.sh', 'oasis_env.sh', 'config.py', 'status'):
