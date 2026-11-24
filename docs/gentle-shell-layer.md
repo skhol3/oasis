@@ -5,7 +5,7 @@ A thin Pi package (`package.json`, `pi/`) layered over Gentle Shell. It changes 
 ## Installing the package
 
 ```bash
-gentle-shell install git:github.com/skhol3/oasis@v0.10.0
+gentle-shell install git:github.com/skhol3/oasis@v0.10.1
 ```
 
 To move to a newer release, remove the old entry and install the new tag (`gentle-shell list` shows the installed entry), then `/reload` open sessions:

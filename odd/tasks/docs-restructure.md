@@ -35,8 +35,8 @@ command, option, output or test behaviour changes.
 
 ## Tasks
 
-- T1 [S3-S7] README landing + docs/ split + diagrams + tests — worker — commit: pending
-- T2 Release v0.10.1 — inline — commit: pending
+- [x] T1 [S3-S7] README landing + docs/ split + diagrams + tests — worker — commit: 97ff5dd
+- [x] T2 Release v0.10.1 — inline — commit: this commit
 
 ## Log
 
@@ -48,3 +48,5 @@ command, option, output or test behaviour changes.
 - L2. After this: the operations audit (user, 2026-11-24): "luego de la documentacion hacemos
   auditoria para ver que falta respecto a comandos para levantar, actualizar, elegir puerto,
   levantar con test y demas".
+- L3. User (2026-11-24): "ok como la documentracion solo es eso, haces pull, pr y merge": for this documentation change the agent pushes, opens the PR and merges it.
+- L4. Workers mwu1r8cx-e-0545 and mwu337b1-f-18y9: README 629 -> 113 lines, 19 topic files + docs/README.md index, Mermaid diagrams in bash-guard.md, checkouts-and-worktrees.md and testing.md; no-line-lost check over the old README (only a deliberate link edit differs); contract notes into CHANGELOG 0.3.0/0.4.0/0.8.0; link check over README, docs and every odoo19-* Markdown file (RED: 10 broken skill reference links, fixed). Parent fixed two stale "below/above" references. Suite 498 OK, node 143 OK.
