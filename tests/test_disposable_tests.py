@@ -138,7 +138,7 @@ class DisposableFixture(unittest.TestCase):
         (self.root / 'dev/odoo.conf').write_text(f'[options]\ndata_dir = {self.data}\n{extra}')
 
     def write_profile(self, extra):
-        (self.root / '.odoo19-agent.toml').write_text(lifecycle.PROFILE + extra)
+        lifecycle.write_config(self.root, lifecycle.WORKSPACE + extra)
 
     def add_module(self, name):
         (self.root / name).mkdir()
@@ -472,8 +472,8 @@ class DisposableTestModuleTests(DisposableFixture):
 
     def test_a_namespace_without_room_is_refused_before_any_command(self):
         prefix = 'a' * 45
-        (self.root / '.odoo19-agent.toml').write_text(
-            lifecycle.PROFILE.replace('cc_dev_', f'{prefix}_dev_').replace('cc_test_', f'{prefix}_test_'))
+        (self.root / 'oasis-workspace.toml').write_text(
+            lifecycle.WORKSPACE.replace('cc_dev_', f'{prefix}_dev_').replace('cc_test_', f'{prefix}_test_'))
         result = self.invoke('test-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
             'ERROR: Test prefix and checkout slug leave no room for a disposable database name: '
@@ -822,7 +822,7 @@ test_prefix = 'cc_test_'
         # The workspace sits above <projects>; neither checkout keeps a profile.
         (self.main.parent.parent / 'oasis-workspace.toml').write_text(self.WORKSPACE)
         for checkout in (self.main, self.linked):
-            (checkout / '.odoo19-agent.toml').unlink()
+            (checkout / 'oasis-workspace.toml').unlink()
         # The folder would derive `wt`; the checkout file sets another slug.
         (self.linked / 'oasis-checkout.toml').write_text("[tooling]\ncheckout_slug = 'shop'\n")
         self.main_orphan, self.linked_orphan = 'cc_test_coffee_r1a2b3c', 'cc_test_shop_coffee_r4d5e6f'

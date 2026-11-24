@@ -204,7 +204,7 @@ class XmlInfoTests(unittest.TestCase):
         addons = scratch / 'source/odoo/addons'
         (scratch / 'source/odoo/odoo/addons').mkdir(parents=True)
         (project / 'addons').mkdir(parents=True)
-        (project / '.odoo19-agent.toml').write_text((PROJECT / '.odoo19-agent.toml').read_text())
+        (project / 'oasis-workspace.toml').write_text((PROJECT / 'oasis-workspace.toml').read_text())
 
         def module(name, files):
             (addons / name).mkdir(parents=True)
@@ -287,7 +287,7 @@ class XmlInfoTests(unittest.TestCase):
         (scratch / 'source/odoo/odoo/addons').mkdir(parents=True)
         (project / 'addons').mkdir(parents=True)
         module.mkdir(parents=True)
-        (project / '.odoo19-agent.toml').write_text((PROJECT / '.odoo19-agent.toml').read_text())
+        (project / 'oasis-workspace.toml').write_text((PROJECT / 'oasis-workspace.toml').read_text())
         (module / '__manifest__.py').write_text("{'name': 'x'}\n")
         (module / 'views.xml').write_text(
             '<odoo>\n'

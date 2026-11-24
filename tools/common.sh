@@ -63,7 +63,7 @@ require_python_version() {
     return 1
   fi
   python_version=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")') || return $?
-  # 3.12 for a profile; a workspace's named environment declares its own (config.py).
+  # The series' default for [tooling].environment; a named environment declares its own (config.py).
   if [[ "$python_version" != "$PYTHON_VERSION" ]]; then
     printf 'Python %s is required; found %s.\n' "$PYTHON_VERSION" "$python_version" >&2
     return 2
@@ -100,7 +100,7 @@ require_runtime() {
 # one, a linked worktree that shares the main checkout's odoo.conf gets that addons_path with
 # the main checkout's root replaced by its own root; the main checkout and a project outside
 # git keep -c alone. [tooling].data_dir adds --data-dir=<DATA_DIR>. When git failed in a linked
-# worktree whose profile sets checkout_slug, config.py reports no main checkout: an odoo.conf
+# worktree whose oasis-checkout.toml sets checkout_slug, config.py reports no main checkout: an odoo.conf
 # inside the worktree is used as it is, a shared one with an addons_path is refused.
 odoo_config_arguments() {
   local output root roots=()

@@ -59,7 +59,7 @@ class ComposeLockTests(unittest.TestCase):
             path = self.other / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.touch()
-        (self.other / '.odoo19-agent.toml').write_text(lifecycle.PROFILE.replace(
+        (self.other / 'oasis-workspace.toml').write_text(lifecycle.WORKSPACE.replace(
             "compose = 'dev/compose.yml'", "compose = '../a project/dev/compose.yml'"))
         self.lock = (Path(self.env['XDG_RUNTIME_DIR']) / f'oasis-{os.getuid()}' /
                      ('compose-' + hashlib.sha256(

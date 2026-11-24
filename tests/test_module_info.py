@@ -126,7 +126,7 @@ class ModuleInfoTests(unittest.TestCase):
         (self.temp / name / 'source/odoo/addons').mkdir(parents=True)
         module = project / 'addons' / name
         module.mkdir(parents=True)
-        (project / '.odoo19-agent.toml').write_text((PROJECT / '.odoo19-agent.toml').read_text())
+        (project / 'oasis-workspace.toml').write_text((PROJECT / 'oasis-workspace.toml').read_text())
         (module / '__manifest__.py').write_text(manifest)
         for file, text in (files or {'data.xml': '<odoo/>\n'}).items():
             (module / file).write_text(text)
@@ -293,7 +293,7 @@ tests: none
     def test_usage_errors_exit_two_before_reading_the_profile(self):
         project = self.temp / 'unconfigured'
         project.mkdir()
-        (project / '.odoo19-agent.toml').write_text('[tooling]\n')
+        (project / 'oasis-workspace.toml').write_text('[tooling]\n')
         for args in ((), ('a', 'b'), ('--bogus',), ('coffee', '--bogus'), ('coffee', '--section'),
                      ('coffee', '--section', 'models', '--section', 'views'), ('--section', 'models')):
             with self.subTest(args=args):
@@ -314,7 +314,7 @@ tests: none
         project = scratch / 'project'
         (scratch / 'source/odoo/odoo/addons').mkdir(parents=True)
         (project / 'addons').mkdir(parents=True)
-        (project / '.odoo19-agent.toml').write_text((PROJECT / '.odoo19-agent.toml').read_text())
+        (project / 'oasis-workspace.toml').write_text((PROJECT / 'oasis-workspace.toml').read_text())
         module = scratch / 'source/odoo/addons/wide'
         for directory in ('models', 'views', 'data', 'security', 'tests'):
             (module / directory).mkdir(parents=True)

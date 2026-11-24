@@ -29,8 +29,8 @@ if [[ -e "$PROJECT_ENVIRONMENT" && ! -x "$PYTHON" ]]; then
   printf 'Refusing to replace a non-virtualenv path: %s\n' "$PROJECT_ENVIRONMENT" >&2
   exit 2
 fi
-# An existing isolated interpreter must be the declared Python ($PYTHON_VERSION: 3.12 for a
-# profile and [tooling].environment, else the selected named environment's python), even
+# An existing isolated interpreter must be the declared Python ($PYTHON_VERSION: the series'
+# default for [tooling].environment, else the selected named environment's python), even
 # before a dry-run or repair. Odoo may lack dependencies until the requested sync completes.
 if [[ -x "$PYTHON" ]]; then require_python_version; fi
 printf 'mode=%s\n' "${mode#--}"

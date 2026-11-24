@@ -94,7 +94,7 @@ class OasisVariableTests(unittest.TestCase):
         for variables in ({'OASIS_PROJECT_ROOT': str(self.root)}, {'ODOO19_PROJECT_ROOT': str(self.root)}):
             with self.subTest(variables=variables):
                 result = self.tool('doctor', **variables)
-                self.assertEqual(result.stdout.splitlines()[0], 'PASS configuration=legacy')
+                self.assertEqual(result.stdout.splitlines()[0], 'PASS configuration=workspace')
 
     def test_python_usage_names_the_oasis_entry_point_first(self):
         for command in ('doctor', 'migrate'):
@@ -227,7 +227,7 @@ class EntryPointHelpTests(unittest.TestCase):
         self.scratch = tempfile.TemporaryDirectory(dir=fixture_root)
         self.addCleanup(self.scratch.cleanup)
         self.project = Path(self.scratch.name)
-        (self.project / '.odoo19-agent.toml').write_text('[tooling]\nversion = "19.0"\n')
+        (self.project / 'oasis-workspace.toml').write_text('[tooling]\nversion = "19.0"\n')
 
     def run_help(self, program, *args):
         env = {key: value for key, value in os.environ.items()

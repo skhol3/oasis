@@ -31,7 +31,7 @@ class DependencyLockTests(unittest.TestCase):
             shared = self.root.parent / 'config' / 'requirements'
             shared.parent.mkdir()
             requirements.rename(shared)
-            profile = self.root / '.odoo19-agent.toml'
+            profile = self.root / 'oasis-workspace.toml'
             profile.write_text(profile.read_text().replace("requirements = 'dev/requirements'",
                                                            "requirements = '../config/requirements'"))
             requirements = shared

@@ -58,7 +58,7 @@ class EnvironmentTests(unittest.TestCase):
         environment that declares it; with logs, [tooling].logs = 'logs'. Returns the workspace
         directory."""
         base = self.root.parent.parent
-        (self.root / '.odoo19-agent.toml').unlink()
+        (self.root / 'oasis-workspace.toml').unlink()
         checkout = 'projects/a project/'
         tooling = ["community = 'source/odoo'",
                    f"config = '{checkout}dev/odoo.conf'", f"env_file = '{checkout}dev/.env'",

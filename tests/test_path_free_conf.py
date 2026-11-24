@@ -57,10 +57,10 @@ class PathFreeConfFixture(unittest.TestCase):
         self.conf = self.root / 'dev/odoo.conf'
         self.port = lifecycle.free_port()
         self.odoo = 'odoo ' + str(self.source / 'odoo-bin')
-        self.profile = self.root / '.odoo19-agent.toml'
+        self.profile = self.root / 'oasis-workspace.toml'
 
     def write_profile(self, extra='', replace=()):
-        text = lifecycle.PROFILE
+        text = lifecycle.WORKSPACE
         for old, new in replace:
             text = text.replace(old, new)
         self.profile.write_text(text + extra)
@@ -180,7 +180,7 @@ class PathFreeLinkedWorktreeTests(unittest.TestCase):
     invoke = shared.SharedConfTests.invoke
     odoo_lines = shared.SharedConfTests.odoo_lines
     odoo_call = shared.SharedConfTests.odoo_call
-    break_git_with_profile_slug = shared.SharedConfTests.break_git_with_profile_slug
+    break_git_with_checkout_slug = shared.SharedConfTests.break_git_with_checkout_slug
 
     def setUp(self):
         self.setUp_fixture()
@@ -202,12 +202,12 @@ class PathFreeLinkedWorktreeTests(unittest.TestCase):
                 self.assertEqual(lines, expected)
 
     def test_without_git_a_path_free_shared_conf_is_composed_instead_of_refused(self):
-        self.break_git_with_profile_slug()
+        self.break_git_with_checkout_slug()
         lines, expected = self.install(self.linked, 'cc_dev_wt_coffee')
         self.assertEqual(lines, expected)
 
     def test_without_git_a_shared_conf_with_addons_path_is_still_refused(self):
-        self.break_git_with_profile_slug()
+        self.break_git_with_checkout_slug()
         self.conf.write_text(f'[options]\naddons_path = {self.main}\n')
         result = self.invoke(self.linked, 'install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
@@ -348,7 +348,7 @@ class WorkspacePythonVersionTests(unittest.TestCase):
         previous = os.umask(0o022)
         self.addCleanup(os.umask, previous)
         self.setUp_fixture()
-        self.profile = self.root / '.odoo19-agent.toml'
+        self.profile = self.root / 'oasis-workspace.toml'
         self.profile.unlink()
         workspace = self.root.parent.parent
         for directory in (workspace, *(path for path in self.root.parents if path.is_relative_to(workspace))):

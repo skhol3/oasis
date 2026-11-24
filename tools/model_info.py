@@ -17,7 +17,7 @@ HELP = USAGE + '''
 Summarize one Odoo model from source without starting Odoo: where it is defined,
 the modules that extend it, its fields, field overrides and methods.
 Scans the Odoo source (odoo/addons, addons), the optional Enterprise source and the
-profile's tooling addon roots; the first module with a given name wins.
+workspace's tooling addon roots; the first module with a given name wins.
 Python files are parsed with ast; no project code is imported or executed, and no
 environment, service or database is used. Odoo/Enterprise source test_* modules and
 tests/, migrations/, upgrades/ and static/ directories are skipped. Mixins named in

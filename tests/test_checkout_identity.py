@@ -14,9 +14,10 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 READER = ROOT / 'tools' / 'config.py'
-PROFILE = (ROOT / 'tests' / 'fixture-profile.toml').read_text()
-# Appended after WORKSPACE_ROOT for a profile: the Odoo 19.0 options, no named environment,
-# then DATA_DIR (empty without [tooling].data_dir) and AGENT_DESTRUCTIVE (ask by default).
+# A workspace file in each checkout (committed, so a linked worktree has its own copy).
+WORKSPACE = (ROOT / 'tests' / 'fixture-workspace.toml').read_text()
+# Appended after WORKSPACE_ROOT: the Odoo 19.0 options, no named environment, then DATA_DIR
+# (empty without [tooling].data_dir) and AGENT_DESTRUCTIVE (ask by default).
 APPENDED = ['ODOO_VERSION=19.0', 'ODOO_SECOND_PORT_OPTION=--gevent-port', 'ODOO_DEMO_OFF_ARGS=--without-demo',
             "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12', "DATA_DIR=''", 'AGENT_DESTRUCTIVE=ask']
 GIT = ['git', '-c', 'user.name=oasis tests', '-c', 'user.email=tests@example.invalid',
@@ -36,17 +37,21 @@ class CheckoutIdentityTests(unittest.TestCase):
     def git(self, cwd, *args):
         subprocess.run([*GIT, '-C', str(cwd), *args], check=True, capture_output=True, env=self.env)
 
-    def project(self, name='proj', profile=PROFILE):
+    def project(self, name='proj'):
         root = self.scratch / name
         root.mkdir()
-        (root / '.odoo19-agent.toml').write_text(profile)
+        (root / 'oasis-workspace.toml').write_text(WORKSPACE)
         return root
+
+    def slug(self, root, line):
+        """The checkout's oasis-checkout.toml with this [tooling].checkout_slug line."""
+        (root / 'oasis-checkout.toml').write_text('[tooling]\n' + line)
 
     def repository(self, name='proj'):
         root = self.project(name)
         self.git(root, 'init', '-q')
-        self.git(root, 'add', '.odoo19-agent.toml')
-        self.git(root, 'commit', '-q', '-m', 'profile')
+        self.git(root, 'add', 'oasis-workspace.toml')
+        self.git(root, 'commit', '-q', '-m', 'workspace')
         return root
 
     def worktree(self, main, name):
@@ -113,6 +118,9 @@ class CheckoutIdentityTests(unittest.TestCase):
         }
         return [f'{name}={shlex.quote(value)}' for name, value in values.items()]
 
+    def workspace_root(self, root):
+        return 'WORKSPACE_ROOT=' + shlex.quote(str(root.resolve()))
+
     def assert_rejected(self, root, message):
         result = self.run_reader(root)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', f'ERROR: {message}\n'))
@@ -129,38 +137,39 @@ class CheckoutIdentityTests(unittest.TestCase):
         linked = self.worktree(self.repository('proj'), 'Feature Branch!')
         self.assertEqual(self.identity(linked), ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=feature_branch'])
 
-    def test_profile_slug_overrides_the_main_checkout(self):
+    def test_checkout_file_slug_overrides_the_main_checkout(self):
         main = self.repository()
-        (main / '.odoo19-agent.toml').write_text(PROFILE + "checkout_slug = 'base'\n")
+        self.slug(main, "checkout_slug = 'base'\n")
         self.assertEqual(self.identity(main), ['CHECKOUT_KIND=main', 'CHECKOUT_SLUG=base'])
 
-    def test_profile_slug_overrides_a_linked_worktree(self):
+    def test_checkout_file_slug_overrides_a_linked_worktree(self):
         linked = self.worktree(self.repository('proj'), 'proj-07.1')
-        (linked / '.odoo19-agent.toml').write_text(PROFILE + "checkout_slug = 'mrp_2'\n")
+        self.slug(linked, "checkout_slug = 'mrp_2'\n")
         self.assertEqual(self.identity(linked), ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=mrp_2'])
 
-    def test_profile_slug_applies_outside_git(self):
-        root = self.project(profile=PROFILE + "checkout_slug = 'solo'\n")
+    def test_checkout_file_slug_applies_outside_git(self):
+        root = self.project()
+        self.slug(root, "checkout_slug = 'solo'\n")
         self.assertEqual(self.identity(root), ['CHECKOUT_KIND=none', 'CHECKOUT_SLUG=solo'])
 
-    def test_invalid_profile_slug_is_rejected_without_assignments(self):
+    def test_invalid_checkout_file_slug_is_rejected_without_assignments(self):
         main = self.repository()
         for value in ("''", "'07.1'", "'Upper'", "'_lead'", "'a" + 'b' * 20 + "'", '7'):
             with self.subTest(value=value):
-                (main / '.odoo19-agent.toml').write_text(PROFILE + f'checkout_slug = {value}\n')
+                self.slug(main, f'checkout_slug = {value}\n')
                 self.assert_rejected(main, 'Invalid tooling checkout slug.')
 
-    def test_twenty_byte_profile_slug_is_accepted(self):
+    def test_twenty_byte_checkout_file_slug_is_accepted(self):
         main = self.repository()
-        (main / '.odoo19-agent.toml').write_text(PROFILE + "checkout_slug = 'a" + '1' * 19 + "'\n")
+        self.slug(main, "checkout_slug = 'a" + '1' * 19 + "'\n")
         self.assertEqual(self.identity(main), ['CHECKOUT_KIND=main', 'CHECKOUT_SLUG=a' + '1' * 19])
 
-    def test_too_long_derived_slug_requires_the_profile_setting(self):
+    def test_too_long_derived_slug_requires_the_checkout_setting(self):
         linked = self.worktree(self.repository('proj'), 'proj-' + 'x' * 21)
         self.assert_rejected(linked, 'Cannot derive a checkout slug from the worktree directory name; '
                                      'set [tooling].checkout_slug.')
 
-    def test_empty_derived_slug_requires_the_profile_setting(self):
+    def test_empty_derived_slug_requires_the_checkout_setting(self):
         linked = self.worktree(self.repository('proj'), 'proj--')
         self.assert_rejected(linked, 'Cannot derive a checkout slug from the worktree directory name; '
                                      'set [tooling].checkout_slug.')
@@ -174,14 +183,14 @@ class CheckoutIdentityTests(unittest.TestCase):
         linked = self.worktree(main, 'proj-07.1')
         outside = self.project('outside')
         main_line = 'CHECKOUT_MAIN_ROOT=' + shlex.quote(str(main.resolve()))
-        # Only LOGS_DIR (empty without [tooling].logs), WORKSPACE_ROOT (empty for a profile) and
+        # Only LOGS_DIR (empty without [tooling].logs), WORKSPACE_ROOT (each checkout's own here) and
         # the Odoo series options, environment and DATA_DIR (APPENDED) follow the identity.
         for root, identity in ((main, ["CHECKOUT_KIND=main", "CHECKOUT_SLUG=''", main_line,
-                                       "LOGS_DIR=''", "WORKSPACE_ROOT=''", *APPENDED]),
+                                       "LOGS_DIR=''", self.workspace_root(main), *APPENDED]),
                                (linked, ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=07_1', main_line,
-                                         "LOGS_DIR=''", "WORKSPACE_ROOT=''", *APPENDED]),
-                               (outside, ["CHECKOUT_KIND=none", "CHECKOUT_SLUG=''",
-                                          "CHECKOUT_MAIN_ROOT=''", "LOGS_DIR=''", "WORKSPACE_ROOT=''", *APPENDED])):
+                                         "LOGS_DIR=''", self.workspace_root(linked), *APPENDED]),
+                               (outside, ["CHECKOUT_KIND=none", "CHECKOUT_SLUG=''", "CHECKOUT_MAIN_ROOT=''",
+                                          "LOGS_DIR=''", self.workspace_root(outside), *APPENDED])):
             with self.subTest(root=root.name):
                 self.assertEqual(self.assignments(root), self.previous_assignments(root) + identity)
 
@@ -197,7 +206,7 @@ class CheckoutIdentityTests(unittest.TestCase):
         main = self.repository('repo')
         nested = main / 'sub project'
         nested.mkdir()
-        (nested / '.odoo19-agent.toml').write_text(PROFILE)
+        (nested / 'oasis-workspace.toml').write_text(WORKSPACE)
         self.assertEqual(self.main_root(nested),
                          'CHECKOUT_MAIN_ROOT=' + shlex.quote(str(nested.resolve())))
 
@@ -212,33 +221,33 @@ class CheckoutIdentityTests(unittest.TestCase):
         # A project directory below the worktree's top level finds the same gitfile.
         nested = linked / 'sub'
         nested.mkdir()
-        (nested / '.odoo19-agent.toml').write_text(PROFILE)
+        (nested / 'oasis-workspace.toml').write_text(WORKSPACE)
         self.assert_failure(nested, self.failures()[0][1], self.LINKED_FAILURE)
 
-    def test_git_failure_in_a_linked_worktree_uses_the_profile_slug(self):
+    def test_git_failure_in_a_linked_worktree_uses_the_checkout_file_slug(self):
         linked = self.worktree(self.repository('proj'), 'proj-07.1')
-        (linked / '.odoo19-agent.toml').write_text(PROFILE + "checkout_slug = 'mrp_2'\n")
+        self.slug(linked, "checkout_slug = 'mrp_2'\n")
         for label, env, _reason in self.failures():
             with self.subTest(failure=label):
                 result = self.run_reader(linked, env)
                 self.assertEqual((result.returncode, result.stderr), (0, ''))
                 lines = result.stdout.splitlines()
                 # The main checkout is unknown without git: CHECKOUT_MAIN_ROOT stays empty.
-                self.assertEqual(lines[-12:], ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=mrp_2',
-                                               "CHECKOUT_MAIN_ROOT=''", "LOGS_DIR=''", "WORKSPACE_ROOT=''", *APPENDED])
+                self.assertEqual(lines[-12:], ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=mrp_2', "CHECKOUT_MAIN_ROOT=''",
+                                               "LOGS_DIR=''", self.workspace_root(linked), *APPENDED])
                 self.assertEqual(lines[:-12], self.previous_assignments(linked))
 
     def test_git_failure_in_a_main_checkout_fails_closed(self):
         main = self.repository('proj')
         nested = main / 'sub'
         nested.mkdir()
-        (nested / '.odoo19-agent.toml').write_text(PROFILE)
+        (nested / 'oasis-workspace.toml').write_text(WORKSPACE)
         for label, env, reason in self.failures():
             for root in (main, nested):
                 with self.subTest(failure=label, root=root.name):
                     self.assert_failure(root, env, f'Cannot determine the checkout identity: git failed ({reason}).')
-        # A profile slug does not replace the identity there: the checkout kind is unknown.
-        (main / '.odoo19-agent.toml').write_text(PROFILE + "checkout_slug = 'base'\n")
+        # A checkout file slug does not replace the identity there: the checkout kind is unknown.
+        self.slug(main, "checkout_slug = 'base'\n")
         self.assert_failure(main, self.failures()[0][1],
                             'Cannot determine the checkout identity: git failed (exit 1: fatal: broken).')
 
@@ -250,7 +259,7 @@ class CheckoutIdentityTests(unittest.TestCase):
                 self.assertEqual((result.returncode, result.stderr), (0, ''))
                 self.assertEqual(result.stdout.splitlines(), self.previous_assignments(root) + [
                     "CHECKOUT_KIND=none", "CHECKOUT_SLUG=''", "CHECKOUT_MAIN_ROOT=''", "LOGS_DIR=''",
-                    "WORKSPACE_ROOT=''", *APPENDED])
+                    self.workspace_root(root), *APPENDED])
 
     def test_a_repository_above_the_git_ceiling_is_not_searched(self):
         # Real git stops at GIT_CEILING_DIRECTORIES (the scratch directory): a .git above it

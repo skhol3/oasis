@@ -6,7 +6,7 @@ if (( $# > 1 )) || [[ "$mode" != "--quick" && "$mode" != "--full" ]]; then
   printf 'Usage: %s [--quick|--full]\n' "$(usage_name)" >&2
   exit 2
 fi
-# The environment's Python must be the declared one ($PYTHON_VERSION: 3.12 for a profile and
+# The environment's Python must be the declared one ($PYTHON_VERSION: the series' default for
 # [tooling].environment, else the selected named environment's python). A mismatch stops here,
 # with the same first line as require_runtime and how to fix it.
 if [[ -x "$PYTHON" ]] \

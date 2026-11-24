@@ -101,7 +101,7 @@ missing, not a regular file or invalid reads as nothing remembered; it is replac
 through a symlink.
 
 Compose lock: `compose-<first 16 hex of sha256(realpath compose_file)>.lock` (0600) directly in
-the user root, shared by every checkout of this user whose profile names that compose file.
+the user root, shared by every checkout of this user whose configuration names that compose file.
 This helper only creates and checks it (a regular file of the current user); common.sh holds
 it with flock(1) around `compose up`.
 """
@@ -246,7 +246,7 @@ def is_odoo_launch(argv, odoo_bin, python=None):
         return False
     if os.path.basename(argv[0]).startswith('python'):
         return True
-    # The interpreter start ran (the profile's python) may have any name, e.g. pypy3.
+    # The interpreter start ran (the configured python) may have any name, e.g. pypy3.
     return bool(python) and (argv[0] == python or os.path.realpath(argv[0]) == os.path.realpath(python))
 
 

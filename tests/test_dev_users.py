@@ -104,7 +104,7 @@ api = SimpleNamespace(Environment=Environment, SUPERUSER_ID=1)
 class DevelopmentUsersTests(unittest.TestCase):
     def setUp(self):
         test_lifecycle.LifecycleTests.setUp(self)
-        self.profile = self.root / '.odoo19-agent.toml'
+        self.profile = self.root / 'oasis-workspace.toml'
         self.profile.write_text(self.profile.read_text() + PROFILE)
         self.state = self.root / 'state.json'
         self.env['FAKE_STATE'] = str(self.state)
@@ -185,8 +185,7 @@ class DevelopmentUsersTests(unittest.TestCase):
             self.assertFalse(self.commands.exists())
 
     def test_slugged_checkout_rejects_main_checkout_name_without_effects(self):
-        self.profile.write_text(self.profile.read_text().replace(
-            "test_prefix = 'cc_test_'\n", "test_prefix = 'cc_test_'\ncheckout_slug = 'wt_1'\n"))
+        (self.root / 'oasis-checkout.toml').write_text("[tooling]\ncheckout_slug = 'wt_1'\n")
         for database in ('cc_dev_coffee', 'cc_dev_wt_1_'):
             result = self.invoke('coffee', database)
             self.assertEqual((result.returncode, result.stdout, result.stderr),
@@ -206,7 +205,7 @@ class DevelopmentUsersTests(unittest.TestCase):
         for profile in (PROFILE + "password = 'not-a-real-secret'\n",
                         PROFILE.replace("['example.group_manager']", '[]'),
                         PROFILE.replace('example.group_manager', 'not-an-xml-id')):
-            self.profile.write_text(test_lifecycle.PROFILE + profile)
+            self.profile.write_text(test_lifecycle.WORKSPACE + profile)
             result = self.invoke('coffee', 'cc_dev_coffee')
             self.assertEqual(result.returncode, 2)
             self.assertEqual(result.stdout, '')
@@ -293,7 +292,7 @@ class DevelopmentUsersTests(unittest.TestCase):
 
     def test_invalid_demo_modules_rejected_before_side_effects(self):
         for modules in ("'purchase_stock'", "['../unsafe']", "['purchase_stock', 'purchase_stock']"):
-            self.profile.write_text(test_lifecycle.PROFILE + PROFILE.replace(
+            self.profile.write_text(test_lifecycle.WORKSPACE + PROFILE.replace(
                 "administrator_login = 'local_admin'", "administrator_login = 'local_admin'\ndemo_modules = " + modules))
             result = self.invoke('--with-demo', 'coffee', 'cc_dev_coffee')
             self.assertEqual((result.returncode, result.stdout, result.stderr),

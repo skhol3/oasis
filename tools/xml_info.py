@@ -20,7 +20,7 @@ List the views of one Odoo model from source without starting Odoo: each base vi
 type (the root tag of its arch), XML id and file:line, and below it the views that extend it.
 A view without a model field takes the model of the view it inherits. Extensions show how many
 changes they make (xpath elements and elements with a position attribute).
-Scans the Odoo source (odoo/addons, addons), the optional Enterprise source and the profile's
+Scans the Odoo source (odoo/addons, addons), the optional Enterprise source and the workspace's
 tooling addon roots; the first module with a given name wins. Odoo/Enterprise source test_*
 modules and tests/, migrations/, upgrades/, static/ and i18n/ directories are skipped.
 
