@@ -322,12 +322,33 @@ class TerminalMenuTests(MenuFixture):
         self.assertIn('-d cc_dev_coffee -u coffee --stop-after-init', self.log())
 
     def test_a_listed_name_made_of_digits_is_taken_as_written(self):
-        self.env.update(FAKE_DATABASES='cc_dev_coffee 2024', FAKE_EXISTS='1')
-        for answer, database in (('2024', '2024'), ('2', '2024'), ('1', 'cc_dev_coffee')):
+        # list-databases lists only prefixed names (v0.12.0 S2), so a module named 2024 holds the rule.
+        (self.root / '2024').mkdir()
+        (self.root / '2024/__manifest__.py').touch()
+        self.env.update(FAKE_DATABASES='cc_dev_coffee', FAKE_EXISTS='1')
+        for answer, module in (('2024', '2024'), ('1', '2024'), ('2', 'coffee')):
             with self.subTest(answer=answer):
-                result = self.terminal(f'2\n3\n1\n{answer}\n')
+                result = self.terminal(f'2\n3\n{answer}\n1\n')
+                self.assertIn('  1) 2024\n  2) coffee\n', result.stdout)
                 self.assertNotIn('Choose a number', result.stdout)
+                self.assertIn(self.command('module-status', module, 'cc_dev_coffee'), result.stdout)
+
+    def test_database_choices_are_the_checkouts_own(self):
+        # The fake service answers every name; list-databases keeps this checkout's (v0.12.0 S2).
+        self.env.update(FAKE_DATABASES='cc_dev_coffee cc_dev_wt_1_coffee cc_test_other cc_test_wt_1_x postgres',
+                        FAKE_EXISTS='1')
+        profile = self.root / '.odoo19-agent.toml'
+        for extra, listed, database in (
+                ('', ['cc_dev_coffee', 'cc_dev_wt_1_coffee', 'cc_test_other', 'cc_test_wt_1_x'], 'cc_dev_coffee'),
+                ("checkout_slug = 'wt_1'\n", ['cc_dev_wt_1_coffee', 'cc_test_wt_1_x'], 'cc_dev_wt_1_coffee')):
+            with self.subTest(slug=extra):
+                profile.write_text(lifecycle.PROFILE + extra)
+                result = self.terminal('2\n3\n1\n1\n')
+                self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+                choices = ''.join(f'  {number}) {name}\n' for number, name in enumerate(listed, 1))
+                self.assertIn(WAITING + '\nDatabase\n' + choices + 'Database (number or name', result.stdout)
                 self.assertIn(self.command('module-status', 'coffee', database), result.stdout)
+                self.assertIn("SELECT datname FROM pg_database WHERE datname LIKE 'cc\\_dev\\_%' ESCAPE", self.log())
 
     def test_a_number_is_not_a_database_name_when_none_is_listed(self):
         result = self.terminal('2\n1\n1\n3\n\nn\n')

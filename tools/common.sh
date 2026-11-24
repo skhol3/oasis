@@ -349,9 +349,43 @@ module_state() {
 }
 
 list_managed_databases() {
-  local dev_like=${DEV_PREFIX//_/\\_} test_like=${TEST_PREFIX//_/\\_}
   wait_for_database >/dev/null
+  query_managed_databases
+}
+
+# The names under both managed prefixes, every namespace, in name order; the service must be up.
+query_managed_databases() {
+  local dev_like=${DEV_PREFIX//_/\\_} test_like=${TEST_PREFIX//_/\\_}
   database_psql -Atqc "SELECT datname FROM pg_database WHERE datname LIKE '$dev_like%' ESCAPE '\\' OR datname LIKE '$test_like%' ESCAPE '\\' ORDER BY datname"
+}
+
+# This checkout's databases (list-databases, and so the menu's database choices), in query order:
+# the prefix query above (every namespace, as gc --all-checkouts needs it), then the namespace
+# rule gc and the trash apply (tools/trash.py owned): a checkout with a slug keeps
+# <prefix><slug>_<name>; the main checkout (or a project outside git) keeps <prefix><name>
+# except the namespaces of its existing linked worktrees (`git worktree list`). The names are
+# filtered in Python, so no slug reaches SQL. Trash names are listed like any other name.
+list_checkout_databases() {
+  local databases
+  # Explicit statuses: errexit does not apply inside a command substitution or an || list.
+  wait_for_database >/dev/null || return $?
+  databases=$(query_managed_databases) || return $?
+  python3 -I -B -c '
+import sys
+from pathlib import Path
+tools, root, dev, test, slug = sys.argv[1:]
+sys.path.insert(0, tools)
+import trash
+try:
+    slugs = trash.gc.checkout_slugs(Path(root))
+except trash.config.InvalidConfig as exc:
+    print(f"ERROR: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+for line in sys.stdin:
+    name = line.strip()
+    if name and trash.owned(name, dev, test, slug, slugs):
+        print(name)
+' "$(dirname "${BASH_SOURCE[0]}")" "$PROJECT_ROOT" "$DEV_PREFIX" "$TEST_PREFIX" "${CHECKOUT_SLUG:-}" <<< "$databases"
 }
 
 managed_database_session_count() {

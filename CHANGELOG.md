@@ -9,8 +9,18 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Added
+
+- `tools/odoo_versions.py` declares the dev features per Odoo series (`dev_option`,
+  `dev_features`, `dev_all`, `dev_reload_packages`). 19.0: `--dev` takes access, qweb, reload,
+  replica and xml; `all` turns on access, qweb, reload and xml; reload needs inotify or watchdog.
+
 ### Changed
 
+- `list-databases`, and so the menu's database choices, lists only the current checkout's
+  databases. A linked worktree (or a checkout with a `checkout_slug`) lists `<prefix><slug>_...`;
+  the main checkout lists its prefixed databases except those of its existing linked worktrees.
+  This is the namespace rule of `gc` and the trash. A bare prefix name is no longer listed.
 - Documentation: `docs/new-workspace.md` (new) sets up a project from an empty folder with one
   `oasis-workspace.toml`: folders, Odoo source, Python environment, compose and environment
   files, a path-free `odoo.conf`, `doctor`, a development database, a first test run and a linked

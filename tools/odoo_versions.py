@@ -13,6 +13,15 @@ Keys:
   odoo.conf could turn demo data back on without it is unverified, so the guard stays.
 - test_tags_implies_stop: whether --test-tags implies --stop-after-init.
 - test_class_filter: whether --test-tags takes `/module:Class.method` (test-module --only).
+- dev_option: the option that turns on developer mode features (`<option>=<feature>,...`).
+- dev_features: every feature that option takes, in the order a selector offers them: the
+  closed set a dev mode choice is built from (no free text). 19.0: odoo/tools/config.py:428-437
+  of the 19.0 source (commit 8a2481dfc); it has no debugger features (pdb, ipdb, wdb, pudb,
+  werkzeug), which older series may have had (unverified: read their source when adding one).
+- dev_all: the features the word `all` turns on (19.0: ALL_DEV_MODE, config.py:29; not replica).
+- dev_reload_packages: the Python packages of which one must be importable for the `reload`
+  feature (19.0: odoo/service/server.py:1663-1675); without any, Odoo logs a warning and
+  disables reload. Empty for a series without `reload`.
 
 Shell tools read one value with `python3 -I -B odoo_versions.py <version> <key>`: a boolean
 prints true or false, a list its items quoted for the shell, anything else its text. An
@@ -32,6 +41,10 @@ CAPABILITIES = {
         'demo_off_args': ['--without-demo'],
         'test_tags_implies_stop': True,
         'test_class_filter': True,
+        'dev_option': '--dev',
+        'dev_features': ['access', 'qweb', 'reload', 'replica', 'xml'],
+        'dev_all': ['access', 'qweb', 'reload', 'xml'],
+        'dev_reload_packages': ['inotify', 'watchdog'],
     },
 }
 
