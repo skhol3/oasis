@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="action_report_subscription" model="ir.actions.report">
+        <field name="name">Subscription</field>
+        <field name="model">coffee.subscription</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">coffee_planner.report_subscription_document</field>
+    </record>
+    <template id="report_subscription_document">
+        <t t-call="web.html_container"/>
+    </template>
+</odoo>

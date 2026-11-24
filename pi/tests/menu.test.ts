@@ -62,7 +62,7 @@ function fixedChoices(modules: string[], databases: string[]) {
 test("parseCatalog reads the core catalog and refuses another version or malformed JSON", () => {
   assert.equal(catalog.project, "/work/a project");
   assert.deepEqual(catalog.groups.map((group) => group.id), ["server", "modules", "tests", "maintenance"]);
-  assert.equal(catalog.actions.length, 20);
+  assert.equal(catalog.actions.length, 21);
   assert.throws(() => parseCatalog(FIXTURE.replace('"catalog_version": 1', '"catalog_version": 2')),
     /^Error: unsupported catalog_version 2 \(this panel reads version 1\); update the oasis layer\.$/);
   assert.throws(() => parseCatalog("not json"), /^Error: the catalog is not JSON: /);
@@ -289,6 +289,7 @@ test("pickerRows lists the groups with their actions; selection skips group rows
   assert.equal(rows.find((row) => row.action?.id === "maintenance.drop_database")?.tag, "confirm");
   assert.equal(rows.find((row) => row.action?.id === "maintenance.worktree")?.tag, "confirm");
   assert.equal(rows.find((row) => row.action?.id === "server.stop")?.tag, "");
+  assert.equal(rows.find((row) => row.action?.id === "modules.overview")?.tag, "");
   assert.equal(moveSelection(rows, 0, 0), 1);
   const lastServer = rows.findIndex((row) => row.action?.id === "server.stop_database");
   assert.equal(rows[lastServer + 1].kind, "group");
@@ -296,7 +297,8 @@ test("pickerRows lists the groups with their actions; selection skips group rows
   assert.equal(moveSelection(rows, lastServer + 2, -1), lastServer);
   assert.equal(moveSelection(rows, 1, -1), 1);
   assert.equal(moveSelection(rows, rows.length - 1, 1), rows.length - 1);
-  assert.equal(moveSelection(rows, 1, 10), 12);
+  // Eleven rows below the first action is the Tests group row: the selection skips it.
+  assert.equal(moveSelection(rows, 1, 11), 13);
   assert.equal(moveSelection(rows, 1, 1000), rows.length - 1);
 });
 

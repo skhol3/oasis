@@ -1,0 +1,7 @@
+<templates>
+    <!-- static/ is skipped: not a view and not a data file. -->
+    <record id="view_static_planner" model="ir.ui.view">
+        <field name="model">coffee.subscription</field>
+        <field name="arch" type="xml"><form/></field>
+    </record>
+</templates>

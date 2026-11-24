@@ -9,6 +9,35 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-24
+
+A one-screen map of a module from source: `module-info`.
+
+### Added
+
+- `module-info <module> [--section <name>]`: a one-screen map of one module from its source,
+  without starting Odoo: manifest header (version, summary or name, depends, addons root),
+  models defined and extended with their field counts and `file:line`, base views per model and
+  type and extensions per inherited view, the menu tree, actions, security (groups, access
+  lines with their flags, record rules), data and demo files in manifest order with crons, files
+  on disk the manifest does not list and listed files that are missing, and the test files with
+  their classes. Python is parsed with `ast`, XML with expat and CSV with `csv`; nothing is
+  imported or executed. Long lists end with `+<n> more`; `--section` prints one section
+  uncapped. An unknown module exits 1 with `module not found: <module>`. The manifest is the
+  first dict literal of `__manifest__.py` (a leading docstring is fine); one that cannot be
+  parsed or holds no literal dict is named in the header as `manifest: unreadable (<reason>)`.
+  An XML id written more than once is shown once with the fields of its writes merged in load
+  order (manifest `data` and `demo` order), and actions and crons end with `(written <n> times)`.
+  Writes from files the manifest does not list, which Odoo never loads, are ignored; an id
+  written only in such files is shown marked `(not loaded: file not in manifest)`. With an
+  unreadable manifest all writes merge in path order and `--section data` names the reason on
+  its first line. New command: nothing existing changes.
+- Agent tool `oasis_module_info` (module, optional section; any given section, even an empty
+  one, reaches the CLI, which reports an invalid one), active in Odoo projects and in the
+  overlay of both subagents (read-only). Some lines of the prompt section were shortened to
+  keep it under 1200 characters.
+- Action menu: **Modules** › "Show a module's overview from source" runs `module-info`.
+
 ## [0.9.0] - 2026-11-23
 
 An action menu to run Odoo operations by hand: `oasis menu` in a terminal and a pop-up panel in
@@ -582,7 +611,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/skhol3/oasis/releases/tag/v0.10.0
 [0.9.0]: https://github.com/skhol3/oasis/releases/tag/v0.9.0
 [0.8.0]: https://github.com/skhol3/oasis/releases/tag/v0.8.0
 [0.7.1]: https://github.com/skhol3/oasis/releases/tag/v0.7.1

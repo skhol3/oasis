@@ -34,6 +34,11 @@ export function viewInfoArgs(params: { model: string; type?: string; module?: st
   ];
 }
 
+export function moduleInfoArgs(params: { module: string; section?: string }): string[] {
+  // Only undefined means no section: an empty or unknown one reaches the CLI, which refuses it.
+  return ["module-info", params.module, ...(params.section !== undefined ? ["--section", params.section] : [])];
+}
+
 export function keyValues(output: string): Record<string, string> {
   const values: Record<string, string> = {};
   for (const line of output.split("\n")) {

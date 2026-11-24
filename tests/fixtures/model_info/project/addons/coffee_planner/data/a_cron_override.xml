@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Sorts before data/cron.xml but the manifest loads it after: its interval wins. -->
+    <record id="ir_cron_renew" model="ir.cron">
+        <field name="interval_number">2</field>
+        <field name="interval_type">weeks</field>
+    </record>
+</odoo>

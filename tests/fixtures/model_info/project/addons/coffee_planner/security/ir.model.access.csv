@@ -1,0 +1,6 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_subscription_user,subscription user,model_coffee_subscription,base.group_user,1,0,0,0
+access_subscription_manager,subscription manager,model_coffee_subscription,group_planner_manager,1,1,1,1
+access_subscription_line,subscription line,model_coffee_subscription_line,,1,1,0,0
+access_subscription_renew,subscription renew,model_coffee_subscription_renew,base.group_user,1,1,1,0
+access_partner_planner,partner planner,base.model_res_partner,base.group_user,1,1,1,0

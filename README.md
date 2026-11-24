@@ -6,7 +6,7 @@ Built with Gentle Shell (`github.com/Gentleman-Programming/gentle-shell`).
 
 ## Install or update
 
-Releases follow Semantic Versioning and are tagged `vX.Y.Z`; see the [changelog](CHANGELOG.md). Install a released version of the Gentle Shell layer with `gentle-shell install git:github.com/skhol3/oasis@v0.9.0`.
+Releases follow Semantic Versioning and are tagged `vX.Y.Z`; see the [changelog](CHANGELOG.md). Install a released version of the Gentle Shell layer with `gentle-shell install git:github.com/skhol3/oasis@v0.10.0`.
 
 With owner authorization, commit the change, run the test suite, then run `install.sh` from this repository:
 
@@ -25,7 +25,7 @@ The installed package contains the six `odoo19-*` directories, `tools/`, `projec
 A thin Pi package (`package.json`, `pi/`) layered over Gentle Shell. It changes nothing in Gentle Shell or Pi; its goal is fewer tokens in Odoo work by wrapping the guarded `oasis` core with compact output. Install it from a release tag, so the sessions load a fixed copy that work in a local checkout cannot change:
 
 ```bash
-gentle-shell install git:github.com/skhol3/oasis@v0.9.0
+gentle-shell install git:github.com/skhol3/oasis@v0.10.0
 ```
 
 To move to a newer release, remove the old entry and install the new tag (`gentle-shell list` shows the installed entry), then `/reload` open sessions:
@@ -44,6 +44,7 @@ Skills still come from `./install.sh` into `~/.agents/skills`, which Gentle Shel
 - Tool `oasis_find_module`: maps a functional name to technical module names by matching the query words against the technical name and the manifest `name`, `summary` and `category` in the profile's addon roots, so the agent needs no `ls` or `grep`.
 - Tool `oasis_model_info`: wraps `oasis model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
 - Tools `oasis_view_info` (model, optional type, module) and `oasis_xmlid_info` (id): wrap `oasis view-info` and `oasis xmlid-info` (see *Views and XML ids without starting Odoo*), so the agent finds a model's views, what extends them and where an XML id is defined or referenced without opening or searching XML files; output is capped at 200 lines.
+- Tool `oasis_module_info` (module, optional section): wraps `oasis module-info` (see *Module overview without starting Odoo*), so the agent sees a module's models, views, menus, actions, security, data files and tests without opening its files; output is capped at 200 lines.
 - Prompt context naming the `oasis_*` tools the session has (a session with none, such as a subagent without the overlay, is pointed to the `oasis` CLI instead) when `.odoo19-agent.toml` is found at or above the working directory, or, without one, an `oasis-workspace.toml` (see *Workspace file*; the project root is then the git top level of the working directory).
 - A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands. In every session it also blocks the agent from running `worktree-init` (through `oasis` or `odoo19`, `tools/worktree-init` or `worktree_init.py`, `--dry-run` included) `migrate` (through `oasis` or `odoo19`, or `tools/migrate` and `tools/migrate.py`, the dry run included) and `menu` (through `oasis` or `odoo19`, or its scripts `tools/menu` and `tools/actions.py` when they are oasis's, `--catalog` included; see *Action menu* for how a script is recognized), which only the user runs; asking only for their help (`--help` or `-h` as the single argument) is allowed, and so is the migration plan: `migrate --plan`, optionally with `--workspace <literal absolute path>` and nothing else. `--plan` can never apply, because the tool refuses it together with `--apply`. It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught. To bypass it, run the command yourself or disable the package. Text that bash would not run is not blocked: substitutions inside single quotes, comments, and heredoc bodies that no command runs, such as `git commit -F - <<'EOF'` or `cat > file <<'EOF'`. A heredoc body is still checked when a command on its opening line runs what it reads: a shell (`bash`, `sh`, `zsh`, `dash`, `ksh`, `mksh`, `ash`, `fish`, `csh`, `tcsh`), `source`, `.`, `eval`, `ssh`, `su` or `xargs`, also behind `sudo`, `doas`, `env`, `timeout`, `setsid`, `stdbuf`, `ionice`, `docker exec` and similar wrappers, on a continued line or after a trailing pipe.
 - `/oasis`: a quick status with the profile, addon modules, configured databases, git worktree, checkout identity and this checkout's server (`server: running on port <port> (pid <pid>)` or `server: stopped`, read from the runtime record). It never starts services or queries databases. `/oasis setup` installs the subagent overlay (see Subagents). `/oasis doctor` shows the `oasis doctor` report (see *Checking the environment*); there is no agent tool for it. `/oasis worktree <feature> <branch>` creates a prepared linked worktree after confirmation (see *Preparing a linked worktree*). `/oasis migrate` shows the `oasis migrate` plan and applies it after confirmation (see *Migrating to the workspace file*). `/oasis menu` (or `alt+o`) opens the action panel (see *Gentle Shell panel* under *Action menu*). Typing `/oasis ` offers its subcommands (`setup`, `doctor`, `migrate`, `worktree`, `menu`).
@@ -271,6 +272,75 @@ referenced by (3):
 - `referenced by (<n>):` lists `file:line` of text references in XML, Python and CSV files (at most 20): the full id anywhere, and inside the defining module also the name alone in `ref`, `parent` and `action` attributes, in comma-separated `groups` lists, `%(name)d`, `ref('name')` and CSV cells (such as the group column of `ir.model.access.csv`). Definition lines and the `inherit_id` reference of a data file are not repeated there; another reference on such a line still counts.
 - `skipped:` lines name files that mention the id but are not well-formed XML; with `xml id not found: <id>` they go to stderr, since one of them may hold the definition.
 - Exit status: 0 when found, 1 with `xml id not found: <id>`, 2 for a usage error.
+
+## Module overview without starting Odoo
+
+```bash
+~/.agents/skills/odoo19/oasis --project /absolute/project module-info sale_mrp
+~/.agents/skills/odoo19/oasis --project /absolute/project module-info sale_mrp --section security
+```
+
+`module-info <module> [--section <name>]` maps one module from its source in about one screen. It finds the module in the same roots as `model-info` (Odoo source, optional Enterprise source, the profile's addon roots; the first module with a name wins, and source `test_*` modules are not modules) and reads only that module's directory: Python with `ast`, XML with expat, CSV with `csv`. Nothing is imported or executed and no environment, service or database is used. `static/`, `i18n/`, `migrations/` and `upgrades/` are skipped, and `tests/` is read only for the tests section.
+
+```text
+module: coffee_planner 19.0.1.2.0 — Plan coffee subscriptions
+depends: coffee, mail
+root: /work/coffee/addons
+models: 4 defined, 2 extended
+  coffee.subscription "Coffee subscription" (+mail.thread): 4 fields, models/subscription.py:4
+  coffee.subscription.line: 2 fields, models/subscription.py:18
+  coffee.planner.mixin "Planner mixin" abstract: 0 fields, models/subscription.py:25
+  coffee.subscription.renew "Renew subscriptions" transient: 1 field, wizard/renew_wizard.py:4
+  extends account.move (+mail.activity.mixin): 2 fields, models/account_move.py:4
+  extends res.partner: 1 field, models/res_partner.py:4
+views: 5 base, 3 extensions
+  coffee.subscription: form view_subscription_form, list view_subscription_list, search view_subscription_search
+  coffee.subscription.renew: form view_subscription_renew_form
+  (no model): qweb report_subscription_document
+  extends account.view_move_form (2): view_move_form_planner, view_move_form_planner_extra
+  extends view_subscription_form (1): view_subscription_form_renew
+menus: 5
+  Planner (menu_planner_root)
+    Subscriptions (menu_planner_subscriptions)
+    Configuration (menu_planner_config)
+      Renew (menu_planner_renew)
+  Planner reports (menu_planner_reports) under base.menu_custom
+actions: 3
+  report action_report_subscription: coffee.subscription "Subscription" qweb-pdf
+  window action_subscription: coffee.subscription "Subscriptions"
+  server action_server_renew: coffee.subscription "Renew now" (written 2 times)
+security: 5 access rules, 2 record rules, 1 group
+  group group_planner_manager "Planner manager"
+  access coffee.subscription: base.group_user r---, group_planner_manager rwcu
+  access coffee.subscription.line: everyone rw--
+  access coffee.subscription.renew, res.partner: base.group_user rwc-
+  rule rule_subscription_user: coffee.subscription, groups base.group_user, group_planner_manager
+  rule rule_subscription_line_global: coffee.subscription.line, global
+data: 8 data files, 1 demo, 1 cron, 1 not in manifest, 1 missing
+  data: security/security.xml, security/ir.model.access.csv, views/subscription_views.xml, views/account_move_views.xml, report/subscription_report.xml, data/cron.xml, data/a_cron_override.xml, views/missing.xml
+  demo: demo/demo.xml
+  cron ir_cron_renew "Renew subscriptions": every 2 weeks, coffee.subscription (written 2 times)
+  not in manifest: data/unused.xml
+  missing on disk: views/missing.xml
+tests: 2 files, 3 classes, 3 test methods
+  tests/common.py: PlannerCommon
+  tests/test_subscription.py: TestSubscription (2 tests), TestRenewWizard (1 test)
+skipped: models/broken.py (Python error at line 2)
+```
+
+- The header gives the manifest `version`, its `summary` (or `name`), `depends` and the addons root the module was found in. The manifest is the first dict literal of `__manifest__.py` (a leading docstring or comment is fine); when the file cannot be parsed or holds no literal dict, `manifest: unreadable (<reason>)` replaces the `depends:` line and the other sections are still printed.
+- `models`: each class that defines a model (`_name`, `"_description"`, `transient` or `abstract`, `(+...)` for `_inherit` mixins) and, as `extends`, each class that extends one (`_inherit` without a new `_name`), with the number of fields the class adds or overrides and its `file:line`.
+- `views`: the base views of each model by type, then the extensions of each inherited view with their count. Only the module's own views count.
+- `menus`: the menu tree with names and XML ids; a top menu whose parent belongs to another module ends with `under <XML id>`.
+- `actions`: window actions with their `res_model`, server actions with their model, reports with their model and type, client and URL actions.
+- `security`: the groups the module defines, the `ir.model.access.csv` lines per model with each group and its flags (`r`ead, `w`rite, `c`reate, `u`nlink, `-` when not granted; `everyone` for a line without a group; models with the same access share a line) and record rules with their model and groups (`global` without groups). A model the module does not name elsewhere is shown as its model XML id (`mrp.model_mrp_bom_line`).
+- `data`: the manifest `data` and `demo` files in order, crons with their interval and model, XML and CSV files on disk that the manifest does not list, and listed files that do not exist.
+- `tests`: the files of `tests/` with their classes and number of test methods.
+- An XML id written more than once (a record the module writes again in another file, or twice in one) is shown once, with the fields of its writes applied in load order: the manifest `data` and `demo` files in their order, and document order within a file. So a later write that changes `res_model`, a name or a cron interval is what you see. It is listed where its first loaded write stands, and actions and crons end with `(written <n> times)`, counting loaded writes only.
+- Odoo never loads a data file the manifest does not list. Its writes are ignored for an id that a listed file also writes (in the example, `data/unused.xml` renames `action_server_renew`, which changes nothing). An id written only in unlisted files is still shown, from those files in path order (its `(written <n> times)` then counts those writes), and ends with `(not loaded: file not in manifest)`; the files themselves appear under `not in manifest:`. When the manifest cannot be read, every file counts as unlisted: all writes are merged in path order and nothing is marked, and `--section data` starts with `manifest: unreadable (<reason>)`.
+- Paths are relative to the module directory, and the module's own XML ids are shown without the module prefix, as its files write them (pass `<module>.<id>` to `xmlid-info`). An empty section prints `<section>: none`; `skipped:` names Python or XML files that could not be parsed.
+- Lists stop at 10 lines, and comma-separated lists at 25 names, each ending with `+<n> more (--section <name>)`. `--section models|views|menus|actions|security|data|tests` prints only that section, uncapped.
+- Exit status: 0 when found, 1 with `module not found: <module>`, 2 for a usage error (unknown option, invalid module name or section).
 
 ## Fresh development database with role accounts
 
@@ -501,7 +571,7 @@ Without `[tooling].logs`, `dev/logs` may stay a link to the main checkout's `dev
 ~/.agents/skills/odoo19/oasis --project /absolute/checkout menu
 ```
 
-- Groups and actions, numbered: **Server** (start in the background, stop, show the end of the server log, status, stop the database service), **Modules** (install with or without demo data, update, module state, a development database with role accounts through `init-dev-database`), **Tests** (a module, one class or method, reusing the test database) and **Databases and maintenance** (create, drop, list and drop leftover test databases with `gc`, `doctor`, the `migrate` plan and `migrate --apply`, `worktree-init`).
+- Groups and actions, numbered: **Server** (start in the background, stop, show the end of the server log, status, stop the database service), **Modules** (install with or without demo data, update, module state, a development database with role accounts through `init-dev-database`, a module's overview from source through `module-info`), **Tests** (a module, one class or method, reusing the test database) and **Databases and maintenance** (create, drop, list and drop leftover test databases with `gc`, `doctor`, the `migrate` plan and `migrate --apply`, `worktree-init`).
 - Inputs: modules come from the checkout's addon roots, databases from `list-databases` (which starts the database service as it does today; the menu prints `Listing databases (this may start the database service)...` first). A database can also be typed; a number picks from the list and is never taken as a name (`Choose a number from 1 to <n>, or type a name.`). Test classes are checked like `test-module --only`. An invalid answer is asked again; `q` quits.
 - Before anything runs it prints `Command: <the exact command>`. Destructive actions then ask you to type the database name (`drop-database`) or `yes` (`stop --database`, `gc --apply`, `migrate --apply`); any other answer prints `Not confirmed: nothing ran.` (exit 1). One action per run; the exit status is the command's.
 - It needs a terminal: with stdin not a TTY it exits 2 with `oasis menu needs a terminal (stdin is not a TTY); run it yourself, or print the actions as JSON with --catalog.` So an agent cannot drive it, even in a form the bash guard does not recognize.

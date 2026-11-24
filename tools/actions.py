@@ -148,6 +148,8 @@ def actions(values: dict, class_filter: bool) -> list[dict]:
         action('modules.init_dev', 'Create a development database with role accounts', 'init-dev-database',
                [flag('demo', '--with-demo'), value('module'), value('database')],
                [MODULE, new_database(), DEMO], terminal_only=True),
+        action('modules.overview', "Show a module's overview from source", 'module-info', [value('module')],
+               [MODULE]),
         *tests,
         action('maintenance.create_database', 'Create a database', 'create-database', [value('database')],
                [new_database()]),
