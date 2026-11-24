@@ -70,8 +70,10 @@ require_python_version() {
   fi
 }
 
-require_runtime() {
-  local path odoo_version series
+# The local paths, the Odoo source release and the Python version of the runtime, without running
+# Odoo (start --print-command); require_runtime also checks what odoo-bin --version reports.
+require_runtime_paths() {
+  local path
   for path in "$PYTHON" "$ODOO_BIN" "$ODOO_CONFIG" "$COMPOSE_FILE" "$ENV_FILE"; do
     if [[ ! -e "$path" ]]; then
       printf 'Missing required local path: %s\n' "$path" >&2
@@ -80,6 +82,11 @@ require_runtime() {
   done
   require_source
   require_python_version
+}
+
+require_runtime() {
+  local odoo_version series
+  require_runtime_paths
   odoo_version=$("$PYTHON" "$ODOO_BIN" --version 2>/dev/null) || return $?
   # The configured series as a whole number in what odoo-bin --version prints.
   series="(^|[^0-9])${ODOO_VERSION//./\\.}([^0-9]|\$)"

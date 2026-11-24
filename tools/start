@@ -20,12 +20,33 @@ set -Eeuo pipefail
 # as Odoo reads it) when given, else the odoo.conf http_interface, 127.0.0.1 for none, 0.0.0.0 or
 # ::. A server that does not listen in time is stopped and its record removed (exit 1). The record,
 # the port rules and stop are the same. A batch run cannot be detached.
+# --print-command, as the first argument only (then --detach may follow, which changes nothing),
+# prints the odoo-bin command line start would exec as one shell-quoted line (shlex.join) on stdout
+# and exits 0: the same configuration options, port choice (and its probes) and passed options, the
+# values of password options shown as *** (server_args.sh print_server_command). Nothing else runs:
+# no database service, no odoo-bin (not even --version), no record, no log, no banner or warning.
+# Refusals are start's. --print-command anywhere else before `--` is refused (exit 2).
 source "$(dirname "$0")/common.sh"
-require_runtime
-detach=false
+print_command=false detach=false
+if [[ ${1:-} == --print-command ]]; then
+  print_command=true
+  shift
+fi
 if [[ ${1:-} == --detach ]]; then
   detach=true
   shift
+fi
+for argument in "$@"; do
+  if [[ "$argument" == -- ]]; then break; fi
+  if [[ "$argument" == --print-command ]]; then
+    printf -- '--print-command must be the first argument.\n' >&2
+    exit 2
+  fi
+done
+if "$print_command"; then
+  require_runtime_paths
+else
+  require_runtime
 fi
 # Guard every database odoo-bin would receive, including optparse's unambiguous
 # abbreviations of --database, before the database service is touched (tools/server_args.sh).
@@ -34,6 +55,10 @@ parse_server_arguments "$@"
 odoo_config_arguments
 if "$informational"; then
   # Odoo prints and exits: no server, no port, no record.
+  if "$print_command"; then
+    print_server_command "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "$@"
+    exit 0
+  fi
   wait_for_database
   exec "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "$@"
 fi
@@ -59,6 +84,10 @@ if "$batch"; then
     second_port=$(runtime_state ephemeral-port ${batch_port:+"$batch_port"})
     port_arguments+=("$ODOO_SECOND_PORT_OPTION=$second_port")
   fi
+  if "$print_command"; then
+    print_server_command "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" "$@"
+    exit 0
+  fi
   wait_for_database
   exec "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" "$@"
 fi
@@ -70,46 +99,10 @@ if [[ -n "$server" ]]; then
   exit 2
 fi
 interface=$(server_interface)
-port_arguments=()
-if [[ -n "$explicit_port" ]]; then
-  if ! valid_port "$explicit_port"; then
-    printf 'Invalid HTTP port: %s\n' "$explicit_port" >&2
-    exit 2
-  fi
-  port=$(( 10#$explicit_port ))
-  if ! probe "$port" "$port"; then
-    busy "$port" 'pass another --http-port'
-    exit 2
-  fi
-else
-  conf_port=$(odoo_conf_option http_port)
-  conf_port=${conf_port:-8069}
-  if [[ "${CHECKOUT_KIND:-}" == linked ]]; then
-    if ! probe $(( conf_port + 1 )) $(( conf_port + 50 )); then
-      printf 'No free HTTP port from %s to %s; pass --http-port or stop another server.\n' \
-        $(( conf_port + 1 )) $(( conf_port + 50 )) >&2
-      exit 2
-    fi
-    port=$found
-  else
-    port=$conf_port
-    if ! probe "$port" "$port"; then
-      busy "$port" 'pass --http-port'
-      exit 2
-    fi
-  fi
-  port_arguments+=("--http-port=$port")
-fi
-if [[ "${CHECKOUT_KIND:-}" == linked ]] && ! "$explicit_gevent"; then
-  gevent_port=$(odoo_conf_option gevent_port)
-  gevent_port=${gevent_port:-8072}
-  if ! probe $(( gevent_port + 1 )) $(( gevent_port + 50 )) "$port"; then
-    printf 'No free gevent port from %s to %s; pass %s or stop another server.\n' \
-      $(( gevent_port + 1 )) $(( gevent_port + 50 )) "$ODOO_SECOND_PORT_OPTION" >&2
-    exit 2
-  fi
-  gevent=$found
-  port_arguments+=("$ODOO_SECOND_PORT_OPTION=$gevent")
+choose_server_ports
+if "$print_command"; then
+  print_server_command "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" "$@"
+  exit 0
 fi
 if "$detach"; then
   source "$(dirname "$0")/compact.sh"
