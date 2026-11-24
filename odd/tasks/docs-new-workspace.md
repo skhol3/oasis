@@ -32,8 +32,8 @@ reference completed. Documentation only, plus tests that pin the behaviour the g
 
 ## Tasks
 
-- T1 [S2-S6] Guide, reference updates and tests — worker — commit: pending
-- T2 Publish — inline — commit: pending
+- [x] T1 [S2-S6] Guide, reference updates and tests — worker — commit: 3d9bef2
+- [x] T2 Publish — inline — merged without a tag (user: "PR y merge, sin tag (recomendado)")
 
 ## Log
 
@@ -47,3 +47,4 @@ reference completed. Documentation only, plus tests that pin the behaviour the g
   Also found, outside scope: bootstrap --apply writes $PROJECT_ROOT/dev/runtime (fails in a workspace
   checkout) and always creates a 3.12 venv; check-environment expects Python 3.12 even for a named
   3.13 environment. The guide creates the environment with uv instead.
+- L3. Suite 565 OK, node 184 OK. User chose "PR y merge, sin tag (recomendado)": merged to main into [Unreleased], no release.
