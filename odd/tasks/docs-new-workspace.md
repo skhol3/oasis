@@ -20,8 +20,8 @@ reference completed. Documentation only, plus tests that pin the behaviour the g
   to the matching oasis-workspace.toml where each key points at its folder.
 - S4. Paths: relative paths resolve from the workspace file's directory (addons_paths from each
   checkout); absolute paths are accepted; the Python environment must be inside the checkout or
-  under a directory whose name ends in `environments`, and may not be, contain or sit inside the
-  Odoo source (`Unsafe tooling environment target.`). Examples of accepted and refused values.
+  under a directory whose name ends in `environments`, and may not be or contain the Odoo source
+  (`Unsafe tooling environment target.`). Examples of accepted and refused values.
   Both the single `[tooling].environment` and `[environments.<name>]` with
   `oasis-checkout.toml` are shown.
 - S5. docs/project-setup.md leads with the workspace file and keeps the legacy
@@ -41,3 +41,9 @@ reference completed. Documentation only, plus tests that pin the behaviour the g
   codigo/<main>-<feature>, config/{.env, odoo.conf, compose.yml, requirements/}, data/, logs/},
   source and environments under the series folder ~/Work/odoo/19.0/. Never copy real values,
   names or credentials into the docs; use a fictional project (acme).
+- L2. Worker mwuv6uid-6-4uy1 found that tools/config.py accepts an environment inside the Odoo
+  source (for example <source>/environments/acme). S4's "or sit inside" was the parent's wording,
+  not the user's and not the code: S4 narrowed to the code's rule (option B), no behaviour change.
+  Also found, outside scope: bootstrap --apply writes $PROJECT_ROOT/dev/runtime (fails in a workspace
+  checkout) and always creates a 3.12 venv; check-environment expects Python 3.12 even for a named
+  3.13 environment. The guide creates the environment with uv instead.
