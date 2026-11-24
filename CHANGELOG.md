@@ -9,6 +9,18 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation: `docs/new-workspace.md` (new) sets up a project from an empty folder with one
+  `oasis-workspace.toml`: folders, Odoo source, Python environment, compose and environment
+  files, a path-free `odoo.conf`, `doctor`, a development database, a first test run and a linked
+  worktree, with an annotated example tree, accepted and refused paths and both environment
+  forms. `docs/workspace-file.md` states that absolute paths are accepted and spells out the
+  environment rule; `docs/project-setup.md` leads with the workspace file and keeps the
+  `.odoo19-agent.toml` profile as the alternative; the README's five-minute start and the
+  documentation index link to the guide. Tests pin the paths, the environment rule and the
+  guide's examples.
+
 ## [0.11.0] - 2026-11-24
 
 Safer destructive operations and server control: dropped databases go to a trash, agents are asked
