@@ -15,7 +15,8 @@ PROGRAMS = ('oasis', 'odoo19')
 PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
           'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases',
           'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'start', 'status',
-          'stop', 'test-module', 'update-module', 'verify-module', 'view-info', 'worktree-init', 'xmlid-info')
+          'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info', 'worktree-init',
+          'xmlid-info')
 
 
 class GlobalCliTests(unittest.TestCase):

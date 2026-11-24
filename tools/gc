@@ -2,14 +2,23 @@
 set -Eeuo pipefail
 source "$(dirname "$0")/oasis_env.sh"
 usage() {
-  printf 'Usage: %s gc [--apply] [--all-checkouts]\n' "$(usage_name)"
+  printf 'Usage: %s gc [--apply] [--all-checkouts] | gc [--apply] --trash [--older-than <days>]\n' "$(usage_name)"
 }
 apply=false
 scope=checkout
-for argument in "$@"; do
+trash=false
+older_than=
+arguments=("$@")
+for (( index = 0; index < ${#arguments[@]}; index++ )); do
+  argument=${arguments[index]}
   case $argument in
     --apply) apply=true ;;
     --all-checkouts) scope=all ;;
+    --trash) trash=true ;;
+    --older-than)
+      index=$(( index + 1 ))
+      older_than=${arguments[index]:-}
+      if [[ ! "$older_than" =~ ^[0-9]+$ ]]; then usage >&2; exit 2; fi ;;
     --help)
       usage
       printf 'Lists the disposable test databases (<test_prefix>...<module>_r<6 hex>, and their _update\n'
@@ -23,12 +32,54 @@ for argument in "$@"; do
       printf 'Development databases and test databases without the run suffix are never\n'
       printf 'touched. A checkout with a slug may drop only its own namespace: run --apply --all-checkouts\n'
       printf 'from the main checkout.\n'
+      printf -- '--trash lists the trash entries of this checkout (see trash --help) dropped at least <days>\n'
+      printf 'days ago (--older-than, default 7), one expired <name> line each, then expired=<n>; with --apply\n'
+      printf 'it closes their sessions, drops them and removes their filestores (dropped <name>, failed <name> on\n'
+      printf 'stderr, then dropped=<n> failed=<m>, exit 1 when m > 0). Without --trash the trash is never touched.\n'
       exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
+if { [[ -n "$older_than" ]] && ! "$trash"; } || { "$trash" && [[ "$scope" == all ]]; }; then
+  usage >&2
+  exit 2
+fi
 source "$(dirname "$0")/common.sh"
 require_runtime
+if "$trash"; then
+  trash_helper() {
+    python3 -B "$(dirname "$0")/trash.py" "$@"
+  }
+  rows=$(list_trash_databases)
+  expired=$(trash_helper expired "$PROJECT_ROOT" "$DEV_PREFIX" "$TEST_PREFIX" "${CHECKOUT_SLUG:-}" "${older_than:-7}" \
+    <<< "$rows")
+  count=0
+  failed=0
+  mapfile -t expired_list <<< "$expired"
+  for database in "${expired_list[@]}"; do
+    [[ -n "$database" ]] || continue
+    if "$apply"; then
+      # drop_trash_database repeats the namespace and trash-name guards.
+      if trash_helper purge "$ODOO_CONFIG" "$database" </dev/null; then
+        printf 'dropped %s\n' "$database"
+        count=$(( count + 1 ))
+      else
+        printf 'failed %s\n' "$database" >&2
+        failed=$(( failed + 1 ))
+      fi
+    else
+      printf 'expired %s\n' "$database"
+      count=$(( count + 1 ))
+    fi
+  done
+  if "$apply"; then
+    printf 'dropped=%s\nfailed=%s\n' "$count" "$failed"
+    if (( failed > 0 )); then exit 1; fi
+  else
+    printf 'expired=%s\n' "$count"
+  fi
+  exit 0
+fi
 if "$apply" && [[ "$scope" == all && -n "${CHECKOUT_SLUG:-}" ]]; then
   printf 'Checkout %s may drop only its own databases (%s%s_*); run gc --apply --all-checkouts from the main checkout.\n' \
     "$CHECKOUT_SLUG" "$TEST_PREFIX" "$CHECKOUT_SLUG" >&2

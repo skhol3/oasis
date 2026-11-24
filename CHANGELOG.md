@@ -9,6 +9,33 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Added
+
+- `trash` (new command): lists the checkout's trash, one `trash <name> original=<name>
+  dropped=<UTC time> age=<d>d<hh>h size=<size>` line per entry, then `trashed=<n>`; `trash restore
+  <trash name>` renames the database and its filestore back, refused when the original name or
+  its filestore path exists, with open sessions (exit 3), or when the name is not a trash entry
+  of this checkout. See `docs/trash.md`.
+- `gc --trash [--older-than <days>]` lists the trash entries dropped at least `<days>` days ago
+  (default 7); with `--apply` it drops them and their filestores (`dropped=<n>`, `failed=<m>`).
+  Plain `gc` and `gc --apply` are unchanged and never touch the trash.
+- Action menu and panel: *List trash*, *Restore from trash* and *Empty trash* (`gc --apply
+  --trash`, typed `yes`).
+
+### Changed
+
+- `drop-database` moves the database to the trash instead of dropping it: it prints the plan
+  (`database=`, `size=`, `sessions=`, `filestore=` or `none`, `trash=`), then renames the
+  database to `<name>_trash_<YYYYMMDD>_<HHMMSS>` (UTC; a name over 63 bytes keeps its first 34
+  bytes plus `_<6 hex of its SHA-256>`) with the comment `oasis-trash original=<name>`, and its
+  filestore directory under the data dir with it. It prints `Database moved to trash: <name> ->
+  <trash name>` instead of `Database dropped: <name>`. A missing database, the usage, the
+  session refusal (exit 3) and `--terminate` are unchanged. The menu action is now *Move a
+  database to the trash*.
+- Contract: names ending in `_trash_<8 digits>_<6 digits>` are reserved for the trash; every
+  command that takes a database refuses them (exit 2), `drop-database` and `module-status`
+  included. The `gc` usage line names `--trash`.
+
 ## [0.10.1] - 2026-11-24
 
 Documentation only: the README is a landing page and the detail lives in docs/.

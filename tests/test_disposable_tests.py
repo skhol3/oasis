@@ -759,11 +759,11 @@ class GcTests(GcFixture):
     def test_usage_and_help(self):
         result = self.gc('--force')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'Usage: {CLI} gc [--apply] [--all-checkouts]\n'))
+                         (2, '', f'Usage: {CLI} gc [--apply] [--all-checkouts] | gc [--apply] --trash [--older-than <days>]\n'))
         self.unchanged()
         result = self.gc('--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertTrue(result.stdout.startswith(f'Usage: {CLI} gc [--apply] [--all-checkouts]\n'))
+        self.assertTrue(result.stdout.startswith(f'Usage: {CLI} gc [--apply] [--all-checkouts] | gc [--apply] --trash [--older-than <days>]\n'))
         self.assertIn('--apply', result.stdout)
         self.unchanged()
 
@@ -915,12 +915,13 @@ class ReservedRunNameTests(DisposableFixture):
         result = self.cli('drop-database', database)
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, f'Database does not exist: {database}\n', ''))
-        self.env['FAKE_EXISTS'] = '1'
+        Path(str(self.commands) + '.databases').write_text(f'{database}\n')
         self.commands.unlink()
         result = self.cli('drop-database', database)
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, f'Database dropped: {database}\n', ''))
-        [drop] = [entry for entry in entries(self.log()) if 'exec dropdb -U' in entry]
-        self.assertTrue(drop.endswith(f' sh {database}'), drop)
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertRegex(result.stdout, rf'\nDatabase moved to trash: {database} -> {database}_trash_\d{{8}}_\d{{6}}\n')
+        [rename] = [entry for entry in entries(self.log()) if 'ALTER DATABASE' in entry]
+        self.assertIn(f'ALTER DATABASE "{database}" RENAME TO "{database}_trash_', rename)
 
 
 if __name__ == '__main__':

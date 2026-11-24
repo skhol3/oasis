@@ -104,6 +104,7 @@ of a checkout and runs them by hand. [Docs →](docs/action-menu.md)
 | [Servers and ports](docs/servers-and-ports.md) | `start`, `stop`, `status` and ports per checkout |
 | [Tests and test databases](docs/testing.md) | `test-module`, `verify-module`, `--only`, `--reuse` |
 | [Disposable test databases](docs/disposable-test-databases.md) | Per-run databases and `gc` |
+| [Database trash](docs/trash.md) | `drop-database` moves to the trash; `trash restore`, `gc --trash` |
 | [Development database](docs/dev-database.md) | `init-dev-database` with role accounts and demo data |
 | [Static inspection](docs/static-inspection.md) | `model-info`, `view-info`, `xmlid-info`, `module-info` |
 | [Lint one module](docs/lint-module.md) | `lint-module` with the project's Pylint rcfile |

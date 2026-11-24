@@ -62,7 +62,7 @@ function fixedChoices(modules: string[], databases: string[]) {
 test("parseCatalog reads the core catalog and refuses another version or malformed JSON", () => {
   assert.equal(catalog.project, "/work/a project");
   assert.deepEqual(catalog.groups.map((group) => group.id), ["server", "modules", "tests", "maintenance"]);
-  assert.equal(catalog.actions.length, 21);
+  assert.equal(catalog.actions.length, 24);
   assert.throws(() => parseCatalog(FIXTURE.replace('"catalog_version": 1', '"catalog_version": 2')),
     /^Error: unsupported catalog_version 2 \(this panel reads version 1\); update the oasis layer\.$/);
   assert.throws(() => parseCatalog("not json"), /^Error: the catalog is not JSON: /);
@@ -217,7 +217,7 @@ test("confirmRun: typed database or yes for destructive actions, a plain confirm
   const command = "oasis drop-database cc_dev_x";
   let run = scripted(["cc_dev_x"]);
   assert.equal(await confirmRun(action("maintenance.drop_database"), drop, command, run.prompter), true);
-  assert.deepEqual(run.calls, [`input Drop a database\n${command}\nType the database name to confirm (cc_dev_x)`]);
+  assert.deepEqual(run.calls, [`input Move a database to the trash\n${command}\nType the database name to confirm (cc_dev_x)`]);
   for (const typed of ["cc_dev_y", "", undefined]) {
     run = scripted([typed]);
     assert.equal(await confirmRun(action("maintenance.drop_database"), drop, command, run.prompter), false);

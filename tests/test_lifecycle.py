@@ -254,16 +254,24 @@ exit 0
         self.assertNotIn('odoo ', self.commands.read_text())
 
     def test_drop_requires_terminate_then_explicit_terminate(self):
-        self.env.update(FAKE_EXISTS='1', FAKE_SESSIONS='2')
+        # Only cc_dev_coffee exists (its trash name is free); drop-database moves it to the trash.
+        Path(str(self.commands) + '.databases').write_text('cc_dev_coffee\n')
+        self.env.update(FAKE_SESSIONS='2')
+        plan = (r'database=cc_dev_coffee\nsize=unknown\nsessions=2\nfilestore=none\n'
+                r'trash=(cc_dev_coffee_trash_\d{8}_\d{6})\n')
         result = self.invoke('drop-database', 'cc_dev_coffee')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (3, '', 'Refusing to drop database with 2 active session(s): cc_dev_coffee\n'
+        self.assertEqual((result.returncode, result.stderr),
+                         (3, 'Refusing to drop database with 2 active session(s): cc_dev_coffee\n'
                           'Retry with --terminate only after confirming those sessions may be closed.\n'))
+        self.assertRegex(result.stdout, rf'\A{plan}\Z')
         self.assertNotIn('pg_terminate_backend', self.commands.read_text())
+        self.assertNotIn('ALTER DATABASE', self.commands.read_text())
         result = self.invoke('drop-database', 'cc_dev_coffee', '--terminate')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (0, 'Database dropped: cc_dev_coffee\n', ''))
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertRegex(result.stdout, rf'\A{plan}Database moved to trash: cc_dev_coffee -> \1\n'
+                                        r'Restore it with: oasis trash restore \1\n\Z')
         self.assertIn('pg_terminate_backend', self.commands.read_text())
+        self.assertNotIn('dropdb', self.commands.read_text())
 
     def test_update_uses_explicit_existing_managed_database_and_test_defaults(self):
         result = self.invoke('update-module', 'coffee', 'other_db')

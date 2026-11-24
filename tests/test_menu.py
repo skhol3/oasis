@@ -22,8 +22,8 @@ ENTRY = str((ROOT / 'oasis').resolve())
 ACTIONS = ['server.start', 'server.stop', 'server.logs', 'server.status', 'server.stop_database',
            'modules.install', 'modules.update', 'modules.status', 'modules.init_dev', 'modules.overview',
            'tests.module', 'tests.class', 'tests.reuse',
-           'maintenance.create_database', 'maintenance.drop_database', 'maintenance.gc',
-           'maintenance.gc_apply', 'maintenance.doctor', 'maintenance.migrate_plan',
+           'maintenance.create_database', 'maintenance.drop_database', 'maintenance.trash',
+           'maintenance.trash_restore', 'maintenance.trash_empty', 'maintenance.gc', 'maintenance.gc_apply', 'maintenance.doctor', 'maintenance.migrate_plan',
            'maintenance.migrate', 'maintenance.worktree']
 ACTION_KEYS = ['argv', 'command', 'confirm', 'destructive', 'group', 'id', 'inputs', 'kind', 'label',
                'terminal_only', 'user_run']
@@ -164,8 +164,31 @@ class CatalogTests(MenuFixture):
         self.assertEqual(actions['modules.update']['argv'], [
             *prefix, 'update-module', {'compact': '--compact'}, {'input': 'module'}, {'input': 'database'}])
         self.assertEqual((actions['maintenance.drop_database']['confirm'], actions['maintenance.gc_apply']['confirm'],
-                          actions['server.stop_database']['confirm'], actions['maintenance.migrate']['confirm']),
-                         ('database', 'yes', 'yes', 'yes'))
+                          actions['server.stop_database']['confirm'], actions['maintenance.migrate']['confirm'],
+                          actions['maintenance.trash_empty']['confirm']),
+                         ('database', 'yes', 'yes', 'yes', 'yes'))
+        # The trash (S2): drop moves to it; list, restore and empty it.
+        self.assertEqual(actions['maintenance.drop_database']['label'], 'Move a database to the trash')
+        self.assertEqual(actions['maintenance.trash'], {
+            'id': 'maintenance.trash', 'group': 'maintenance', 'label': 'List trash', 'kind': 'command',
+            'command': 'trash', 'argv': [*prefix, 'trash'], 'inputs': [], 'destructive': False, 'confirm': None,
+            'user_run': False, 'terminal_only': False})
+        self.assertEqual(actions['maintenance.trash_restore'], {
+            'id': 'maintenance.trash_restore', 'group': 'maintenance', 'label': 'Restore from trash',
+            'kind': 'command', 'command': 'trash', 'argv': [*prefix, 'trash', 'restore', {'input': 'trash'}],
+            'inputs': [{'id': 'trash', 'label': 'Trash name (as listed by List trash)', 'kind': 'text',
+                        'source': None, 'required': True, 'allow_new': False, 'pattern': '^[A-Za-z0-9_]+$',
+                        'error': 'Database name must use only letters, numbers, and underscores.',
+                        'default': None, 'hint': None}],
+            'destructive': False, 'confirm': None, 'user_run': False, 'terminal_only': False})
+        self.assertEqual(actions['maintenance.trash_empty'], {
+            'id': 'maintenance.trash_empty', 'group': 'maintenance', 'label': 'Empty trash', 'kind': 'command',
+            'command': 'gc', 'argv': [*prefix, 'gc', '--apply', '--trash',
+                                      {'input': 'older_than', 'option': '--older-than'}],
+            'inputs': [{'id': 'older_than', 'label': 'Dropped at least this many days ago', 'kind': 'text',
+                        'source': None, 'required': False, 'allow_new': False, 'pattern': '^[0-9]+$',
+                        'error': 'Days must be a whole number.', 'default': None, 'hint': 'Enter for 7'}],
+            'destructive': True, 'confirm': 'yes', 'user_run': False, 'terminal_only': False})
         self.assertEqual([key for key, action in actions.items() if action['user_run']],
                          ['maintenance.migrate', 'maintenance.worktree'])
         self.assertEqual([key for key, action in actions.items() if action['terminal_only']], ['modules.init_dev'])
@@ -260,20 +283,25 @@ class TerminalMenuTests(MenuFixture):
         self.assertIn('-d cc_dev_coffee -i coffee', self.log())
 
     def test_drop_requires_typing_the_database_name(self):
-        self.env.update(FAKE_DATABASES='cc_dev_coffee cc_test_other', FAKE_EXISTS='1')
+        self.env.update(FAKE_DATABASES='cc_dev_coffee cc_test_other')
+        # Only cc_dev_coffee exists, so its trash name is free.
+        Path(str(self.commands) + '.databases').write_text('cc_dev_coffee\n')
         result = self.terminal('4\n2\n1\nn\ncc_dev_coffe\n')
         self.assertEqual((result.returncode, result.stderr), (1, ''), result.stdout)
         self.assertIn('  1) cc_dev_coffee\n  2) cc_test_other\n', result.stdout)
         self.assertIn(self.command('drop-database', 'cc_dev_coffee'), result.stdout)
         self.assertTrue(result.stdout.endswith('Not confirmed: nothing ran.\n'), result.stdout)
-        self.assertNotIn('dropdb', self.log())
+        self.assertNotIn('ALTER DATABASE', self.log())
         result = self.terminal('4\n2\n1\nn\ncc_dev_coffee\n')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         # The command first, then the confirmation (the typed answer echoes on the terminal only).
-        self.assertTrue(result.stdout.endswith(self.command('drop-database', 'cc_dev_coffee') +
-                                               'Type the database name to confirm: '
-                                               'Database dropped: cc_dev_coffee\n'), result.stdout)
-        self.assertIn('dropdb', self.log())
+        self.assertRegex(result.stdout, re.escape(self.command('drop-database', 'cc_dev_coffee') +
+                                                  'Type the database name to confirm: database=cc_dev_coffee\n') +
+                         r'size=unknown\nsessions=0\nfilestore=none\ntrash=(cc_dev_coffee_trash_\d{8}_\d{6})\n'
+                         r'Database moved to trash: cc_dev_coffee -> \1\n'
+                         r'Restore it with: oasis trash restore \1\n\Z')
+        self.assertIn('ALTER DATABASE "cc_dev_coffee" RENAME TO "cc_dev_coffee_trash_', self.log())
+        self.assertNotIn('dropdb', self.log())
 
     def test_yes_confirmation_for_stopping_the_database_service(self):
         result = self.terminal('1\n5\nno\n')

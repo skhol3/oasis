@@ -84,13 +84,20 @@ def checkout_slugs(root):
     return slugs
 
 
+def foreign_namespaces(slugs, prefix, slug):
+    """The namespaces of the other checkouts (slugs) that are longer than and start with this
+    checkout's namespace under prefix: names there belong to them (tools/trash.py uses it too)."""
+    namespace = prefix + (f'{slug}_' if slug else '')
+    others = [f'{prefix}{other}_' for other in slugs if other != slug]
+    return [other for other in others if len(other) > len(namespace) and other.startswith(namespace)]
+
+
 def orphans(names, root, prefix, slug, scope, configured=''):
     live = runtime_state.live_run_databases()
     namespace = prefix + (f'{slug}_' if slug else '')
     excluded = []
     if scope != 'all':
-        excluded = [f'{prefix}{other}_' for other in checkout_slugs(root) if other != slug]
-        excluded = [other for other in excluded if len(other) > len(namespace) and other.startswith(namespace)]
+        excluded = foreign_namespaces(checkout_slugs(root), prefix, slug)
     owned = prefix if scope == 'all' else namespace
     reserved = {configured, f'{configured}_update'} if configured else set()
     for name in names:

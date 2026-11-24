@@ -50,6 +50,9 @@ CLASS_ERROR = '--only takes a test class or Class.method.'
 DATABASE_PATTERN = r'^[A-Za-z0-9_]+$'
 DATABASE_ERROR = 'Database name must use only letters, numbers, and underscores.'
 MODULE_NAME = re.compile(r'[A-Za-z0-9_]+')
+# gc --older-than takes whole days.
+DAYS_PATTERN = r'^[0-9]+$'
+DAYS_ERROR = 'Days must be a whole number.'
 WAITING = 'Listing databases (this may start the database service)...'
 LOG_LINES = '200'
 HELP = '''Shows the oasis actions of this checkout as numbered menus in a terminal: choose a group, an
@@ -153,8 +156,15 @@ def actions(values: dict, class_filter: bool) -> list[dict]:
         *tests,
         action('maintenance.create_database', 'Create a database', 'create-database', [value('database')],
                [new_database()]),
-        action('maintenance.drop_database', 'Drop a database', 'drop-database',
+        action('maintenance.drop_database', 'Move a database to the trash', 'drop-database',
                [value('database'), flag('terminate', '--terminate')], [database(), TERMINATE], confirm='database'),
+        action('maintenance.trash', 'List trash', 'trash'),
+        action('maintenance.trash_restore', 'Restore from trash', 'trash', ['restore', value('trash')],
+               [field('trash', 'Trash name (as listed by List trash)', 'text', pattern=DATABASE_PATTERN,
+                      error=DATABASE_ERROR)]),
+        action('maintenance.trash_empty', 'Empty trash', 'gc', ['--apply', '--trash', option('older_than', '--older-than')],
+               [field('older_than', 'Dropped at least this many days ago', 'text', required=False,
+                      pattern=DAYS_PATTERN, error=DAYS_ERROR, hint='Enter for 7')], confirm='yes'),
         action('maintenance.gc', 'List leftover test databases', 'gc'),
         action('maintenance.gc_apply', 'Drop leftover test databases', 'gc', ['--apply'], confirm='yes'),
         action('maintenance.doctor', 'Check the environment (doctor)', 'doctor'),
