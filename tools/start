@@ -6,7 +6,9 @@ set -Eeuo pipefail
 # http_port (8069 when absent), a linked worktree the first free port after it; an explicit
 # -p/--http-port wins. The record also names the database given with -d/--database, if any. A
 # linked worktree also gets a free second (gevent) port, passed with the Odoo series' option
-# ($ODOO_SECOND_PORT_OPTION from config.py) unless one is given.
+# ($ODOO_SECOND_PORT_OPTION from config.py) unless one is given. A server started without
+# -d/--database prints `WARNING: no database given (-d); Odoo will use odoo.conf's db_name (<name>).`
+# to stderr when odoo.conf names one (server_args.sh warn_without_database); nothing else changes.
 # A batch run (--stop-after-init) serves nothing: no server check, no port check, no record;
 # like test runs it gets a free ephemeral --http-port and a distinct free second port (explicit
 # ones are passed as given).
@@ -113,6 +115,7 @@ if "$detach"; then
   source "$(dirname "$0")/compact.sh"
   log=$(server_log_path)
 fi
+warn_without_database
 wait_for_database
 if "$detach"; then
   exec python3 -I -B "$(dirname "$0")/runtime_state.py" detach "$PROJECT_ROOT" "$port" "$log" \

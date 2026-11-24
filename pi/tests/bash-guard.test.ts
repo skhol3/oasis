@@ -116,8 +116,8 @@ test("allows other oasis and odoo19 commands and reading or testing worktree-ini
 test("blockReason for worktree-init sends the user to /oasis worktree", () => {
   assert.equal(
     blockReason("worktree-init", "/work/coffee"),
-    "worktree-init creates links to environment files; ask the user to run /oasis worktree <feature> " +
-      "<branch> in Gentle Shell or the command in a terminal.",
+    "worktree-init adds a git worktree and branch for the user; ask the user to run /oasis worktree " +
+      "<feature> <branch> in Gentle Shell or the command in a terminal.",
   );
 });
 

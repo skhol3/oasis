@@ -20,7 +20,7 @@ import test_lifecycle as lifecycle
 HELPER = lifecycle.STAGE / 'tools' / 'odoo_addons_path.py'
 GIT = ['git', '-c', 'user.name=oasis tests', '-c', 'user.email=tests@example.invalid',
        '-c', 'init.defaultBranch=main', '-c', 'commit.gpgsign=false']
-SHARED_PROFILE = (lifecycle.PROFILE
+SHARED_PROFILE = (lifecycle.WORKSPACE
                   .replace("config = 'dev/odoo.conf'", "config = '../config/odoo.conf'")
                   .replace("env_file = 'dev/.env'", "env_file = '../config/runtime-env'")
                   .replace("compose = 'dev/compose.yml'", "compose = '../config/compose.yml'")
@@ -54,14 +54,14 @@ def shared_layout(test, profile=SHARED_PROFILE):
     test.http_port = free_pair()
     test.gevent_port = free_pair(excluded=(test.http_port, test.http_port + 1))
     write_conf(test, f'{test.enterprise},{test.main},{test.odoo_addons}')
-    (test.main / '.odoo19-agent.toml').write_text(profile)
+    (test.main / 'oasis-workspace.toml').write_text(profile)
 
     def git(*args):
         subprocess.run([*GIT, '-C', str(test.main), *args], check=True, capture_output=True,
                        env=test.env)
 
     git('init', '-q')
-    git('add', '.odoo19-agent.toml', 'coffee/__manifest__.py')
+    git('add', 'oasis-workspace.toml', 'coffee/__manifest__.py')
     git('commit', '-q', '-m', 'profile and module')
     test.linked = test.main.parent / 'a project-wt'
     git('worktree', 'add', '-q', '-b', 'wt', str(test.linked))
@@ -199,7 +199,7 @@ class SharedConfTests(unittest.TestCase):
                     addons=f'{self.linked},{self.odoo_addons}')])
 
     def test_linked_worktree_with_its_own_conf_adds_no_flag(self):
-        profile = self.linked / '.odoo19-agent.toml'
+        profile = self.linked / 'oasis-workspace.toml'
         profile.write_text(SHARED_PROFILE.replace("'../config/odoo.conf'", "'dev/odoo.conf'"))
         own = self.linked / 'dev/odoo.conf'
         own.parent.mkdir()
@@ -259,17 +259,16 @@ class SharedConfTests(unittest.TestCase):
                 self.assertEqual(self.odoo_lines(), [self.odoo_call(
                     '-d', 'cc_dev_x', '--stop-after-init', addons=addons)])
 
-    def break_git_with_profile_slug(self):
-        """git fails in the linked worktree, whose profile sets checkout_slug (main checkout unknown)."""
-        profile = self.linked / '.odoo19-agent.toml'
-        profile.write_text(profile.read_text().replace(
-            "test_prefix = 'cc_test_'\n", "test_prefix = 'cc_test_'\ncheckout_slug = 'wt'\n"))
+    def break_git_with_checkout_slug(self):
+        """git fails in the linked worktree, whose oasis-checkout.toml sets checkout_slug (main
+        checkout unknown)."""
+        (self.linked / 'oasis-checkout.toml').write_text("[tooling]\ncheckout_slug = 'wt'\n")
         fake = self.bindir / 'git'
         fake.write_text('#!/bin/sh\necho "fatal: broken" >&2\nexit 1\n')
         fake.chmod(0o755)
 
     def test_without_git_a_shared_conf_is_not_used_with_the_main_checkout_addons(self):
-        self.break_git_with_profile_slug()
+        self.break_git_with_checkout_slug()
         message = (f'ERROR: Cannot move the addons_path of {self.conf} to this worktree: git failed, '
                    'so the main checkout is unknown.\n')
         for command, args in (('test-module', ('coffee',)), ('start', ()),
@@ -281,8 +280,8 @@ class SharedConfTests(unittest.TestCase):
                 self.assertEqual(self.odoo_lines(), [])
 
     def test_without_git_an_own_conf_runs_unchanged(self):
-        self.break_git_with_profile_slug()
-        profile = self.linked / '.odoo19-agent.toml'
+        self.break_git_with_checkout_slug()
+        profile = self.linked / 'oasis-workspace.toml'
         profile.write_text(profile.read_text().replace("'../config/odoo.conf'", "'dev/odoo.conf'"))
         own = self.linked / 'dev/odoo.conf'
         own.parent.mkdir()
@@ -400,7 +399,7 @@ class SharedConfDevelopmentTests(unittest.TestCase):
                                      '--stop-after-init', '--no-http', '--log-level=critical']])
 
     def test_without_git_a_shared_conf_is_not_initialized_with_the_main_checkout_addons(self):
-        SharedConfTests.break_git_with_profile_slug(self)
+        SharedConfTests.break_git_with_checkout_slug(self)
         self.root = self.linked
         code, output = self.terminal('coffee', 'cc_dev_wt_coffee')
         # Refused before any prompt or service call, like the other Odoo-starting commands.

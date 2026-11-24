@@ -13,14 +13,14 @@ import {
 import { withHeartbeat } from "../lib/heartbeat.ts";
 import { DECISION_ENTRY, type GateEffects, settingReader, toolCallRouter } from "../lib/destructive.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
-import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/project.ts";
+import { findWorkspaceFile, legacyProfile, notProject, projectContext, projectRootResolver } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
 import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
-import { type CatalogAction, menuShortcut } from "../lib/menu.ts";
+import { type Answers, menuShortcut, type PickerChoice, RunForm } from "../lib/menu.ts";
 import { actionPanel, type ExecPurpose } from "../lib/panel.ts";
 import { readTail } from "../lib/log-tail.ts";
-import { LogPanel, MENU_ENTRY, MenuPanel, renderMenuEntry } from "../ui/menu-panel.ts";
+import { LogPanel, MENU_ENTRY, MenuPanel, renderMenuEntry, RunFormPanel } from "../ui/menu-panel.ts";
 import {
   formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, moduleInfoArgs, testModuleArgs, updateModuleArgs,
   viewInfoArgs,
@@ -58,10 +58,6 @@ function readLog(path: string): string {
   }
 }
 
-function notProject(cwd: string): string {
-  return `no .odoo19-agent.toml or oasis-workspace.toml at or above ${cwd}`;
-}
-
 export default function oasisLayer(pi: ExtensionAPI) {
   async function gitTopLevel(start: string): Promise<string | null> {
     try {
@@ -96,8 +92,8 @@ export default function oasisLayer(pi: ExtensionAPI) {
     return text(formatPlain(result, maxLines), { exit: result.code });
   }
 
-  // Resolved profile from tools/config.py (read-only): values, or the error it reported.
-  async function profileConfig(root: string): Promise<{ config?: Record<string, string>; error?: string }> {
+  // The resolved configuration from tools/config.py (read-only): values, or the error it reported.
+  async function projectConfig(root: string): Promise<{ config?: Record<string, string>; error?: string }> {
     const config = await pi.exec("python3", ["-B", CONFIG_PY, root], { cwd: root, timeout: STATUS_TIMEOUT_MS });
     if (config.code === 0) return { config: parseAssignments(config.stdout) };
     return { error: config.stderr.trim() || `config.py exited with ${config.code}` };
@@ -110,7 +106,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     const known = versions.get(root);
     if (known) return known;
     try {
-      const version = (await profileConfig(root)).config?.ODOO_VERSION;
+      const version = (await projectConfig(root)).config?.ODOO_VERSION;
       if (version) versions.set(root, version);
       return version;
     } catch {
@@ -131,11 +127,11 @@ export default function oasisLayer(pi: ExtensionAPI) {
     return { serverError: shown.stderr.trim() || `runtime_state.py exited with ${shown.code}` };
   }
 
-  // Read-only status: the profile, addon roots, git state and this checkout's server record.
+  // Read-only status: the configuration, addon roots, git state and this checkout's server record.
   // Never starts services or queries databases.
   async function projectStatus(root: string): Promise<StatusInput> {
     const status: StatusInput = { root, modules: [], git: null };
-    const { config, error } = await profileConfig(root);
+    const { config, error } = await projectConfig(root);
     if (config) {
       status.config = config;
       status.modules = addonRoots(config).map((addons) => ({ root: addons, names: listModules(addons) }));
@@ -269,9 +265,10 @@ export default function oasisLayer(pi: ExtensionAPI) {
   // The action panel (alt+o or OASIS_MENU_KEY, and /oasis menu): user-run only, no agent tool opens
   // it. lib/panel.ts decides everything (catalog, inputs, confirmation, run, result); this adapter
   // gives it pi.exec in the project root, the Pi dialogs and the overlays (the picker, with the
-  // checkout's server state from runtime_state in its header, and the live server log, which reads
-  // the end of server.log again every second while open), and records results as custom session
-  // entries (pi.appendEntry with an entry renderer): Pi shows them but never sends them to the model.
+  // checkout's server state from runtime_state in its header, the start / restart form, and the live
+  // server log, which reads the end of server.log again every second while open), records results as
+  // custom session entries (pi.appendEntry with an entry renderer): Pi shows them but never sends
+  // them to the model, and remembers the action that ran for Repeat (runtime_state.py remember).
   pi.registerEntryRenderer(MENU_ENTRY, renderMenuEntry);
   const EXEC_TIMEOUTS: Record<ExecPurpose, number> = {
     catalog: STATUS_TIMEOUT_MS, list: TOOL_TIMEOUT_MS, run: MENU_TIMEOUT_MS,
@@ -285,6 +282,11 @@ export default function oasisLayer(pi: ExtensionAPI) {
     readLog,
     appendEntry: (entry) => pi.appendEntry(MENU_ENTRY, entry),
     serverState: (root) => serverState(root),
+    remember: async (root, action, answers) => {
+      const result = await pi.exec("python3", ["-I", "-B", RUNTIME_STATE_PY, "remember", root, action,
+        JSON.stringify(answers)], { cwd: root, timeout: STATUS_TIMEOUT_MS });
+      if (result.code !== 0) throw new Error(result.stderr.trim() || `runtime_state.py exited with ${result.code}`);
+    },
   });
 
   function menu(ctx: ExtensionContext): Promise<void> {
@@ -292,8 +294,16 @@ export default function oasisLayer(pi: ExtensionAPI) {
       mode: ctx.mode,
       cwd: ctx.cwd,
       ui: {
-        pick: (catalog, header) => ctx.ui.custom<CatalogAction | undefined>(
+        pick: (catalog, header) => ctx.ui.custom<PickerChoice | undefined>(
           (tui, theme, keybindings, done) => new MenuPanel(catalog, header, tui, theme, keybindings, done),
+          {
+            overlay: true,
+            overlayOptions: { anchor: "center", width: "80%", minWidth: 40, maxHeight: "90%" },
+            blocked: { kind: "question", message: "oasis menu" },
+          },
+        ),
+        form: (spec) => ctx.ui.custom<Answers | undefined>(
+          (tui, theme, keybindings, done) => new RunFormPanel(new RunForm(spec), tui, theme, keybindings, done),
           {
             overlay: true,
             overlayOptions: { anchor: "center", width: "80%", minWidth: 40, maxHeight: "90%" },
@@ -331,7 +341,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
   });
 
   const COMMAND_DESCRIPTION =
-    "Odoo project status: profile, addon modules, databases, git worktree and this checkout's server; " +
+    "Odoo project status: configuration, addon modules, databases, git worktree and this checkout's server; " +
     SUBCOMMAND_SUMMARY;
   // One entry per subcommand of the table in lib/commands.ts, which also drives completion and usage.
   type CommandContext = Parameters<Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]>[1];
@@ -399,9 +409,11 @@ export default function oasisLayer(pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     const root = await projectRoot(ctx.cwd);
     if (!root) return;
-    // A checkout without profile names its workspace file (null when the root holds the profile).
-    // Name only the oasis tools this session has: a subagent without the overlay has none.
-    const context = projectContext(root, findWorkspaceFile(root), pi.getActiveTools(), await projectVersion(root));
+    // The checkout's workspace file; null when the root holds a legacy profile, which config.py
+    // refuses (the context then says so). Name only the oasis tools this session has: a subagent
+    // without the overlay has none.
+    const workspace = legacyProfile(root) ? null : findWorkspaceFile(root);
+    const context = projectContext(root, workspace, pi.getActiveTools(), await projectVersion(root));
     const sections = event.systemPromptOptions?.sections;
     if (sections) {
       sections.oasis = context;
@@ -412,13 +424,14 @@ export default function oasisLayer(pi: ExtensionAPI) {
 
   // Agent bash, edit and write tool calls; lib/destructive.ts decides (toolCallRouter). Deny tier:
   // direct odoo-bin/dropdb/psql bypass the core's database guards (Odoo projects); worktree-init
-  // links environment files, migrate rewrites configuration files and menu is the user's interactive
+  // adds a git worktree and branch, migrate rewrites configuration files and menu is the user's interactive
   // menu, so all three are user-run in every session. Ask tier: drop-database, stop --database and
   // gc --apply --trash run after the user types the database name or `yes` in a dialog, unless
   // [tooling].agent_destructive (read through config.py, never from a tool argument) says deny or
   // allow: the stricter of the session project's and the target project's (`--project`, or a tool
   // script's OASIS_PROJECT_ROOT or ODOO19_PROJECT_ROOT). The files that hold that setting (an
-  // oasis-workspace.toml or .odoo19-agent.toml in the session's directory or above it) are in the
+  // oasis-workspace.toml, or a legacy .odoo19-agent.toml that migrate converts, in the session's
+  // directory or above it) are in the
   // ask tier too: bash writes to them and Pi's edit and write tool calls on them. Each ask decision
   // is a custom session entry: Pi shows it but never sends it to the model.
   pi.registerEntryRenderer(DECISION_ENTRY, renderMenuEntry);
@@ -426,7 +439,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     projectRoot: (cwd) => projectRoot(cwd),
     home: homedir(),
     exists: existsSync,
-    agentDestructive: settingReader(profileConfig),
+    agentDestructive: settingReader(projectConfig),
     appendEntry: (entry) => pi.appendEntry(DECISION_ENTRY, entry),
     realpath: realpathSync,
   };
@@ -458,7 +471,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     description:
       "Run one Odoo module's tests on a new disposable test database dropped afterwards (a given or configured " +
       "database is reset first instead). Returns the result line and " +
-      "failures with the end of each traceback; full logs stay in the profile logs directory (default dev/logs/odoo19).",
+      "failures with the end of each traceback; full logs stay in the configured logs directory (default dev/logs/odoo19).",
     promptSnippet: "Run an Odoo module's tests and get only the result and failures",
     promptGuidelines: [
       "Use oasis_test_module instead of running odoo-bin --test-tags through bash.",
@@ -470,7 +483,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     parameters: Type.Object({
       module: Type.String({ description: "Technical module name" }),
       database: Type.Optional(Type.String({
-        description: "Test database to reset and reuse; default: the profile's test_database, else a disposable one",
+        description: "Test database to reset and reuse; default: the configured test_database, else a disposable one",
       })),
       only: Type.Optional(Type.String({
         description: "Run one test class, or one method of it: Class or Class.method. Default: every test of the module",
@@ -519,8 +532,8 @@ export default function oasisLayer(pi: ExtensionAPI) {
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const root = await requireRoot(ctx.cwd);
       // The named logs must lie in this checkout's log locations ([tooling].logs or dev/logs/odoo19).
-      const { config, error } = await profileConfig(root);
-      if (!config) throw new Error(`Cannot read the project profile: ${error}`);
+      const { config, error } = await projectConfig(root);
+      if (!config) throw new Error(`Cannot read the project configuration: ${error}`);
       const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };
       // lib/tools.ts decides: the named logs' real paths in the real log locations (symlinks followed).
       return text(formatBackgroundRun(params.module, params.output, config, { realpath: realpathSync, readLog }, options,
@@ -576,8 +589,8 @@ export default function oasisLayer(pi: ExtensionAPI) {
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const root = await requireRoot(ctx.cwd);
-      const { config, error } = await profileConfig(root);
-      if (!config) throw new Error(`Cannot read the project profile: ${error}`);
+      const { config, error } = await projectConfig(root);
+      if (!config) throw new Error(`Cannot read the project configuration: ${error}`);
       const { matches, total } = findModules(loadModules(addonRoots(config)), params.query, params.limit ?? DEFAULT_LIMIT);
       return text(formatModules(matches, total), { total });
     },

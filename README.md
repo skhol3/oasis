@@ -31,8 +31,7 @@ gentle-shell install git:github.com/skhol3/oasis@v0.11.0
 ## Five-minute start
 
 1. Describe the project in one `oasis-workspace.toml` for every checkout, step by step in
-   [Setting up a new workspace](docs/new-workspace.md) ([workspace file](docs/workspace-file.md)),
-   or in a legacy `.odoo19-agent.toml` profile ([new project setup](docs/project-setup.md)).
+   [Setting up a new workspace](docs/new-workspace.md) ([workspace file](docs/workspace-file.md)).
 2. Check that oasis can work there, then that the environment matches its locks:
 
    ```bash
@@ -83,9 +82,14 @@ of a checkout and runs them by hand. [Docs →](docs/action-menu.md)
 ### Environment and workspace file
 
 `doctor` and `check-environment` check the environment; one
-[`oasis-workspace.toml`](docs/workspace-file.md) can replace the profile of every checkout, and
-[`oasis migrate`](docs/migrating.md) converts existing profiles.
+[`oasis-workspace.toml`](docs/workspace-file.md) configures every checkout.
 [Docs →](docs/checking-environment.md)
+
+Contract change in v0.12.0: the legacy per-checkout profile `.odoo19-agent.toml` is no longer
+read. A checkout that still has one is refused (exit 2) with
+`<checkout>/.odoo19-agent.toml is the old profile format, no longer read: run oasis migrate --plan to see its conversion to oasis-workspace.toml, then oasis migrate --apply.`;
+`doctor` reports it as one `FAIL configuration`. [`oasis migrate`](docs/migrating.md), the only
+command that still reads it, converts the profiles of every checkout into one workspace file.
 
 ## Documentation
 
@@ -97,7 +101,7 @@ of a checkout and runs them by hand. [Docs →](docs/action-menu.md)
 | [Bash guard](docs/bash-guard.md) | Which agent bash commands run, wait for the user's confirmation or are blocked; `agent_destructive` |
 | [Subagents](docs/subagents.md) | The overlay that gives subagents the `oasis_*` tools |
 | [Setting up a new workspace](docs/new-workspace.md) | From an empty folder to `doctor`, a database and a test run; example tree and paths |
-| [New project setup](docs/project-setup.md) | Workspace file or profile, entry point and optional project wrappers |
+| [New project setup](docs/project-setup.md) | Workspace file, entry point and optional project wrappers |
 | [Checking the environment](docs/checking-environment.md) | `doctor`, `check-environment` and `lock.sha256` |
 | [Workspace file](docs/workspace-file.md) | One `oasis-workspace.toml` for every checkout |
 | [Migrating to the workspace file](docs/migrating.md) | `oasis migrate` |

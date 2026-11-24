@@ -2,7 +2,7 @@
 
 Use the global `init-dev-database` command for a **new, explicitly authorized development database**. By default it initializes Odoo without demo data, configures the administrator, installs one project module, and creates the project-declared role accounts. Pass `--with-demo` explicitly to use Odoo's native demo loader. `create-database` (empty PostgreSQL database), `install-module`, `update-module`, `start`, and test commands do not provision these users.
 
-Declare non-secret accounts in the project's `.odoo19-agent.toml`:
+Declare non-secret accounts in the project's `oasis-workspace.toml`:
 
 ```toml
 [development]
@@ -21,6 +21,14 @@ From an interactive terminal, run the full executable path with the actual modul
 ```bash
 ~/.agents/skills/odoo19/oasis --project /absolute/project init-dev-database your_module project_dev_manual
 ```
+
+## Listing this checkout's databases
+
+```bash
+~/.agents/skills/odoo19/oasis --project /absolute/project list-databases
+```
+
+`list-databases` prints the databases of the current checkout, one name per line in name order, and nothing when there are none; it takes no arguments (exit 2 with its usage). It starts the database service like the other database commands. The menu's database choices (terminal and Gentle Shell panel) come from it. The namespace is the one `gc` uses (see [Disposable test databases](disposable-test-databases.md#cleaning-up-after-interrupted-runs)): in a checkout with a slug (a linked worktree, or a configured `checkout_slug`) only `<dev_prefix><slug>_<name>` and `<test_prefix><slug>_<name>`; in the main checkout (or a project outside git) every name under both prefixes except the namespaces of its existing linked worktrees, from `git worktree list`. The databases of a removed worktree are listed again by the checkout whose namespace holds them, usually the main checkout. PostgreSQL is asked only for the names under the two prefixes (their `_` escaped in `LIKE`); the slugs are compared outside SQL. [Trash](trash.md) entries are listed like any other name of the namespace, as before; a bare prefix (`<dev_prefix>` alone) is not a managed name and is not listed.
 
 ## Optional native demo loading
 
@@ -44,6 +52,6 @@ demo_modules = ['purchase_stock']
 
 ## Credential entry and recovery
 
-The command requests and confirms each password with terminal echo disabled. It refuses piped password entry, test/unmanaged databases, and existing databases; it never resets existing credentials. Passwords are not passed in arguments or environment variables, saved to files, or relayed in logs. Do not put them in the profile, shell commands, or chat. A failed setup retains the new database for inspection and reports a sanitized error; no automatic deletion or retry occurs. Base initialization, module installation, and account creation are separate phases; role accounts are created in one transaction. Tests continue to create their own actors independently.
+The command requests and confirms each password with terminal echo disabled. It refuses piped password entry, test/unmanaged databases, and existing databases; it never resets existing credentials. Passwords are not passed in arguments or environment variables, saved to files, or relayed in logs. Do not put them in the workspace file, shell commands, or chat. A failed setup retains the new database for inspection and reports a sanitized error; no automatic deletion or retry occurs. Base initialization, module installation, and account creation are separate phases; role accounts are created in one transaction. Tests continue to create their own actors independently.
 
 Before modifying an installed bundle without a source checkout, make and validate a complete backup. Recover only affected files after preserving unrelated later edits; a reinstall may overwrite local changes. Fresh database initialization is not permission to modify an existing database.

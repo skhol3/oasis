@@ -72,7 +72,7 @@ class CompactGuardTests(unittest.TestCase):
         sentinel = outside / 'sentinel'
         sentinel.write_bytes(b'unchanged')
         (self.root / 'dev/logs').symlink_to(outside, target_is_directory=True)
-        profile = self.root / '.odoo19-agent.toml'
+        profile = self.root / 'oasis-workspace.toml'
         before = hashlib.sha256(profile.read_bytes()).digest()
         for command in ('test-module', 'verify-module'):
             with self.subTest(command=command):
@@ -114,13 +114,13 @@ class LinkedWorktreeCompactTests(unittest.TestCase):
             self.env.pop(key, None)
         self.main = self.root.resolve()
         self.git(self.main, 'init', '-q')
-        self.git(self.main, 'add', '.odoo19-agent.toml')
+        self.git(self.main, 'add', 'oasis-workspace.toml')
         self.git(self.main, 'commit', '-q', '-m', 'profile')
         self.linked = self.main.parent / 'a project-wt'
         self.git(self.main, 'worktree', 'add', '-q', '-b', 'wt', str(self.linked))
         # The linked checkout gets its own runtime files; a neutral env file name.
-        (self.linked / '.odoo19-agent.toml').write_text(
-            lifecycle.PROFILE.replace("env_file = 'dev/.env'", "env_file = 'dev/runtime-env'"))
+        (self.linked / 'oasis-workspace.toml').write_text(
+            lifecycle.WORKSPACE.replace("env_file = 'dev/.env'", "env_file = 'dev/runtime-env'"))
         for name in ('dev/odoo.conf', 'dev/runtime-env', 'dev/compose.yml', 'coffee/__manifest__.py'):
             path = self.linked / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -205,7 +205,7 @@ class ConfiguredLogsCompactTests(unittest.TestCase):
         # <projects>/logs, shared by '<projects>/a project' and '<projects>/a project-wt'.
         self.logs = self.main.parent / 'logs'
         for root in (self.main, self.linked):
-            profile = root / '.odoo19-agent.toml'
+            profile = root / 'oasis-workspace.toml'
             profile.write_text(profile.read_text() + "logs = '../logs'\n")
 
     def invoke(self, root, command, *args):
@@ -241,7 +241,7 @@ class ConfiguredLogsCompactTests(unittest.TestCase):
         # directory and oasis_test_summary reads them.
         (self.main.parent / 'logs-link').symlink_to('logs', target_is_directory=True)
         self.logs.mkdir()
-        profile = self.main / '.odoo19-agent.toml'
+        profile = self.main / 'oasis-workspace.toml'
         text = profile.read_text()
         for spelling in ("../logs-link", "dev/../../logs"):
             with self.subTest(logs=spelling):

@@ -140,8 +140,8 @@ def check_release(report: Report, values: dict):
     return report.check('odoo_release', found)
 
 
-def check_conf(report: Report, values: dict, conf_reader, workspace: bool):
-    """odoo.conf exists and parses; a workspace checkout's conf should not hold location options."""
+def check_conf(report: Report, values: dict, conf_reader):
+    """odoo.conf exists and parses, and holds no location options (oasis passes them)."""
     conf = values['ODOO_CONFIG']
     if not os.path.exists(conf):
         return report.fail('odoo_conf', 'missing')
@@ -149,7 +149,7 @@ def check_conf(report: Report, values: dict, conf_reader, workspace: bool):
         present = [option for option in LOCATION_OPTIONS if conf_reader.read_option(conf, option) is not None]
     except conf_reader.ConfError as exc:
         return report.fail('odoo_conf', 'unreadable' if isinstance(exc.__cause__, OSError) else 'invalid')
-    if workspace and present:
+    if present:
         return report.warn('odoo_conf', ','.join(present))
     return report.check('odoo_conf')
 
@@ -235,8 +235,8 @@ def usage() -> str:
 
 
 HELP = '''
-Checks the environment contract of this checkout, read-only: the configuration (legacy profile
-or workspace) and its agent_destructive setting, git 2.31 or newer, docker and `docker compose version`, flock, /proc, the
+Checks the environment contract of this checkout, read-only: the configuration (the workspace
+file; a legacy profile is one FAIL naming oasis migrate) and its agent_destructive setting, git 2.31 or newer, docker and `docker compose version`, flock, /proc, the
 environment's Python, the Odoo source release, odoo.conf, the compose file's top-level name,
 the env file (existence only), the logs and data directories, and the HTTP port.
 Prints PASS|WARN|FAIL <check>[=<value>] per check and doctor_failures=<n>; exit 1 when n > 0.
@@ -263,8 +263,7 @@ def main(arguments: list[str]) -> int:
         values = None
         report.fail('configuration', ' '.join(str(exc).split()))
     else:
-        workspace = bool(values['WORKSPACE_ROOT'])
-        report.check('configuration', 'workspace' if workspace else 'legacy')
+        report.check('configuration', 'workspace')
         report.check('odoo_version', values['ODOO_VERSION'])
         report.check('agent_destructive', values['AGENT_DESTRUCTIVE'])
     check_git(report)
@@ -281,7 +280,7 @@ def main(arguments: list[str]) -> int:
         conf_reader = sibling('odoo_addons_path')
         check_python(report, values, config.versions())
         check_release(report, values)
-        conf_ok = check_conf(report, values, conf_reader, workspace)
+        conf_ok = check_conf(report, values, conf_reader)
         check_compose(report, values)
         if os.path.exists(values['ENV_FILE']):
             report.check('env_file')

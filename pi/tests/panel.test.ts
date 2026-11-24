@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { CoreResult } from "../lib/tools.ts";
-import type { MenuEntry } from "../lib/menu.ts";
+import type { Answers, MenuEntry } from "../lib/menu.ts";
+import type { FormSpec } from "../lib/menu.ts";
 import { actionPanel, type ExecPurpose, type PanelContext, type PanelEffects } from "../lib/panel.ts";
 
 // The panel's decisions with every Pi effect faked: what it runs, asks, notifies and records.
@@ -10,7 +11,7 @@ const CATALOG = readFileSync(new URL("./fixtures/catalog.json", import.meta.url)
 const ROOT = "/work/a project";
 const ENTRY = "/opt/oasis/oasis --project '/work/a project'";
 const CATALOG_ARGV = ["python3", "-B", "/opt/oasis/oasis", "--project", ROOT, "menu", "--catalog"];
-const NOT_PROJECT = "no .odoo19-agent.toml or oasis-workspace.toml at or above /elsewhere";
+const NOT_PROJECT = "no oasis-workspace.toml at or above /elsewhere";
 const NON_TUI = "warning: oasis menu: the action panel needs the interactive terminal UI; run `oasis menu` in a terminal.";
 
 type Exec = (argv: string[], purpose: ExecPurpose) => Promise<CoreResult>;
@@ -23,6 +24,12 @@ async function until(ready: () => boolean): Promise<void> {
 
 interface Setup {
   pick?: string | undefined;
+  /** The picker's Repeat row: the picked action comes with these answers. */
+  repeat?: Answers;
+  /** What the start / restart form returns (default: cancelled). */
+  form?: Answers;
+  /** remember rejects with this error. */
+  rememberError?: Error;
   answers?: (string | boolean | undefined)[];
   /** The catalog command (default: prints the fixture catalog). */
   catalog?: Exec;
@@ -39,6 +46,8 @@ function harness(options: Setup = {}) {
   const entries: MenuEntry[] = [];
   const headers: string[] = [];
   const serverRoots: string[] = [];
+  const forms: FormSpec[] = [];
+  const remembered: string[] = [];
   const answers = [...(options.answers ?? [])];
   const catalog: Exec = options.catalog ?? (async () => ({ code: 0, stdout: CATALOG, stderr: "" }));
   const exec: Exec = options.exec ?? (async () => ({ code: 0, stdout: "done\n", stderr: "" }));
@@ -53,6 +62,10 @@ function harness(options: Setup = {}) {
     exists: () => options.exists ?? true,
     readLog: () => "",
     appendEntry: (entry) => entries.push(entry),
+    remember: async (root, id, answers) => {
+      remembered.push(`${root}: ${id} ${JSON.stringify(answers)}`);
+      if (options.rememberError) throw options.rememberError;
+    },
     serverState: async (root) => {
       serverRoots.push(root);
       const server = options.server ?? { server: null };
@@ -71,7 +84,13 @@ function harness(options: Setup = {}) {
       pick: async (catalog, header) => {
         events.push("pick");
         headers.push(header);
-        return catalog.actions.find((action) => action.id === options.pick);
+        const action = catalog.actions.find((item) => item.id === options.pick);
+        return action && { action, ...(options.repeat ? { answers: options.repeat } : {}) };
+      },
+      form: async (spec) => {
+        events.push(`form ${spec.action.id}`);
+        forms.push(spec);
+        return options.form;
       },
       follow: async (path, title) => {
         events.push(`follow ${path} (${title})`);
@@ -92,7 +111,10 @@ function harness(options: Setup = {}) {
       setStatus: (text) => events.push(`status ${text ?? "-"}`),
     },
   });
-  return { open: actionPanel(effects), context, events, entries, headers, serverRoots, left: () => answers.length };
+  return {
+    open: actionPanel(effects), context, events, entries, headers, serverRoots, forms, remembered,
+    left: () => answers.length,
+  };
 }
 
 test("outside the interactive TUI the panel refuses and runs nothing", async () => {
@@ -177,13 +199,14 @@ test("a destructive action that is not confirmed runs nothing", async () => {
 });
 
 test("a confirmed action runs its filled command in the project root and records command and output", async () => {
-  const { open, context, events, entries } = harness({
-    pick: "server.status",
+  const { open, context, events, entries, remembered } = harness({
+    pick: "server.status", answers: [true],
     exec: async () => ({ code: 0, stdout: "server: stopped\n", stderr: "" }),
   });
   await open(context());
   assert.deepEqual(events.slice(1), [
     "pick",
+    "confirm Show the server and database service status",
     `info: oasis menu: running ${ENTRY} status`,
     "status oasis: Show the server and database service status",
     `exec run in ${ROOT}: /opt/oasis/oasis --project ${ROOT} status`,
@@ -192,11 +215,13 @@ test("a confirmed action runs its filled command in the project root and records
   assert.deepEqual(entries, [{
     label: "Show the server and database service status", command: `${ENTRY} status`, exit: 0, output: "server: stopped",
   }]);
+  // v0.12.0 (S6): the action and its answers are remembered for Repeat.
+  assert.deepEqual(remembered, [`${ROOT}: server.status {}`]);
 });
 
 test("a command that cannot be started leaves an entry with the attempted command and the error", async () => {
   const { open, context, events, entries } = harness({
-    pick: "server.status",
+    pick: "server.status", answers: [true],
     exec: async () => {
       throw new Error("spawn /opt/oasis/oasis ENOENT");
     },
@@ -242,7 +267,7 @@ test("one panel action at a time: a second open while one runs says what is in p
   let finish: (result: CoreResult) => void = () => {};
   let runs = 0;
   const { open, context, events, entries } = harness({
-    pick: "server.status",
+    pick: "server.status", answers: [true, true],
     // The first run waits until the test finishes it; later runs end at once.
     exec: () => runs++ === 0
       ? new Promise((resolve) => { finish = resolve; })
@@ -285,7 +310,7 @@ test("an unexpected error is reported and releases the lock", async () => {
   assert.ok(events.includes("pick"));
 });
 
-test("the picker header shows the server state of the checkout from runtime_state", async () => {
+test("the picker header shows the checkout, its server state from runtime_state and the default database", async () => {
   for (const [server, header] of [
     [{ server: { pid: 4242, port: 8070 } }, "server: running on port 8070 (pid 4242)"],
     [{ server: null }, "server: stopped"],
@@ -295,7 +320,7 @@ test("the picker header shows the server state of the checkout from runtime_stat
   ] as const) {
     const { open, context, events, headers, serverRoots, entries } = harness({ pick: undefined, server });
     await open(context());
-    assert.deepEqual(headers, [header]);
+    assert.deepEqual(headers, [`checkout: main\n${header}\ndefault database: cc_dev_coffee`]);
     assert.deepEqual(serverRoots, [ROOT]);
     assert.deepEqual(events.slice(1), ["pick", "status -"]);
     assert.deepEqual(entries, []);
@@ -318,7 +343,7 @@ test("following the server log opens the live view of server.log and runs nothin
 
 test("restart runs with the optional database and records its output", async () => {
   const { open, context, events, entries, left } = harness({
-    pick: "server.restart", answers: ["(skip: to keep the database of the running server)"],
+    pick: "server.restart", answers: ["(skip: to keep the database of the running server)", true],
     exec: async () => ({ code: 0, stdout: "Stopped Odoo for this checkout: pid 1, port 8069.\npid=2 port=8069 log=/l\n",
       stderr: "" }),
   });
@@ -329,4 +354,75 @@ test("restart runs with the optional database and records its output", async () 
     label: "Restart the server", command: `${ENTRY} restart`, exit: 0,
     output: "Stopped Odoo for this checkout: pid 1, port 8069.\npid=2 port=8069 log=/l",
   }]);
+});
+
+test("a non-destructive action that is not confirmed runs nothing and is not remembered", async () => {
+  const { open, context, events, entries, remembered } = harness({ pick: "server.status", answers: [false] });
+  await open(context());
+  assert.deepEqual(events.slice(1), [
+    "pick", "confirm Show the server and database service status", "info: oasis menu: not confirmed, nothing ran.",
+    "status -",
+  ]);
+  assert.deepEqual([entries, remembered], [[], []]);
+});
+
+test("user-run actions are not remembered; a memory that cannot be written is only a notice", async () => {
+  const worktree = harness({ pick: "maintenance.worktree", answers: ["shop", "shop", true] });
+  await worktree.open(worktree.context());
+  assert.equal(worktree.entries.length, 1);
+  assert.deepEqual(worktree.remembered, []);
+  const failing = harness({ pick: "server.status", answers: [true], rememberError: new Error("ERROR: no state") });
+  await failing.open(failing.context());
+  assert.equal(failing.entries.length, 1);
+  assert.deepEqual(failing.events.slice(-2), [
+    "warning: oasis menu: could not remember this action: ERROR: no state", "status -",
+  ]);
+});
+
+test("start / restart lists the databases, then asks everything in one form that also confirms", async () => {
+  const answers = { database: "cc_dev_coffee", dev: "all", port: "" };
+  const { open, context, events, entries, forms, remembered } = harness({
+    pick: "server.run", form: answers,
+    exec: async (argv) => ({ code: 0, stdout: argv.includes("list-databases") ? "cc_dev_coffee\n" : "pid=1\n", stderr: "" }),
+  });
+  await open(context());
+  assert.deepEqual(events.slice(1), [
+    "pick",
+    "status Listing databases (this may start the database service)...",
+    "info: Listing databases (this may start the database service)...",
+    `exec list in ${ROOT}: /opt/oasis/oasis --project ${ROOT} list-databases`,
+    "status -",
+    "form server.run",
+    `info: oasis menu: running ${ENTRY} start --detach -d cc_dev_coffee --dev all`,
+    "status oasis: Start / restart the server",
+    `exec run in ${ROOT}: /opt/oasis/oasis --project ${ROOT} start --detach -d cc_dev_coffee --dev all`,
+    "status -",
+  ]);
+  assert.deepEqual([forms[0].databases, forms[0].answers, forms[0].header],
+    [["cc_dev_coffee"], undefined, "checkout: main\nserver: stopped\ndefault database: cc_dev_coffee"]);
+  assert.deepEqual(entries.map((entry) => entry.command), [`${ENTRY} start --detach -d cc_dev_coffee --dev all`]);
+  assert.deepEqual(remembered, [`${ROOT}: server.run ${JSON.stringify(answers)}`]);
+  const cancelled = harness({ pick: "server.run" });
+  await cancelled.open(cancelled.context());
+  assert.deepEqual(cancelled.events.slice(-3), ["form server.run", "info: oasis menu: nothing ran.", "status -"]);
+  assert.deepEqual([cancelled.entries, cancelled.remembered], [[], []]);
+});
+
+test("Repeat runs the remembered answers after the same preview and confirmation", async () => {
+  const update = harness({ pick: "modules.update", repeat: { module: "coffee", database: "cc_dev_x" }, answers: [true] });
+  await update.open(update.context());
+  assert.deepEqual(update.events.slice(1, 3), ["pick", "confirm Update a module"]);
+  assert.deepEqual(update.entries.map((entry) => entry.command), [`${ENTRY} update-module --compact coffee cc_dev_x`]);
+  const declined = harness({ pick: "maintenance.drop_database", repeat: { database: "cc_dev_x", terminate: false },
+    answers: ["cc_dev_y"] });
+  await declined.open(declined.context());
+  assert.deepEqual(declined.events.slice(1), ["pick", "input Move a database to the trash",
+    "info: oasis menu: not confirmed, nothing ran.", "status -"]);
+  // The start / restart form opens at its confirmation: no database listing.
+  const run = { database: "", dev: "", port: "8070" };
+  const restart = harness({ pick: "server.run", repeat: run, form: run });
+  await restart.open(restart.context());
+  assert.deepEqual(restart.events.slice(1, 3), ["pick", "form server.run"]);
+  assert.deepEqual(restart.forms[0].answers, run);
+  assert.deepEqual(restart.entries.map((entry) => entry.command), [`${ENTRY} start --detach --http-port 8070`]);
 });

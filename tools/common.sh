@@ -63,7 +63,7 @@ require_python_version() {
     return 1
   fi
   python_version=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")') || return $?
-  # 3.12 for a profile; a workspace's named environment declares its own (config.py).
+  # The series' default for [tooling].environment; a named environment declares its own (config.py).
   if [[ "$python_version" != "$PYTHON_VERSION" ]]; then
     printf 'Python %s is required; found %s.\n' "$PYTHON_VERSION" "$python_version" >&2
     return 2
@@ -100,7 +100,7 @@ require_runtime() {
 # one, a linked worktree that shares the main checkout's odoo.conf gets that addons_path with
 # the main checkout's root replaced by its own root; the main checkout and a project outside
 # git keep -c alone. [tooling].data_dir adds --data-dir=<DATA_DIR>. When git failed in a linked
-# worktree whose profile sets checkout_slug, config.py reports no main checkout: an odoo.conf
+# worktree whose oasis-checkout.toml sets checkout_slug, config.py reports no main checkout: an odoo.conf
 # inside the worktree is used as it is, a shared one with an addons_path is refused.
 odoo_config_arguments() {
   local output root roots=()
@@ -349,9 +349,43 @@ module_state() {
 }
 
 list_managed_databases() {
-  local dev_like=${DEV_PREFIX//_/\\_} test_like=${TEST_PREFIX//_/\\_}
   wait_for_database >/dev/null
+  query_managed_databases
+}
+
+# The names under both managed prefixes, every namespace, in name order; the service must be up.
+query_managed_databases() {
+  local dev_like=${DEV_PREFIX//_/\\_} test_like=${TEST_PREFIX//_/\\_}
   database_psql -Atqc "SELECT datname FROM pg_database WHERE datname LIKE '$dev_like%' ESCAPE '\\' OR datname LIKE '$test_like%' ESCAPE '\\' ORDER BY datname"
+}
+
+# This checkout's databases (list-databases, and so the menu's database choices), in query order:
+# the prefix query above (every namespace, as gc --all-checkouts needs it), then the namespace
+# rule gc and the trash apply (tools/trash.py owned): a checkout with a slug keeps
+# <prefix><slug>_<name>; the main checkout (or a project outside git) keeps <prefix><name>
+# except the namespaces of its existing linked worktrees (`git worktree list`). The names are
+# filtered in Python, so no slug reaches SQL. Trash names are listed like any other name.
+list_checkout_databases() {
+  local databases
+  # Explicit statuses: errexit does not apply inside a command substitution or an || list.
+  wait_for_database >/dev/null || return $?
+  databases=$(query_managed_databases) || return $?
+  python3 -I -B -c '
+import sys
+from pathlib import Path
+tools, root, dev, test, slug = sys.argv[1:]
+sys.path.insert(0, tools)
+import trash
+try:
+    slugs = trash.gc.checkout_slugs(Path(root))
+except trash.config.InvalidConfig as exc:
+    print(f"ERROR: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+for line in sys.stdin:
+    name = line.strip()
+    if name and trash.owned(name, dev, test, slug, slugs):
+        print(name)
+' "$(dirname "${BASH_SOURCE[0]}")" "$PROJECT_ROOT" "$DEV_PREFIX" "$TEST_PREFIX" "${CHECKOUT_SLUG:-}" <<< "$databases"
 }
 
 managed_database_session_count() {

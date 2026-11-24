@@ -1,4 +1,4 @@
-// /oasis status: parse the core's profile output and format a compact report. No Pi imports.
+// /oasis status: parse the core's configuration output and format a compact report. No Pi imports.
 import { existsSync, readdirSync, type Dirent } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -70,7 +70,7 @@ export function parseGit(root: string, revParse: string, porcelain: string): Sta
 export function formatStatus(input: StatusInput): string {
   const series = input.config?.ODOO_VERSION;
   const lines = [`${series ? `Odoo ${series}` : "Odoo"} project: ${input.root}`];
-  if (input.configError) lines.push(`profile: ${input.configError}`);
+  if (input.configError) lines.push(`configuration: ${input.configError}`);
   const config = input.config;
   if (config) {
     lines.push(`odoo source: ${config.ODOO_SOURCE ?? "?"}`);
@@ -102,7 +102,7 @@ export function formatStatus(input: StatusInput): string {
 
 /**
  * Checkout identity from config.py's CHECKOUT_KIND / CHECKOUT_SLUG. Only a linked worktree
- * derives a slug, so a slug on any other kind comes from `[tooling].checkout_slug`.
+ * derives a slug, so a slug on any other kind comes from oasis-checkout.toml's `[tooling].checkout_slug`.
  */
 function formatCheckout(config: Record<string, string> | undefined): string | null {
   const kind = config?.CHECKOUT_KIND;
@@ -110,7 +110,7 @@ function formatCheckout(config: Record<string, string> | undefined): string | nu
   const slug = config.CHECKOUT_SLUG ?? "";
   if (kind === "linked") return `checkout: linked worktree, slug ${slug || "?"}`;
   const label = kind === "main" ? "main" : "outside git";
-  return slug ? `checkout: ${label}, slug ${slug} (profile)` : `checkout: ${label}`;
+  return slug ? `checkout: ${label}, slug ${slug} (oasis-checkout.toml)` : `checkout: ${label}`;
 }
 
 /** Technical names of the modules (directories with __manifest__.py) directly under an addons root. */

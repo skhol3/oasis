@@ -2,6 +2,8 @@
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
+/** The legacy per-checkout profile: tools/config.py no longer reads it and refuses a checkout
+ * that has one (`oasis migrate` converts it); found here only so that refusal shows. */
 export const PROFILE_NAME = ".odoo19-agent.toml";
 export const WORKSPACE_NAME = "oasis-workspace.toml";
 
@@ -27,40 +29,59 @@ function ancestors(start: string): string[] {
   }
 }
 
-/**
- * Nearest `oasis-workspace.toml` at or above `start`, else null. Like tools/config.py, the
- * search ends at a directory that holds the profile: that checkout owns the tree.
- */
+/** Nearest `oasis-workspace.toml` at or above `start`, else null, as tools/config.py finds it. */
 export function findWorkspaceFile(start: string): string | null {
   for (const directory of ancestors(start)) {
-    if (existsSync(join(directory, PROFILE_NAME))) return null;
     const candidate = join(directory, WORKSPACE_NAME);
     if (existsSync(candidate)) return candidate;
   }
   return null;
 }
 
+/** The legacy profile in `root` itself (the one tools/config.py refuses), else null. */
+export function legacyProfile(root: string): string | null {
+  const profile = join(root, PROFILE_NAME);
+  return existsSync(profile) ? profile : null;
+}
+
+/** Why `cwd` is not an Odoo project (findProjectRoot returned null). */
+export function notProject(cwd: string): string {
+  return `no ${WORKSPACE_NAME} at or above ${cwd}`;
+}
+
+/** The nearest directory holding `name` at or above `start`, up to `last` included. */
+function nearestHolding(name: string, start: string, last?: string): string | null {
+  for (const directory of ancestors(start)) {
+    if (existsSync(join(directory, name))) return directory;
+    if (directory === last) break;
+  }
+  return null;
+}
+
 /**
- * Checkout root for `start`: the nearest directory with the profile, else, under a workspace
- * file, the real git top level of `start` (`start` itself without git or when the top level is
- * not inside the real workspace directory, where the workspace file would not be found again),
- * else null.
+ * Checkout root for `start`: the directory passed to tools/config.py as the project. Under a
+ * workspace file: the real git top level of `start`; without git (or when the top level is not
+ * inside the real workspace directory, where the workspace file would not be found again), the
+ * directory git would report, the nearest one holding `.git` from `start` up to the workspace
+ * directory, else `start` itself. A legacy profile never picks the root there: config.py checks
+ * only `<root>/.odoo19-agent.toml`, so one in a directory between the workspace and the checkout
+ * is crossed, with git or without. Without a workspace file: the nearest directory holding a
+ * legacy profile, so config.py's refusal (run oasis migrate) shows there; else null.
  */
 export function findProjectRoot(start: string, gitTopLevel?: GitTopLevel): string | null {
-  for (const directory of ancestors(start)) {
-    if (existsSync(join(directory, PROFILE_NAME))) return directory;
-  }
   // Real paths, as tools/config.py resolves the checkout and git reports its top level: a
   // symlinked session directory still finds its workspace and resolves to the checkout root.
   const fallback = real(start);
   const workspace = findWorkspaceFile(fallback);
-  if (!workspace) return null;
+  if (!workspace) return nearestHolding(PROFILE_NAME, fallback);
+  const base = real(dirname(workspace));
   const top = gitTopLevel?.(fallback);
-  if (!top) return fallback;
+  const withoutGit = () => nearestHolding(".git", fallback, base) ?? fallback;
+  if (!top) return withoutGit();
   const checkout = real(top);
-  const inside = relative(real(dirname(workspace)), checkout);
+  const inside = relative(base, checkout);
   const outside = inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside);
-  return outside ? fallback : checkout;
+  return outside ? withoutGit() : checkout;
 }
 
 /**
@@ -101,7 +122,8 @@ const TOOL_LINES: Record<string, string> = {
 };
 
 /**
- * Compact system-prompt section for a detected project; `workspace` names its workspace file.
+ * Compact system-prompt section for a detected project; `workspace` names its workspace file, null
+ * (or omitted) for a root that holds a legacy profile, which no command reads any more.
  * `tools` are the session's tools: only the oasis tools among them are named, and a session with
  * none (a subagent without the overlay) is pointed to the CLI. Omitted: every oasis tool.
  * `version` is the configured Odoo series ("19.0"); it names the project and its skills. The last
@@ -116,7 +138,9 @@ export function projectContext(
   // The series comes from the project's configuration; without it no number is made up.
   const odoo = version ? `Odoo ${version}` : "Odoo";
   const skills = version ? `odoo${version.split(".")[0]}-*` : "Odoo";
-  const source = workspace ? `workspace ${workspace}` : `profile ${PROFILE_NAME}`;
+  const source = workspace
+    ? `workspace ${workspace}`
+    : `legacy ${PROFILE_NAME}, no longer read: the user runs /oasis migrate`;
   const names = Object.keys(TOOL_LINES).filter((name) => !tools || tools.includes(name));
   const routing = names.length > 0
     ? [

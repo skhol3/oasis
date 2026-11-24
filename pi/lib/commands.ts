@@ -14,7 +14,7 @@ export const SUBCOMMANDS = [
   {
     name: "migrate", parameters: [],
     description: "Plan and apply the move to a workspace file",
-    summary: "`migrate` converts the checkouts' profiles into one oasis-workspace.toml after confirmation",
+    summary: "`migrate` converts the checkouts' legacy .odoo19-agent.toml profiles into one oasis-workspace.toml after confirmation",
   },
   {
     name: "worktree", parameters: ["feature", "branch"],

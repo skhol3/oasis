@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Create a linked git worktree next to the main checkout and prepare its local files.
+"""Create a linked git worktree next to the main checkout, below the same workspace file.
 
-User-run only: in the legacy layout it links the main checkout's environment file, which
-agents may not touch. The content of odoo.conf and of environment files is never printed.
-Nothing is deleted: a failure after `git worktree add` keeps what was created and reports it,
-and --resume completes it later.
+User-run only (the Gentle Shell bash guard blocks agents). The new worktree reads the
+workspace file the main checkout reads, so only `git worktree add` runs: nothing is copied or
+linked. Nothing is deleted.
 """
 import importlib.util
 import os
@@ -12,7 +11,6 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tomllib
 
 USAGE = 'Usage: worktree-init <feature> <branch> [--dry-run] [--resume]'
 HELP = f"""{USAGE}
@@ -22,30 +20,14 @@ prepare it for oasis. <feature> becomes the checkout slug (lowercase, other char
 <branch> is checked out when it exists locally, tracked when only origin/<branch> exists, and
 otherwise created from the main checkout's HEAD.
 
-Shared layout: when the profile's config, env_file, compose and requirements all resolve
-outside the checkouts (a shared config directory), only an untracked .odoo19-agent.toml is
-copied; its relative paths (and [tooling].logs, when set) give the same files from the new
-sibling folder. Nothing is linked and no odoo.conf is written: the tools pass the shared
-odoo.conf's addons_path with the worktree root as --addons-path.
+The oasis-workspace.toml the main checkout reads must be in a directory above the new folder;
+the new worktree then reads it too, so only `git worktree add` runs: nothing is copied or
+linked.
 
-Otherwise (legacy layout): an untracked .odoo19-agent.toml is copied; each untracked or
-ignored entry of the main checkout's dev/ is linked, except dev/odoo.conf (copied with mode
-0600, the main root in addons_path replaced by the worktree root, db_name removed) and
-dev/runtime (a new empty 0700 directory); the profile's env_file is linked to the main
-checkout's file.
-
-Workspace mode: when the main checkout has no .odoo19-agent.toml and an oasis-workspace.toml
-is found above it, only `git worktree add` runs; the new worktree reads the same workspace.
-
-Existing paths are never replaced. --dry-run prints the same plan and changes nothing.
---resume accepts an existing folder that is a worktree of this repository on <branch> and
-adds only the missing items.
+--dry-run prints the same plan and changes nothing. --resume accepts an existing folder that
+is a worktree of this repository on <branch>.
 """
-SHARED_KEYS = ('config', 'env_file', 'compose', 'requirements')
 QUERY_TIMEOUT_SECONDS = 30
-PROFILE = '.odoo19-agent.toml'
-ADDONS_PATH = re.compile(r'^(\s*addons_path\s*[=:])(.*)$', re.IGNORECASE)
-DB_NAME = re.compile(r'^\s*db_name\s*[=:]', re.IGNORECASE)
 
 
 class Refused(Exception):
@@ -122,220 +104,26 @@ def registered_branch(main, folder):
     return None
 
 
-def in_commit(main, commit, relative):
-    return git(main, 'cat-file', '-e', f'{commit}:{relative}').returncode == 0
-
-
-def is_tracked(main, relative):
-    return git(main, 'ls-files', '--error-unmatch', '--', relative).returncode == 0
-
-
-def dev_entries(main):
-    """Names of the top-level entries of main/dev that git reports as untracked or ignored."""
-    dev = main / 'dev'
-    if dev.is_symlink() or not dev.is_dir():
-        return []
-    reported = set()
-    for extra in ((), ('--ignored',)):
-        result = git(main, 'ls-files', '-z', '--others', *extra, '--exclude-standard', '--directory',
-                     '--', 'dev/')
-        if result.returncode != 0:
-            raise Refused('Cannot list the untracked files of the main checkout.')
-        reported.update(path for path in result.stdout.split('\0') if path)
-    names = set()
-    for path in reported:
-        if not path.startswith('dev/'):
-            continue
-        rest = path[len('dev/'):].rstrip('/')
-        if not rest:
-            names.update(os.listdir(dev))  # the whole dev/ is untracked or ignored
-        elif '/' not in rest:
-            names.add(rest)
-    return sorted(names)
-
-
-def rewrite_conf(text, main, new):
-    """odoo.conf lines with main-root addons paths moved to the new root and db_name dropped."""
-    lines, rewrote, removed = [], False, False
-    for line in text.splitlines(keepends=True):
-        body = line.rstrip('\r\n')
-        ending = line[len(body):]
-        if DB_NAME.match(body):
-            removed = True
-            continue
-        match = ADDONS_PATH.match(body)
-        if match:
-            pieces = []
-            for piece in match.group(2).split(','):
-                core = piece.strip()
-                # Only whole path components: <main>-other is a different directory.
-                if core == main or core.startswith(main + '/'):
-                    piece = piece.replace(core, new + core[len(main):], 1)
-                    rewrote = True
-                pieces.append(piece)
-            body = match.group(1) + ','.join(pieces)
-        lines.append(body + ending)
-    return ''.join(lines), rewrote, removed
-
-
-def shared_config(config, main, root, new, values):
-    """The shared configuration directory, or None for the legacy layout.
-
-    Shared: the config, env_file, compose and requirements of the profile that gets copied
-    (the main checkout's, else this checkout's) all resolve outside both checkouts. The
-    copied profile must then resolve them to the same absolute paths from the new folder.
-    """
-    source = main if (main / PROFILE).is_file() else root
-    profile = source / PROFILE
-    # The profile that gets copied, read once; a missing key names that file, not a KeyError.
-    try:
-        with profile.open('rb') as stream:
-            tooling = tomllib.load(stream).get('tooling')
-    except tomllib.TOMLDecodeError as exc:
-        raise Refused(f'Invalid tooling configuration: {profile}') from exc
-    if not isinstance(tooling, dict):
-        raise Refused(f'Invalid tooling configuration: {profile}')
-    for key in SHARED_KEYS:
-        if not isinstance(tooling.get(key), str) or not tooling[key]:
-            raise Refused(f'{profile} does not set [tooling].{key}; prepare the worktree by hand.')
-    if source != root:
-        values = config.load(source)
-    paths = [Path(values[config.PATHS[key]]) for key in SHARED_KEYS]
-    if any(path.is_relative_to(checkout) for path in paths for checkout in (main, root)):
-        return None
-    checked = list(zip(SHARED_KEYS, paths))
-    if 'logs' in tooling:
-        # The copied profile keeps [tooling].logs: every checkout must share that directory.
-        checked.append(('logs', Path(values['LOGS_DIR'])))
-    for key, path in checked:
-        # The resolution of tools/config.py, from the new folder.
-        copied = (new / tooling[key]).resolve()
-        if copied != path:
-            raise Refused(f'The copied profile would resolve {key} to {copied} instead of {path}; '
-                          'prepare the worktree by hand.')
-    return Path(values['ODOO_CONFIG']).parent
-
-
 def workspace_dir(config, main, new):
-    """The workspace directory in workspace mode, or None.
+    """The directory of the workspace file the main checkout reads, which must be above new.
 
-    Workspace mode: the main checkout has no profile and a workspace file is found above it.
-    The new worktree then needs nothing but `git worktree add`, provided it finds the same
-    workspace file, so that file must be in a directory above the new folder.
+    The new worktree needs nothing but `git worktree add`, provided it finds the same
+    workspace file, so that file must be in a directory above the new folder, trusted and
+    readable TOML (config.InvalidConfig otherwise, as every command reports it).
     """
-    if (main / PROFILE).is_file():
-        return None
-    workspace = config.find_workspace(main)
+    try:
+        workspace = config.find_workspace(main)
+    except OSError as exc:
+        raise Refused(f'Cannot search {main} and above for {config.WORKSPACE_NAME}: '
+                      f'{exc.strerror or exc}.') from exc
     if workspace is None:
-        return None
+        raise Refused(f'The main checkout {main} has no {config.WORKSPACE_NAME} at or above it; '
+                      'prepare the worktree by hand.')
     if not new.is_relative_to(workspace.parent):
         raise Refused(f'The new worktree {new} would not be under the workspace {workspace.parent}; '
                       'prepare the worktree by hand.')
+    config.read_toml(config.trusted(workspace))
     return workspace.parent
-
-
-def profile_items(main, commit):
-    """The profile copy, when the main checkout's profile is untracked and not in the commit."""
-    profile = main / PROFILE
-    if profile.is_file() and not is_tracked(main, PROFILE) and not in_commit(main, commit, PROFILE):
-        with profile.open('rb') as stream:
-            try:
-                tooling = tomllib.load(stream).get('tooling', {})
-            except tomllib.TOMLDecodeError as exc:
-                raise Refused(f'Invalid tooling configuration: {profile}') from exc
-        if isinstance(tooling, dict) and 'checkout_slug' in tooling:
-            raise Refused(f'{profile} sets [tooling].checkout_slug, which the new worktree would share '
-                          'with this checkout; prepare the worktree by hand.')
-        return [('copy', PROFILE, None)]
-    return []
-
-
-def plan_items(main, new, commit, env_relative):
-    """Ordered actions: (kind, relative path, payload). Paths existing in the commit are skipped."""
-    items, created = profile_items(main, commit), set()
-    names = dev_entries(main)
-    if names and not in_commit(main, commit, 'dev'):
-        items.append(('mkdir', 'dev', None))
-        created.add('dev')
-    for name in names:
-        relative = f'dev/{name}'
-        if in_commit(main, commit, relative):
-            continue
-        source = main / relative
-        if name == 'odoo.conf' and source.is_file():
-            text = source.read_text(encoding='utf-8', errors='surrogateescape')
-            items.append(('conf', relative, rewrite_conf(text, str(main), str(new))))
-        elif name == 'runtime':
-            items.append(('runtime', relative, None))
-        else:
-            items.append(('link', relative, None))
-    if env_relative:
-        covered = any(env_relative == relative or env_relative.startswith(relative + '/')
-                      for kind, relative, _payload in items if kind != 'mkdir')
-        if (not covered and os.path.exists(main / env_relative)
-                and not in_commit(main, commit, env_relative)):
-            parts = Path(env_relative).parts
-            for depth in range(1, len(parts)):
-                parent = '/'.join(parts[:depth])
-                if parent not in created and not in_commit(main, commit, parent):
-                    items.append(('mkdir', parent, None))
-                    created.add(parent)
-            items.append(('link', env_relative, None))
-    return items
-
-
-def env_path(root):
-    """The profile's env_file relative to the checkout, or '' when it lives outside it.
-
-    Read raw from the profile: config.py resolves symlinks, and a linked worktree's env file
-    is a link into the main checkout.
-    """
-    with (root / PROFILE).open('rb') as stream:
-        value = tomllib.load(stream)['tooling']['env_file']
-    relative = os.path.normpath(value)
-    if os.path.isabs(relative) or relative == '.' or relative.split(os.sep)[0] == '..':
-        return ''
-    return relative
-
-
-def item_lines(main, kind, relative, payload):
-    if kind == 'copy':
-        return [f'copied {relative}']
-    if kind in ('mkdir', 'runtime'):
-        return [f'created dir {relative}']
-    if kind == 'link':
-        return [f'linked {relative} -> {main / relative}']
-    _text, rewrote, removed = payload
-    lines = [f'copied {relative}']
-    if rewrote:
-        lines.append(f'rewrote addons_path in {relative}')
-    if removed:
-        lines.append(f'removed db_name from {relative}')
-    return lines
-
-
-def apply_item(main, new, kind, relative, payload):
-    target = new / relative
-    if os.path.lexists(target):
-        # Never replace: the plan read the commit, the checkout may differ (hooks, sparse).
-        return [f'kept existing {relative}']
-    if kind == 'copy':
-        data = (main / relative).read_bytes()
-        target.write_bytes(data)
-    elif kind == 'mkdir':
-        target.mkdir()
-    elif kind == 'runtime':
-        target.mkdir(mode=0o700)
-        os.chmod(target, 0o700)
-    elif kind == 'link':
-        os.symlink(main / relative, target)
-    else:
-        text = payload[0]
-        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, 'w', encoding='utf-8', errors='surrogateescape', newline='') as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            stream.write(text)
-    return item_lines(main, kind, relative, payload)
 
 
 def main():
@@ -355,6 +143,8 @@ def main():
         values = config.load(root)
     except config.InvalidConfig as exc:
         return fail(str(exc))
+    except OSError as exc:  # older Pythons: Path.is_file raises on a directory it cannot search
+        return fail(f'Cannot read the configuration of {root}: {exc.strerror or exc}.')
     if values['CHECKOUT_KIND'] == 'none' or not values['CHECKOUT_MAIN_ROOT']:
         return fail('worktree-init needs a git checkout.')
     main_root = Path(values['CHECKOUT_MAIN_ROOT'])
@@ -410,36 +200,15 @@ def main():
         add = ['worktree', 'add', '-b', branch, str(new), commit]
         branch_line = f'{branch} (created from HEAD {commit[:12]})'
 
-    shared = workspace = None
     try:
         workspace = workspace_dir(config, main_root, new)
-        if workspace is not None:
-            items = []
-        else:
-            shared = shared_config(config, main_root, root, new, values)
-            if shared is None:
-                items = plan_items(main_root, new, commit, env_path(root))
-            else:
-                items = profile_items(main_root, commit)
     except (Refused, config.InvalidConfig) as exc:
         return fail(str(exc))
-    except OSError as exc:
-        return fail(f'Cannot read the main checkout: {exc.strerror or exc}.')
 
-    header = [f'worktree: {new}', f'branch: {branch_line}', f'slug: {feature}']
-    if shared is not None:
-        header.append(f'shared config: {shared}')
-    if workspace is not None:
-        header.append(f'workspace: {workspace}')
+    header = [f'worktree: {new}', f'branch: {branch_line}', f'slug: {feature}', f'workspace: {workspace}']
     if dry_run:
         for line in header:
             print(line)
-        for kind, relative, payload in items:
-            # Only a resumed worktree already has items; they are kept, as apply_item does.
-            existing = os.path.lexists(new / relative)
-            for line in ([f'kept existing {relative}'] if existing
-                         else item_lines(main_root, kind, relative, payload)):
-                print(line)
         print('dry run: nothing changed')
         return 0
 
@@ -450,14 +219,6 @@ def main():
             return fail('git worktree add failed: ' + (message[-1] if message else f'exit {added.returncode}'), 1)
     for line in header:
         print(line, flush=True)
-    for kind, relative, payload in items:
-        try:
-            lines = apply_item(main_root, new, kind, relative, payload)
-        except OSError as exc:
-            return fail(f'Could not create {relative}: {exc.strerror or exc}. '
-                        'The worktree and the items listed above were kept.', 1)
-        for line in lines:
-            print(line, flush=True)
     return 0
 
 

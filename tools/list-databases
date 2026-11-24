@@ -6,4 +6,5 @@ if (( $# != 0 )); then
   printf 'Usage: %s\n' "$(usage_name)" >&2
   exit 2
 fi
-list_managed_databases
+# Only this checkout's namespace (common.sh list_checkout_databases); gc reads every namespace.
+list_checkout_databases

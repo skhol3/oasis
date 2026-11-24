@@ -80,7 +80,7 @@ def main():
         for path in module.rglob('*'):
             if path.is_symlink() and not path.resolve().is_relative_to(module):
                 return fail('Lint module sources must stay inside its module directory.')
-        # The profile's [tooling], or the workspace file's when the checkout has no profile;
+        # The workspace file's [tooling];
         # lint_rcfile resolves from the file's directory like the other tooling paths.
         document, base, _workspace = config.configuration(root)
         tooling = document['tooling']

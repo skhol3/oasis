@@ -6,6 +6,17 @@ if (( $# > 1 )) || [[ "$mode" != "--quick" && "$mode" != "--full" ]]; then
   printf 'Usage: %s [--quick|--full]\n' "$(usage_name)" >&2
   exit 2
 fi
+# The environment's Python must be the declared one ($PYTHON_VERSION: the series' default for
+# [tooling].environment, else the selected named environment's python). A mismatch stops here,
+# with the same first line as require_runtime and how to fix it.
+if [[ -x "$PYTHON" ]] \
+    && found_python=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null) \
+    && [[ "$found_python" != "$PYTHON_VERSION" ]]; then
+  printf 'Python %s is required; found %s.\n' "$PYTHON_VERSION" "$found_python" >&2
+  printf 'Move %s away and run %s bootstrap --apply to recreate it with Python %s.\n' \
+    "$PROJECT_ENVIRONMENT" "$(program_name)" "$PYTHON_VERSION" >&2
+  exit 2
+fi
 require_runtime
 requirements_dir="$REQUIREMENTS_DIR"
 required_files=(
@@ -24,8 +35,8 @@ for path in "${required_files[@]}"; do
   fi
 done
 python_version=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-if [[ "$python_version" == "3.12" ]]; then pass "python_version=$python_version"
-else fail "python_version=$python_version expected=3.12"
+if [[ "$python_version" == "$PYTHON_VERSION" ]]; then pass "python_version=$python_version"
+else fail "python_version=$python_version expected=$PYTHON_VERSION"
 fi
 venv_prefix=$("$PYTHON" -c 'import sys; print(sys.prefix)')
 if [[ "$venv_prefix/bin/python" -ef "$PYTHON" ]]; then pass "virtualenv=$venv_prefix"

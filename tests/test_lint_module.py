@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-PROFILE = (ROOT / 'tests/fixture-profile.toml').read_text()
+PROFILE = (ROOT / 'tests/fixture-workspace.toml').read_text()
 
 
 class LintModuleTests(unittest.TestCase):
@@ -20,7 +20,7 @@ class LintModuleTests(unittest.TestCase):
         self.addCleanup(scratch.cleanup)
         self.root = Path(scratch.name) / 'a project'
         self.root.mkdir()
-        self.profile = self.root / '.odoo19-agent.toml'
+        self.profile = self.root / 'oasis-workspace.toml'
         self.profile.write_text(PROFILE.replace("environment = '../../environments/example'",
                                                 "environment = '.venv'").replace(
                                                     "addons_paths = ['.']", "addons_paths = ['addons']")

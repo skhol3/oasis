@@ -9,7 +9,7 @@ One topic per file. Start from the group that matches what you are doing; the
 | --- | --- |
 | [Install or update](install.md) | `install.sh`, release tags and what gets installed |
 | [Setting up a new workspace](new-workspace.md) | From an empty folder to `doctor`, a database and a test run; example tree and paths |
-| [New project: deliberate setup](project-setup.md) | Workspace file or profile, entry point and optional project wrappers |
+| [New project: deliberate setup](project-setup.md) | Workspace file, entry point and optional project wrappers |
 | [Checking the environment](checking-environment.md) | `doctor`, `check-environment` and `lock.sha256` |
 | [Workspace file](workspace-file.md) | One `oasis-workspace.toml` for every checkout |
 | [Gentle Shell layer](gentle-shell-layer.md) | Installing the package, the agent tools and `/oasis` |

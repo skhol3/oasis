@@ -1,8 +1,10 @@
-# Test-only tooling inputs for synthetic projects inside tests/fixturesroot.
+# Test-only tooling inputs for synthetic projects inside tests/fixturesroot: a workspace file
+# written in the checkout itself, so every path resolves from the checkout.
 # Not a template or default for a real project. No operation is authorized.
+workspace_version = 1
+odoo_version = '19.0'
+
 [tooling]
-version = '19.0'
-python_version = '3.12'
 community = '../../source/odoo'
 environment = '../../environments/example'
 config = 'dev/odoo.conf'

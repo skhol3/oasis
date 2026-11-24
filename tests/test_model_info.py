@@ -118,8 +118,8 @@ class ModelInfoTests(unittest.TestCase):
             + ''.join(f'    f{index} = fields.Char()\n' for index in range(42)))
         project = self.temp / 'project'
         project.mkdir()
-        (project / '.odoo19-agent.toml').write_text(
-            (PROJECT / '.odoo19-agent.toml').read_text().replace("addons_paths = ['addons']",
+        (project / 'oasis-workspace.toml').write_text(
+            (PROJECT / 'oasis-workspace.toml').read_text().replace("addons_paths = ['addons']",
                                                                  "addons_paths = ['.']"))
         result = self.invoke('wide.model', project=project)
         self.assertEqual((result.returncode, result.stderr), (0, ''))
@@ -143,7 +143,7 @@ class ModelInfoTests(unittest.TestCase):
     def test_invalid_arguments_exit_two_before_reading_the_profile(self):
         project = self.temp / 'unconfigured'
         project.mkdir()
-        (project / '.odoo19-agent.toml').write_text('[tooling]\n')
+        (project / 'oasis-workspace.toml').write_text('[tooling]\n')
         name = 'ERROR: Invalid model name: use lowercase dotted words such as sale.order.\n'
         for args, stderr in (((), USAGE), (('a.b', 'c.d'), USAGE), (('a.b', '--unknown'), USAGE),
                              (('a.b', '--field'), USAGE), (('Coffee.Order',), name),
@@ -157,7 +157,7 @@ class ModelInfoTests(unittest.TestCase):
     def test_help_needs_no_profile_values(self):
         project = self.temp / 'unconfigured'
         project.mkdir()
-        (project / '.odoo19-agent.toml').write_text('[tooling]\n')
+        (project / 'oasis-workspace.toml').write_text('[tooling]\n')
         result = self.invoke('--help', project=project)
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertTrue(result.stdout.startswith(

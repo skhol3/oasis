@@ -11,60 +11,10 @@ NAMES = {
 }
 SECTIONS = ('Activation Contract', 'Hard Rules', 'Decision Gates',
             'Execution Steps', 'Output Contract', 'References')
-CONFIG = ROOT / 'odoo19-environment/assets/odoo19-agent.example.toml'
-# The installed entry point and its compatibility alias.
-ENTRY_POINTS = ('~/.agents/skills/odoo19/oasis', '~/.agents/skills/odoo19/odoo19')
-TOOLING = {
-    'version': str, 'python_version': str, 'community': str,
-    'environment': str, 'config': str, 'env_file': str, 'compose': str,
-    'requirements': str, 'addons_paths': list, 'db_service': str,
-    'dev_prefix': str, 'test_prefix': str,
-}
-COMMANDS = {'entrypoint', 'check_environment', 'bootstrap', 'install', 'update',
-            'test', 'module_status', 'odoo_shell'}
-
-
-def check_example(raw):
-    """Check static roles of the shipped example, not production config resolution."""
-    data = tomllib.loads(raw)
-    if not {'odoo', 'environment', 'tooling'} <= set(data) or set(data) - {'odoo', 'environment', 'tooling', 'commands'}:
-        raise ValueError('sections')
-    if set(data['odoo']) != {'addons_paths'} or set(data['environment']) != {'dependency_inputs', 'lock_files'}:
-        raise ValueError('metadata')
-    for section, fields in (('odoo', ('addons_paths',)),
-                            ('environment', ('dependency_inputs', 'lock_files'))):
-        for key in fields:
-            value = data[section][key]
-            if not isinstance(value, list) or not value or not all(isinstance(p, str) and p for p in value):
-                raise ValueError(key)
-    tooling = data['tooling']
-    if set(tooling) != set(TOOLING) or any(
-        not isinstance(tooling[key], kind) or not tooling[key] for key, kind in TOOLING.items()
-    ):
-        raise ValueError('tooling')
-    if (tooling['version'] != '19.0' or tooling['python_version'] != '3.12'
-            or not tooling['dev_prefix'].endswith('_dev_')
-            or tooling['test_prefix'] != tooling['dev_prefix'][:-4] + 'test_'):
-        raise ValueError('tooling agreement')
-    commands = data.get('commands', {})
-    if not isinstance(commands, dict):
-        raise ValueError('command path')
-    operations = {'check_environment': 'check-environment', 'bootstrap': 'bootstrap',
-                  'install': 'install-module', 'update': 'update-module',
-                  'test': 'test-module', 'module_status': 'module-status',
-                  'odoo_shell': 'odoo-shell'}
-    for key, value in commands.items():
-        if key not in COMMANDS or not isinstance(value, str):
-            raise ValueError('command path')
-        if 'entrypoint' in commands:
-            if (key == 'entrypoint' and value not in ENTRY_POINTS) or (key != 'entrypoint' and value != operations[key]):
-                raise ValueError('command path')
-        elif (key == 'odoo_shell' or not re.fullmatch(r'[A-Za-z0-9_./-]+', value)
-              or value.startswith('/') or '..' in Path(value).parts):
-            raise ValueError('command path')
-    if re.search(r'corpus.cafe|cc_(?:test|dev)_|password|secret|token|credential', repr(data), re.I):
-        raise ValueError('customer path or credential')
-    return data
+# The legacy per-checkout profile: no longer read; only docs/migrating.md describes it (how to
+# convert one), the README notes the contract change and the bash guard keeps it in its setting files.
+LEGACY_PROFILE = '.odoo19-agent.toml'
+LEGACY_MENTIONS = {'README.md', 'docs/migrating.md', 'docs/bash-guard.md'}
 
 
 # Repository-only paths: install.sh does not install them, so no installed document may link to them.
@@ -123,8 +73,10 @@ def broken_links(files, root):
 
 
 WORKSPACE = ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml'
-WORKSPACE_TOOLING = {key: kind for key, kind in TOOLING.items()
-                     if key not in ('version', 'python_version')}
+WORKSPACE_TOOLING = {
+    'community': str, 'environment': str, 'config': str, 'env_file': str, 'compose': str,
+    'requirements': str, 'addons_paths': list, 'db_service': str, 'dev_prefix': str, 'test_prefix': str,
+}
 
 
 def check_workspace_example(raw):
@@ -178,55 +130,38 @@ class BundleTests(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)))
         self.assertFalse((ROOT / 'SKILL.md').exists())
 
-    def test_example_schema_and_negative_examples(self):
-        raw = CONFIG.read_text(encoding='utf-8')
-        data = check_example(raw)
-        self.assertEqual(data['odoo']['addons_paths'][0], data['tooling']['addons_paths'][0])
-        self.assertNotEqual(data['odoo']['addons_paths'], data['tooling']['addons_paths'])
-        self.assertNotIn('commands', data)
-        for entrypoint in ENTRY_POINTS:
-            valid = raw + f"\n[commands]\nentrypoint = '{entrypoint}'\ntest = 'test-module'\n"
-            self.assertEqual(check_example(valid)['commands']['test'], 'test-module')
-        with self.assertRaisesRegex(ValueError, '^command path$'):
-            check_example(raw + "\n[commands]\nentrypoint = '~/.agents/skills/odoo19/other'\n")
-        with self.assertRaises(ValueError):
-            check_example(raw.replace("version = '19.0'", "version = '18.0'"))
-        with self.assertRaises(ValueError):
-            check_example(raw.replace("environment = '.venv'", ''))
-        with self.assertRaisesRegex(ValueError, '^command path$'):
-            check_example(raw + "\n[commands]\ntest = 'bash -c unsafe'\n")
-        with self.assertRaisesRegex(ValueError, '^command path$'):
-            check_example(raw + "\n[commands]\ntest = '../outside'\n")
-        with self.assertRaises(ValueError):
-            check_example(raw + "\n[database_extra]\npassword = 'example'\n")
+    def test_the_legacy_profile_example_is_gone_and_only_migrating_describes_the_format(self):
+        self.assertFalse((ROOT / 'odoo19-environment/assets/odoo19-agent.example.toml').exists())
+        shipped = [*documents(ROOT), *skill_documents(ROOT), *sorted(ROOT.glob('odoo19-*/assets/*'))]
+        mentions = {path.relative_to(ROOT).as_posix() for path in shipped
+                    if LEGACY_PROFILE in path.read_text(encoding='utf-8')}
+        self.assertEqual(mentions, LEGACY_MENTIONS)
 
-    def test_checkout_slug_is_documented_but_not_set_in_the_example(self):
-        raw = CONFIG.read_text(encoding='utf-8')
+    def test_checkout_slug_is_documented_but_not_set_in_the_workspace_example(self):
+        raw = WORKSPACE.read_text(encoding='utf-8')
         self.assertNotIn('checkout_slug', tomllib.loads(raw)['tooling'])
-        documented = re.findall(r"^# checkout_slug = '([^']*)'$", raw, re.MULTILINE)
+        documented = re.findall(r"^#\s+checkout_slug = '([^']*)'$", raw, re.MULTILINE)
         self.assertEqual(len(documented), 1)
         self.assertRegex(documented[0], r'^[a-z0-9][a-z0-9_]{0,19}$')
         contract = (ROOT / 'odoo19-environment/references/project-contract.md').read_text(encoding='utf-8')
         for phrase in ('`checkout_slug`', '`CHECKOUT_KIND`', '`CHECKOUT_SLUG`'):
             self.assertIn(phrase, contract)
 
-    def test_logs_is_documented_but_not_set_in_the_example(self):
-        raw = CONFIG.read_text(encoding='utf-8')
+    def test_logs_is_documented_but_not_set_in_the_workspace_example(self):
+        raw = WORKSPACE.read_text(encoding='utf-8')
         self.assertNotIn('logs', tomllib.loads(raw)['tooling'])
-        self.assertEqual(re.findall(r"^# logs = '([^']*)'$", raw, re.MULTILINE), ['../logs'])
+        self.assertEqual(re.findall(r"^# logs = '([^']*)'$", raw, re.MULTILINE), ['logs'])
         contract = (ROOT / 'odoo19-environment/references/project-contract.md').read_text(encoding='utf-8')
         for phrase in ('`logs`', '`LOGS_DIR`', '`<logs>/<slug, or main for the main checkout>/run-*`'):
             self.assertIn(phrase, contract)
 
-    def test_agent_destructive_is_documented_but_not_set_in_the_examples(self):
-        for path in (CONFIG, WORKSPACE):
-            with self.subTest(path=path.name):
-                raw = path.read_text(encoding='utf-8')
-                self.assertNotIn('agent_destructive', tomllib.loads(raw)['tooling'])
-                self.assertEqual(re.findall(r"^# agent_destructive = '([^']*)'$", raw, re.MULTILINE), ['ask'])
-                comment = raw[:raw.index("# agent_destructive = 'ask'")].rsplit('\n\n', 1)[-1]
-                for value in ("'ask'", "'deny'", "'allow'"):
-                    self.assertIn(value, comment)
+    def test_agent_destructive_is_documented_but_not_set_in_the_workspace_example(self):
+        raw = WORKSPACE.read_text(encoding='utf-8')
+        self.assertNotIn('agent_destructive', tomllib.loads(raw)['tooling'])
+        self.assertEqual(re.findall(r"^# agent_destructive = '([^']*)'$", raw, re.MULTILINE), ['ask'])
+        comment = raw[:raw.index("# agent_destructive = 'ask'")].rsplit('\n\n', 1)[-1]
+        for value in ("'ask'", "'deny'", "'allow'"):
+            self.assertIn(value, comment)
 
     def test_workspace_example_schema_and_negative_examples(self):
         raw = WORKSPACE.read_text(encoding='utf-8')
@@ -242,10 +177,9 @@ class BundleTests(unittest.TestCase):
                        raw + "\n[database_extra]\npassword = 'example'\n"):
             with self.assertRaises(ValueError):
                 check_workspace_example(broken)
-        # Documented but not set: logs and optional keys; the slug lives in oasis-checkout.toml.
-        self.assertEqual(re.findall(r"^# logs = '([^']*)'$", raw, re.MULTILINE), ['logs'])
+        # Documented but not set: the slug lives in oasis-checkout.toml.
         self.assertEqual(re.findall(r"^#\s+checkout_slug = '([^']*)'$", raw, re.MULTILINE), ['acme_07_1'])
-        for phrase in ('oasis-checkout.toml', 'addons_paths', '.odoo19-agent.toml'):
+        for phrase in ('oasis-checkout.toml', 'addons_paths'):
             self.assertIn(phrase, raw)
         contract = (ROOT / 'odoo19-environment/references/project-contract.md').read_text(encoding='utf-8')
         for phrase in ('`oasis-workspace.toml`', '`oasis-checkout.toml`', '`WORKSPACE_ROOT`'):

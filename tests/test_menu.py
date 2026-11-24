@@ -5,6 +5,8 @@ terminal menu runs on a pseudo-terminal created by the test. Detached fake serve
 cleanup.
 """
 from pathlib import Path
+import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -22,7 +24,7 @@ import test_lifecycle as lifecycle
 
 ROOT = lifecycle.STAGE
 ENTRY = str((ROOT / 'oasis').resolve())
-ACTIONS = ['server.start', 'server.restart', 'server.stop', 'server.logs', 'server.follow', 'server.status',
+ACTIONS = ['server.run', 'server.start', 'server.restart', 'server.stop', 'server.logs', 'server.follow', 'server.status',
            'server.stop_database',
            'modules.install', 'modules.update', 'modules.status', 'modules.init_dev', 'modules.overview',
            'tests.module', 'tests.class', 'tests.reuse',
@@ -30,16 +32,48 @@ ACTIONS = ['server.start', 'server.restart', 'server.stop', 'server.logs', 'serv
            'maintenance.trash_restore', 'maintenance.trash_empty', 'maintenance.gc', 'maintenance.gc_apply', 'maintenance.doctor', 'maintenance.migrate_plan',
            'maintenance.migrate', 'maintenance.worktree']
 ACTION_KEYS = ['argv', 'command', 'confirm', 'destructive', 'follow', 'group', 'id', 'inputs', 'kind', 'label',
-               'terminal_only', 'user_run']
-INPUT_KEYS = ['allow_new', 'default', 'error', 'hint', 'id', 'kind', 'label', 'pattern', 'required',
+               'superseded_by', 'terminal_only', 'user_run']
+INPUT_KEYS = ['allow_new', 'choices', 'default', 'error', 'hint', 'id', 'kind', 'label', 'pattern', 'required',
               'source']
 MODULE_INPUT = {'id': 'module', 'label': 'Module', 'kind': 'choice', 'source': 'modules',
                 'required': True, 'allow_new': False, 'pattern': None, 'error': None, 'default': None,
-                'hint': None}
+                'hint': None, 'choices': None}
 ONLY_INPUT = {'id': 'only', 'label': 'Test class (Class or Class.method)', 'kind': 'text',
               'source': None, 'required': True, 'allow_new': False,
               'pattern': r'^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$',
-              'error': '--only takes a test class or Class.method.', 'default': None, 'hint': None}
+              'error': '--only takes a test class or Class.method.', 'default': None, 'hint': None,
+              'choices': None}
+# v0.12.0 (S3): the start / restart flow's inputs in the fixture (one module: cc_dev_coffee is derivable).
+DATABASE_PATTERN = '^[A-Za-z0-9_]+$'
+DATABASE_ERROR = 'Database name must use only letters, numbers, and underscores.'
+PORT_PATTERN = '^(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$'
+RUN_DATABASE = {'id': 'database', 'label': 'Database', 'kind': 'choice', 'source': 'databases',
+                'required': False, 'allow_new': True, 'pattern': DATABASE_PATTERN, 'error': DATABASE_ERROR,
+                'default': 'cc_dev_coffee', 'hint': 'Enter for cc_dev_coffee, - for none', 'choices': None}
+
+
+def dev_choices(warning=None):
+    """The closed dev mode choices of 19.0 (tools/odoo_versions.py); warning on those that turn on reload."""
+    return [{'value': '', 'label': 'off', 'warning': None},
+            {'value': 'all', 'label': 'all (access, qweb, reload, xml)', 'warning': warning},
+            *({'value': name, 'label': name, 'warning': warning if name == 'reload' else None}
+              for name in ('access', 'qweb', 'reload', 'replica', 'xml')),
+            {'value': 'reload,xml', 'label': 'reload,xml', 'warning': warning}]
+
+
+def dev_input(warning=None):
+    return {'id': 'dev', 'label': 'Dev mode', 'kind': 'choice', 'source': None, 'required': False,
+            'allow_new': False, 'pattern': None, 'error': None, 'default': '', 'hint': 'Enter for off',
+            'choices': dev_choices(warning)}
+
+
+def port_input(port):
+    return {'id': 'port', 'label': 'HTTP port', 'kind': 'text', 'source': None, 'required': False,
+            'allow_new': False, 'pattern': PORT_PATTERN, 'error': 'Port must be a number from 1 to 65535.',
+            'default': str(port), 'hint': f'Enter for {port}', 'choices': None}
+
+
+NO_CONF_DATABASE = 'No database chosen: odoo.conf sets no db_name, so Odoo starts without a database.'
 WAITING = 'Listing databases (this may start the database service)...'
 NO_TERMINAL = ('oasis menu needs a terminal (stdin is not a TTY); run it yourself, or print the '
                'actions as JSON with --catalog.\n')
@@ -132,6 +166,31 @@ class MenuFixture(unittest.TestCase):
     def log(self):
         return self.commands.read_text() if self.commands.exists() else ''
 
+    def odoo_lines(self):
+        return [line for line in self.log().splitlines() if line.startswith('odoo ')]
+
+    def state_file(self, name='menu.json'):
+        """A file of this checkout's private runtime directory (tools/runtime_state.py)."""
+        digest = hashlib.sha256(os.path.realpath(self.root).encode()).hexdigest()[:16]
+        return Path(self.env['XDG_RUNTIME_DIR']) / f'oasis-{os.getuid()}' / digest / name
+
+    def remember(self, action, answers):
+        result = subprocess.run([sys.executable, '-B', str(ROOT / 'tools/runtime_state.py'), 'remember',
+                                 str(self.root), action, json.dumps(answers)],
+                                capture_output=True, text=True, env=self.env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+
+    def without_reload_packages(self):
+        """The fake environment Python cannot import inotify or watchdog (FAKE_NO_RELOAD)."""
+        self.python.write_text(self.python.read_text().replace(
+            'if [ "$1" = "-c" ]; then echo 3.12',
+            'if [ "$1" = "-c" ] && [ -n "${FAKE_NO_RELOAD:-}" ] && [ "${3:-}" = inotify ]; then exit 1; fi\n'
+            'if [ "$1" = "-c" ]; then echo 3.12', 1))
+        self.env['FAKE_NO_RELOAD'] = '1'
+        return (f'reload needs inotify or watchdog importable by {self.python}; none is, so Odoo will log a '
+                'warning and disable reload.')
+
+
 
 class CatalogTests(MenuFixture):
     def catalog(self):
@@ -141,8 +200,8 @@ class CatalogTests(MenuFixture):
 
     def test_catalog_is_json_with_every_action_and_runs_nothing(self):
         catalog = self.catalog()
-        self.assertEqual(sorted(catalog), ['actions', 'catalog_version', 'entrypoint', 'groups', 'project',
-                                           'server_log', 'sources'])
+        self.assertEqual(sorted(catalog), ['actions', 'catalog_version', 'checkout', 'entrypoint', 'groups', 'last',
+                                           'project', 'server_log', 'sources'])
         self.assertEqual((catalog['catalog_version'], catalog['project'], catalog['entrypoint']),
                          (1, self.project, ENTRY))
         self.assertEqual(catalog['server_log'], str(self.root.resolve() / 'dev/logs/odoo19/server.log'))
@@ -165,6 +224,9 @@ class CatalogTests(MenuFixture):
                     self.assertIn(item['kind'], ('choice', 'text', 'boolean'))
                     self.assertIn(item['source'], (None, 'modules', 'databases'))
                 self.assertEqual(action['follow'], action['id'] == 'server.follow')
+                # v0.12.0 (S7): the old start and restart stay for older panels; new front ends show server.run.
+                self.assertEqual(action['superseded_by'],
+                                 'server.run' if action['id'] in ('server.start', 'server.restart') else None)
                 for token in action['argv']:
                     if isinstance(token, dict):
                         self.assertTrue(set(token) in ({'input'}, {'input', 'option'}, {'input', 'flag'},
@@ -193,7 +255,7 @@ class CatalogTests(MenuFixture):
             'argv': [*prefix, 'test-module', {'compact': '--compact'}, {'input': 'only', 'option': '--only'},
                      {'input': 'module'}],
             'inputs': [MODULE_INPUT, ONLY_INPUT], 'destructive': False, 'confirm': None, 'user_run': False,
-            'terminal_only': False, 'follow': False})
+            'terminal_only': False, 'follow': False, 'superseded_by': None})
         self.assertEqual(actions['server.start']['argv'], [*prefix, 'start', '--detach',
                                                            {'input': 'database', 'option': '-d'}])
         # S6: restart with an optional database, and the live server log.
@@ -201,12 +263,20 @@ class CatalogTests(MenuFixture):
             'id': 'server.restart', 'group': 'server', 'label': 'Restart the server', 'kind': 'command',
             'command': 'restart', 'argv': [*prefix, 'restart', {'input': 'database', 'option': '-d'}],
             'inputs': [actions['server.start']['inputs'][0] | {'hint': 'Enter to keep the database of the running server'}],
-            'destructive': False, 'confirm': None, 'user_run': False, 'terminal_only': False, 'follow': False})
+            'destructive': False, 'confirm': None, 'user_run': False, 'terminal_only': False, 'follow': False,
+            'superseded_by': 'server.run'})
+        # v0.12.0 (S7): the old start keeps its id, label, command and input for older panels.
+        self.assertEqual(actions['server.start'], {
+            'id': 'server.start', 'group': 'server', 'label': 'Start the server in the background', 'kind': 'command',
+            'command': 'start', 'argv': [*prefix, 'start', '--detach', {'input': 'database', 'option': '-d'}],
+            'inputs': [RUN_DATABASE | {'default': None, 'hint': 'Enter to start without -d'}],
+            'destructive': False, 'confirm': None, 'user_run': False, 'terminal_only': False, 'follow': False,
+            'superseded_by': 'server.run'})
         self.assertEqual(actions['server.follow'], {
             'id': 'server.follow', 'group': 'server', 'label': 'Follow the server log', 'kind': 'log',
             'command': None, 'argv': ['tail', '-n', '200', '-f', str(self.root.resolve() / 'dev/logs/odoo19/server.log')],
             'inputs': [], 'destructive': False, 'confirm': None, 'user_run': False, 'terminal_only': False,
-            'follow': True})
+            'follow': True, 'superseded_by': None})
         self.assertEqual(actions['modules.install']['argv'], [
             *prefix, 'install-module', {'input': 'demo', 'flag': '--with-demo'}, {'input': 'module'},
             {'input': 'database'}])
@@ -227,23 +297,24 @@ class CatalogTests(MenuFixture):
         self.assertEqual(actions['maintenance.trash'], {
             'id': 'maintenance.trash', 'group': 'maintenance', 'label': 'List trash', 'kind': 'command',
             'command': 'trash', 'argv': [*prefix, 'trash'], 'inputs': [], 'destructive': False, 'confirm': None,
-            'user_run': False, 'terminal_only': False, 'follow': False})
+            'user_run': False, 'terminal_only': False, 'follow': False, 'superseded_by': None})
         self.assertEqual(actions['maintenance.trash_restore'], {
             'id': 'maintenance.trash_restore', 'group': 'maintenance', 'label': 'Restore from trash',
             'kind': 'command', 'command': 'trash', 'argv': [*prefix, 'trash', 'restore', {'input': 'trash'}],
             'inputs': [{'id': 'trash', 'label': 'Trash name (as listed by List trash)', 'kind': 'text',
                         'source': None, 'required': True, 'allow_new': False, 'pattern': '^[A-Za-z0-9_]+$',
                         'error': 'Database name must use only letters, numbers, and underscores.',
-                        'default': None, 'hint': None}],
-            'destructive': False, 'confirm': None, 'user_run': False, 'terminal_only': False, 'follow': False})
+                        'default': None, 'hint': None, 'choices': None}],
+            'destructive': False, 'confirm': None, 'user_run': False, 'terminal_only': False, 'follow': False, 'superseded_by': None})
         self.assertEqual(actions['maintenance.trash_empty'], {
             'id': 'maintenance.trash_empty', 'group': 'maintenance', 'label': 'Empty trash', 'kind': 'command',
             'command': 'gc', 'argv': [*prefix, 'gc', '--apply', '--trash',
                                       {'input': 'older_than', 'option': '--older-than'}],
             'inputs': [{'id': 'older_than', 'label': 'Dropped at least this many days ago', 'kind': 'text',
                         'source': None, 'required': False, 'allow_new': False, 'pattern': '^[0-9]+$',
-                        'error': 'Days must be a whole number.', 'default': None, 'hint': 'Enter for 7'}],
-            'destructive': True, 'confirm': 'yes', 'user_run': False, 'terminal_only': False, 'follow': False})
+                        'error': 'Days must be a whole number.', 'default': None, 'hint': 'Enter for 7',
+                        'choices': None}],
+            'destructive': True, 'confirm': 'yes', 'user_run': False, 'terminal_only': False, 'follow': False, 'superseded_by': None})
         self.assertEqual([key for key, action in actions.items() if action['user_run']],
                          ['maintenance.migrate', 'maintenance.worktree'])
         self.assertEqual([key for key, action in actions.items() if action['terminal_only']], ['modules.init_dev'])
@@ -253,13 +324,127 @@ class CatalogTests(MenuFixture):
             'id': 'modules.overview', 'group': 'modules', 'label': "Show a module's overview from source",
             'kind': 'command', 'command': 'module-info', 'argv': [*prefix, 'module-info', {'input': 'module'}],
             'inputs': [MODULE_INPUT], 'destructive': False, 'confirm': None, 'user_run': False,
-            'terminal_only': False, 'follow': False})
+            'terminal_only': False, 'follow': False, 'superseded_by': None})
 
     def test_catalog_server_log_follows_the_configured_logs_directory(self):
-        profile = self.root / '.odoo19-agent.toml'
+        profile = self.root / 'oasis-workspace.toml'
         profile.write_text(profile.read_text() + "logs = '../logs'\n")
         self.assertEqual(self.catalog()['server_log'], str(self.root.resolve().parent / 'logs/main/server.log'))
         self.assertFalse((self.root.parent / 'logs').exists())
+
+    def test_catalog_start_restart_action_asks_database_dev_mode_and_port(self):
+        catalog = self.catalog()
+        prefix = [ENTRY, '--project', self.project]
+        actions = {action['id']: action for action in catalog['actions']}
+        # v0.12.0 (S3): one action; a stopped checkout starts in the background.
+        self.assertEqual(actions['server.run'], {
+            'id': 'server.run', 'group': 'server', 'label': 'Start / restart the server', 'kind': 'command',
+            'command': 'start',
+            'argv': [*prefix, 'start', '--detach', {'input': 'database', 'option': '-d'},
+                     {'input': 'dev', 'option': '--dev'}, {'input': 'port', 'option': '--http-port'}],
+            'inputs': [RUN_DATABASE, dev_input(), port_input(8069)], 'destructive': False, 'confirm': None,
+            'user_run': False, 'terminal_only': False, 'follow': False, 'superseded_by': None})
+        # S5: what the headers show.
+        self.assertEqual(catalog['checkout'], {
+            'name': 'main',
+            'server': {'state': 'stopped', 'pid': None, 'port': None, 'database': None, 'error': None},
+            'default_database': 'cc_dev_coffee',
+            'no_database': {'start': NO_CONF_DATABASE, 'restart': NO_CONF_DATABASE}})
+        self.assertIsNone(catalog['last'])
+        self.unchanged()
+
+    def test_catalog_defaults_follow_the_checkout_and_its_odoo_conf(self):
+        warning = self.without_reload_packages()
+        conf = self.root / 'dev/odoo.conf'
+        conf.write_text(lifecycle.conf_text('http_port = 8100\ndb_name = cc_dev_other\n'))
+        (self.root / 'tea').mkdir()
+        (self.root / 'tea/__manifest__.py').touch()
+        catalog = self.catalog()
+        run = next(action for action in catalog['actions'] if action['id'] == 'server.run')
+        # Two modules: no development database is derivable, so the default is none.
+        self.assertEqual(run['inputs'], [RUN_DATABASE | {'default': None, 'hint': 'Enter for none'},
+                                         dev_input(warning), port_input(8100)])
+        uses = "No database chosen: Odoo will use odoo.conf's db_name (cc_dev_other)."
+        self.assertEqual((catalog['checkout']['default_database'], catalog['checkout']['no_database']),
+                         (None, {'start': uses, 'restart': uses}))
+        # Odoo writes db_name = False for none.
+        for value in ('False', ''):
+            with self.subTest(db_name=value):
+                conf.write_text(lifecycle.conf_text(f'db_name = {value}\n'))
+                self.assertEqual(self.catalog()['checkout']['no_database'],
+                                 {'start': NO_CONF_DATABASE, 'restart': NO_CONF_DATABASE})
+        # The last database this flow used in this checkout comes first.
+        self.remember('server.run', {'database': 'cc_dev_tea', 'dev': 'all', 'port': '8070'})
+        catalog = self.catalog()
+        self.assertEqual(catalog['checkout']['default_database'], 'cc_dev_tea')
+        self.assertEqual(catalog['actions'][0]['inputs'][0],
+                         RUN_DATABASE | {'default': 'cc_dev_tea', 'hint': 'Enter for cc_dev_tea, - for none'})
+        self.assertEqual(catalog['last'], {
+            'action': 'server.run', 'answers': {'database': 'cc_dev_tea', 'dev': 'all', 'port': '8070'},
+            'label': 'Repeat: Start / restart the server (cc_dev_tea, dev all, port 8070)'})
+        # Choosing no database later keeps the last one used as the default.
+        self.remember('server.run', {'database': '', 'dev': '', 'port': ''})
+        catalog = self.catalog()
+        self.assertEqual((catalog['checkout']['default_database'], catalog['last']['label']),
+                         ('cc_dev_tea', 'Repeat: Start / restart the server'))
+        self.unchanged()
+
+    def test_catalog_offers_the_last_action_only_while_it_still_applies(self):
+        self.remember('modules.update', {'module': 'coffee', 'database': 'cc_dev_coffee'})
+        self.assertEqual(self.catalog()['last'], {
+            'action': 'modules.update', 'answers': {'module': 'coffee', 'database': 'cc_dev_coffee'},
+            'label': 'Repeat: Update a module (coffee, cc_dev_coffee)'})
+        self.remember('modules.install', {'module': 'coffee', 'database': '', 'demo': True})
+        self.assertEqual(self.catalog()['last']['label'], 'Repeat: Install a module (coffee, demo)')
+        self.remember('tests.class', {'module': 'coffee', 'only': 'TestCup.test_fill'})
+        self.assertEqual(self.catalog()['last']['label'], 'Repeat: Test one class or method (coffee, only TestCup.test_fill)')
+        for action, answers in (
+                ('modules.update', {'module': 'gone', 'database': 'cc_dev_coffee'}),
+                ('modules.update', {'module': 'coffee'}),
+                ('modules.update', {'module': 'coffee', 'database': 'cc_dev_coffee', 'extra': 'x'}),
+                ('modules.update', {'module': 'coffee', 'database': 'bad-name'}),
+                ('modules.install', {'module': 'coffee', 'database': '', 'demo': 'yes'}),
+                ('server.run', {'database': '', 'dev': 'pdb', 'port': ''}),
+                ('server.run', {'database': '', 'dev': '', 'port': '70000'}),
+                ('maintenance.worktree', {'feature': 'shop', 'branch': 'shop'}),
+                ('modules.init_dev', {'module': 'coffee', 'database': 'cc_dev_x', 'demo': False}),
+                ('server.follow', {}),
+                ('server.gone', {})):
+            with self.subTest(action=action, answers=answers):
+                self.remember(action, answers)
+                self.assertIsNone(self.catalog()['last'])
+        self.unchanged()
+
+    def test_catalog_reports_an_unreadable_runtime_state_and_still_lists_the_actions(self):
+        user_root = Path(self.env['XDG_RUNTIME_DIR']) / f'oasis-{os.getuid()}'
+        elsewhere = Path(self.scratch.name) / 'elsewhere'
+        elsewhere.mkdir()
+        user_root.symlink_to(elsewhere, target_is_directory=True)
+        catalog = self.catalog()
+        self.assertEqual(catalog['checkout']['server'], {
+            'state': 'unknown', 'pid': None, 'port': None, 'database': None,
+            'error': f'Runtime state directory is a symlink: {user_root}'})
+        self.assertEqual((catalog['last'], catalog['actions'][0]['command']), (None, 'start'))
+        self.assertEqual(list(elsewhere.iterdir()), [])
+
+    def test_start_port_follows_the_rules_of_start(self):
+        spec = importlib.util.spec_from_file_location('oasis_actions_under_test', ROOT / 'tools/actions.py')
+        actions = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(actions)
+        port = lifecycle.quiet_ports(3)
+        conf = self.root / 'dev/odoo.conf'
+        conf.write_text(lifecycle.conf_text(f'http_port = {port}\n'))
+        values = {'ODOO_CONFIG': str(conf), 'CHECKOUT_KIND': 'main'}
+        self.assertEqual(actions.start_port(values, None), port)
+        self.assertEqual(actions.start_port(values, {'port': 9000}), 9000)
+        with socket.socket() as holder:
+            holder.bind(('127.0.0.1', port + 1))
+            holder.listen()
+            self.assertEqual(actions.start_port(values | {'CHECKOUT_KIND': 'linked'}, None), port + 2)
+        conf.write_text(lifecycle.conf_text())
+        self.assertEqual(actions.start_port(values, None), 8069)
+        conf.write_text(lifecycle.conf_text('http_port = x\n'))
+        self.assertIsNone(actions.start_port(values, None))
 
     def test_menu_is_a_public_command_with_help(self):
         result = self.oasis('menu', '--help')
@@ -271,6 +456,100 @@ class CatalogTests(MenuFixture):
 
 
 class TerminalMenuTests(MenuFixture):
+    def test_menu_header_shows_checkout_server_and_default_database(self):
+        result = self.terminal('q\n')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.startswith(
+            f'oasis menu: {self.project}\ncheckout: main\nserver: stopped\ndefault database: cc_dev_coffee\n'
+            '  1) Server\n'), result.stdout)
+        self.assertIn('Group (q to quit): ', result.stdout)
+        self.assertNotIn('Repeat', result.stdout)
+        # One start / restart action; the superseded ones are not listed.
+        result = self.terminal('1\nq\n')
+        self.assertIn('Server\n  1) Start / restart the server\n  2) Stop the server\n'
+                      '  3) Show the end of the server log\n', result.stdout)
+        self.assertNotIn('Start the server in the background', result.stdout)
+        self.assertNotIn('Restart the server\n', result.stdout)
+        self.unchanged()
+
+    def test_start_restart_asks_database_dev_mode_and_port_then_confirms(self):
+        self.env.update(FAKE_DATABASES='cc_dev_coffee cc_dev_tea')
+        result = self.terminal('1\n1\n\n\n\nn\n')
+        self.assertEqual((result.returncode, result.stderr), (1, ''), result.stdout)
+        self.assertIn('Database\n  1) cc_dev_coffee\n  2) cc_dev_tea\n'
+                      'Database (number or name, Enter for cc_dev_coffee, - for none): Dev mode\n  1) off\n'
+                      '  2) all (access, qweb, reload, xml)\n  3) access\n  4) qweb\n  5) reload\n  6) replica\n'
+                      '  7) xml\n  8) reload,xml\nDev mode (number, Enter for off): HTTP port (Enter for 8069): ',
+                      result.stdout)
+        self.assertTrue(result.stdout.endswith(
+            self.command('start', '--detach', '-d', 'cc_dev_coffee') +
+            'Run this command? [y/N]: Not confirmed: nothing ran.\n'), result.stdout)
+        self.assertEqual(self.odoo_lines(), [])
+        self.assertFalse(self.state_file().exists())
+        # No database, a dev mode whose reload cannot work here, a port asked again until valid.
+        warning = self.without_reload_packages()
+        result = self.terminal('1\n1\n-\n9\n2\n0\n8070\nno\n')
+        self.assertEqual((result.returncode, result.stderr), (1, ''), result.stdout)
+        self.assertIn('Choose a number from 1 to 8.\n', result.stdout)
+        self.assertIn(f'Warning: {warning}\nHTTP port', result.stdout)
+        self.assertIn('Port must be a number from 1 to 65535.\n', result.stdout)
+        self.assertTrue(result.stdout.endswith(
+            self.command('start', '--detach', '--dev', 'all', '--http-port', '8070') + NO_CONF_DATABASE +
+            '\nRun this command? [y/N]: Not confirmed: nothing ran.\n'), result.stdout)
+        self.assertEqual(self.odoo_lines(), [])
+
+    def test_dash_chooses_no_database_when_the_input_has_no_default(self):
+        # Two modules and no remembered database: the database input has no default, and `-`
+        # still chooses none instead of failing the name check.
+        (self.root / 'tea').mkdir()
+        (self.root / 'tea/__manifest__.py').touch()
+        self.env.update(FAKE_DATABASES='cc_dev_coffee')
+        result = self.terminal('1\n1\n-\n\n\nn\n')
+        self.assertEqual((result.returncode, result.stderr), (1, ''), result.stdout)
+        self.assertIn('Database (number or name, Enter for none): Dev mode\n', result.stdout)
+        self.assertTrue(result.stdout.endswith(
+            self.command('start', '--detach') + NO_CONF_DATABASE +
+            '\nRun this command? [y/N]: Not confirmed: nothing ran.\n'), result.stdout)
+        self.assertEqual(self.odoo_lines(), [])
+        self.assertFalse(self.state_file().exists())
+
+    def test_the_last_action_is_offered_first_and_repeats_after_the_same_confirmation(self):
+        self.env.update(FAKE_DATABASES='cc_dev_coffee', FAKE_EXISTS='1')
+        result = self.terminal('2\n3\n1\n1\n')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        memory = self.state_file()
+        self.assertEqual(memory.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(json.loads(memory.read_text()),
+                         {'last': {'action': 'modules.status', 'answers': {'module': 'coffee', 'database': 'cc_dev_coffee'}}})
+        before = self.log().count('COALESCE(latest_version')
+        result = self.terminal('r\n')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        # The group numbers stay; r repeats.
+        self.assertIn("default database: cc_dev_coffee\n  r) Repeat: Show a module's state (coffee, cc_dev_coffee)\n"
+                      '  1) Server\n', result.stdout)
+        self.assertIn('Group (r to repeat, q to quit): ' + self.command('module-status', 'coffee', 'cc_dev_coffee'),
+                      result.stdout)
+        self.assertEqual(self.log().count('COALESCE(latest_version'), before + 1)
+        # A destructive action repeats only after its typed confirmation.
+        Path(str(self.commands) + '.databases').write_text('cc_dev_coffee\n')
+        self.env.pop('FAKE_EXISTS')
+        result = self.terminal('4\n2\n1\nn\ncc_dev_coffee\n')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        result = self.terminal('r\ncc_dev_coffe\n')
+        self.assertEqual((result.returncode, result.stderr), (1, ''), result.stdout)
+        self.assertIn('  r) Repeat: Move a database to the trash (cc_dev_coffee)\n', result.stdout)
+        self.assertTrue(result.stdout.endswith(
+            self.command('drop-database', 'cc_dev_coffee') + 'Type the database name to confirm: '
+            'Not confirmed: nothing ran.\n'), result.stdout)
+        self.assertEqual(self.log().count('RENAME TO'), 1)
+
+    def test_user_run_actions_are_not_remembered(self):
+        result = self.terminal('4\n11\nshop\nshop\n')
+        self.assertIn(self.command('worktree-init', 'shop', 'shop'), result.stdout)
+        self.assertFalse(self.state_file().exists())
+        result = self.terminal('q\n')
+        self.assertNotIn('Repeat', result.stdout)
+
     def test_menu_refuses_without_a_terminal(self):
         for program in ('oasis', 'odoo19'):
             with self.subTest(program=program):
@@ -322,12 +601,33 @@ class TerminalMenuTests(MenuFixture):
         self.assertIn('-d cc_dev_coffee -u coffee --stop-after-init', self.log())
 
     def test_a_listed_name_made_of_digits_is_taken_as_written(self):
-        self.env.update(FAKE_DATABASES='cc_dev_coffee 2024', FAKE_EXISTS='1')
-        for answer, database in (('2024', '2024'), ('2', '2024'), ('1', 'cc_dev_coffee')):
+        # list-databases lists only prefixed names (v0.12.0 S2), so a module named 2024 holds the rule.
+        (self.root / '2024').mkdir()
+        (self.root / '2024/__manifest__.py').touch()
+        self.env.update(FAKE_DATABASES='cc_dev_coffee', FAKE_EXISTS='1')
+        for answer, module in (('2024', '2024'), ('1', '2024'), ('2', 'coffee')):
             with self.subTest(answer=answer):
-                result = self.terminal(f'2\n3\n1\n{answer}\n')
+                result = self.terminal(f'2\n3\n{answer}\n1\n')
+                self.assertIn('  1) 2024\n  2) coffee\n', result.stdout)
                 self.assertNotIn('Choose a number', result.stdout)
+                self.assertIn(self.command('module-status', module, 'cc_dev_coffee'), result.stdout)
+
+    def test_database_choices_are_the_checkouts_own(self):
+        # The fake service answers every name; list-databases keeps this checkout's (v0.12.0 S2).
+        self.env.update(FAKE_DATABASES='cc_dev_coffee cc_dev_wt_1_coffee cc_test_other cc_test_wt_1_x postgres',
+                        FAKE_EXISTS='1')
+        profile = self.root / 'oasis-workspace.toml'
+        for extra, listed, database in (
+                ('', ['cc_dev_coffee', 'cc_dev_wt_1_coffee', 'cc_test_other', 'cc_test_wt_1_x'], 'cc_dev_coffee'),
+                ("checkout_slug = 'wt_1'\n", ['cc_dev_wt_1_coffee', 'cc_test_wt_1_x'], 'cc_dev_wt_1_coffee')):
+            with self.subTest(slug=extra):
+                lifecycle.write_config(self.root, lifecycle.WORKSPACE + extra)
+                result = self.terminal('2\n3\n1\n1\n')
+                self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+                choices = ''.join(f'  {number}) {name}\n' for number, name in enumerate(listed, 1))
+                self.assertIn(WAITING + '\nDatabase\n' + choices + 'Database (number or name', result.stdout)
                 self.assertIn(self.command('module-status', 'coffee', database), result.stdout)
+                self.assertIn("SELECT datname FROM pg_database WHERE datname LIKE 'cc\\_dev\\_%' ESCAPE", self.log())
 
     def test_a_number_is_not_a_database_name_when_none_is_listed(self):
         result = self.terminal('2\n1\n1\n3\n\nn\n')
@@ -359,18 +659,18 @@ class TerminalMenuTests(MenuFixture):
         self.assertNotIn('dropdb', self.log())
 
     def test_yes_confirmation_for_stopping_the_database_service(self):
-        result = self.terminal('1\n7\nno\n')
+        result = self.terminal('1\n6\nno\n')
         self.assertEqual((result.returncode, result.stderr), (1, ''), result.stdout)
         self.assertIn(self.command('stop', '--database'), result.stdout)
         self.assertIn('Type yes to confirm: ', result.stdout)
         self.assertTrue(result.stdout.endswith('Not confirmed: nothing ran.\n'))
         self.unchanged()
-        result = self.terminal('1\n7\nyes\n')
+        result = self.terminal('1\n6\nyes\n')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         self.assertTrue(self.log().endswith(' stop db\n'), self.log())
 
     def test_missing_server_log(self):
-        for answers in ('1\n4\n', '1\n5\n'):
+        for answers in ('1\n3\n', '1\n4\n'):
             with self.subTest(action=answers.split()[1]):
                 result = self.terminal(answers)
                 self.assertEqual((result.returncode, result.stderr), (1, ''))
@@ -398,7 +698,7 @@ class TerminalMenuTests(MenuFixture):
                 os.killpg(process.pid, signal.SIGKILL)
                 process.communicate()
         self.addCleanup(end)
-        os.write(master, b'1\n5\n')
+        os.write(master, b'1\n4\n')
         seen = b''
 
         def read_until(text):
@@ -608,7 +908,7 @@ class DetachTests(MenuFixture):
                                  (0, f'Stopped Odoo for this checkout: pid {pid}, port {self.port}.\n', ''))
 
     def test_detach_writes_to_the_configured_logs_directory(self):
-        profile = self.root / '.odoo19-agent.toml'
+        profile = self.root / 'oasis-workspace.toml'
         profile.write_text(profile.read_text() + "logs = '../logs'\n")
         self.env['FAKE_SERVE'] = '1'
         result = self.start('--detach')
@@ -632,7 +932,7 @@ class DetachTests(MenuFixture):
         self.assertEqual(list(outside.iterdir()), [])
 
     def test_detach_refuses_a_checkout_directory_escaping_the_logs_directory(self):
-        profile = self.root / '.odoo19-agent.toml'
+        profile = self.root / 'oasis-workspace.toml'
         profile.write_text(profile.read_text() + "logs = '../logs'\n")
         outside = Path(self.scratch.name) / 'elsewhere'
         outside.mkdir()
@@ -656,9 +956,6 @@ class DetachTests(MenuFixture):
         pid = int(match.group(1))
         self.addCleanup(self.kill, pid)
         return pid
-
-    def odoo_lines(self):
-        return [line for line in self.log().splitlines() if line.startswith('odoo ')]
 
     def test_restart_stops_the_server_and_starts_it_detached_on_the_same_port(self):
         self.env['FAKE_SERVE'] = '1'
@@ -825,6 +1122,102 @@ class DetachTests(MenuFixture):
         self.assertIn('--http-port', result.stdout)
         self.assertIn('the port and the database the stopped server had', ' '.join(result.stdout.split()))
         self.assertEqual(self.record(), f'pid={pid} port={self.port}\n')
+
+    def test_start_restart_from_the_menu_starts_then_restarts_and_repeats(self):
+        self.env.update(FAKE_SERVE='1', FAKE_DATABASES='cc_dev_coffee', FAKE_EXISTS='1')
+        prefix = f'odoo {self.source / "odoo-bin"} -c {self.root / "dev/odoo.conf"}'
+        result = self.terminal('1\n1\n\n\n\ny\n')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn(f'HTTP port (Enter for {self.port}): ' + self.command('start', '--detach', '-d', 'cc_dev_coffee') +
+                      'Run this command? [y/N]: pid=', result.stdout)
+        pid = int(re.search(r'pid=(\d+) ', self.record()).group(1))
+        self.addCleanup(self.kill, pid)
+        self.assertEqual(self.odoo_lines()[-1], f'{prefix} --http-port={self.port} -d cc_dev_coffee')
+        # The server runs: the same action restarts it, with the chosen dev mode.
+        result = self.terminal('1\n1\n\n4\n\ny\n')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn(f'server: running on port {self.port} (pid {pid})\n', result.stdout)
+        self.assertIn(self.command('restart', '-d', 'cc_dev_coffee', '--dev', 'qweb') + 'Run this command? [y/N]: '
+                      f'Stopped Odoo for this checkout: pid {pid}, port {self.port}.\n', result.stdout)
+        second = self.restarted(subprocess.CompletedProcess([], 0, result.stdout.split('Run this command? [y/N]: ', 1)[1], ''),
+                                self.port)
+        self.assertEqual(self.odoo_lines()[-1], f'{prefix} --http-port={self.port} -d cc_dev_coffee --dev qweb')
+        result = self.terminal('r\ny\n')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn('  r) Repeat: Start / restart the server (cc_dev_coffee, dev qweb)\n', result.stdout)
+        self.assertIn(self.command('restart', '-d', 'cc_dev_coffee', '--dev', 'qweb') + 'Run this command? [y/N]: '
+                      f'Stopped Odoo for this checkout: pid {second}, port {self.port}.\n', result.stdout)
+        third = int(re.search(r'pid=(\d+) ', self.record()).group(1))
+        self.addCleanup(self.kill, third)
+        self.assertEqual(len(self.odoo_lines()), 3)
+
+    def test_start_without_a_database_from_the_menu_is_remembered(self):
+        self.env.update(FAKE_SERVE='1', FAKE_DATABASES='cc_dev_coffee', FAKE_EXISTS='1')
+        result = self.terminal('1\n1\n-\n\n\ny\n')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn(self.command('start', '--detach') + NO_CONF_DATABASE, result.stdout)
+        pid = int(re.search(r'pid=(\d+) ', self.record()).group(1))
+        self.addCleanup(self.kill, pid)
+        memory = json.loads(self.state_file().read_text())
+        self.assertEqual(memory['last']['action'], 'server.run')
+        self.assertEqual(memory['last']['answers']['database'], '')
+
+    def test_catalog_restarts_a_running_server_and_keeps_its_port(self):
+        self.env['FAKE_SERVE'] = '1'
+        other = self.port + 1
+        result = self.start('--detach', '-d', 'cc_dev_coffee', f'--http-port={other}')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        pid = int(re.match(r'pid=(\d+) ', result.stdout).group(1))
+        self.addCleanup(self.kill, pid)
+        result = self.oasis('menu', '--catalog')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        catalog = json.loads(result.stdout)
+        run = catalog['actions'][0]
+        self.assertEqual((run['id'], run['command'], run['argv'][3:]), ('server.run', 'restart', [
+            'restart', {'input': 'database', 'option': '-d'}, {'input': 'dev', 'option': '--dev'},
+            {'input': 'port', 'option': '--http-port'}]))
+        self.assertEqual(run['inputs'][2], port_input(other))
+        self.assertEqual(catalog['checkout']['server'], {'state': 'running', 'pid': pid, 'port': other,
+                                                         'database': 'cc_dev_coffee', 'error': None})
+        self.assertEqual(catalog['checkout']['no_database'], {
+            'start': NO_CONF_DATABASE,
+            'restart': 'No database chosen: restart keeps the database of the running server (cc_dev_coffee).'})
+
+    def test_start_without_a_database_warns_when_odoo_conf_names_one(self):
+        self.env['FAKE_SERVE'] = '1'
+        conf = self.root / 'dev/odoo.conf'
+        conf.write_text(lifecycle.conf_text(f'http_port = {self.port}\ndb_name = cc_dev_coffee\n'))
+        warning = "WARNING: no database given (-d); Odoo will use odoo.conf's db_name (cc_dev_coffee).\n"
+        result = self.start('--detach')
+        self.assertEqual((result.returncode, result.stderr), (0, warning))
+        pid = self.detached(result, self.server_log)
+        # restart without a recorded database starts without -d: the same warning.
+        result = self.oasis('restart')
+        self.assertEqual((result.returncode, result.stderr), (0, warning))
+        self.restarted(result, self.port)
+        result = self.invoke('stop')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.start('--detach', '-d', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.detached(result, self.server_log)
+        # The recorded database is kept: no warning.
+        result = self.oasis('restart')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.restarted(result, self.port)
+        result = self.invoke('stop')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # A batch run is not warned; neither is a conf without db_name (Odoo writes False for none).
+        del self.env['FAKE_SERVE']
+        result = self.start('--stop-after-init')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.env['FAKE_SERVE'] = '1'
+        for value in ('False', ''):
+            with self.subTest(db_name=value):
+                conf.write_text(lifecycle.conf_text(f'http_port = {self.port}\ndb_name = {value}\n'))
+                result = self.start('--detach')
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                self.detached(result, self.server_log)
+                self.assertEqual(self.invoke('stop').returncode, 0)
 
     def test_start_without_detach_is_unchanged(self):
         result = self.start('--workers=0')

@@ -9,8 +9,67 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-24
+
+### Added
+
+- Action menu (`oasis menu` and the Gentle Shell panel): a header with the checkout (`main` or
+  the worktree slug), its server state and the default database.
+- *Start / restart the server*: one action that asks the database (default: the last one it used
+  in this checkout, else the development database of the checkout's only module), the dev mode (a
+  closed list from the series table: off, all, each feature, reload,xml) and the HTTP port, then
+  shows the exact command (`start --detach`, or `restart` when the server runs) and asks to
+  confirm. It warns when no database is chosen and when reload cannot work because the
+  environment has neither inotify nor watchdog.
+- Repeat last action: the last action run from either menu in this checkout is offered first (`r`
+  in the terminal, the first row in the panel), with the same preview and confirmation; it is
+  kept in `menu.json` in the checkout's private runtime directory and survives `stop`.
+- `start` without a database prints `WARNING: no database given (-d); Odoo will use odoo.conf's
+  db_name (<name>).` to stderr when odoo.conf names one; the exit status is unchanged.
+- Catalog: `checkout`, `last`, and per-action `superseded_by` and per-input `choices` keys;
+  `catalog_version` stays 1.
+- `tools/odoo_versions.py` declares the dev features per Odoo series (`dev_option`,
+  `dev_features`, `dev_all`, `dev_reload_packages`). 19.0: `--dev` takes access, qweb, reload,
+  replica and xml; `all` turns on access, qweb, reload and xml; reload needs inotify or watchdog.
+
 ### Changed
 
+- `oasis migrate` on a checkout that is already migrated says what configures it: `nothing to
+  migrate: <checkout> has no .odoo19-agent.toml; it is already configured by <workspace file>`
+  (still exit 0). A legacy profile it cannot read is refused naming the file: `Cannot read
+  <profile>: <reason>.`, `Invalid TOML in <profile>.` or `Invalid tooling configuration:
+  <profile> has no [tooling] table.` (exit 2).
+- In Gentle Shell without git (or when git's top level is outside the workspace directory), the
+  project root is the nearest directory holding `.git` below the workspace file, else the
+  session directory; a leftover `.odoo19-agent.toml` between the workspace and the checkout no
+  longer becomes the root.
+- Gentle Shell: a profile above the checkout no longer stops the search for
+  `oasis-workspace.toml`, as in `tools/config.py`. A checkout with its own `.odoo19-agent.toml`
+  is still found, and its prompt context says the file is no longer read and that the user runs
+  `/oasis migrate`. "Not an Odoo project" now reads `no oasis-workspace.toml at or above <cwd>`.
+- `/oasis` status: `configuration: <error>` instead of `profile: <error>`, and `slug <slug>
+  (oasis-checkout.toml)` instead of `(profile)`.
+- The bash guard's reason for `worktree-init` says it adds a git worktree and branch for the user
+  (it no longer links environment files).
+- `doctor` prints `PASS configuration=workspace` and warns about `addons_path` or `data_dir` in
+  every checkout's `odoo.conf`.
+- On the main checkout, `list-databases`, `gc` and `trash` still stop (exit 2) when a linked
+  worktree's slug cannot be read; the message now ends with `Fix <worktree>/oasis-checkout.toml,
+  then run the command again.`, and a worktree that still has a legacy profile stops them with
+  the refusal above.
+- The Python of a workspace with `[tooling].environment` is the series' `python_default` in
+  `tools/odoo_versions.py` (3.12 on 19.0, unchanged).
+- The Gentle Shell panel's start / restart is one form whose last lines are the filled command,
+  drawn again after every answer and wrapped; every other panel action shows its filled command
+  in a Yes/No confirmation before running (destructive ones keep their typed confirmation).
+- The terminal menu asks `Run this command? [y/N]` before start / restart, and lists *Start /
+  restart the server* instead of the separate start and restart actions, so the Server group's
+  numbers move (for example, stopping the database service is now 6). The separate actions stay
+  in the catalog for older panels.
+- `list-databases`, and so the menu's database choices, lists only the current checkout's
+  databases. A linked worktree (or a checkout with a `checkout_slug`) lists `<prefix><slug>_...`;
+  the main checkout lists its prefixed databases except those of its existing linked worktrees.
+  This is the namespace rule of `gc` and the trash. A bare prefix name is no longer listed.
 - Documentation: `docs/new-workspace.md` (new) sets up a project from an empty folder with one
   `oasis-workspace.toml`: folders, Odoo source, Python environment, compose and environment
   files, a path-free `odoo.conf`, `doctor`, a development database, a first test run and a linked
@@ -20,6 +79,40 @@ names) may still change in a minor release; every such change is listed here und
   `.odoo19-agent.toml` profile as the alternative; the README's five-minute start and the
   documentation index link to the guide. Tests pin the paths, the environment rule and the
   guide's examples.
+
+### Removed
+
+- The legacy per-checkout profile `.odoo19-agent.toml` is no longer read (contract change). A
+  checkout that still has one, even next to an `oasis-workspace.toml`, is refused before any
+  command runs (exit 2): `<checkout>/.odoo19-agent.toml is the old profile format, no longer
+  read: run oasis migrate --plan to see its conversion to oasis-workspace.toml, then oasis
+  migrate --apply.` `oasis migrate` (and `--plan`) still read and convert it; `doctor` reports it
+  as one `FAIL configuration`. A profile above a checkout no longer ends the search for the
+  workspace file. Without a workspace file the error is `Missing tooling configuration: no
+  oasis-workspace.toml at or above <checkout>.`
+- `worktree-init`'s profile layouts (copying the profile, linking `dev/` entries and the
+  environment file, rewriting a copied `odoo.conf`): it only runs `git worktree add` below the
+  workspace file, and refuses a main checkout that finds none.
+- The example profile `odoo19-environment/assets/odoo19-agent.example.toml`; the workspace
+  example `assets/oasis-workspace.example.toml` replaces it, and the documentation describes only
+  the workspace file (the old format appears only in docs/migrating.md).
+
+### Fixed
+
+- `worktree-init` refuses a workspace file above the main checkout that the new worktree could
+  not read (invalid TOML, unreadable, or writable by group or others), with the error every
+  command gives for it (exit 2), instead of creating the worktree.
+- `bootstrap` creates the environment with the Python the configuration declares (3.12 for a
+  profile and `[tooling].environment`, else the selected named environment's `python`), and
+  `--preview` names it in `planned_action=create_python_<version>_and_sync_lock`. It works in a
+  workspace checkout: `bootstrap-before.txt` now goes to the checkout's log directory
+  (`<logs>/<slug or main>/`, else `dev/logs/odoo19/`) instead of `dev/runtime/`, also for profiles.
+- `check-environment` checks the declared Python instead of a fixed 3.12, so a named 3.13
+  environment passes; a mismatch exits 2 with the expected and found versions and how to
+  recreate the environment.
+- docs/new-workspace.md uses the declared Python instead of a hardcoded 3.12, says what
+  `check-environment --quick` skips, and checks the locks with `--full` once the database
+  service runs.
 
 ## [0.11.0] - 2026-11-24
 
@@ -806,7 +899,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/skhol3/oasis/releases/tag/v0.12.0
 [0.11.0]: https://github.com/skhol3/oasis/releases/tag/v0.11.0
 [0.10.1]: https://github.com/skhol3/oasis/releases/tag/v0.10.1
 [0.10.0]: https://github.com/skhol3/oasis/releases/tag/v0.10.0

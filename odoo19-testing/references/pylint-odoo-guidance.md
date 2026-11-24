@@ -4,15 +4,15 @@ Use the standalone global `lint-module` command for Python/manifest changes. It 
 
 ## Quick path
 
-1. Declare an existing, trusted rcfile in the project's `.odoo19-agent.toml`:
+1. Declare an existing, trusted rcfile in the project's `oasis-workspace.toml`:
 
    ```toml
    [tooling]
    # Other required project tooling declarations remain unchanged.
-   lint_rcfile = 'dev/lint/.pylintrc'
+   lint_rcfile = 'config/lint/.pylintrc'
    ```
 
-   Paths resolve from the project root, not the current working directory or VS Code. Absolute or project-relative external rcfiles are supported only with the required per-target access authorization. This is not permission to read arbitrary files. Keep `pylint_odoo` in the rcfile's `load-plugins`; existing plugin/rule selections remain intact.
+   Paths resolve from the workspace file's directory, not the current working directory or VS Code. Absolute or project-relative external rcfiles are supported only with the required per-target access authorization. This is not permission to read arbitrary files. Keep `pylint_odoo` in the rcfile's `load-plugins`; existing plugin/rule selections remain intact.
 
 2. With authorization for the project, interpreter, rcfile and plugins, run:
 
@@ -24,10 +24,10 @@ Use the standalone global `lint-module` command for Python/manifest changes. It 
 
 ## Behavior and boundaries
 
-- The selected isolated Python must match `[tooling].python_version` (3.12 in this Odoo 19 bundle). It must already provide Pylint and pylint-odoo; the plugin must advertise support for `[tooling].version` (19.0). Missing/incompatible prerequisites fail rather than installing or falling back to a global interpreter.
+- The selected isolated Python must match the declared Python (`PYTHON_VERSION`: 3.12 by default on Odoo 19.0, or the named environment's `python`). It must already provide Pylint and pylint-odoo; the plugin must advertise support for the workspace's `odoo_version` (19.0). Missing/incompatible prerequisites fail rather than installing or falling back to a global interpreter.
 - Only a whole technical module under a configured `[tooling].addons_paths` root inside the selected project is accepted. Traversal, module escape and escaping symlinks are refused. This command accepts no arbitrary Pylint arguments or file lists.
 - The command passes the declared Odoo and Python targets and disables Pylint persistence/Python bytecode writes. It does not rewrite the rcfile or override its rules/plugin list. A trusted rcfile and plugins can execute Python hooks: this is not a sandbox or a guarantee that arbitrary plugin code is side-effect-free.
-- No Odoo server/configuration, credentials, Docker, database, package installer or SonarQube connection is needed. `lint-module --help` requires only the normal explicit project/profile selection, not lint configuration or an installed analyzer.
+- No Odoo server/configuration, credentials, Docker, database, package installer or SonarQube connection is needed. `lint-module --help` requires only the normal explicit project selection, not lint configuration or an installed analyzer.
 - stdout, stderr and the analyzer's exit status pass through unchanged. Setup errors use exit 2 and occur before analyzer execution. Declared paths are inputs, not operational consent.
 
 ## When to run

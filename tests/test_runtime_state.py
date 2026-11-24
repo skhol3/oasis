@@ -322,6 +322,67 @@ class RuntimeStateHelperTests(unittest.TestCase):
         self.assertIsNone(module.read_live(directory))
         self.assertFalse(self.record_path().exists())
 
+    def test_remember_keeps_the_last_menu_action_private_and_it_survives_stop(self):
+        # v0.12.0 (S6): menu.json next to server.json; S3: the last database of the start / restart flow.
+        path = state_dir(self.xdg, self.root) / 'menu.json'
+        update = {'module': 'coffee', 'database': 'cc_dev_coffee'}
+        result = self.helper('remember', str(self.root), 'modules.update', json.dumps(update))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(json.loads(path.read_text()), {'last': {'action': 'modules.update', 'answers': update}})
+        run = {'database': 'cc_dev_tea', 'dev': 'reload,xml', 'port': ''}
+        self.assertEqual(self.helper('remember', str(self.root), 'server.run', json.dumps(run)).returncode, 0)
+        self.assertEqual(json.loads(path.read_text()),
+                         {'last': {'action': 'server.run', 'answers': run}, 'database': 'cc_dev_tea'})
+        # The flow's database stays while other actions, or the flow without a database, run.
+        for action, answers in (('server.run', {'database': '', 'dev': '', 'port': ''}), ('modules.update', update)):
+            self.assertEqual(self.helper('remember', str(self.root), action, json.dumps(answers)).returncode, 0)
+            self.assertEqual(json.loads(path.read_text()),
+                             {'last': {'action': action, 'answers': answers}, 'database': 'cc_dev_tea'})
+        state = load_state_module()
+        with mock.patch.dict(os.environ, {'XDG_RUNTIME_DIR': str(self.xdg)}):
+            self.assertEqual(state.read_menu(str(self.root)),
+                             {'last': {'action': 'modules.update', 'answers': update}, 'database': 'cc_dev_tea'})
+        # Stopping the server removes only its record.
+        process = self.spawn()
+        self.helper('record', str(self.root), str(process.pid), '8070', str(self.odoo_bin))
+        result = self.helper('stop', str(self.root))
+        self.assertEqual((result.returncode, result.stdout),
+                         (0, f'Stopped Odoo for this checkout: pid {process.pid}, port 8070.\n'))
+        self.assertEqual(sorted(entry.name for entry in path.parent.iterdir()), ['menu.json'])
+
+    def test_remember_refuses_what_is_not_an_action_and_its_answers(self):
+        path = state_dir(self.xdg, self.root) / 'menu.json'
+        self.assertEqual(self.helper('remember', str(self.root), 'server.status', '{}').returncode, 0)
+        kept = path.read_text()
+        for action, answers in (('server', '{}'), ('Server.Status', '{}'), ('server.status', '[]'),
+                                ('server.status', 'not json'), ('modules.update', '{"module": ["coffee"]}'),
+                                ('modules.update', '{"module": 1}'), ('modules.update', '{"Module": "coffee"}'),
+                                ('modules.update', '{"module": "cof\\nfee"}'),
+                                ('modules.update', json.dumps({'module': 'x' * 201}))):
+            with self.subTest(action=action, answers=answers):
+                result = self.helper('remember', str(self.root), action, answers)
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (2, '', 'ERROR: Invalid menu action or answers.\n'))
+                self.assertEqual(path.read_text(), kept)
+        # Never through a symlink: the link is replaced, its target kept.
+        target = self.scratch / 'target.json'
+        target.write_text('{}')
+        path.unlink()
+        path.symlink_to(target)
+        state = load_state_module()
+        with mock.patch.dict(os.environ, {'XDG_RUNTIME_DIR': str(self.xdg)}):
+            self.assertEqual(state.read_menu(str(self.root)), {'last': None, 'database': None})
+        self.assertEqual(self.helper('remember', str(self.root), 'server.status', '{}').returncode, 0)
+        self.assertEqual((path.is_symlink(), target.read_text()), (False, '{}'))
+        # An invalid file reads as nothing remembered.
+        for text in ('not json', '[]', '{"last": {"action": 1}}', '{"database": "bad-name"}'):
+            with self.subTest(text=text):
+                path.write_text(text)
+                with mock.patch.dict(os.environ, {'XDG_RUNTIME_DIR': str(self.xdg)}):
+                    self.assertEqual(state.read_menu(str(self.root)), {'last': None, 'database': None})
+
     @unittest.skipUnless(privileged_port_is_refused(), 'port 1 is bindable here (root or sysctl)')
     def test_an_unbindable_port_is_reported_without_traceback(self):
         result = self.helper('port', '127.0.0.1', '1', '1')

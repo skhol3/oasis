@@ -15,7 +15,7 @@ TERMINAL = 'ERROR: Password entry requires an interactive terminal.'
 
 
 def declaration(root):
-    # [development] of the profile, or of the workspace file when the checkout has none.
+    # [development] of the workspace file.
     section = configuration(root)[0].get('development')
     if (not isinstance(section, dict) or set(section) - {'administrator_login', 'users', 'demo_modules'}
             or 'administrator_login' not in section):

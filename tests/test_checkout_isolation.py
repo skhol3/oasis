@@ -35,7 +35,7 @@ class IsolationBase(unittest.TestCase):
         self.write_profile()
 
     def write_profile(self, extra=''):
-        (self.root / '.odoo19-agent.toml').write_text(lifecycle.PROFILE + self.profile_extra + extra)
+        lifecycle.write_config(self.root, lifecycle.WORKSPACE + self.profile_extra + extra)
 
     def odoo_lines(self):
         return [lifecycle.any_run_database(lifecycle.any_test_port(line))

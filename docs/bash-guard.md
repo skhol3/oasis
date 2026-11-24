@@ -81,8 +81,8 @@ Type shop_dev_old to allow drop-database shop_dev_old. Esc, another answer or no
 
 ## The setting
 
-`[tooling].agent_destructive` in the workspace file or the legacy profile (see
-[Workspace file](workspace-file.md)) decides the ask tier for the agent:
+`[tooling].agent_destructive` in the workspace file (see [Workspace file](workspace-file.md))
+decides the ask tier for the agent:
 
 ```toml
 [tooling]
@@ -96,7 +96,7 @@ agent_destructive = 'ask'    # default: the dialog; 'deny' blocks them; 'allow' 
   OASIS_PROJECT_ROOT=<dir> <tool>`). The stricter of the two decides (`deny` over `ask` over
   `allow`), so `oasis --project <other> drop-database <name>` from an `allow` project still asks
   or is denied when the other project says so; a refusal by the target names it (`... = "deny" in
-  the configuration of <root>`). A session outside an Odoo project, a profile that cannot be read,
+  the configuration of <root>`). A session outside an Odoo project, a configuration that cannot be read,
   and a target that is not literal (`--project "$DIR"`), not an Odoo project, unreadable, or set
   elsewhere on the line (`export OASIS_PROJECT_ROOT=...; <tool>`) count as `ask`.
 - `deny` turns the ask tier into deny; `allow` lets those commands run without a dialog (each run
@@ -108,9 +108,11 @@ agent_destructive = 'ask'    # default: the dialog; 'deny' blocks them; 'allow' 
 ## The setting files
 
 The files that hold `[tooling].agent_destructive` are in the ask tier too, so the agent cannot
-turn the setting to `allow` by itself: any file named `oasis-workspace.toml` or
-`.odoo19-agent.toml` in the session's directory or one of its parents (where `tools/config.py`
-looks for them; the real path of the session's directory counts as well). `oasis-checkout.toml`
+turn the setting to `allow` by itself: any file named `oasis-workspace.toml` in the session's
+directory or one of its parents (where `tools/config.py` looks for it; the real path of the
+session's directory counts as well), and any `.odoo19-agent.toml` there, the per-checkout file of
+earlier versions, which no command reads any more but `oasis migrate` converts into the workspace
+file, setting included (see [Migrating to the workspace file](migrating.md)). `oasis-checkout.toml`
 refuses the key and is not one of them.
 
 These edits always reach the dialog: `allow` does not cover them, so an agent cannot change its own

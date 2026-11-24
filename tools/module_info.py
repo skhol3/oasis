@@ -46,7 +46,7 @@ unreadable manifest every write counts, in path order, unmarked.
 The manifest is the first dict literal of __manifest__.py; without one the header says
 `manifest: unreadable (<reason>)` (so does the first line of --section data). `skipped:` names
 Python or XML files that could not be parsed.
-Scans the same roots as model-info (Odoo source, optional Enterprise source, the profile's
+Scans the same roots as model-info (Odoo source, optional Enterprise source, the workspace's
 tooling addon roots; the first module with a name wins; Odoo/Enterprise source test_* modules
 are not modules). static/, i18n/, migrations/ and upgrades/ are skipped, and tests/ is read only
 for the tests section. Python is parsed with ast, XML with expat and CSV with csv:

@@ -48,7 +48,7 @@ Tool `oasis_update_module` (module, database): `oasis update-module --compact` o
 
 ### Source inspection tools
 
-- Tool `oasis_find_module`: maps a functional name to technical module names by matching the query words against the technical name and the manifest `name`, `summary` and `category` in the profile's addon roots, so the agent needs no `ls` or `grep`.
+- Tool `oasis_find_module`: maps a functional name to technical module names by matching the query words against the technical name and the manifest `name`, `summary` and `category` in the workspace's addon roots, so the agent needs no `ls` or `grep`.
 - Tool `oasis_model_info`: wraps `oasis model-info` (model, optional field, module, methods, allFields) so the agent learns a model's fields, methods and inheritance without opening large Odoo source files; output is capped at 200 lines.
 - Tools `oasis_view_info` (model, optional type, module) and `oasis_xmlid_info` (id): wrap `oasis view-info` and `oasis xmlid-info` (see [Views and XML ids without starting Odoo](static-inspection.md#views-and-xml-ids-without-starting-odoo)), so the agent finds a model's views, what extends them and where an XML id is defined or referenced without opening or searching XML files; output is capped at 200 lines.
 - Tool `oasis_module_info` (module, optional section): wraps `oasis module-info` (see [Module overview without starting Odoo](static-inspection.md#module-overview-without-starting-odoo)), so the agent sees a module's models, views, menus, actions, security, data files and tests without opening its files; output is capped at 200 lines.
@@ -57,25 +57,25 @@ See [Static inspection without starting Odoo](static-inspection.md) for the comm
 
 ### Prompt context
 
-Prompt context naming the `oasis_*` tools the session has (a session with none, such as a subagent without the overlay, is pointed to the `oasis` CLI instead) and the commands that ask the user first when `.odoo19-agent.toml` is found at or above the working directory, or, without one, an `oasis-workspace.toml` (see [Workspace file](workspace-file.md); the project root is then the git top level of the working directory).
+Prompt context naming the `oasis_*` tools the session has (a session with none, such as a subagent without the overlay, is pointed to the `oasis` CLI instead) and the commands that ask the user first when an `oasis-workspace.toml` is found at or above the working directory (see [Workspace file](workspace-file.md); the project root is the git top level of the working directory). A checkout that still has the per-checkout file of earlier versions is detected too: its context says that file is no longer read and that the user migrates it (see [Migrating to the workspace file](migrating.md)), and every tool returns the refusal of `tools/config.py`.
 
 ### Bash guard
 
-A bash guard blocks the agent from running some commands directly and asks the user, in a dialog, before the agent's `drop-database`, `stop --database` or `gc --apply --trash` run, and before the agent changes the workspace file or profile that holds `[tooling].agent_destructive` (which can make them deny or allow); see [Bash guard](bash-guard.md).
+A bash guard blocks the agent from running some commands directly and asks the user, in a dialog, before the agent's `drop-database`, `stop --database` or `gc --apply --trash` run, and before the agent changes the workspace file that holds `[tooling].agent_destructive` (which can make them deny or allow); see [Bash guard](bash-guard.md).
 
 ### The /oasis command
 
-- `/oasis`: a quick status with the profile, addon modules, configured databases, git worktree, checkout identity and this checkout's server (`server: running on port <port> (pid <pid>)` or `server: stopped`, read from the runtime record). It never starts services or queries databases.
+- `/oasis`: a quick status with the configuration (or its error), addon modules, configured databases, git worktree, checkout identity and this checkout's server (`server: running on port <port> (pid <pid>)` or `server: stopped`, read from the runtime record). It never starts services or queries databases.
 - `/oasis setup` installs the subagent overlay (see [Subagents](subagents.md)).
 - `/oasis doctor` shows the `oasis doctor` report (see [Checking the environment](checking-environment.md)); there is no agent tool for it.
-- `/oasis worktree <feature> <branch>` creates a prepared linked worktree after confirmation (see [Preparing a linked worktree](checkouts-and-worktrees.md#preparing-a-linked-worktree)).
+- `/oasis worktree <feature> <branch>` creates a linked worktree below the workspace file after confirmation (see [Preparing a linked worktree](checkouts-and-worktrees.md#preparing-a-linked-worktree)).
 - `/oasis migrate` shows the `oasis migrate` plan and applies it after confirmation (see [Migrating to the workspace file](migrating.md)).
 - `/oasis menu` (or `alt+o`) opens the action panel (see [Gentle Shell panel](action-menu.md#gentle-shell-panel) under [Action menu](action-menu.md)).
 - Typing `/oasis ` offers its subcommands (`setup`, `doctor`, `migrate`, `worktree`, `menu`).
 
 ## Activation and aliases
 
-The `oasis_*` tools are active only in sessions started inside an Odoo 19 project (a directory with `.odoo19-agent.toml` or `oasis-workspace.toml` at or above it), so other projects pay no tokens for them; `/oasis` is available everywhere.
+The `oasis_*` tools are active only in sessions started inside an Odoo 19 project (a directory with `oasis-workspace.toml` at or above it), so other projects pay no tokens for them; `/oasis` is available everywhere.
 
 Aliases from before 0.4.0: `/odoo19` runs the same command as `/oasis` (same subcommands), and each `oasis_*` tool is also registered as an `odoo19_*` alias with the same parameters and implementation. The aliases are never activated by the layer, so they cost no tokens; an overlay or allowlist that still names them keeps working, and `/oasis setup` reports such an overlay as outdated.
 

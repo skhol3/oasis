@@ -23,8 +23,8 @@
 Several Odoo projects depend on the installed bundle. Treat as a contract: both entry point
 names, `oasis` and its alias `odoo19` (same dispatcher, identical command names, options,
 exit codes and output), the Gentle Shell names (`oasis_*` tools with their inactive
-`odoo19_*` aliases, `/oasis` with its alias `/odoo19`), `.odoo19-agent.toml` `[tooling]`
-keys, database prefix guards and the skill names. Changing or removing any of them needs an
+`odoo19_*` aliases, `/oasis` with its alias `/odoo19`), the `oasis-workspace.toml` keys
+(with `oasis-checkout.toml`), database prefix guards and the skill names. Changing or removing any of them needs an
 explicit decision and a note in the README.
 
 ## Verification

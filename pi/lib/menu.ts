@@ -6,6 +6,9 @@ import { type CoreResult, formatTestRun, formatUpdateRun } from "./tools.ts";
 
 export const CATALOG_VERSION = 1;
 export const MENU_KEY_DEFAULT = "alt+o";
+/** The start / restart flow (S3): the panel asks it in one form (RunForm). */
+export const RUN_ACTION = "server.run";
+const SERVER_COMMANDS = ["start", "restart"] as const;
 /** The select option that switches a choice to typing a value (allow_new). */
 export const TYPE_OPTION = "(type a name)";
 const NO_OUTPUT = "(no output)";
@@ -17,6 +20,13 @@ const SUMMARY_OPTIONS = { maxFailures: 10, traceLines: 6 };
 
 export type Token = string | { input: string; option?: string; flag?: string } | { compact: string };
 
+/** One value of a closed choice, and what to warn about when it is chosen. */
+export interface CatalogChoice {
+  value: string;
+  label: string;
+  warning: string | null;
+}
+
 export interface CatalogInput {
   id: string;
   label: string;
@@ -26,8 +36,11 @@ export interface CatalogInput {
   allow_new: boolean;
   pattern: string | null;
   error: string | null;
-  default: boolean | null;
+  /** Booleans: false; a choice: the value an empty answer takes; a text input: only shown. */
+  default: boolean | string | null;
   hint: string | null;
+  /** A closed choice without source (v0.12.0; absent in older catalogs). */
+  choices?: CatalogChoice[] | null;
 }
 
 export interface CatalogAction {
@@ -44,6 +57,24 @@ export interface CatalogAction {
   terminal_only: boolean;
   /** A log action that keeps showing what the server writes (the panel's live view). */
   follow: boolean;
+  /** The action that replaces this one in the menus (v0.12.0): not listed, kept for older panels. */
+  superseded_by?: string | null;
+}
+
+/** What the headers show and the start / restart flow needs (v0.12.0). */
+export interface CheckoutInfo {
+  name: string;
+  server: { state: "running" | "stopped" | "unknown"; pid: number | null; port: number | null;
+    database: string | null; error: string | null };
+  default_database: string | null;
+  no_database: { start: string; restart: string };
+}
+
+/** The last action run from a menu in this checkout, still valid (v0.12.0). */
+export interface LastAction {
+  action: string;
+  answers: Answers;
+  label: string;
 }
 
 export interface Catalog {
@@ -57,6 +88,8 @@ export interface Catalog {
   };
   groups: { id: string; label: string }[];
   actions: CatalogAction[];
+  checkout?: CheckoutInfo;
+  last?: LastAction | null;
 }
 
 export type Answers = Record<string, string | boolean>;
@@ -162,6 +195,13 @@ async function typed(input: CatalogInput, prompter: Prompter, placeholder?: stri
 async function answer(
   input: CatalogInput, prompter: Prompter, choices: (source: Source) => Promise<string[]>,
 ): Promise<string | boolean | undefined> {
+  if (input.choices) {
+    const picked = await prompter.select(input.label, input.choices.map((choice) => choice.label));
+    const chosen = input.choices.find((choice) => choice.label === picked);
+    if (!chosen) return undefined;
+    if (chosen.warning) prompter.notify(chosen.warning, "warning");
+    return chosen.value;
+  }
   if (input.kind === "boolean") {
     const picked = await prompter.select(`${input.label}?`, ["No", "Yes"]);
     return picked === undefined ? undefined : picked === "Yes";
@@ -230,13 +270,29 @@ export function sources(catalog: Catalog, hooks: SourceHooks): (source: Source) 
   };
 }
 
+/** What to show when start or restart gets no database (the catalog's checkout), else null. */
+export function noDatabaseWarning(catalog: Catalog | undefined, action: CatalogAction, answers: Answers): string | null {
+  const command = SERVER_COMMANDS.find((name) => name === action.command);
+  if (!command || answers.database || !catalog?.checkout) return null;
+  return catalog.checkout.no_database[command];
+}
+
+/** The warnings of the chosen closed choices (for example reload without its packages). */
+export function choiceWarnings(action: CatalogAction, answers: Answers): string[] {
+  return action.inputs.flatMap((input) => {
+    const warning = input.choices?.find((choice) => choice.value === answers[input.id])?.warning;
+    return warning ? [warning] : [];
+  });
+}
+
 /**
  * Whether the action may run: destructive actions need the database name (confirm `database`) or
- * `yes` typed, as the terminal menu asks; a user-run action without that gets a yes/no confirmation;
- * any other action runs without asking. `command` is shown in the question.
+ * `yes` typed, as the terminal menu asks; any other action asks yes/no (v0.12.0). The filled
+ * `command` is shown in the question, then what start or restart will do without a database and
+ * the warnings of the chosen choices.
  */
 export async function confirmRun(
-  action: CatalogAction, answers: Answers, command: string, prompter: Prompter,
+  action: CatalogAction, answers: Answers, command: string, prompter: Prompter, catalog?: Catalog,
 ): Promise<boolean> {
   if (action.confirm === "database") {
     const database = String(answers.database ?? "");
@@ -248,8 +304,8 @@ export async function confirmRun(
   if (action.confirm === "yes") {
     return (await prompter.input(`${action.label}\n${command}\nType yes to confirm`))?.trim() === "yes";
   }
-  if (action.user_run) return prompter.confirm(action.label, `${command}\n\nRun this command?`);
-  return true;
+  const notes = [noDatabaseWarning(catalog, action, answers), ...choiceWarnings(action, answers)].filter(Boolean);
+  return prompter.confirm(action.label, [command, ...notes, "Run this command?"].join("\n\n"));
 }
 
 /** What the panel shows of a finished run: compact summaries for tests and updates, else the output. */
@@ -331,13 +387,34 @@ export interface PickerRow {
   /** "terminal only", "confirm" (asks before running) or "". */
   tag: string;
   action?: CatalogAction;
+  /** The Repeat row: the remembered answers of its action. */
+  answers?: Answers;
 }
 
-/** The picker's rows: each group label followed by its actions, in catalog order. */
+/** What the picker returns: an action, with answers when it is the Repeat row. */
+export interface PickerChoice {
+  action: CatalogAction;
+  answers?: Answers;
+}
+
+/** The menu header: the checkout, its server line (serverLine) and the start / restart flow's default database. */
+export function menuHeader(catalog: Catalog, server: string): string {
+  const checkout = catalog.checkout;
+  return [`checkout: ${checkout?.name ?? "unknown"}`, server,
+    `default database: ${checkout?.default_database ?? "none"}`].join("\n");
+}
+
+/**
+ * The picker's rows: the last action of the checkout first ("Repeat: ..."), when the catalog has
+ * it, then each group label followed by its actions in catalog order, without superseded actions.
+ */
 export function pickerRows(catalog: Catalog): PickerRow[] {
   const rows: PickerRow[] = [];
+  const last = catalog.last;
+  const repeated = last ? catalog.actions.find((item) => item.id === last.action) : undefined;
+  if (last && repeated) rows.push({ kind: "action", text: last.label, tag: "", action: repeated, answers: last.answers });
   for (const group of catalog.groups) {
-    const members = catalog.actions.filter((item) => item.group === group.id);
+    const members = catalog.actions.filter((item) => item.group === group.id && !item.superseded_by);
     if (members.length === 0) continue;
     rows.push({ kind: "group", text: group.label, tag: "" });
     for (const item of members) {
@@ -402,4 +479,218 @@ export function menuShortcut(value: string | undefined): { key: string | null; e
     error: `OASIS_MENU_KEY=${JSON.stringify(value)} is not a usable key (for example alt+o, ctrl+shift+m or f5); ` +
       "the menu shortcut is off, /oasis menu still opens the panel.",
   };
+}
+
+/**
+ * A line wrapped at spaces to `width` columns, never truncated: continuation lines start with
+ * `indent`, and a word longer than a line is split.
+ */
+export function wrapLine(text: string, width: number, indent = "  "): string[] {
+  const room = Math.max(width, indent.length + 1);
+  const lines: string[] = [];
+  let current = "";
+  const push = (line: string) => {
+    let rest = line;
+    while (rest.length > room) {
+      const head = rest.slice(0, room);
+      lines.push(head);
+      rest = indent + rest.slice(room);
+    }
+    lines.push(rest);
+  };
+  for (const word of text.split(" ")) {
+    if (current === "") current = word;
+    else if (`${current} ${word}`.length <= room) current = `${current} ${word}`;
+    else {
+      push(current);
+      current = indent + word;
+    }
+  }
+  push(current);
+  return lines;
+}
+
+/** What the start / restart form is opened with. */
+export interface FormSpec {
+  catalog: Catalog;
+  action: CatalogAction;
+  /** The menu header (menuHeader), shown first. */
+  header: string;
+  /** The databases list-databases printed (not listed again on a repeat). */
+  databases: string[];
+  /** Remembered answers (Repeat): the form opens at its confirmation. */
+  answers?: Answers;
+}
+
+export interface FormOption {
+  label: string;
+  value: string;
+  /** Choosing it switches to typing a value. */
+  type?: boolean;
+}
+
+export interface FormLine {
+  text: string;
+  style: "header" | "answer" | "warning" | "question" | "option" | "selected" | "typed" | "error" | "command" | "plain";
+}
+
+const NONE_OPTION = "(none)";
+const CONFIRM_OPTIONS: FormOption[] = [{ label: "Run", value: "run" }, { label: "Cancel", value: "cancel" }];
+const PRINTABLE = /[^\x00-\x1f\x7f-\x9f]/g;
+
+/**
+ * The start / restart flow as one form (S3, S5): its inputs in catalog order, then a Run / Cancel
+ * confirmation; lines() ends with the command filled with the answers so far. Pure state: the
+ * overlay (pi/ui/menu-panel.ts RunFormPanel) maps keys to move, type, backspace, submit and cancel.
+ */
+export class RunForm {
+  readonly spec: FormSpec;
+  readonly answers: Answers = {};
+  step = 0;
+  selected = 0;
+  typing = false;
+  buffer = "";
+  error: string | null = null;
+  finished = false;
+  result: Answers | undefined = undefined;
+
+  constructor(spec: FormSpec) {
+    this.spec = spec;
+    if (spec.answers) {
+      Object.assign(this.answers, spec.answers);
+      this.step = spec.action.inputs.length;
+    }
+    this.enter();
+  }
+
+  /** The input being asked, or undefined at the confirmation. */
+  get input(): CatalogInput | undefined {
+    return this.spec.action.inputs[this.step];
+  }
+
+  options(): FormOption[] {
+    const input = this.input;
+    if (!input) return CONFIRM_OPTIONS;
+    if (input.choices) return input.choices.map((choice) => ({ label: choice.label, value: choice.value }));
+    if (input.kind === "boolean") return [{ label: "No", value: "" }, { label: "Yes", value: "yes" }];
+    if (input.kind === "text") return [];
+    const listed = input.source === "databases" ? this.spec.databases
+      : input.source === "modules" ? this.spec.catalog.sources.modules.choices : [];
+    const preset = typeof input.default === "string" && input.default ? input.default : null;
+    const options: FormOption[] = preset ? [{ label: `${preset} (default)`, value: preset }] : [];
+    if (!input.required && !preset) options.push({ label: `${NONE_OPTION} (default)`, value: "" });
+    options.push(...listed.filter((name) => name !== preset).map((name) => ({ label: name, value: name })));
+    if (!input.required && preset) options.push({ label: NONE_OPTION, value: "" });
+    if (input.allow_new) options.push({ label: TYPE_OPTION, value: "", type: true });
+    return options;
+  }
+
+  private enter(): void {
+    const input = this.input;
+    this.error = null;
+    this.typing = input?.kind === "text";
+    this.buffer = this.typing && typeof input?.default === "string" ? input.default : "";
+    const index = input?.choices ? input.choices.findIndex((choice) => choice.value === input.default) : 0;
+    this.selected = Math.max(0, index);
+  }
+
+  move(delta: number): void {
+    if (this.typing || this.finished) return;
+    this.selected = Math.min(Math.max(this.selected + delta, 0), this.options().length - 1);
+  }
+
+  type(text: string): void {
+    if (this.typing && !this.finished) this.buffer += (text.match(PRINTABLE) ?? []).join("");
+  }
+
+  backspace(): void {
+    if (this.typing) this.buffer = Array.from(this.buffer).slice(0, -1).join("");
+  }
+
+  cancel(): void {
+    this.finished = true;
+    this.result = undefined;
+  }
+
+  /** Enter: accept the highlighted option or the typed value (checked like textError), or run / cancel. */
+  submit(): void {
+    if (this.finished) return;
+    const input = this.input;
+    if (!input) {
+      this.finished = true;
+      this.result = this.options()[this.selected]?.value === "run" ? { ...this.answers } : undefined;
+      return;
+    }
+    if (this.typing) {
+      const value = this.buffer.trim();
+      const error = textError(input, value);
+      if (error !== null) {
+        this.error = error;
+        return;
+      }
+      // Keeping a text input's shown default leaves its option out: the command applies its own rule.
+      this.accept(input, input.kind === "text" && value === input.default ? "" : value);
+      return;
+    }
+    const option = this.options()[this.selected];
+    if (!option) return;
+    if (option.type) {
+      this.typing = true;
+      this.buffer = "";
+      return;
+    }
+    this.accept(input, input.kind === "boolean" ? option.value === "yes" : option.value);
+  }
+
+  private accept(input: CatalogInput, value: string | boolean): void {
+    this.answers[input.id] = value;
+    this.step += 1;
+    this.enter();
+  }
+
+  /** The filled command of the answers so far, as it will run. */
+  command(): string {
+    return shellJoin(fillTemplate(this.spec.action, this.answers, true));
+  }
+
+  private shown(input: CatalogInput): string {
+    const value = this.answers[input.id];
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    if (input.choices) return input.choices.find((choice) => choice.value === value)?.label ?? value;
+    if (value) return value;
+    if (input.kind === "text") return typeof input.default === "string" && input.default ? `${input.default} (default)` : "(default)";
+    return NONE_OPTION;
+  }
+
+  lines(width: number): FormLine[] {
+    const lines: FormLine[] = this.spec.header.split("\n").map((text) => ({ text, style: "header" }));
+    lines.push({ text: "", style: "plain" });
+    for (const input of this.spec.action.inputs.slice(0, this.step)) {
+      lines.push({ text: `${input.label}: ${this.shown(input)}`, style: "answer" });
+      const warning = input.choices?.find((choice) => choice.value === this.answers[input.id])?.warning;
+      if (warning) lines.push({ text: `  warning: ${warning}`, style: "warning" });
+    }
+    if (!this.finished) {
+      const input = this.input;
+      if (!input) {
+        const warning = noDatabaseWarning(this.spec.catalog, this.spec.action, this.answers);
+        if (warning) lines.push({ text: warning, style: "warning" });
+        lines.push({ text: "Run this command?", style: "question" });
+      } else {
+        lines.push({ text: input.hint ? `${input.label} (${input.hint})` : input.label, style: "question" });
+      }
+      if (this.typing) {
+        lines.push({ text: `> ${this.buffer}`, style: "typed" });
+        if (this.error) lines.push({ text: `! ${this.error}`, style: "error" });
+      } else {
+        for (const [index, option] of this.options().entries()) {
+          const chosen = index === this.selected;
+          lines.push({ text: `${chosen ? "›" : " "} ${option.label}`, style: chosen ? "selected" : "option" });
+        }
+      }
+    }
+    lines.push({ text: "", style: "plain" });
+    for (const text of wrapLine(`$ ${this.command()}`, width)) lines.push({ text, style: "command" });
+    return lines;
+  }
 }
