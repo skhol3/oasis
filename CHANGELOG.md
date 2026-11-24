@@ -11,12 +11,34 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Added
 
+- Action menu (`oasis menu` and the Gentle Shell panel): a header with the checkout (`main` or
+  the worktree slug), its server state and the default database.
+- *Start / restart the server*: one action that asks the database (default: the last one it used
+  in this checkout, else the development database of the checkout's only module), the dev mode (a
+  closed list from the series table: off, all, each feature, reload,xml) and the HTTP port, then
+  shows the exact command (`start --detach`, or `restart` when the server runs) and asks to
+  confirm. It warns when no database is chosen and when reload cannot work because the
+  environment has neither inotify nor watchdog.
+- Repeat last action: the last action run from either menu in this checkout is offered first (`r`
+  in the terminal, the first row in the panel), with the same preview and confirmation; it is
+  kept in `menu.json` in the checkout's private runtime directory and survives `stop`.
+- `start` without a database prints `WARNING: no database given (-d); Odoo will use odoo.conf's
+  db_name (<name>).` to stderr when odoo.conf names one; the exit status is unchanged.
+- Catalog: `checkout`, `last`, and per-action `superseded_by` and per-input `choices` keys;
+  `catalog_version` stays 1.
 - `tools/odoo_versions.py` declares the dev features per Odoo series (`dev_option`,
   `dev_features`, `dev_all`, `dev_reload_packages`). 19.0: `--dev` takes access, qweb, reload,
   replica and xml; `all` turns on access, qweb, reload and xml; reload needs inotify or watchdog.
 
 ### Changed
 
+- The Gentle Shell panel's start / restart is one form whose last lines are the filled command,
+  drawn again after every answer and wrapped; every other panel action shows its filled command
+  in a Yes/No confirmation before running (destructive ones keep their typed confirmation).
+- The terminal menu asks `Run this command? [y/N]` before start / restart, and lists *Start /
+  restart the server* instead of the separate start and restart actions, so the Server group's
+  numbers move (for example, stopping the database service is now 6). The separate actions stay
+  in the catalog for older panels.
 - `list-databases`, and so the menu's database choices, lists only the current checkout's
   databases. A linked worktree (or a checkout with a `checkout_slug`) lists `<prefix><slug>_...`;
   the main checkout lists its prefixed databases except those of its existing linked worktrees.

@@ -40,6 +40,8 @@ Usage:
   runtime_state.py compose-lock <compose_file>
                                              the path of the lock file that serializes
                                              `compose up` of that compose file (created 0600)
+  runtime_state.py remember <project_root> <action id> <answers JSON>
+                                             record the menu action that just ran (see below)
 
 State lives in ${XDG_RUNTIME_DIR, or /tmp}/oasis-<uid>/<first 16 hex of sha256(realpath
 project_root)>/server.json ({pid, port, started_at, project_root, odoo_bin, python, database}, the
@@ -90,6 +92,14 @@ one of the worktrees `git worktree list` names for the project root, or inside o
 cannot list them (missing, failing, timed out), `servers` exits 2 with `ERROR: <reason>` instead
 of listing none.
 
+Menu memory (oasis menu and the Gentle Shell panel): `menu.json` (0600) in the same private state
+directory, {last: {action, answers}, database}: the last action run from either menu with its
+answers (an object of short strings and booleans: module, database, port and dev mode names, never
+a secret; the menus skip user-run and terminal-only actions), and the last database the start /
+restart flow (server.run) used. It survives stop, which removes only server.json. A file that is
+missing, not a regular file or invalid reads as nothing remembered; it is replaced, never written
+through a symlink.
+
 Compose lock: `compose-<first 16 hex of sha256(realpath compose_file)>.lock` (0600) directly in
 the user root, shared by every checkout of this user whose profile names that compose file.
 This helper only creates and checks it (a regular file of the current user); common.sh holds
@@ -113,6 +123,12 @@ import tempfile
 import time
 
 RECORD = 'server.json'
+MENU = 'menu.json'
+MENU_BYTES = 64 * 1024
+MENU_ACTION = re.compile(r'[a-z]+\.[a-z_]+')
+MENU_ANSWER = re.compile(r'[a-z_]+')
+MENU_VALUE = re.compile(r'[^\x00-\x1f\x7f]{0,200}')
+RUN_ACTION = 'server.run'
 STOP_TIMEOUT = 20
 GRACE = 10
 DETACH_WAIT = 30.0
@@ -881,6 +897,72 @@ def discard_stale_run_locks(database):
             discard_stale(path, seen)
 
 
+class MenuError(ValueError):
+    """Not a menu action id with answers (remember)."""
+
+
+def valid_menu_answers(answers):
+    return (isinstance(answers, dict) and len(answers) <= 20
+            and all(isinstance(key, str) and MENU_ANSWER.fullmatch(key)
+                    and (isinstance(value, bool) or isinstance(value, str) and MENU_VALUE.fullmatch(value))
+                    for key, value in answers.items()))
+
+
+def read_menu(project_root):
+    """{last: {action, answers} or None, database: str or None} remembered for the checkout."""
+    empty = {'last': None, 'database': None}
+    directory = state_dir(project_root, create=False)
+    if directory is None:
+        return empty
+    try:
+        descriptor = os.open(directory / MENU, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return empty
+    try:
+        with os.fdopen(descriptor, 'rb') as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return empty
+            data = json.loads(stream.read(MENU_BYTES + 1).decode('utf-8'))
+    except (OSError, ValueError, UnicodeDecodeError, RecursionError):
+        return empty
+    if not isinstance(data, dict):
+        return empty
+    last, database = data.get('last'), data.get('database')
+    if not (isinstance(last, dict) and isinstance(last.get('action'), str) and MENU_ACTION.fullmatch(last['action'])
+            and valid_menu_answers(last.get('answers'))):
+        last = None
+    else:
+        last = {'action': last['action'], 'answers': last['answers']}
+    if not (isinstance(database, str) and DATABASE.fullmatch(database)):
+        database = None
+    if last is None and data.get('last') is not None or database is None and data.get('database') is not None:
+        return empty
+    return {'last': last, 'database': database}
+
+
+def remember(project_root, action, answers):
+    """Record the menu action that ran and its answers; the start / restart flow's database too."""
+    if not (isinstance(action, str) and MENU_ACTION.fullmatch(action)) or not valid_menu_answers(answers):
+        raise MenuError('Invalid menu action or answers.')
+    database = read_menu(project_root)['database']
+    chosen = answers.get('database')
+    if action == RUN_ACTION and isinstance(chosen, str) and DATABASE.fullmatch(chosen):
+        database = chosen
+    content = {'last': {'action': action, 'answers': answers}}
+    if database:
+        content['database'] = database
+    directory = state_dir(project_root, create=True)
+    descriptor, temporary = tempfile.mkstemp(prefix='.menu-', dir=directory)
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+            json.dump(content, stream)
+        # os.replace renames over the path itself: a symlink there is replaced, never followed.
+        os.replace(temporary, directory / MENU)
+    except BaseException:
+        os.unlink(temporary)
+        raise
+
+
 def compose_lock(compose_file):
     """The lock file of compose_file in the user root, created 0600 when missing."""
     root = user_root()
@@ -1011,6 +1093,16 @@ def main(argv):
         if command == 'compose-lock' and len(args) == 1:
             print(compose_lock(args[0]))
             return 0
+        if command == 'remember' and len(args) == 3:
+            try:
+                answers = json.loads(args[2])
+            except (ValueError, RecursionError):
+                answers = None
+            remember(args[0], args[1], answers)
+            return 0
+    except MenuError as exc:
+        print(f'ERROR: {exc}', file=sys.stderr)
+        return 2
     except RunLocked as exc:
         print(exc, file=sys.stderr)
         return 2
@@ -1023,7 +1115,7 @@ def main(argv):
     except ValueError:
         pass
     print('ERROR: Usage: runtime_state.py show|database|record|detach|stop|others|servers|port|ephemeral-port|run-name|'
-          'run-lock|run-unlock|run-owned|compose-lock ...', file=sys.stderr)
+          'run-lock|run-unlock|run-owned|compose-lock|remember ...', file=sys.stderr)
     return 2
 
 

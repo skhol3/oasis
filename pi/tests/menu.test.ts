@@ -2,9 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  type Answers, askInputs, type CatalogAction, confirmRun, entryLines, fillTemplate, lastLines, logView,
-  MENU_KEY_DEFAULT, menuOutput, menuShortcut, moveSelection, parseCatalog, pickerRows, type Prompter, serverLine,
-  shellJoin, sources, terminalCommand, textError, visibleStart,
+  type Answers, askInputs, type Catalog, type CatalogAction, confirmRun, entryLines, fillTemplate, lastLines, logView,
+  MENU_KEY_DEFAULT, menuHeader, menuOutput, menuShortcut, moveSelection, parseCatalog, pickerRows, type Prompter,
+  RunForm, serverLine, shellJoin, sources, terminalCommand, textError, visibleStart, wrapLine,
 } from "../lib/menu.ts";
 
 // A real `oasis menu --catalog` of the synthetic lifecycle fixture (tests/test_pi_layer.py checks it
@@ -62,7 +62,7 @@ function fixedChoices(modules: string[], databases: string[]) {
 test("parseCatalog reads the core catalog and refuses another version or malformed JSON", () => {
   assert.equal(catalog.project, "/work/a project");
   assert.deepEqual(catalog.groups.map((group) => group.id), ["server", "modules", "tests", "maintenance"]);
-  assert.equal(catalog.actions.length, 26);
+  assert.equal(catalog.actions.length, 27);
   assert.throws(() => parseCatalog(FIXTURE.replace('"catalog_version": 1', '"catalog_version": 2')),
     /^Error: unsupported catalog_version 2 \(this panel reads version 1\); update the oasis layer\.$/);
   assert.throws(() => parseCatalog("not json"), /^Error: the catalog is not JSON: /);
@@ -260,11 +260,24 @@ test("confirmRun: typed database or yes for destructive actions, a plain confirm
   assert.deepEqual(run.calls, ["confirm Create a linked worktree: c w b\n\nRun this command?"]);
   run = scripted([false]);
   assert.equal(await confirmRun(action("maintenance.worktree"), {}, "c w b", run.prompter), false);
-  for (const id of ["server.status", "tests.module", "modules.install", "maintenance.migrate_plan"]) {
-    run = scripted([]);
+  // v0.12.0 (S5): every other action shows its filled command and runs only after Yes.
+  for (const id of ["server.status", "tests.module", "modules.install", "maintenance.migrate_plan", "server.logs"]) {
+    run = scripted([true]);
     assert.equal(await confirmRun(action(id), {}, "c", run.prompter), true, id);
-    assert.deepEqual(run.calls, [], id);
+    assert.deepEqual(run.calls, [`confirm ${action(id).label}: c\n\nRun this command?`], id);
+    run = scripted([false]);
+    assert.equal(await confirmRun(action(id), {}, "c", run.prompter), false, id);
   }
+  // Start or restart without a database says what Odoo will use instead (S3).
+  run = scripted([true]);
+  assert.equal(await confirmRun(action("server.start"), { database: "" }, "c", run.prompter, catalog), true);
+  assert.deepEqual(run.calls, [
+    "confirm Start the server in the background: c\n\nNo database chosen: odoo.conf sets no db_name, so Odoo " +
+      "starts without a database.\n\nRun this command?",
+  ]);
+  run = scripted([true]);
+  await confirmRun(action("server.start"), { database: "cc_dev_coffee" }, "c", run.prompter, catalog);
+  assert.deepEqual(run.calls, ["confirm Start the server in the background: c\n\nRun this command?"]);
 });
 
 const STAMP = "2026-11-16 18:00:00,123 4242";
@@ -309,14 +322,16 @@ test("entryLines shows the command and exit, and the last lines unless expanded"
 
 test("pickerRows lists the groups with their actions; selection skips group rows", () => {
   const rows = pickerRows(catalog);
+  // v0.12.0 (S3, S7): one start / restart action; the superseded ones stay in the catalog only.
   assert.deepEqual(rows.slice(0, 4).map((row) => row.text),
-    ["Server", "Start the server in the background", "Restart the server", "Stop the server"]);
+    ["Server", "Start / restart the server", "Stop the server", "Show the end of the server log"]);
+  assert.equal(rows.some((row) => row.action?.superseded_by), false);
   assert.equal(rows.filter((row) => row.kind === "group").length, 4);
   assert.equal(rows.find((row) => row.action?.id === "modules.init_dev")?.tag, "terminal only");
   assert.equal(rows.find((row) => row.action?.id === "maintenance.drop_database")?.tag, "confirm");
   assert.equal(rows.find((row) => row.action?.id === "maintenance.worktree")?.tag, "confirm");
   assert.equal(rows.find((row) => row.action?.id === "server.stop")?.tag, "");
-  assert.equal(rows.find((row) => row.action?.id === "server.restart")?.tag, "");
+  assert.equal(rows.find((row) => row.action?.id === "server.run")?.tag, "");
   assert.equal(rows.find((row) => row.action?.id === "server.follow")?.tag, "");
   assert.equal(rows.find((row) => row.action?.id === "modules.overview")?.tag, "");
   assert.equal(moveSelection(rows, 0, 0), 1);
@@ -326,9 +341,9 @@ test("pickerRows lists the groups with their actions; selection skips group rows
   assert.equal(moveSelection(rows, lastServer + 2, -1), lastServer);
   assert.equal(moveSelection(rows, 1, -1), 1);
   assert.equal(moveSelection(rows, rows.length - 1, 1), rows.length - 1);
-  // Thirteen rows below the first action is the Tests group row: the selection skips it.
-  assert.equal(rows[14].kind, "group");
-  assert.equal(moveSelection(rows, 1, 13), 15);
+  // Twelve rows below the first action is the Tests group row: the selection skips it.
+  assert.equal(rows[13].kind, "group");
+  assert.equal(moveSelection(rows, 1, 12), 14);
   assert.equal(moveSelection(rows, 1, 1000), rows.length - 1);
 });
 
@@ -364,4 +379,179 @@ test("menuShortcut: alt+o by default, configurable with OASIS_MENU_KEY, off when
         "the menu shortcut is off, /oasis menu still opens the panel.",
     }, bad);
   }
+});
+
+/** The fixture catalog with changes (a deep copy). */
+function variant(change: (copy: Catalog) => void): Catalog {
+  const copy = structuredClone(catalog);
+  change(copy);
+  return copy;
+}
+
+const RUN = "/opt/oasis/oasis --project '/work/a project'";
+const NO_DATABASE = "No database chosen: odoo.conf sets no db_name, so Odoo starts without a database.";
+const RELOAD = "reload needs inotify or watchdog importable by /env/bin/python; none is, so Odoo will log a warning and " +
+  "disable reload.";
+
+function withReloadWarning(copy: Catalog): void {
+  for (const choice of copy.actions[0].inputs[1].choices ?? []) {
+    if (choice.value === "all" || choice.value.split(",").includes("reload")) choice.warning = RELOAD;
+  }
+}
+
+test("menuHeader: the checkout, its server and the default database of the start / restart flow", () => {
+  assert.equal(menuHeader(catalog, "server: stopped"),
+    "checkout: main\nserver: stopped\ndefault database: cc_dev_coffee");
+  const worktree = variant((copy) => {
+    copy.checkout!.name = "wt_1";
+    copy.checkout!.default_database = null;
+  });
+  assert.equal(menuHeader(worktree, "server: running on port 8070 (pid 1)"),
+    "checkout: wt_1\nserver: running on port 8070 (pid 1)\ndefault database: none");
+});
+
+test("pickerRows offers the last action of the checkout first, with its answers", () => {
+  const remembered = variant((copy) => {
+    copy.last = { action: "modules.update", answers: { module: "coffee", database: "cc_dev_coffee" },
+      label: "Repeat: Update a module (coffee, cc_dev_coffee)" };
+  });
+  const rows = pickerRows(remembered);
+  assert.deepEqual([rows[0].kind, rows[0].text, rows[0].tag, rows[0].action?.id, rows[0].answers],
+    ["action", "Repeat: Update a module (coffee, cc_dev_coffee)", "", "modules.update",
+      { module: "coffee", database: "cc_dev_coffee" }]);
+  assert.equal(rows[1].text, "Server");
+  assert.equal(moveSelection(rows, 0, 0), 0);
+  assert.equal(pickerRows(catalog)[0].text, "Server");
+  // A last action the catalog does not have is not offered.
+  assert.equal(pickerRows(variant((copy) => {
+    copy.last = { action: "server.gone", answers: {}, label: "Repeat: gone" };
+  }))[0].text, "Server");
+});
+
+test("askInputs asks a closed choice by its labels and shows its warning", async () => {
+  const run = action("server.run");
+  const dev = { ...run, inputs: [run.inputs[1]] };
+  let script = scripted(["all (access, qweb, reload, xml)"]);
+  assert.deepEqual(await askInputs(dev, script.prompter, fixedChoices([], []).choices), { dev: "all" });
+  assert.deepEqual(script.calls, ["select Dev mode [off, all (access, qweb, reload, xml), access, qweb, reload, " +
+    "replica, xml, reload,xml]"]);
+  assert.deepEqual(script.notices, []);
+  const warned = variant(withReloadWarning).actions[0];
+  script = scripted(["reload,xml"]);
+  assert.deepEqual(await askInputs({ ...warned, inputs: [warned.inputs[1]] }, script.prompter,
+    fixedChoices([], []).choices), { dev: "reload,xml" });
+  assert.deepEqual(script.notices, [`warning: ${RELOAD}`]);
+});
+
+function texts(form: RunForm, width = 200): string[] {
+  return form.lines(width).map((line) => line.text);
+}
+
+test("RunForm asks database, dev mode and port in order; the last line is the command filled so far", () => {
+  const form = new RunForm({
+    catalog, action: action("server.run"), header: "checkout: main\nserver: stopped\ndefault database: cc_dev_coffee",
+    databases: ["cc_dev_coffee", "cc_dev_tea"],
+  });
+  assert.deepEqual(texts(form), [
+    "checkout: main", "server: stopped", "default database: cc_dev_coffee", "",
+    "Database (Enter for cc_dev_coffee, - for none)",
+    "› cc_dev_coffee (default)", "  cc_dev_tea", "  (none)", "  (type a name)",
+    "", `$ ${RUN} start --detach`,
+  ]);
+  form.submit();
+  assert.equal(texts(form).at(-1), `$ ${RUN} start --detach -d cc_dev_coffee`);
+  assert.deepEqual(texts(form).slice(4, 7), ["Database: cc_dev_coffee", "Dev mode (Enter for off)", "› off"]);
+  form.move(3);
+  form.submit();
+  assert.equal(texts(form).at(-1), `$ ${RUN} start --detach -d cc_dev_coffee --dev qweb`);
+  // The port is typed over the one start will use; keeping it leaves the option out.
+  assert.deepEqual(texts(form).slice(5, 8), ["Dev mode: qweb", "HTTP port (Enter for 8069)", "> 8069"]);
+  form.submit();
+  assert.deepEqual(texts(form).slice(4, 10), [
+    "Database: cc_dev_coffee", "Dev mode: qweb", "HTTP port: 8069 (default)", "Run this command?", "› Run", "  Cancel",
+  ]);
+  assert.equal(form.finished, false);
+  form.submit();
+  assert.equal(form.finished, true);
+  assert.deepEqual(form.result, { database: "cc_dev_coffee", dev: "qweb", port: "" });
+});
+
+test("RunForm: no database warns at the confirmation, a reload warning, a port re-asked until valid", () => {
+  const warned = variant(withReloadWarning);
+  const form = new RunForm({ catalog: warned, action: warned.actions[0], header: "h", databases: ["cc_dev_coffee"] });
+  form.move(1);
+  form.submit();
+  assert.deepEqual(texts(form).slice(2, 3), ["Database: (none)"]);
+  form.move(1);
+  form.submit();
+  assert.deepEqual(texts(form).slice(4, 5), [`  warning: ${RELOAD}`]);
+  for (let index = 0; index < 4; index += 1) form.backspace();
+  form.type("0");
+  form.submit();
+  assert.deepEqual(texts(form).slice(5, 8), ["HTTP port (Enter for 8069)", "> 0", "! Port must be a number from 1 to 65535."]);
+  form.backspace();
+  form.type("8070");
+  form.submit();
+  assert.deepEqual(texts(form), [
+    "h", "", "Database: (none)", "Dev mode: all (access, qweb, reload, xml)", `  warning: ${RELOAD}`,
+    "HTTP port: 8070", NO_DATABASE, "Run this command?", "› Run", "  Cancel",
+    "", `$ ${RUN} start --detach --dev all --http-port 8070`,
+  ]);
+  form.move(1);
+  form.submit();
+  assert.deepEqual([form.finished, form.result], [true, undefined]);
+});
+
+test("RunForm types a database name checked by the catalog pattern; escape cancels", () => {
+  const form = new RunForm({ catalog, action: action("server.run"), header: "h", databases: [] });
+  assert.deepEqual(texts(form).slice(2, 6), [
+    "Database (Enter for cc_dev_coffee, - for none)", "› cc_dev_coffee (default)", "  (none)", "  (type a name)",
+  ]);
+  form.move(2);
+  form.submit();
+  form.type("bad-name");
+  form.submit();
+  assert.deepEqual(texts(form).slice(2, 5), ["Database (Enter for cc_dev_coffee, - for none)", "> bad-name",
+    "! Database name must use only letters, numbers, and underscores."]);
+  for (let index = 0; index < 8; index += 1) form.backspace();
+  form.type("cc_new\u0007");
+  form.submit();
+  assert.equal(texts(form)[2], "Database: cc_new");
+  form.cancel();
+  assert.deepEqual([form.finished, form.result], [true, undefined]);
+});
+
+test("RunForm repeats remembered answers from the confirmation", () => {
+  const form = new RunForm({
+    catalog, action: action("server.run"), header: "h", databases: [],
+    answers: { database: "cc_dev_coffee", dev: "reload,xml", port: "8070" },
+  });
+  assert.deepEqual(texts(form), [
+    "h", "", "Database: cc_dev_coffee", "Dev mode: reload,xml", "HTTP port: 8070", "Run this command?", "› Run",
+    "  Cancel", "", `$ ${RUN} start --detach -d cc_dev_coffee --dev reload,xml --http-port 8070`,
+  ]);
+  form.submit();
+  assert.deepEqual(form.result, { database: "cc_dev_coffee", dev: "reload,xml", port: "8070" });
+});
+
+test("RunForm wraps a long command instead of truncating it", () => {
+  const deep = variant((copy) => {
+    const run = copy.actions[0];
+    run.argv = run.argv.map((token) => token === "/work/a project" ? `/work/${"nested/".repeat(12)}project` : token);
+  });
+  const form = new RunForm({ catalog: deep, action: deep.actions[0], header: "h", databases: [],
+    answers: { database: "cc_dev_coffee", dev: "all", port: "8070" } });
+  const lines = form.lines(40);
+  const command = lines.slice(lines.findIndex((line) => line.text.startsWith("$ ")));
+  assert.ok(command.length > 3, String(command.length));
+  assert.ok(command.every((line) => line.text.length <= 40 && line.style === "command"));
+  assert.ok(command.every((line) => !line.text.includes("…")));
+  assert.equal(command.map((line) => line.text).join("").replaceAll(" ", ""),
+    `$ ${shellJoin(fillTemplate(deep.actions[0], form.answers, true))}`.replaceAll(" ", ""));
+});
+
+test("wrapLine breaks at spaces, indents continuations and splits a word longer than the width", () => {
+  assert.deepEqual(wrapLine("$ a bb ccc dddd", 8), ["$ a bb", "  ccc", "  dddd"]);
+  assert.deepEqual(wrapLine("$ abcdefghijkl", 6), ["$", "  abcd", "  efgh", "  ijkl"]);
+  assert.deepEqual(wrapLine("short", 40), ["short"]);
 });

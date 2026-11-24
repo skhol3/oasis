@@ -89,3 +89,28 @@ busy() {
   done < <(runtime_state others "$PROJECT_ROOT" 2>/dev/null || true)
   printf 'Port %s is in use by another process; %s or stop that process.\n' "$port" "$pass" >&2
 }
+
+# conf_database: the db_name of the configured odoo.conf, or nothing when it sets none (Odoo writes
+# False for none) or cannot be read (Odoo then reports the file itself). Read with odoo_addons_path.py
+# read_option, the reader of every other odoo.conf option.
+conf_database() {
+  python3 -I -B - "$(dirname "${BASH_SOURCE[0]}")/odoo_addons_path.py" "$ODOO_CONFIG" 2>/dev/null <<'PYTHON' || true
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('oasis_odoo_addons_path', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+value = (module.read_option(sys.argv[2], 'db_name') or '').strip()
+if value and value != 'False':
+    print(value)
+PYTHON
+}
+
+# warn_without_database: a server started without -d serves odoo.conf's db_name; say so on stderr.
+warn_without_database() {
+  local named
+  if [[ -n "$explicit_database" ]]; then return; fi
+  named=$(conf_database)
+  if [[ -n "$named" ]]; then
+    printf "WARNING: no database given (-d); Odoo will use odoo.conf's db_name (%s).\n" "$named" >&2
+  fi
+}

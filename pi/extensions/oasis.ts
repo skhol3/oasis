@@ -17,10 +17,10 @@ import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/p
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
 import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
-import { type CatalogAction, menuShortcut } from "../lib/menu.ts";
+import { type Answers, menuShortcut, type PickerChoice, RunForm } from "../lib/menu.ts";
 import { actionPanel, type ExecPurpose } from "../lib/panel.ts";
 import { readTail } from "../lib/log-tail.ts";
-import { LogPanel, MENU_ENTRY, MenuPanel, renderMenuEntry } from "../ui/menu-panel.ts";
+import { LogPanel, MENU_ENTRY, MenuPanel, renderMenuEntry, RunFormPanel } from "../ui/menu-panel.ts";
 import {
   formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, moduleInfoArgs, testModuleArgs, updateModuleArgs,
   viewInfoArgs,
@@ -269,9 +269,10 @@ export default function oasisLayer(pi: ExtensionAPI) {
   // The action panel (alt+o or OASIS_MENU_KEY, and /oasis menu): user-run only, no agent tool opens
   // it. lib/panel.ts decides everything (catalog, inputs, confirmation, run, result); this adapter
   // gives it pi.exec in the project root, the Pi dialogs and the overlays (the picker, with the
-  // checkout's server state from runtime_state in its header, and the live server log, which reads
-  // the end of server.log again every second while open), and records results as custom session
-  // entries (pi.appendEntry with an entry renderer): Pi shows them but never sends them to the model.
+  // checkout's server state from runtime_state in its header, the start / restart form, and the live
+  // server log, which reads the end of server.log again every second while open), records results as
+  // custom session entries (pi.appendEntry with an entry renderer): Pi shows them but never sends
+  // them to the model, and remembers the action that ran for Repeat (runtime_state.py remember).
   pi.registerEntryRenderer(MENU_ENTRY, renderMenuEntry);
   const EXEC_TIMEOUTS: Record<ExecPurpose, number> = {
     catalog: STATUS_TIMEOUT_MS, list: TOOL_TIMEOUT_MS, run: MENU_TIMEOUT_MS,
@@ -285,6 +286,11 @@ export default function oasisLayer(pi: ExtensionAPI) {
     readLog,
     appendEntry: (entry) => pi.appendEntry(MENU_ENTRY, entry),
     serverState: (root) => serverState(root),
+    remember: async (root, action, answers) => {
+      const result = await pi.exec("python3", ["-I", "-B", RUNTIME_STATE_PY, "remember", root, action,
+        JSON.stringify(answers)], { cwd: root, timeout: STATUS_TIMEOUT_MS });
+      if (result.code !== 0) throw new Error(result.stderr.trim() || `runtime_state.py exited with ${result.code}`);
+    },
   });
 
   function menu(ctx: ExtensionContext): Promise<void> {
@@ -292,8 +298,16 @@ export default function oasisLayer(pi: ExtensionAPI) {
       mode: ctx.mode,
       cwd: ctx.cwd,
       ui: {
-        pick: (catalog, header) => ctx.ui.custom<CatalogAction | undefined>(
+        pick: (catalog, header) => ctx.ui.custom<PickerChoice | undefined>(
           (tui, theme, keybindings, done) => new MenuPanel(catalog, header, tui, theme, keybindings, done),
+          {
+            overlay: true,
+            overlayOptions: { anchor: "center", width: "80%", minWidth: 40, maxHeight: "90%" },
+            blocked: { kind: "question", message: "oasis menu" },
+          },
+        ),
+        form: (spec) => ctx.ui.custom<Answers | undefined>(
+          (tui, theme, keybindings, done) => new RunFormPanel(new RunForm(spec), tui, theme, keybindings, done),
           {
             overlay: true,
             overlayOptions: { anchor: "center", width: "80%", minWidth: 40, maxHeight: "90%" },

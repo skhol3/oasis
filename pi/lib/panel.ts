@@ -3,8 +3,9 @@
 // Pi. pi/extensions/oasis.ts only adapts ctx.ui and pi to these interfaces. No Pi imports.
 import { withHeartbeat } from "./heartbeat.ts";
 import {
-  askInputs, type Catalog, type CatalogAction, confirmRun, fillTemplate, type MenuEntry, menuOutput, parseCatalog,
-  type Prompter, type ServerState, serverLine, shellJoin, sources, terminalCommand,
+  type Answers, askInputs, type Catalog, confirmRun, fillTemplate, type FormSpec, type MenuEntry, menuHeader, menuOutput,
+  parseCatalog, type PickerChoice, type Prompter, RUN_ACTION, type ServerState, serverLine, shellJoin, sources,
+  terminalCommand,
 } from "./menu.ts";
 import type { CoreResult } from "./tools.ts";
 
@@ -18,8 +19,10 @@ export type ExecPurpose = "catalog" | "list" | "run";
 
 /** The panel's dialogs: the Prompter questions plus the overlays (picker, live log) and the footer status. */
 export interface PanelUi extends Prompter {
-  /** The picker; `header` is the server line of the checkout (serverLine). */
-  pick(catalog: Catalog, header: string): Promise<CatalogAction | undefined>;
+  /** The picker; `header` is the checkout, its server line (serverLine) and the default database (menuHeader). */
+  pick(catalog: Catalog, header: string): Promise<PickerChoice | undefined>;
+  /** The start / restart form (RunForm): its answers once the user chose Run, undefined otherwise. */
+  form(spec: FormSpec): Promise<Answers | undefined>;
   /** The live view of the server log at `path`, refreshed while open; resolves when the user closes it. */
   follow(path: string, title: string): Promise<void>;
   setStatus(text: string | undefined): void;
@@ -46,6 +49,8 @@ export interface PanelEffects {
   appendEntry(entry: MenuEntry): void;
   /** This checkout's server record (`runtime_state.py show`); may reject when it cannot be read. */
   serverState(root: string): Promise<ServerState>;
+  /** Remembers the action that ran with its answers, for Repeat (`runtime_state.py remember`); may reject. */
+  remember(root: string, action: string, answers: Answers): Promise<void>;
   heartbeatMs?: number;
 }
 
@@ -58,9 +63,10 @@ function message(error: unknown): string {
 
 /**
  * The panel, opened by the shortcut and `/oasis menu`: one action at a time. It reads the catalog,
- * lets the user pick an action, asks its inputs and confirmation, runs the filled command in the
- * project root and records the command with its output as an entry. A command that cannot be
- * started is recorded the same way, with the error as output.
+ * lets the user pick an action (or Repeat the last one), asks its inputs (the start / restart flow
+ * in one form) and confirmation with the filled command, runs it in the project root, records the
+ * command with its output as an entry and remembers the action. A command that cannot be started is
+ * recorded the same way, with the error as output.
  */
 export function actionPanel(effects: PanelEffects): (ctx: PanelContext) => Promise<void> {
   let busy: string | null = null;
@@ -91,14 +97,16 @@ export function actionPanel(effects: PanelEffects): (ctx: PanelContext) => Promi
       return;
     }
     const catalog = parseCatalog(listed.stdout);
-    let header: string;
+    let server: string;
     try {
-      header = serverLine(await effects.serverState(root));
+      server = serverLine(await effects.serverState(root));
     } catch (error) {
-      header = serverLine({ serverError: message(error) });
+      server = serverLine({ serverError: message(error) });
     }
-    const action = await ui.pick(catalog, header);
-    if (!action) return;
+    const header = menuHeader(catalog, server);
+    const picked = await ui.pick(catalog, header);
+    if (!picked) return;
+    const { action, answers: repeated } = picked;
     if (action.terminal_only) {
       effects.appendEntry({ label: action.label, command: terminalCommand(action), note: TERMINAL_ONLY, output: "" });
       return;
@@ -120,7 +128,14 @@ export function actionPanel(effects: PanelEffects): (ctx: PanelContext) => Promi
       },
       notify: (text, level) => ui.notify(text, level),
     });
-    const answers = await askInputs(action, ui, choices);
+    let answers: Answers | null | undefined;
+    if (action.id === RUN_ACTION) {
+      // One form asks, previews and confirms; a repeat opens it at the confirmation.
+      const databases = repeated ? [] : await choices("databases");
+      answers = await ui.form({ catalog, action, header, databases, ...(repeated ? { answers: repeated } : {}) });
+    } else {
+      answers = repeated ? { ...repeated } : await askInputs(action, ui, choices);
+    }
     if (!answers) {
       ui.notify("oasis menu: nothing ran.", "info");
       return;
@@ -128,7 +143,7 @@ export function actionPanel(effects: PanelEffects): (ctx: PanelContext) => Promi
     // The panel wants compact output: menuOutput summarizes the run logs it names.
     const argv = fillTemplate(action, answers, true);
     const command = shellJoin(argv);
-    if (!(await confirmRun(action, answers, command, ui))) {
+    if (action.id !== RUN_ACTION && !(await confirmRun(action, answers, command, ui, catalog))) {
       ui.notify("oasis menu: not confirmed, nothing ran.", "info");
       return;
     }
@@ -143,6 +158,14 @@ export function actionPanel(effects: PanelEffects): (ctx: PanelContext) => Promi
     effects.appendEntry({
       label: action.label, command, exit: result.code, output: menuOutput(action, answers, result, effects.readLog),
     });
+    // Repeat (S6): never a user-run action (terminal-only and the live log never get here).
+    if (!action.user_run) {
+      try {
+        await effects.remember(root, action.id, answers);
+      } catch (error) {
+        ui.notify(`oasis menu: could not remember this action: ${message(error)}`, "warning");
+      }
+    }
   }
 
   return async (ctx) => {

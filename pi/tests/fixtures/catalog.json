@@ -39,6 +39,120 @@
   ],
   "actions": [
     {
+      "id": "server.run",
+      "group": "server",
+      "label": "Start / restart the server",
+      "kind": "command",
+      "command": "start",
+      "argv": [
+        "/opt/oasis/oasis",
+        "--project",
+        "/work/a project",
+        "start",
+        "--detach",
+        {
+          "input": "database",
+          "option": "-d"
+        },
+        {
+          "input": "dev",
+          "option": "--dev"
+        },
+        {
+          "input": "port",
+          "option": "--http-port"
+        }
+      ],
+      "inputs": [
+        {
+          "id": "database",
+          "label": "Database",
+          "kind": "choice",
+          "source": "databases",
+          "required": false,
+          "allow_new": true,
+          "pattern": "^[A-Za-z0-9_]+$",
+          "error": "Database name must use only letters, numbers, and underscores.",
+          "default": "cc_dev_coffee",
+          "hint": "Enter for cc_dev_coffee, - for none",
+          "choices": null
+        },
+        {
+          "id": "dev",
+          "label": "Dev mode",
+          "kind": "choice",
+          "source": null,
+          "required": false,
+          "allow_new": false,
+          "pattern": null,
+          "error": null,
+          "default": "",
+          "hint": "Enter for off",
+          "choices": [
+            {
+              "value": "",
+              "label": "off",
+              "warning": null
+            },
+            {
+              "value": "all",
+              "label": "all (access, qweb, reload, xml)",
+              "warning": null
+            },
+            {
+              "value": "access",
+              "label": "access",
+              "warning": null
+            },
+            {
+              "value": "qweb",
+              "label": "qweb",
+              "warning": null
+            },
+            {
+              "value": "reload",
+              "label": "reload",
+              "warning": null
+            },
+            {
+              "value": "replica",
+              "label": "replica",
+              "warning": null
+            },
+            {
+              "value": "xml",
+              "label": "xml",
+              "warning": null
+            },
+            {
+              "value": "reload,xml",
+              "label": "reload,xml",
+              "warning": null
+            }
+          ]
+        },
+        {
+          "id": "port",
+          "label": "HTTP port",
+          "kind": "text",
+          "source": null,
+          "required": false,
+          "allow_new": false,
+          "pattern": "^(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$",
+          "error": "Port must be a number from 1 to 65535.",
+          "default": "8069",
+          "hint": "Enter for 8069",
+          "choices": null
+        }
+      ],
+      "destructive": false,
+      "confirm": null,
+      "user_run": false,
+      "terminal_only": false,
+      "follow": false,
+      "superseded_by": null
+    },
+    {
       "id": "server.start",
       "group": "server",
       "label": "Start the server in the background",
@@ -66,14 +180,16 @@
           "pattern": "^[A-Za-z0-9_]+$",
           "error": "Database name must use only letters, numbers, and underscores.",
           "default": null,
-          "hint": "Enter to start without -d"
+          "hint": "Enter to start without -d",
+          "choices": null
         }
       ],
       "destructive": false,
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": "server.run"
     },
     {
       "id": "server.restart",
@@ -102,14 +218,16 @@
           "pattern": "^[A-Za-z0-9_]+$",
           "error": "Database name must use only letters, numbers, and underscores.",
           "default": null,
-          "hint": "Enter to keep the database of the running server"
+          "hint": "Enter to keep the database of the running server",
+          "choices": null
         }
       ],
       "destructive": false,
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": "server.run"
     },
     {
       "id": "server.stop",
@@ -128,7 +246,8 @@
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "server.logs",
@@ -147,7 +266,8 @@
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "server.follow",
@@ -167,7 +287,8 @@
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": true
+      "follow": true,
+      "superseded_by": null
     },
     {
       "id": "server.status",
@@ -186,7 +307,8 @@
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "server.stop_database",
@@ -206,7 +328,8 @@
       "confirm": "yes",
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "modules.install",
@@ -241,7 +364,8 @@
           "pattern": null,
           "error": null,
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         },
         {
           "id": "database",
@@ -253,7 +377,8 @@
           "pattern": "^[A-Za-z0-9_]+$",
           "error": "Database name must use only letters, numbers, and underscores.",
           "default": null,
-          "hint": "Enter for cc_dev_<module>"
+          "hint": "Enter for cc_dev_<module>",
+          "choices": null
         },
         {
           "id": "demo",
@@ -265,14 +390,16 @@
           "pattern": null,
           "error": null,
           "default": false,
-          "hint": null
+          "hint": null,
+          "choices": null
         }
       ],
       "destructive": false,
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "modules.update",
@@ -306,7 +433,8 @@
           "pattern": null,
           "error": null,
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         },
         {
           "id": "database",
@@ -318,14 +446,16 @@
           "pattern": "^[A-Za-z0-9_]+$",
           "error": "Database name must use only letters, numbers, and underscores.",
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         }
       ],
       "destructive": false,
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "modules.status",
@@ -356,7 +486,8 @@
           "pattern": null,
           "error": null,
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         },
         {
           "id": "database",
@@ -368,14 +499,16 @@
           "pattern": "^[A-Za-z0-9_]+$",
           "error": "Database name must use only letters, numbers, and underscores.",
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         }
       ],
       "destructive": false,
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "modules.init_dev",
@@ -410,7 +543,8 @@
           "pattern": null,
           "error": null,
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         },
         {
           "id": "database",
@@ -422,7 +556,8 @@
           "pattern": "^[A-Za-z0-9_]+$",
           "error": "Database name must use only letters, numbers, and underscores.",
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         },
         {
           "id": "demo",
@@ -434,14 +569,16 @@
           "pattern": null,
           "error": null,
           "default": false,
-          "hint": null
+          "hint": null,
+          "choices": null
         }
       ],
       "destructive": false,
       "confirm": null,
       "user_run": false,
       "terminal_only": true,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "modules.overview",
@@ -469,14 +606,16 @@
           "pattern": null,
           "error": null,
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         }
       ],
       "destructive": false,
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "tests.module",
@@ -507,14 +646,16 @@
           "pattern": null,
           "error": null,
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         }
       ],
       "destructive": false,
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "tests.class",
@@ -549,7 +690,8 @@
           "pattern": null,
           "error": null,
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         },
         {
           "id": "only",
@@ -561,14 +703,16 @@
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
           "error": "--only takes a test class or Class.method.",
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         }
       ],
       "destructive": false,
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "tests.reuse",
@@ -604,7 +748,8 @@
           "pattern": null,
           "error": null,
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         },
         {
           "id": "only",
@@ -616,14 +761,16 @@
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$",
           "error": "--only takes a test class or Class.method.",
           "default": null,
-          "hint": "Enter for every test of the module"
+          "hint": "Enter for every test of the module",
+          "choices": null
         }
       ],
       "destructive": false,
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "maintenance.create_database",
@@ -651,14 +798,16 @@
           "pattern": "^[A-Za-z0-9_]+$",
           "error": "Database name must use only letters, numbers, and underscores.",
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         }
       ],
       "destructive": false,
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "maintenance.drop_database",
@@ -690,7 +839,8 @@
           "pattern": "^[A-Za-z0-9_]+$",
           "error": "Database name must use only letters, numbers, and underscores.",
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         },
         {
           "id": "terminate",
@@ -702,14 +852,16 @@
           "pattern": null,
           "error": null,
           "default": false,
-          "hint": null
+          "hint": null,
+          "choices": null
         }
       ],
       "destructive": true,
       "confirm": "database",
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "maintenance.trash",
@@ -728,7 +880,8 @@
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "maintenance.trash_restore",
@@ -757,14 +910,16 @@
           "pattern": "^[A-Za-z0-9_]+$",
           "error": "Database name must use only letters, numbers, and underscores.",
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         }
       ],
       "destructive": false,
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "maintenance.trash_empty",
@@ -795,14 +950,16 @@
           "pattern": "^[0-9]+$",
           "error": "Days must be a whole number.",
           "default": null,
-          "hint": "Enter for 7"
+          "hint": "Enter for 7",
+          "choices": null
         }
       ],
       "destructive": true,
       "confirm": "yes",
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "maintenance.gc",
@@ -821,7 +978,8 @@
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "maintenance.gc_apply",
@@ -841,7 +999,8 @@
       "confirm": "yes",
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "maintenance.doctor",
@@ -860,7 +1019,8 @@
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "maintenance.migrate_plan",
@@ -880,7 +1040,8 @@
       "confirm": null,
       "user_run": false,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "maintenance.migrate",
@@ -900,7 +1061,8 @@
       "confirm": "yes",
       "user_run": true,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     },
     {
       "id": "maintenance.worktree",
@@ -931,7 +1093,8 @@
           "pattern": null,
           "error": null,
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         },
         {
           "id": "branch",
@@ -943,14 +1106,32 @@
           "pattern": null,
           "error": null,
           "default": null,
-          "hint": null
+          "hint": null,
+          "choices": null
         }
       ],
       "destructive": false,
       "confirm": null,
       "user_run": true,
       "terminal_only": false,
-      "follow": false
+      "follow": false,
+      "superseded_by": null
     }
-  ]
+  ],
+  "checkout": {
+    "name": "main",
+    "server": {
+      "state": "stopped",
+      "pid": null,
+      "port": null,
+      "database": null,
+      "error": null
+    },
+    "default_database": "cc_dev_coffee",
+    "no_database": {
+      "start": "No database chosen: odoo.conf sets no db_name, so Odoo starts without a database.",
+      "restart": "No database chosen: odoo.conf sets no db_name, so Odoo starts without a database."
+    }
+  },
+  "last": null
 }
