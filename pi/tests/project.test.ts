@@ -189,6 +189,16 @@ test("projectContext names the root and routes the agent to the oasis tools", ()
   assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
 });
 
+test("projectContext keeps the guidance of the test tools: what to pass, and where the logs are", () => {
+  const text = projectContext("/work/acme/codigo/acme", "/work/acme/oasis-workspace.toml", undefined, "19.0");
+  const lines = text.split("\n");
+  const summary = lines.find((line) => line.startsWith("- oasis_test_summary: ")) ?? "";
+  assert.ok(summary.includes("pass what test-module --compact printed"), summary);
+  const tests = lines.find((line) => line.startsWith("- oasis_test_module: ")) ?? "";
+  assert.ok(tests.includes("full logs stay on disk"), tests);
+  assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
+});
+
 test("projectContext names the workspace file of a checkout without profile", () => {
   const text = projectContext("/work/acme/codigo/acme", "/work/acme/oasis-workspace.toml");
   assert.match(text, /Odoo project root: \/work\/acme\/codigo\/acme \(workspace \/work\/acme\/oasis-workspace\.toml\)/);
@@ -224,4 +234,13 @@ test("projectContext names the configured Odoo series and its skills", () => {
   const unknown = projectContext("/work/coffee");
   assert.match(unknown, /^Odoo project root: /);
   assert.ok(!/odoo\d+-\*/.test(unknown), unknown);
+});
+
+test("projectContext tells the agent which oasis commands ask the user, and stays compact", () => {
+  const line = "drop-database, stop --database, gc --apply --trash ask the user; never bypass a refusal.";
+  for (const tools of [undefined, ["read", "bash"]]) {
+    const text = projectContext("/work/acme/codigo/acme", "/work/acme/oasis-workspace.toml", tools, "19.0");
+    assert.ok(text.split("\n").includes(line), text);
+    assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
+  }
 });

@@ -11,7 +11,7 @@ import {
   parseCommand, SUBCOMMAND_SUMMARY, type SubcommandName, subcommandCompletions, USAGE,
 } from "../lib/commands.ts";
 import { withHeartbeat } from "../lib/heartbeat.ts";
-import { blockedEverywhere, blockedProgram, blockReason } from "../lib/bash-guard.ts";
+import { DECISION_ENTRY, type GateEffects, settingReader, toolCallRouter } from "../lib/destructive.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import { findWorkspaceFile, projectContext, projectRootResolver } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
@@ -19,7 +19,8 @@ import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
 import { type CatalogAction, menuShortcut } from "../lib/menu.ts";
 import { actionPanel, type ExecPurpose } from "../lib/panel.ts";
-import { MENU_ENTRY, MenuPanel, renderMenuEntry } from "../ui/menu-panel.ts";
+import { readTail } from "../lib/log-tail.ts";
+import { LogPanel, MENU_ENTRY, MenuPanel, renderMenuEntry } from "../ui/menu-panel.ts";
 import {
   formatBackgroundRun, formatPlain, formatTestRun, formatUpdateRun, moduleInfoArgs, testModuleArgs, updateModuleArgs,
   viewInfoArgs,
@@ -267,9 +268,10 @@ export default function oasisLayer(pi: ExtensionAPI) {
 
   // The action panel (alt+o or OASIS_MENU_KEY, and /oasis menu): user-run only, no agent tool opens
   // it. lib/panel.ts decides everything (catalog, inputs, confirmation, run, result); this adapter
-  // gives it pi.exec in the project root, the Pi dialogs and the overlay, and records results as
-  // custom session entries (pi.appendEntry with an entry renderer): Pi shows them but never sends
-  // them to the model.
+  // gives it pi.exec in the project root, the Pi dialogs and the overlays (the picker, with the
+  // checkout's server state from runtime_state in its header, and the live server log, which reads
+  // the end of server.log again every second while open), and records results as custom session
+  // entries (pi.appendEntry with an entry renderer): Pi shows them but never sends them to the model.
   pi.registerEntryRenderer(MENU_ENTRY, renderMenuEntry);
   const EXEC_TIMEOUTS: Record<ExecPurpose, number> = {
     catalog: STATUS_TIMEOUT_MS, list: TOOL_TIMEOUT_MS, run: MENU_TIMEOUT_MS,
@@ -282,6 +284,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     exists: existsSync,
     readLog,
     appendEntry: (entry) => pi.appendEntry(MENU_ENTRY, entry),
+    serverState: (root) => serverState(root),
   });
 
   function menu(ctx: ExtensionContext): Promise<void> {
@@ -289,13 +292,18 @@ export default function oasisLayer(pi: ExtensionAPI) {
       mode: ctx.mode,
       cwd: ctx.cwd,
       ui: {
-        pick: (catalog) => ctx.ui.custom<CatalogAction | undefined>(
-          (tui, theme, keybindings, done) => new MenuPanel(catalog, tui, theme, keybindings, done),
+        pick: (catalog, header) => ctx.ui.custom<CatalogAction | undefined>(
+          (tui, theme, keybindings, done) => new MenuPanel(catalog, header, tui, theme, keybindings, done),
           {
             overlay: true,
             overlayOptions: { anchor: "center", width: "80%", minWidth: 40, maxHeight: "90%" },
             blocked: { kind: "question", message: "oasis menu" },
           },
+        ),
+        follow: (path, title) => ctx.ui.custom<void>(
+          (tui, theme, keybindings, done) => new LogPanel(title, () => readTail(path), tui, theme, keybindings,
+            () => done()),
+          { overlay: true, overlayOptions: { anchor: "center", width: "90%", minWidth: 40, maxHeight: "90%" } },
         ),
         select: (title, options) => ctx.ui.select(title, options),
         input: (title, placeholder) => ctx.ui.input(title, placeholder),
@@ -402,20 +410,28 @@ export default function oasisLayer(pi: ExtensionAPI) {
     return { systemPrompt: `${event.systemPrompt}\n\n<oasis>\n${context}\n</oasis>` };
   });
 
-  // Agent bash only: direct odoo-bin/dropdb/psql bypass the core's database guards (Odoo projects);
-  // worktree-init links environment files, migrate rewrites configuration files and menu is the
-  // user's interactive menu, so all three are user-run in every session.
-  pi.on("tool_call", async (event, ctx) => {
-    if (event.toolName !== "bash") return;
-    const command = (event.input as { command?: unknown }).command;
-    if (typeof command !== "string") return;
-    // The menu's scripts are judged by the file they resolve to from the session's directory.
-    const program = blockedProgram(command, { cwd: ctx.cwd, home: homedir(), exists: existsSync });
-    if (!program) return;
-    if (blockedEverywhere(program)) return { block: true, reason: blockReason(program, "") };
-    const root = await projectRoot(ctx.cwd);
-    if (root) return { block: true, reason: blockReason(program, root) };
-  });
+  // Agent bash, edit and write tool calls; lib/destructive.ts decides (toolCallRouter). Deny tier:
+  // direct odoo-bin/dropdb/psql bypass the core's database guards (Odoo projects); worktree-init
+  // links environment files, migrate rewrites configuration files and menu is the user's interactive
+  // menu, so all three are user-run in every session. Ask tier: drop-database, stop --database and
+  // gc --apply --trash run after the user types the database name or `yes` in a dialog, unless
+  // [tooling].agent_destructive (read through config.py, never from a tool argument) says deny or
+  // allow: the stricter of the session project's and the target project's (`--project`, or a tool
+  // script's OASIS_PROJECT_ROOT or ODOO19_PROJECT_ROOT). The files that hold that setting (an
+  // oasis-workspace.toml or .odoo19-agent.toml in the session's directory or above it) are in the
+  // ask tier too: bash writes to them and Pi's edit and write tool calls on them. Each ask decision
+  // is a custom session entry: Pi shows it but never sends it to the model.
+  pi.registerEntryRenderer(DECISION_ENTRY, renderMenuEntry);
+  const gateEffects: GateEffects = {
+    projectRoot: (cwd) => projectRoot(cwd),
+    home: homedir(),
+    exists: existsSync,
+    agentDestructive: settingReader(profileConfig),
+    appendEntry: (entry) => pi.appendEntry(DECISION_ENTRY, entry),
+    realpath: realpathSync,
+  };
+  const routeToolCall = toolCallRouter(gateEffects);
+  pi.on("tool_call", (event, ctx) => routeToolCall(event, ctx));
 
   // Each tool is registered under its oasis_* name and, always inactive, under its odoo19_* alias
   // with the same parameters and implementation, for overlays and allowlists that name the old

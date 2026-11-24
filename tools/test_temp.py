@@ -59,25 +59,36 @@ def create_step(database):
     return result.returncode, 'already exists' in result.stderr
 
 
-def remove_filestore(conf, database):
-    """Remove <data_dir>/filestore/<database>.
+def filestore_path(conf, database):
+    """<data_dir>/filestore/<database>, or None without a known data_dir.
 
     data_dir is DATA_DIR ([tooling].data_dir, which Odoo receives as --data-dir; common.sh
     exports it) when set; otherwise only the conf's data_dir is read. Without an absolute
-    data_dir (absent, or relative to an unknown working directory) there is nothing known to
-    remove. A filestore entry that is not a directory is never followed.
+    data_dir (absent, or relative to an unknown working directory) nothing is known. An
+    unreadable conf raises odoo_addons_path.ConfError. tools/trash.py moves filestores with it.
     """
     data_dir = os.environ.get('DATA_DIR', '')
     if not data_dir:
-        try:
-            value = (odoo_addons_path.read_option(conf, 'data_dir') or '').strip()
-        except odoo_addons_path.ConfError as exc:
-            print(f'{exc} Filestore of {database} not removed.', file=sys.stderr)
-            return False
+        value = (odoo_addons_path.read_option(conf, 'data_dir') or '').strip()
         data_dir = os.path.expanduser(value) if value else ''
     if not os.path.isabs(data_dir):
+        return None
+    return Path(data_dir) / 'filestore' / database
+
+
+def remove_filestore(conf, database):
+    """Remove <data_dir>/filestore/<database> (filestore_path).
+
+    Without a known data_dir there is nothing known to remove. A filestore entry that is not a
+    directory is never followed.
+    """
+    try:
+        path = filestore_path(conf, database)
+    except odoo_addons_path.ConfError as exc:
+        print(f'{exc} Filestore of {database} not removed.', file=sys.stderr)
+        return False
+    if path is None:
         return True
-    path = Path(data_dir) / 'filestore' / database
     try:
         if not stat.S_ISDIR(os.lstat(path).st_mode):
             print(f'Filestore of {database} is not a directory; not removed: {path}', file=sys.stderr)

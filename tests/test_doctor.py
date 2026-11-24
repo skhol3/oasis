@@ -90,7 +90,8 @@ class DoctorTests(unittest.TestCase):
 
     def expected(self, *changed, omit=(), mode='legacy', extra=()):
         """The all-pass report with some lines replaced (by check name), omitted or added."""
-        lines = [f'PASS configuration={mode}', 'PASS odoo_version=19.0', 'PASS git=2.47.1', 'PASS docker',
+        lines = [f'PASS configuration={mode}', 'PASS odoo_version=19.0', 'PASS agent_destructive=ask',
+                 'PASS git=2.47.1', 'PASS docker',
                  'PASS docker_compose=2.29.1', 'PASS flock', 'PASS proc', 'PASS python=3.12',
                  'PASS odoo_release=19.0', 'PASS odoo_conf', 'PASS compose', 'PASS env_file', 'PASS logs_dir',
                  *extra, f'PASS http_port={self.port}']
@@ -130,7 +131,8 @@ class DoctorTests(unittest.TestCase):
     # -- all checks pass ------------------------------------------------------------------------
 
     def test_legacy_profile_passes_every_check(self):
-        self.assert_report('PASS configuration=legacy\nPASS odoo_version=19.0\nPASS git=2.47.1\n'
+        self.assert_report('PASS configuration=legacy\nPASS odoo_version=19.0\nPASS agent_destructive=ask\n'
+                           'PASS git=2.47.1\n'
                            'PASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
                            'PASS python=3.12\nPASS odoo_release=19.0\nPASS odoo_conf\nPASS compose\n'
                            f'PASS env_file\nPASS logs_dir\nPASS http_port={self.port}\ndoctor_failures=0\n')
@@ -138,12 +140,22 @@ class DoctorTests(unittest.TestCase):
 
     def test_workspace_checkout_passes_every_check(self):
         self.workspace_mode()
-        self.assert_report('PASS configuration=workspace\nPASS odoo_version=19.0\nPASS git=2.47.1\n'
+        self.assert_report('PASS configuration=workspace\nPASS odoo_version=19.0\nPASS agent_destructive=ask\n'
+                           'PASS git=2.47.1\n'
                            'PASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
                            'PASS python=3.12\nPASS odoo_release=19.0\nPASS odoo_conf\nPASS compose\n'
                            'PASS env_file\nPASS logs_dir\nPASS data_dir\n'
                            f'PASS http_port={self.port}\ndoctor_failures=0\n')
         self.assertEqual(os.listdir(self.runtime.name), [])
+
+    def test_agent_destructive_setting_is_shown(self):
+        profile = self.root / '.odoo19-agent.toml'
+        for value in ('deny', 'allow'):
+            with self.subTest(value=value):
+                self.commands.unlink(missing_ok=True)
+                profile.write_text(profile.read_text().replace('agent_destructive = ', '# was: ')
+                                   + f"agent_destructive = '{value}'\n")
+                self.assert_report(self.expected(f'PASS agent_destructive={value}'))
 
     def test_help_and_unknown_arguments(self):
         result = self.doctor('--help')

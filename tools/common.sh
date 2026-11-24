@@ -84,7 +84,9 @@ require_runtime() {
   # The configured series as a whole number in what odoo-bin --version prints.
   series="(^|[^0-9])${ODOO_VERSION//./\\.}([^0-9]|\$)"
   if [[ ! "$odoo_version" =~ $series ]]; then
-    printf 'Odoo runtime %s is required.\n' "$ODOO_VERSION" >&2
+    printf 'Odoo runtime %s is required; %s reports: %s.\n' "$ODOO_VERSION" "$ODOO_BIN" "${odoo_version%%$'\n'*}" >&2
+    printf 'Point [tooling].community at an Odoo %s source, then check it with %s doctor.\n' \
+      "$ODOO_VERSION" "$(program_name)" >&2
     return 2
   fi
 }
@@ -141,7 +143,10 @@ require_database_name() {
   fi
 }
 
-require_managed_database_name() {
+# A managed name of this checkout's namespace (prefix, slug, 63 bytes), trash names included:
+# the trash commands and the session helpers use it; every other command calls
+# require_managed_database_name, which also refuses trash names.
+require_namespace_database_name() {
   local database=${1:-}
   require_database_name "$database"
   if [[ "$database" != "$DEV_PREFIX"* && "$database" != "$TEST_PREFIX"* ||
@@ -160,6 +165,30 @@ require_managed_database_name() {
   fi
   if (( $(database_name_bytes "$database") > 63 )); then
     printf 'Database names must be at most 63 bytes: %s\n' "$database" >&2
+    return 2
+  fi
+}
+
+# Trash names (drop-database, tools/trash.py) end in _trash_<YYYYMMDD>_<HHMMSS>: reserved for the
+# trash, so no normal command creates, uses or drops one; `trash restore` and `gc --trash` take them.
+is_trash_database_name() {
+  [[ "${1:-}" =~ _trash_[0-9]{8}_[0-9]{6}$ ]]
+}
+
+require_managed_database_name() {
+  local database=${1:-}
+  require_namespace_database_name "$database"
+  if is_trash_database_name "$database"; then
+    printf 'Database names ending in _trash_<YYYYMMDD>_<HHMMSS> are reserved for the trash: %s\n' "$database" >&2
+    return 2
+  fi
+}
+
+require_trash_database_name() {
+  local database=${1:-}
+  require_namespace_database_name "$database"
+  if ! is_trash_database_name "$database"; then
+    printf 'Not a trash database of this checkout: %s\n' "$database" >&2
     return 2
   fi
 }
@@ -327,16 +356,68 @@ list_managed_databases() {
 
 managed_database_session_count() {
   local database=$1
-  require_managed_database_name "$database"
+  require_namespace_database_name "$database"
   wait_for_database >/dev/null
   database_psql -Atqc "SELECT count(*) FROM pg_stat_activity WHERE datname = '$database' AND pid <> pg_backend_pid()"
 }
 
 terminate_managed_database_sessions() {
   local database=$1
-  require_managed_database_name "$database"
+  require_namespace_database_name "$database"
   wait_for_database >/dev/null
   database_psql -Atqc "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$database' AND pid <> pg_backend_pid()" >/dev/null
+}
+
+# The size of an existing database in bytes (pg_database_size).
+database_size() {
+  local database=$1
+  require_namespace_database_name "$database"
+  database_psql -Atqc "SELECT pg_database_size('$database')"
+}
+
+# The comment of a trash database: `oasis-trash original=<name>` names the database it was.
+trash_database_comment() {
+  local database=$1
+  require_trash_database_name "$database"
+  database_psql -Atqc "SELECT coalesce(shobj_description(oid, 'pg_database'), '') FROM pg_database WHERE datname = '$database'"
+}
+
+# The trash databases under both managed prefixes: <name>\t<size in bytes>\t<comment> per line.
+# tools/trash.py keeps the entries of this checkout whose comment matches their name.
+list_trash_databases() {
+  local dev_like=${DEV_PREFIX//_/\\_} test_like=${TEST_PREFIX//_/\\_}
+  wait_for_database >/dev/null
+  database_psql -AtF $'\t' -qc "SELECT datname, pg_database_size(oid), coalesce(shobj_description(oid, 'pg_database'), '') FROM pg_database WHERE (datname LIKE '$dev_like%' ESCAPE '\\' OR datname LIKE '$test_like%' ESCAPE '\\') AND datname ~ '_trash_[0-9]{8}_[0-9]{6}\$' ORDER BY datname"
+}
+
+# Renames a database and sets its comment in one statement list (one transaction): to the
+# trash with `oasis-trash original=<name>`, or back from it with no comment. PostgreSQL refuses
+# to rename a database with open sessions or onto an existing name.
+rename_managed_database() {
+  local from=$1 to=$2 comment
+  if is_trash_database_name "$to"; then
+    require_managed_database_name "$from"
+    require_trash_database_name "$to"
+    comment="'oasis-trash original=$from'"
+  else
+    require_trash_database_name "$from"
+    require_managed_database_name "$to"
+    comment=NULL
+  fi
+  wait_for_database >/dev/null
+  database_psql -v ON_ERROR_STOP=1 -qc "ALTER DATABASE \"$from\" RENAME TO \"$to\"; COMMENT ON DATABASE \"$to\" IS $comment" >/dev/null
+}
+
+# Closes a trash database's sessions and drops it (gc --apply --trash); prints nothing.
+drop_trash_database() {
+  local database=$1
+  require_trash_database_name "$database"
+  terminate_managed_database_sessions "$database"
+  compose exec -T "$DB_SERVICE" sh -c '
+    set -eu
+    export PGPASSWORD="$ODOO_DB_PASSWORD"
+    exec dropdb --if-exists -U "$ODOO_DB_USER" "$1"
+  ' sh "$database"
 }
 
 ensure_database() {
@@ -375,7 +456,9 @@ require_free_disposable_database() {
   # Outside the condition, so an unavailable service fails instead of looking free.
   wait_for_database >/dev/null
   if database_exists "$database"; then
-    printf 'Disposable test database already exists: %s\n' "$database" >&2
+    printf 'Disposable test database already exists: %s; it was left as it is.\n' "$database" >&2
+    printf 'Run the command again for a new name; %s gc --apply drops what interrupted runs left.\n' \
+      "$(program_name)" >&2
     return 2
   fi
 }

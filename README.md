@@ -23,7 +23,7 @@ Then install the Gentle Shell layer from a release tag (see the [changelog](CHAN
 `/reload` open sessions:
 
 ```bash
-gentle-shell install git:github.com/skhol3/oasis@v0.10.1
+gentle-shell install git:github.com/skhol3/oasis@v0.11.0
 ```
 
 [Docs →](docs/install.md) · [Gentle Shell package →](docs/gentle-shell-layer.md#installing-the-package)
@@ -93,7 +93,7 @@ of a checkout and runs them by hand. [Docs →](docs/action-menu.md)
 | [docs/README.md](docs/README.md) | Index of the documentation by reader |
 | [Install or update](docs/install.md) | `install.sh`, release tags and what gets installed |
 | [Gentle Shell layer](docs/gentle-shell-layer.md) | The agent tools, prompt context, `/oasis` and aliases |
-| [Bash guard](docs/bash-guard.md) | What the agent's bash commands may not run |
+| [Bash guard](docs/bash-guard.md) | Which agent bash commands run, wait for the user's confirmation or are blocked; `agent_destructive` |
 | [Subagents](docs/subagents.md) | The overlay that gives subagents the `oasis_*` tools |
 | [New project setup](docs/project-setup.md) | Profile, entry point and optional project wrappers |
 | [Checking the environment](docs/checking-environment.md) | `doctor`, `check-environment` and `lock.sha256` |
@@ -104,6 +104,7 @@ of a checkout and runs them by hand. [Docs →](docs/action-menu.md)
 | [Servers and ports](docs/servers-and-ports.md) | `start`, `stop`, `status` and ports per checkout |
 | [Tests and test databases](docs/testing.md) | `test-module`, `verify-module`, `--only`, `--reuse` |
 | [Disposable test databases](docs/disposable-test-databases.md) | Per-run databases and `gc` |
+| [Database trash](docs/trash.md) | `drop-database` moves to the trash; `trash restore`, `gc --trash` |
 | [Development database](docs/dev-database.md) | `init-dev-database` with role accounts and demo data |
 | [Static inspection](docs/static-inspection.md) | `model-info`, `view-info`, `xmlid-info`, `module-info` |
 | [Lint one module](docs/lint-module.md) | `lint-module` with the project's Pylint rcfile |

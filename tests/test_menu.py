@@ -8,8 +8,11 @@ from pathlib import Path
 import json
 import os
 import re
+import select
 import shlex
+import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -19,13 +22,14 @@ import test_lifecycle as lifecycle
 
 ROOT = lifecycle.STAGE
 ENTRY = str((ROOT / 'oasis').resolve())
-ACTIONS = ['server.start', 'server.stop', 'server.logs', 'server.status', 'server.stop_database',
+ACTIONS = ['server.start', 'server.restart', 'server.stop', 'server.logs', 'server.follow', 'server.status',
+           'server.stop_database',
            'modules.install', 'modules.update', 'modules.status', 'modules.init_dev', 'modules.overview',
            'tests.module', 'tests.class', 'tests.reuse',
-           'maintenance.create_database', 'maintenance.drop_database', 'maintenance.gc',
-           'maintenance.gc_apply', 'maintenance.doctor', 'maintenance.migrate_plan',
+           'maintenance.create_database', 'maintenance.drop_database', 'maintenance.trash',
+           'maintenance.trash_restore', 'maintenance.trash_empty', 'maintenance.gc', 'maintenance.gc_apply', 'maintenance.doctor', 'maintenance.migrate_plan',
            'maintenance.migrate', 'maintenance.worktree']
-ACTION_KEYS = ['argv', 'command', 'confirm', 'destructive', 'group', 'id', 'inputs', 'kind', 'label',
+ACTION_KEYS = ['argv', 'command', 'confirm', 'destructive', 'follow', 'group', 'id', 'inputs', 'kind', 'label',
                'terminal_only', 'user_run']
 INPUT_KEYS = ['allow_new', 'default', 'error', 'hint', 'id', 'kind', 'label', 'pattern', 'required',
               'source']
@@ -39,8 +43,46 @@ ONLY_INPUT = {'id': 'only', 'label': 'Test class (Class or Class.method)', 'kind
 WAITING = 'Listing databases (this may start the database service)...'
 NO_TERMINAL = ('oasis menu needs a terminal (stdin is not a TTY); run it yourself, or print the '
                'actions as JSON with --catalog.\n')
-# A fake odoo-bin that says it serves and stays alive until killed.
-SERVING = 'import time\nprint("serving", flush=True)\nwhile True:\n    time.sleep(0.1)\n'
+# A fake odoo-bin that listens like Odoo (on --http-interface or an unambiguous prefix of it down to
+# --http-i, as optparse reads it; else the conf's http_interface; 127.0.0.1 for none, 0.0.0.0 or ::,
+# so a test never listens beyond loopback), says it serves and stays alive until killed.
+# FAKE_LISTEN_HOST overrides the address, FAKE_NO_LISTEN binds nothing. FAKE_TERM=ignore makes it
+# ignore SIGTERM; with FAKE_CHILD it first starts a child (`<odoo-bin> --fake-child`) that ignores
+# SIGTERM and writes its pid to that file.
+SERVING = r'''import configparser, os, signal, socket, subprocess, sys, time
+if sys.argv[1:] == ['--fake-child']:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    with open(os.environ['FAKE_CHILD'], 'w') as stream:
+        stream.write(str(os.getpid()))
+    while True:
+        time.sleep(0.1)
+if os.environ.get('FAKE_TERM') == 'ignore':
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+if os.environ.get('FAKE_CHILD'):
+    subprocess.Popen([sys.executable, sys.argv[0], '--fake-child'])
+    while not (os.path.exists(os.environ['FAKE_CHILD']) and open(os.environ['FAKE_CHILD']).read()):
+        time.sleep(0.02)
+args, host, port = sys.argv[1:], None, None
+for index, arg in enumerate(args):
+    name, equals, value = arg.partition('=')
+    if name == '--http-port' and equals:
+        port = int(value)
+    elif len(name) >= len('--http-i') and '--http-interface'.startswith(name):
+        host = value if equals else args[index + 1]
+if host is None and '-c' in args:
+    conf = configparser.RawConfigParser()
+    conf.read(args[args.index('-c') + 1])
+    host = conf.get('options', 'http_interface', fallback='')
+host = os.environ.get('FAKE_LISTEN_HOST') or (host if host not in ('', '0.0.0.0', '::') else '127.0.0.1')
+if not os.environ.get('FAKE_NO_LISTEN'):
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind((host, port))
+    listener.listen()
+print("serving", flush=True)
+while True:
+    time.sleep(0.1)
+'''
 SERVE = f'if [ -n "${{FAKE_SERVE:-}}" ]; then exec "{sys.executable}" "$@"; fi\n'
 DIE = 'if [ -n "${FAKE_DIE:-}" ]; then echo "address already in use" >&2; exit 3; fi\n'
 
@@ -122,6 +164,7 @@ class CatalogTests(MenuFixture):
                     self.assertEqual(sorted(item), INPUT_KEYS)
                     self.assertIn(item['kind'], ('choice', 'text', 'boolean'))
                     self.assertIn(item['source'], (None, 'modules', 'databases'))
+                self.assertEqual(action['follow'], action['id'] == 'server.follow')
                 for token in action['argv']:
                     if isinstance(token, dict):
                         self.assertTrue(set(token) in ({'input'}, {'input', 'option'}, {'input', 'flag'},
@@ -135,8 +178,9 @@ class CatalogTests(MenuFixture):
                 if action['kind'] == 'command':
                     self.assertEqual(action['argv'][:4], [ENTRY, '--project', self.project, action['command']])
                 else:
+                    follow = ['-f'] if action['follow'] else []
                     self.assertEqual((action['kind'], action['command'], action['argv']),
-                                     ('log', None, ['tail', '-n', '200', catalog['server_log']]))
+                                     ('log', None, ['tail', '-n', '200', *follow, catalog['server_log']]))
         self.unchanged()
         self.assertFalse((self.root / 'dev/logs').exists())
 
@@ -149,9 +193,20 @@ class CatalogTests(MenuFixture):
             'argv': [*prefix, 'test-module', {'compact': '--compact'}, {'input': 'only', 'option': '--only'},
                      {'input': 'module'}],
             'inputs': [MODULE_INPUT, ONLY_INPUT], 'destructive': False, 'confirm': None, 'user_run': False,
-            'terminal_only': False})
+            'terminal_only': False, 'follow': False})
         self.assertEqual(actions['server.start']['argv'], [*prefix, 'start', '--detach',
                                                            {'input': 'database', 'option': '-d'}])
+        # S6: restart with an optional database, and the live server log.
+        self.assertEqual(actions['server.restart'], {
+            'id': 'server.restart', 'group': 'server', 'label': 'Restart the server', 'kind': 'command',
+            'command': 'restart', 'argv': [*prefix, 'restart', {'input': 'database', 'option': '-d'}],
+            'inputs': [actions['server.start']['inputs'][0] | {'hint': 'Enter to keep the database of the running server'}],
+            'destructive': False, 'confirm': None, 'user_run': False, 'terminal_only': False, 'follow': False})
+        self.assertEqual(actions['server.follow'], {
+            'id': 'server.follow', 'group': 'server', 'label': 'Follow the server log', 'kind': 'log',
+            'command': None, 'argv': ['tail', '-n', '200', '-f', str(self.root.resolve() / 'dev/logs/odoo19/server.log')],
+            'inputs': [], 'destructive': False, 'confirm': None, 'user_run': False, 'terminal_only': False,
+            'follow': True})
         self.assertEqual(actions['modules.install']['argv'], [
             *prefix, 'install-module', {'input': 'demo', 'flag': '--with-demo'}, {'input': 'module'},
             {'input': 'database'}])
@@ -164,8 +219,31 @@ class CatalogTests(MenuFixture):
         self.assertEqual(actions['modules.update']['argv'], [
             *prefix, 'update-module', {'compact': '--compact'}, {'input': 'module'}, {'input': 'database'}])
         self.assertEqual((actions['maintenance.drop_database']['confirm'], actions['maintenance.gc_apply']['confirm'],
-                          actions['server.stop_database']['confirm'], actions['maintenance.migrate']['confirm']),
-                         ('database', 'yes', 'yes', 'yes'))
+                          actions['server.stop_database']['confirm'], actions['maintenance.migrate']['confirm'],
+                          actions['maintenance.trash_empty']['confirm']),
+                         ('database', 'yes', 'yes', 'yes', 'yes'))
+        # The trash (S2): drop moves to it; list, restore and empty it.
+        self.assertEqual(actions['maintenance.drop_database']['label'], 'Move a database to the trash')
+        self.assertEqual(actions['maintenance.trash'], {
+            'id': 'maintenance.trash', 'group': 'maintenance', 'label': 'List trash', 'kind': 'command',
+            'command': 'trash', 'argv': [*prefix, 'trash'], 'inputs': [], 'destructive': False, 'confirm': None,
+            'user_run': False, 'terminal_only': False, 'follow': False})
+        self.assertEqual(actions['maintenance.trash_restore'], {
+            'id': 'maintenance.trash_restore', 'group': 'maintenance', 'label': 'Restore from trash',
+            'kind': 'command', 'command': 'trash', 'argv': [*prefix, 'trash', 'restore', {'input': 'trash'}],
+            'inputs': [{'id': 'trash', 'label': 'Trash name (as listed by List trash)', 'kind': 'text',
+                        'source': None, 'required': True, 'allow_new': False, 'pattern': '^[A-Za-z0-9_]+$',
+                        'error': 'Database name must use only letters, numbers, and underscores.',
+                        'default': None, 'hint': None}],
+            'destructive': False, 'confirm': None, 'user_run': False, 'terminal_only': False, 'follow': False})
+        self.assertEqual(actions['maintenance.trash_empty'], {
+            'id': 'maintenance.trash_empty', 'group': 'maintenance', 'label': 'Empty trash', 'kind': 'command',
+            'command': 'gc', 'argv': [*prefix, 'gc', '--apply', '--trash',
+                                      {'input': 'older_than', 'option': '--older-than'}],
+            'inputs': [{'id': 'older_than', 'label': 'Dropped at least this many days ago', 'kind': 'text',
+                        'source': None, 'required': False, 'allow_new': False, 'pattern': '^[0-9]+$',
+                        'error': 'Days must be a whole number.', 'default': None, 'hint': 'Enter for 7'}],
+            'destructive': True, 'confirm': 'yes', 'user_run': False, 'terminal_only': False, 'follow': False})
         self.assertEqual([key for key, action in actions.items() if action['user_run']],
                          ['maintenance.migrate', 'maintenance.worktree'])
         self.assertEqual([key for key, action in actions.items() if action['terminal_only']], ['modules.init_dev'])
@@ -175,7 +253,7 @@ class CatalogTests(MenuFixture):
             'id': 'modules.overview', 'group': 'modules', 'label': "Show a module's overview from source",
             'kind': 'command', 'command': 'module-info', 'argv': [*prefix, 'module-info', {'input': 'module'}],
             'inputs': [MODULE_INPUT], 'destructive': False, 'confirm': None, 'user_run': False,
-            'terminal_only': False})
+            'terminal_only': False, 'follow': False})
 
     def test_catalog_server_log_follows_the_configured_logs_directory(self):
         profile = self.root / '.odoo19-agent.toml'
@@ -260,37 +338,92 @@ class TerminalMenuTests(MenuFixture):
         self.assertIn('-d cc_dev_coffee -i coffee', self.log())
 
     def test_drop_requires_typing_the_database_name(self):
-        self.env.update(FAKE_DATABASES='cc_dev_coffee cc_test_other', FAKE_EXISTS='1')
+        self.env.update(FAKE_DATABASES='cc_dev_coffee cc_test_other')
+        # Only cc_dev_coffee exists, so its trash name is free.
+        Path(str(self.commands) + '.databases').write_text('cc_dev_coffee\n')
         result = self.terminal('4\n2\n1\nn\ncc_dev_coffe\n')
         self.assertEqual((result.returncode, result.stderr), (1, ''), result.stdout)
         self.assertIn('  1) cc_dev_coffee\n  2) cc_test_other\n', result.stdout)
         self.assertIn(self.command('drop-database', 'cc_dev_coffee'), result.stdout)
         self.assertTrue(result.stdout.endswith('Not confirmed: nothing ran.\n'), result.stdout)
-        self.assertNotIn('dropdb', self.log())
+        self.assertNotIn('ALTER DATABASE', self.log())
         result = self.terminal('4\n2\n1\nn\ncc_dev_coffee\n')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         # The command first, then the confirmation (the typed answer echoes on the terminal only).
-        self.assertTrue(result.stdout.endswith(self.command('drop-database', 'cc_dev_coffee') +
-                                               'Type the database name to confirm: '
-                                               'Database dropped: cc_dev_coffee\n'), result.stdout)
-        self.assertIn('dropdb', self.log())
+        self.assertRegex(result.stdout, re.escape(self.command('drop-database', 'cc_dev_coffee') +
+                                                  'Type the database name to confirm: database=cc_dev_coffee\n') +
+                         r'size=unknown\nsessions=0\nfilestore=none\ntrash=(cc_dev_coffee_trash_\d{8}_\d{6})\n'
+                         r'Database moved to trash: cc_dev_coffee -> \1\n'
+                         r'Restore it with: oasis trash restore \1\n\Z')
+        self.assertIn('ALTER DATABASE "cc_dev_coffee" RENAME TO "cc_dev_coffee_trash_', self.log())
+        self.assertNotIn('dropdb', self.log())
 
     def test_yes_confirmation_for_stopping_the_database_service(self):
-        result = self.terminal('1\n5\nno\n')
+        result = self.terminal('1\n7\nno\n')
         self.assertEqual((result.returncode, result.stderr), (1, ''), result.stdout)
         self.assertIn(self.command('stop', '--database'), result.stdout)
         self.assertIn('Type yes to confirm: ', result.stdout)
         self.assertTrue(result.stdout.endswith('Not confirmed: nothing ran.\n'))
         self.unchanged()
-        result = self.terminal('1\n5\nyes\n')
+        result = self.terminal('1\n7\nyes\n')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         self.assertTrue(self.log().endswith(' stop db\n'), self.log())
 
     def test_missing_server_log(self):
-        result = self.terminal('1\n3\n')
-        self.assertEqual((result.returncode, result.stderr), (1, ''))
-        self.assertTrue(result.stdout.endswith(
-            f'No server log yet: {self.root.resolve() / "dev/logs/odoo19/server.log"}\n'), result.stdout)
+        for answers in ('1\n4\n', '1\n5\n'):
+            with self.subTest(action=answers.split()[1]):
+                result = self.terminal(answers)
+                self.assertEqual((result.returncode, result.stderr), (1, ''))
+                self.assertTrue(result.stdout.endswith(
+                    f'No server log yet: {self.root.resolve() / "dev/logs/odoo19/server.log"}\n'), result.stdout)
+                self.unchanged()
+
+    def test_follow_the_server_log_until_ctrl_c(self):
+        log = self.root.resolve() / 'dev/logs/odoo19/server.log'
+        log.parent.mkdir(parents=True)
+        log.write_text(''.join(f'line {number}\n' for number in range(1, 251)))
+        master, slave = os.openpty()
+        try:
+            # A session of its own, so the test can send Ctrl+C (SIGINT) to the menu and tail only.
+            process = subprocess.Popen(
+                [sys.executable, '-B', str(ROOT / 'oasis'), '--project', str(self.root), 'menu'], text=True,
+                cwd=self.root, env=self.env, stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                start_new_session=True)
+        finally:
+            os.close(slave)
+        self.addCleanup(os.close, master)
+
+        def end():
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate()
+        self.addCleanup(end)
+        os.write(master, b'1\n5\n')
+        seen = b''
+
+        def read_until(text):
+            nonlocal seen
+            deadline = time.monotonic() + 20
+            while text not in seen:
+                self.assertLess(time.monotonic(), deadline, seen.decode()[-2000:])
+                ready, _, _ = select.select([process.stdout], [], [], 0.1)
+                if ready:
+                    chunk = os.read(process.stdout.fileno(), 65536)
+                    self.assertTrue(chunk, seen.decode()[-2000:])
+                    seen += chunk
+        read_until(b'line 250\n')
+        with log.open('a') as stream:
+            stream.write('line 251\n')
+        read_until(b'line 251\n')
+        self.assertIsNone(process.poll())
+        os.killpg(process.pid, signal.SIGINT)
+        stdout, stderr = process.communicate(timeout=20)
+        output = (seen + stdout.encode()).decode()
+        self.assertEqual((process.returncode, stderr), (0, ''))
+        self.assertIn('Command: ' + shlex.join(['tail', '-n', '200', '-f', str(log)]) + '\n'
+                      f'Following {log}; press Ctrl+C to stop.\nline 51\n', output)
+        self.assertNotIn('line 50\n', output)
+        self.assertTrue(output.endswith('line 251\n\nStopped following the server log.\n'), output[-300:])
         self.unchanged()
 
 
@@ -368,7 +501,8 @@ class DetachTests(MenuFixture):
         self.assertEqual(self.server_log.parent.stat().st_mode & 0o777, 0o700)
         result = self.start('--detach')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'Odoo is already running for this checkout: pid {pid}, port {self.port}.\n'))
+                         (2, '', f'Odoo is already running for this checkout: pid {pid}, port {self.port}; '
+                          'run oasis stop first.\n'))
         result = self.invoke('stop')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, f'Stopped Odoo for this checkout: pid {pid}, port {self.port}.\n', ''))
@@ -390,6 +524,88 @@ class DetachTests(MenuFixture):
                           'address already in use\n'))
         self.assertEqual(self.record(), '')
         self.assertEqual(self.server_log.read_text(), 'address already in use\n')
+
+    def fake_servers(self):
+        """The pids of the processes that run this test's fake odoo-bin."""
+        target = os.fsencode(str(self.source / 'odoo-bin'))
+        found = []
+        for entry in Path('/proc').iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                argv = (entry / 'cmdline').read_bytes().split(b'\0')
+            except OSError:
+                continue
+            if target in argv:
+                found.append(int(entry.name))
+        return found
+
+    def test_detach_fails_and_stops_a_server_that_does_not_listen_in_time(self):
+        self.env.update(FAKE_SERVE='1', FAKE_NO_LISTEN='1', OASIS_DETACH_WAIT='2')
+        result = self.start('--detach')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', (
+            f'Odoo did not listen on 127.0.0.1:{self.port} within 2 s and was stopped; the end of '
+            f'{self.server_log}:\nserving\n')))
+        self.assertEqual(self.record(), '')
+        self.assertEqual(self.fake_servers(), [])
+        # Nothing is left behind: the next start works.
+        del self.env['FAKE_NO_LISTEN']
+        result = self.start('--detach')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.detached(result, self.server_log)
+
+    def test_detach_kills_a_server_and_a_child_that_ignore_sigterm(self):
+        # The escalation (L9): SIGTERM to the session, SIGKILL to whatever is left after the grace.
+        child_file = Path(self.scratch.name) / 'child.pid'
+        self.addCleanup(lambda: [self.kill(pid) for pid in self.fake_servers()])
+        self.env.update(FAKE_SERVE='1', FAKE_NO_LISTEN='1', OASIS_DETACH_WAIT='1', OASIS_STOP_GRACE='0.5',
+                        FAKE_CHILD=str(child_file))
+        for term in ('ignore', 'exit'):
+            with self.subTest(term=term):
+                child_file.unlink(missing_ok=True)
+                self.env['FAKE_TERM'] = term
+                result = self.start('--detach')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', (
+                    f'Odoo did not listen on 127.0.0.1:{self.port} within 1 s and was stopped; the end of '
+                    f'{self.server_log}:\nserving\n')))
+                self.assertTrue(child_file.read_text())
+                self.assertEqual(self.record(), '')
+                deadline = time.monotonic() + 5
+                while self.fake_servers():
+                    self.assertLess(time.monotonic(), deadline, f'left running: {self.fake_servers()}')
+                    time.sleep(0.05)
+                self.server_log.unlink()
+
+    def test_detach_probes_the_configured_http_interface(self):
+        try:
+            with socket.socket() as probe:
+                probe.bind(('127.0.0.2', 0))
+        except OSError:
+            self.skipTest('127.0.0.2 is not a local address here')
+        # A probe of the wrong address would wait the whole 20 s, then fail.
+        self.env.update(FAKE_SERVE='1', OASIS_DETACH_WAIT='20')
+        conf = self.root / 'dev/odoo.conf'
+        for options, args in (
+                ('http_interface = 127.0.0.2\n', ()),
+                ('', ('--http-interface', '127.0.0.2')),
+                ('http_interface = 127.0.0.1\n', ('--http-interface=127.0.0.2',)),
+                # Odoo reads unambiguous abbreviations (optparse), down to --http-i.
+                ('http_interface = 127.0.0.1\n', ('--http-int=127.0.0.2',)),
+                ('', ('--http-i', '127.0.0.2')),
+                ('http_interface = 127.0.0.1\n', ('--http-interfac', '127.0.0.2')),
+                ('http_interface = 0.0.0.0\n', ()),
+                ('http_interface = ::\n', ()),
+                ('http_interface =\n', ())):
+            with self.subTest(options=options, args=args):
+                conf.write_text(lifecycle.conf_text(f'http_port = {self.port}\n{options}'))
+                began = time.monotonic()
+                result = self.start('--detach', *args)
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                self.assertLess(time.monotonic() - began, 10, 'start waited on an address Odoo does not use')
+                pid = self.detached(result, self.server_log)
+                result = self.invoke('stop')
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (0, f'Stopped Odoo for this checkout: pid {pid}, port {self.port}.\n', ''))
 
     def test_detach_writes_to_the_configured_logs_directory(self):
         profile = self.root / '.odoo19-agent.toml'
@@ -432,6 +648,183 @@ class DetachTests(MenuFixture):
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (2, '', '--detach starts a server; it cannot be combined with --stop-after-init.\n'))
         self.unchanged()
+
+    def restarted(self, result, port):
+        match = re.fullmatch(rf'pid=(\d+) port={port} log={re.escape(str(self.server_log))}\n',
+                             result.stdout.split('\n', 1)[1] if '\n' in result.stdout else '')
+        self.assertIsNotNone(match, (result.stdout, result.stderr))
+        pid = int(match.group(1))
+        self.addCleanup(self.kill, pid)
+        return pid
+
+    def odoo_lines(self):
+        return [line for line in self.log().splitlines() if line.startswith('odoo ')]
+
+    def test_restart_stops_the_server_and_starts_it_detached_on_the_same_port(self):
+        self.env['FAKE_SERVE'] = '1'
+        other = self.port + 1
+        result = self.start('--detach', f'--http-port={other}')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        first = int(re.match(r'pid=(\d+) ', result.stdout).group(1))
+        self.addCleanup(self.kill, first)
+        result = self.oasis('restart', '--workers=0')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.startswith(f'Stopped Odoo for this checkout: pid {first}, port {other}.\n'),
+                        result.stdout)
+        second = self.restarted(result, other)
+        self.assertNotEqual(second, first)
+        self.assertEqual(self.record(), f'pid={second} port={other}\n')
+        self.assertNotIn(first, self.fake_servers())
+        conf = self.root / 'dev/odoo.conf'
+        self.assertEqual(self.odoo_lines()[-1],
+                         f'odoo {self.source / "odoo-bin"} -c {conf} --http-port={other} --workers=0')
+        # Options that name another port win; the record follows.
+        result = self.oasis('restart', f'--http-port={self.port}')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.startswith(f'Stopped Odoo for this checkout: pid {second}, port {other}.\n'))
+        third = self.restarted(result, self.port)
+        self.assertEqual(self.record(), f'pid={third} port={self.port}\n')
+        self.assertEqual(self.odoo_lines()[-1], f'odoo {self.source / "odoo-bin"} -c {conf} --http-port={self.port}')
+
+    def test_restart_without_a_server_starts_one(self):
+        self.env['FAKE_SERVE'] = '1'
+        result = self.oasis('restart', '-d', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.startswith('No Odoo server running for this checkout.\n'), result.stdout)
+        pid = self.restarted(result, self.port)
+        self.assertEqual(self.record(), f'pid={pid} port={self.port}\n')
+        self.assertEqual(self.odoo_lines(), [f'odoo {self.source / "odoo-bin"} -c {self.root / "dev/odoo.conf"} '
+                                             f'--http-port={self.port} -d cc_dev_coffee'])
+
+    def test_restart_keeps_the_database_the_stopped_server_recorded(self):
+        git = {'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
+        self.env.update(git, FAKE_SERVE='1')
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True, env=self.env, capture_output=True)
+        result = self.start('--detach', '-d', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.detached(result, self.server_log)
+        prefix = f'odoo {self.source / "odoo-bin"} -c {self.root / "dev/odoo.conf"}'
+        other = self.port + 1
+        # Without -d/--database the recorded database is kept, restart after restart; given ones win.
+        for args, port, line in (
+                ((), self.port, f'--http-port={self.port} -d cc_dev_coffee'),
+                (('--workers=0',), self.port, f'--http-port={self.port} -d cc_dev_coffee --workers=0'),
+                (('-d', 'cc_test_coffee'), self.port, f'--http-port={self.port} -d cc_test_coffee'),
+                (('--database=cc_dev_coffee',), self.port, f'--http-port={self.port} --database=cc_dev_coffee'),
+                ((f'--http-port={other}',), other, f'-d cc_dev_coffee --http-port={other}')):
+            with self.subTest(args=args):
+                result = self.oasis('restart', *args)
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                pid = self.restarted(result, port)
+                self.assertEqual(self.odoo_lines()[-1], f'{prefix} {line}')
+        result = self.oasis('status')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout, (
+            f'server: running pid {pid} port {other}\nrepository servers: 1\n'
+            f'  {self.root.resolve()}: pid {pid}, port {other}, database cc_dev_coffee (this checkout)\n'))
+
+    def test_restart_names_the_database_in_the_repository_status(self):
+        git = {'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
+        self.env.update(git, FAKE_SERVE='1')
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True, env=self.env, capture_output=True)
+        result = self.oasis('restart', '-d', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        pid = self.restarted(result, self.port)
+        result = self.oasis('status')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout, (
+            f'server: running pid {pid} port {self.port}\nrepository servers: 1\n'
+            f'  {self.root.resolve()}: pid {pid}, port {self.port}, database cc_dev_coffee (this checkout)\n'))
+
+    def test_restart_refuses_cleanly_when_stop_fails(self):
+        self.env.update(FAKE_SERVE='1', FAKE_TERM='ignore', OASIS_STOP_TIMEOUT='0.5')
+        result = self.start('--detach')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        pid = self.detached(result, self.server_log)
+        lines = self.odoo_lines()
+        result = self.oasis('restart')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', (
+            f'Odoo did not stop within 0.5 s: pid {pid}, port {self.port}; run oasis stop --force.\n'
+            'Nothing was restarted: Odoo is still running for this checkout.\n')))
+        self.assertEqual(self.record(), f'pid={pid} port={self.port}\n')
+        self.assertIn(pid, self.fake_servers())
+        self.assertEqual(self.odoo_lines(), lines)
+        # Plain stop suggests --force with the program that ran it; the exit code stays 1.
+        for program in ('oasis', 'odoo19'):
+            with self.subTest(program=program):
+                result = self.oasis('stop', program=program)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', (
+                    f'Odoo did not stop within 0.5 s: pid {pid}, port {self.port}; run {program} stop --force.\n')))
+                self.assertEqual(self.record(), f'pid={pid} port={self.port}\n')
+        # stop --force ends it; restart then starts a new server.
+        result = self.oasis('stop', '--force')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
+            f'Killed Odoo for this checkout after 0.5 s (SIGKILL to its session): pid {pid}, port {self.port}.\n'), ''))
+        del self.env['FAKE_TERM']
+        result = self.oasis('restart')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.restarted(result, self.port)
+
+    def test_restart_reports_a_stop_failure_without_claiming_odoo_still_runs(self):
+        self.env['FAKE_SERVE'] = '1'
+        result = self.start('--detach')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        pid = self.detached(result, self.server_log)
+        lines = self.odoo_lines()
+        # The tools with a runtime_state.py whose stop fails as FAKE_STOP says; the rest is the real one.
+        tools = Path(self.scratch.name) / 'staged-tools'
+        shutil.copytree(ROOT / 'tools', tools, ignore=shutil.ignore_patterns('__pycache__'))
+        (tools / 'runtime_state.py').write_text(
+            'import os, sys\n'
+            'if sys.argv[1:2] == ["stop"]:\n'
+            '    status, message = os.environ["FAKE_STOP"].split(":", 1)\n'
+            '    print(message, file=sys.stderr)\n'
+            '    sys.exit(int(status))\n'
+            f'os.execv(sys.executable, [sys.executable, "-I", "-B", {str(ROOT / "tools/runtime_state.py")!r}, '
+            '*sys.argv[1:]])\n')
+        env = {**self.env, 'OASIS_PROJECT_ROOT': str(self.root), 'ODOO19_PROJECT_ROOT': str(self.root)}
+        for status, message in ((2, f'ERROR: Cannot read runtime state: {self.root}/server.json'),
+                                (1, 'Traceback (most recent call last):\nPermissionError: [Errno 13] Permission denied')):
+            with self.subTest(status=status):
+                result = subprocess.run(['bash', str(tools / 'restart')], text=True, cwd=self.root,
+                                        env={**env, 'FAKE_STOP': f'{status}:{message}'}, capture_output=True,
+                                        stdin=subprocess.DEVNULL, timeout=30)
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (status, '', f'{message}\nNothing was restarted.\n'))
+                self.assertEqual(self.record(), f'pid={pid} port={self.port}\n')
+                self.assertIn(pid, self.fake_servers())
+                self.assertEqual(self.odoo_lines(), lines)
+
+    def test_restart_refuses_before_stopping_what_start_would_refuse(self):
+        self.env['FAKE_SERVE'] = '1'
+        result = self.start('--detach')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        pid = self.detached(result, self.server_log)
+        lines = self.odoo_lines()
+        usage = f'Usage: {ENTRY} restart [odoo options]\n'
+        with socket.socket() as holder:
+            holder.bind(('127.0.0.1', self.port + 1))
+            holder.listen()
+            for args, message in (
+                    (('--stop-after-init',), 'restart starts a server; it cannot be combined with --stop-after-init.\n'),
+                    (('--detach',), usage), (('--workers=0', '--detach'), usage), (('--help', '-d', 'cc_dev_coffee'), usage),
+                    (('--version',), usage),
+                    (('-d', 'other_db'), 'Managed databases must use cc_dev_<name> or cc_test_<name>: other_db\n'),
+                    (('--http-port=0',), 'Invalid HTTP port: 0\n'),
+                    ((f'--http-port={self.port + 1}',), (
+                        f'Port {self.port + 1} is in use by another process; pass another --http-port or stop that '
+                        'process.\n'))):
+                with self.subTest(args=args):
+                    result = self.oasis('restart', *args)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', message))
+                    self.assertEqual(self.record(), f'pid={pid} port={self.port}\n')
+                    self.assertEqual(self.odoo_lines(), lines)
+        result = self.oasis('restart', '--help')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.startswith(usage), result.stdout)
+        self.assertIn('--http-port', result.stdout)
+        self.assertIn('the port and the database the stopped server had', ' '.join(result.stdout.split()))
+        self.assertEqual(self.record(), f'pid={pid} port={self.port}\n')
 
     def test_start_without_detach_is_unchanged(self):
         result = self.start('--workers=0')

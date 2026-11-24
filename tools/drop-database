@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Moves a managed database to the trash (tools/trash.py): prints the plan, then renames the
+# database to its trash name and its filestore directory with it. `trash restore` brings it back;
+# `gc --apply --trash` drops what has been in the trash long enough.
 set -Eeuo pipefail
 source "$(dirname "$0")/common.sh"
 database=${1:-}
@@ -13,7 +16,19 @@ if ! database_exists "$database"; then
   printf 'Database does not exist: %s\n' "$database"
   exit 0
 fi
+trash_helper() {
+  python3 -B "$(dirname "$0")/trash.py" "$@"
+}
+trash=$(trash_helper name "$DEV_PREFIX" "$TEST_PREFIX" "${CHECKOUT_SLUG:-}" "$database")
+if database_exists "$trash"; then
+  printf 'Trash name already exists: %s\n' "$trash" >&2
+  exit 2
+fi
+filestore=$(trash_helper filestore "$ODOO_CONFIG" "$database" "$trash")
+size=$(database_size "$database")
 session_count=$(managed_database_session_count "$database")
+printf 'database=%s\nsize=%s\nsessions=%s\nfilestore=%s\ntrash=%s\n' \
+  "$database" "$(trash_helper size "$size")" "$session_count" "$filestore" "$trash"
 if (( session_count > 0 )); then
   if [[ "$mode" != "--terminate" ]]; then
     printf 'Refusing to drop database with %s active session(s): %s\n' "$session_count" "$database" >&2
@@ -22,9 +37,15 @@ if (( session_count > 0 )); then
   fi
   terminate_managed_database_sessions "$database"
 fi
-compose exec -T "$DB_SERVICE" sh -c '
-  set -eu
-  export PGPASSWORD="$ODOO_DB_PASSWORD"
-  exec dropdb -U "$ODOO_DB_USER" "$1"
-' sh "$database"
-printf 'Database dropped: %s\n' "$database"
+# The filestore first: when the rename fails it moves back, and nothing has changed.
+trash_helper move-filestore "$ODOO_CONFIG" "$database" "$trash"
+if ! rename_managed_database "$database" "$trash"; then
+  if trash_helper move-filestore "$ODOO_CONFIG" "$trash" "$database"; then
+    printf 'Cannot move %s to the trash; nothing changed.\n' "$database" >&2
+  else
+    printf 'Cannot move %s to the trash; its filestore stays at the trash path of %s.\n' "$database" "$trash" >&2
+  fi
+  exit 1
+fi
+printf 'Database moved to trash: %s -> %s\n' "$database" "$trash"
+printf 'Restore it with: %s trash restore %s\n' "$(program_name)" "$trash"

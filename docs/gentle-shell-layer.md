@@ -5,7 +5,7 @@ A thin Pi package (`package.json`, `pi/`) layered over Gentle Shell. It changes 
 ## Installing the package
 
 ```bash
-gentle-shell install git:github.com/skhol3/oasis@v0.10.1
+gentle-shell install git:github.com/skhol3/oasis@v0.11.0
 ```
 
 To move to a newer release, remove the old entry and install the new tag (`gentle-shell list` shows the installed entry), then `/reload` open sessions:
@@ -57,11 +57,11 @@ See [Static inspection without starting Odoo](static-inspection.md) for the comm
 
 ### Prompt context
 
-Prompt context naming the `oasis_*` tools the session has (a session with none, such as a subagent without the overlay, is pointed to the `oasis` CLI instead) when `.odoo19-agent.toml` is found at or above the working directory, or, without one, an `oasis-workspace.toml` (see [Workspace file](workspace-file.md); the project root is then the git top level of the working directory).
+Prompt context naming the `oasis_*` tools the session has (a session with none, such as a subagent without the overlay, is pointed to the `oasis` CLI instead) and the commands that ask the user first when `.odoo19-agent.toml` is found at or above the working directory, or, without one, an `oasis-workspace.toml` (see [Workspace file](workspace-file.md); the project root is then the git top level of the working directory).
 
 ### Bash guard
 
-A bash guard blocks the agent from running some commands directly; see [Bash guard](bash-guard.md).
+A bash guard blocks the agent from running some commands directly and asks the user, in a dialog, before the agent's `drop-database`, `stop --database` or `gc --apply --trash` run, and before the agent changes the workspace file or profile that holds `[tooling].agent_destructive` (which can make them deny or allow); see [Bash guard](bash-guard.md).
 
 ### The /oasis command
 

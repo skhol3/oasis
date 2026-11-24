@@ -2,9 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  type Answers, askInputs, type CatalogAction, confirmRun, entryLines, fillTemplate, MENU_KEY_DEFAULT, menuOutput,
-  menuShortcut, moveSelection, parseCatalog, pickerRows, type Prompter, shellJoin, sources, terminalCommand,
-  textError, visibleStart,
+  type Answers, askInputs, type CatalogAction, confirmRun, entryLines, fillTemplate, lastLines, logView,
+  MENU_KEY_DEFAULT, menuOutput, menuShortcut, moveSelection, parseCatalog, pickerRows, type Prompter, serverLine,
+  shellJoin, sources, terminalCommand, textError, visibleStart,
 } from "../lib/menu.ts";
 
 // A real `oasis menu --catalog` of the synthetic lifecycle fixture (tests/test_pi_layer.py checks it
@@ -62,7 +62,7 @@ function fixedChoices(modules: string[], databases: string[]) {
 test("parseCatalog reads the core catalog and refuses another version or malformed JSON", () => {
   assert.equal(catalog.project, "/work/a project");
   assert.deepEqual(catalog.groups.map((group) => group.id), ["server", "modules", "tests", "maintenance"]);
-  assert.equal(catalog.actions.length, 21);
+  assert.equal(catalog.actions.length, 26);
   assert.throws(() => parseCatalog(FIXTURE.replace('"catalog_version": 1', '"catalog_version": 2')),
     /^Error: unsupported catalog_version 2 \(this panel reads version 1\); update the oasis layer\.$/);
   assert.throws(() => parseCatalog("not json"), /^Error: the catalog is not JSON: /);
@@ -89,6 +89,32 @@ test("fillTemplate fills words, inputs, options, flags and compact in order", ()
     [...PREFIX, "drop-database", "cc_dev_x", "--terminate"]);
   assert.deepEqual(fillTemplate(action("server.logs"), {}, true),
     ["tail", "-n", "200", "/work/a project/dev/logs/odoo19/server.log"]);
+  // S6: restart with an optional database; the live log follows server.log.
+  assert.deepEqual(fillTemplate(action("server.restart"), { database: "" }, true), [...PREFIX, "restart"]);
+  assert.deepEqual(fillTemplate(action("server.restart"), { database: "cc_dev_coffee" }, true),
+    [...PREFIX, "restart", "-d", "cc_dev_coffee"]);
+  assert.deepEqual(fillTemplate(action("server.follow"), {}, true),
+    ["tail", "-n", "200", "-f", "/work/a project/dev/logs/odoo19/server.log"]);
+  assert.deepEqual([action("server.follow").kind, action("server.follow").follow, action("server.logs").follow],
+    ["log", true, false]);
+});
+
+test("serverLine says how the checkout's server is: running on its port and pid, stopped or unknown", () => {
+  assert.equal(serverLine({ server: { pid: 4242, port: 8070 } }), "server: running on port 8070 (pid 4242)");
+  assert.equal(serverLine({ server: null }), "server: stopped");
+  assert.equal(serverLine({ serverError: "ERROR: Runtime state directory is a symlink: /run/x" }),
+    "server: unknown (Runtime state directory is a symlink: /run/x)");
+  assert.equal(serverLine({}), "server: unknown");
+});
+
+test("lastLines and logView: the end of a log, without control sequences, that fits the height", () => {
+  const text = Array.from({ length: 300 }, (_, index) => `line ${index + 1}`).join("\n") + "\n";
+  assert.deepEqual(lastLines(text, 3), ["line 298", "line 299", "line 300"]);
+  assert.deepEqual(lastLines("", 3), []);
+  assert.deepEqual(lastLines("\x1b[31mred\x1b[0m\tx\r\nend", 5), ["red    x", "end"]);
+  assert.deepEqual(logView(["a", "b", "c"], 5), ["a", "b", "c"]);
+  assert.deepEqual(logView(["a", "b", "c"], 2), ["b", "c"]);
+  assert.deepEqual(logView([], 4), ["(the server log is empty)"]);
 });
 
 test("shellJoin quotes like shlex.join and terminalCommand shows a terminal-only action with placeholders", () => {
@@ -217,7 +243,7 @@ test("confirmRun: typed database or yes for destructive actions, a plain confirm
   const command = "oasis drop-database cc_dev_x";
   let run = scripted(["cc_dev_x"]);
   assert.equal(await confirmRun(action("maintenance.drop_database"), drop, command, run.prompter), true);
-  assert.deepEqual(run.calls, [`input Drop a database\n${command}\nType the database name to confirm (cc_dev_x)`]);
+  assert.deepEqual(run.calls, [`input Move a database to the trash\n${command}\nType the database name to confirm (cc_dev_x)`]);
   for (const typed of ["cc_dev_y", "", undefined]) {
     run = scripted([typed]);
     assert.equal(await confirmRun(action("maintenance.drop_database"), drop, command, run.prompter), false);
@@ -283,12 +309,15 @@ test("entryLines shows the command and exit, and the last lines unless expanded"
 
 test("pickerRows lists the groups with their actions; selection skips group rows", () => {
   const rows = pickerRows(catalog);
-  assert.deepEqual(rows.slice(0, 3).map((row) => row.text), ["Server", "Start the server in the background", "Stop the server"]);
+  assert.deepEqual(rows.slice(0, 4).map((row) => row.text),
+    ["Server", "Start the server in the background", "Restart the server", "Stop the server"]);
   assert.equal(rows.filter((row) => row.kind === "group").length, 4);
   assert.equal(rows.find((row) => row.action?.id === "modules.init_dev")?.tag, "terminal only");
   assert.equal(rows.find((row) => row.action?.id === "maintenance.drop_database")?.tag, "confirm");
   assert.equal(rows.find((row) => row.action?.id === "maintenance.worktree")?.tag, "confirm");
   assert.equal(rows.find((row) => row.action?.id === "server.stop")?.tag, "");
+  assert.equal(rows.find((row) => row.action?.id === "server.restart")?.tag, "");
+  assert.equal(rows.find((row) => row.action?.id === "server.follow")?.tag, "");
   assert.equal(rows.find((row) => row.action?.id === "modules.overview")?.tag, "");
   assert.equal(moveSelection(rows, 0, 0), 1);
   const lastServer = rows.findIndex((row) => row.action?.id === "server.stop_database");
@@ -297,8 +326,9 @@ test("pickerRows lists the groups with their actions; selection skips group rows
   assert.equal(moveSelection(rows, lastServer + 2, -1), lastServer);
   assert.equal(moveSelection(rows, 1, -1), 1);
   assert.equal(moveSelection(rows, rows.length - 1, 1), rows.length - 1);
-  // Eleven rows below the first action is the Tests group row: the selection skips it.
-  assert.equal(moveSelection(rows, 1, 11), 13);
+  // Thirteen rows below the first action is the Tests group row: the selection skips it.
+  assert.equal(rows[14].kind, "group");
+  assert.equal(moveSelection(rows, 1, 13), 15);
   assert.equal(moveSelection(rows, 1, 1000), rows.length - 1);
 });
 

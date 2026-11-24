@@ -30,11 +30,15 @@ interface Setup {
   exec?: Exec;
   exists?: boolean;
   root?: string | null;
+  /** What runtime_state reads for the header (default: stopped), or the error the read throws. */
+  server?: Awaited<ReturnType<PanelEffects["serverState"]>> | Error;
 }
 
 function harness(options: Setup = {}) {
   const events: string[] = [];
   const entries: MenuEntry[] = [];
+  const headers: string[] = [];
+  const serverRoots: string[] = [];
   const answers = [...(options.answers ?? [])];
   const catalog: Exec = options.catalog ?? (async () => ({ code: 0, stdout: CATALOG, stderr: "" }));
   const exec: Exec = options.exec ?? (async () => ({ code: 0, stdout: "done\n", stderr: "" }));
@@ -49,6 +53,12 @@ function harness(options: Setup = {}) {
     exists: () => options.exists ?? true,
     readLog: () => "",
     appendEntry: (entry) => entries.push(entry),
+    serverState: async (root) => {
+      serverRoots.push(root);
+      const server = options.server ?? { server: null };
+      if (server instanceof Error) throw server;
+      return server;
+    },
   };
   const next = () => {
     assert.ok(answers.length > 0, `unexpected prompt after ${events.join(" | ")}`);
@@ -58,9 +68,13 @@ function harness(options: Setup = {}) {
     mode,
     cwd: "/work/a project/addons",
     ui: {
-      pick: async (catalog) => {
+      pick: async (catalog, header) => {
         events.push("pick");
+        headers.push(header);
         return catalog.actions.find((action) => action.id === options.pick);
+      },
+      follow: async (path, title) => {
+        events.push(`follow ${path} (${title})`);
       },
       select: async (title) => {
         events.push(`select ${title}`);
@@ -78,7 +92,7 @@ function harness(options: Setup = {}) {
       setStatus: (text) => events.push(`status ${text ?? "-"}`),
     },
   });
-  return { open: actionPanel(effects), context, events, entries, left: () => answers.length };
+  return { open: actionPanel(effects), context, events, entries, headers, serverRoots, left: () => answers.length };
 }
 
 test("outside the interactive TUI the panel refuses and runs nothing", async () => {
@@ -269,4 +283,50 @@ test("an unexpected error is reported and releases the lock", async () => {
   events.length = 0;
   await open(context());
   assert.ok(events.includes("pick"));
+});
+
+test("the picker header shows the server state of the checkout from runtime_state", async () => {
+  for (const [server, header] of [
+    [{ server: { pid: 4242, port: 8070 } }, "server: running on port 8070 (pid 4242)"],
+    [{ server: null }, "server: stopped"],
+    [{ serverError: "ERROR: Runtime state directory is a symlink: /run/x" },
+      "server: unknown (Runtime state directory is a symlink: /run/x)"],
+    [new Error("spawn python3 ENOENT"), "server: unknown (spawn python3 ENOENT)"],
+  ] as const) {
+    const { open, context, events, headers, serverRoots, entries } = harness({ pick: undefined, server });
+    await open(context());
+    assert.deepEqual(headers, [header]);
+    assert.deepEqual(serverRoots, [ROOT]);
+    assert.deepEqual(events.slice(1), ["pick", "status -"]);
+    assert.deepEqual(entries, []);
+  }
+});
+
+test("following the server log opens the live view of server.log and runs nothing", async () => {
+  const { open, context, events, entries } = harness({ pick: "server.follow" });
+  await open(context());
+  assert.deepEqual(events.slice(1), [
+    "pick", "follow /work/a project/dev/logs/odoo19/server.log (Follow the server log)", "status -",
+  ]);
+  assert.deepEqual(entries, []);
+  const missing = harness({ pick: "server.follow", exists: false });
+  await missing.open(missing.context());
+  assert.deepEqual(missing.events.slice(1), [
+    "pick", "warning: oasis menu: no server log yet: /work/a project/dev/logs/odoo19/server.log", "status -",
+  ]);
+});
+
+test("restart runs with the optional database and records its output", async () => {
+  const { open, context, events, entries, left } = harness({
+    pick: "server.restart", answers: ["(skip: to keep the database of the running server)"],
+    exec: async () => ({ code: 0, stdout: "Stopped Odoo for this checkout: pid 1, port 8069.\npid=2 port=8069 log=/l\n",
+      stderr: "" }),
+  });
+  await open(context());
+  assert.equal(left(), 0);
+  assert.ok(events.includes(`exec run in ${ROOT}: /opt/oasis/oasis --project ${ROOT} restart`), events.join("\n"));
+  assert.deepEqual(entries, [{
+    label: "Restart the server", command: `${ENTRY} restart`, exit: 0,
+    output: "Stopped Odoo for this checkout: pid 1, port 8069.\npid=2 port=8069 log=/l",
+  }]);
 });

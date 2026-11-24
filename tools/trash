@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# The database trash of this checkout (tools/trash.py): list it, or restore one entry.
+set -Eeuo pipefail
+source "$(dirname "$0")/oasis_env.sh"
+usage() {
+  printf 'Usage: %s trash [restore <trash name>]\n' "$(usage_name)"
+}
+if [[ "${1:-}" == --help && $# -eq 1 ]]; then
+  usage
+  printf 'drop-database moves a database to the trash: it renames it to <name>_trash_<YYYYMMDD>_<HHMMSS>\n'
+  printf '(the drop time in UTC; a longer name keeps its first 34 bytes plus _<6 hex of its SHA-256>, so it\n'
+  printf 'fits in 63 bytes) and renames its filestore directory under the data dir with it.\n'
+  printf 'Without arguments, lists the trash of this checkout: one line per entry with its original name,\n'
+  printf 'drop time, age and size, then trashed=<n>. Nothing changes.\n'
+  printf 'restore <trash name> renames the database and its filestore back to the original name; refused\n'
+  printf 'when that name exists, when its filestore path exists, with open sessions, or when the name is not\n'
+  printf 'a trash database of this checkout. gc --apply --trash [--older-than <days>] drops trash entries\n'
+  printf 'that are at least <days> (default 7) days old, with their filestores.\n'
+  exit 0
+fi
+mode=list
+if (( $# == 2 )) && [[ "$1" == restore ]]; then
+  mode=restore
+  name=$2
+elif (( $# != 0 )); then
+  usage >&2
+  exit 2
+fi
+source "$(dirname "$0")/common.sh"
+require_runtime
+trash_helper() {
+  python3 -B "$(dirname "$0")/trash.py" "$@"
+}
+if [[ "$mode" == list ]]; then
+  rows=$(list_trash_databases)
+  trash_helper list "$PROJECT_ROOT" "$DEV_PREFIX" "$TEST_PREFIX" "${CHECKOUT_SLUG:-}" <<< "$rows"
+  exit 0
+fi
+require_trash_database_name "$name"
+wait_for_database >/dev/null
+if ! database_exists "$name"; then
+  printf 'Database does not exist: %s\n' "$name" >&2
+  exit 2
+fi
+comment=$(trash_database_comment "$name")
+original=$(trash_helper original "$PROJECT_ROOT" "$DEV_PREFIX" "$TEST_PREFIX" "${CHECKOUT_SLUG:-}" "$name" "$comment")
+require_managed_database_name "$original"
+if database_exists "$original"; then
+  printf 'Refusing to restore %s: database %s already exists.\n' "$name" "$original" >&2
+  exit 2
+fi
+trash_helper filestore "$ODOO_CONFIG" "$name" "$original" >/dev/null
+session_count=$(managed_database_session_count "$name")
+if (( session_count > 0 )); then
+  printf 'Refusing to restore database with %s active session(s): %s\n' "$session_count" "$name" >&2
+  exit 3
+fi
+trash_helper move-filestore "$ODOO_CONFIG" "$name" "$original"
+if ! rename_managed_database "$name" "$original"; then
+  if trash_helper move-filestore "$ODOO_CONFIG" "$original" "$name"; then
+    printf 'Cannot restore %s; nothing changed.\n' "$name" >&2
+  else
+    printf 'Cannot restore %s; its filestore stays at the path of %s.\n' "$name" "$original" >&2
+  fi
+  exit 1
+fi
+printf 'Database restored from trash: %s -> %s\n' "$name" "$original"

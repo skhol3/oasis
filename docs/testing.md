@@ -10,7 +10,7 @@ flowchart TD
     RN --> RI{"Exists with the module installed?"}
     RI -->|yes| UP["Update the module (-u) and run the tests"]
     RI -->|no| RS["Reset, install the module, run the tests"]
-    UP --> KEEP["Kept: remove it with drop-database"]
+    UP --> KEEP["Kept: move it to the trash with drop-database"]
     RS --> KEEP
     R -->|no| E{"Explicit database argument<br/>or configured test_database?"}
     E -->|yes| SH["Shared destination: reset, install, run the tests"]
@@ -81,6 +81,6 @@ Installing a module in a new database usually takes far longer than its tests. `
 
 - Name: the explicit `test_database` argument, else `tooling.test_database`, else `<test_prefix><module>` (`<test_prefix><slug>_<module>` in a checkout with a slug). The same name rules apply as for any explicit test database.
 - When the database exists and the module is installed in it, the run updates the module (`-u <module>`) and runs the tests. Otherwise the database is reset and the module installed, exactly as without `--reuse`.
-- Nothing is dropped at the end, and `gc` does not touch it: remove it with `drop-database` when you are done. Run reuse targets sequentially.
+- Nothing is dropped at the end, and `gc` does not touch it: move it to the [trash](trash.md) with `drop-database` when you are done. Run reuse targets sequentially.
 - With `--compact`, the line after `phase=tests ...` is `database_lifecycle=reused mode=<install|update>`.
 - A reused database carries whatever earlier runs left in it and only the tested module is updated. Use it while fixing a test, and run once without `--reuse` (a fresh database) before reporting a result.

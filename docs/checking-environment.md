@@ -17,6 +17,7 @@ Two commands, for two questions:
 | --- | --- | --- |
 | `configuration` | the profile or workspace file loads; the value is `legacy` or `workspace` | `FAIL configuration=<error>`; the checks after `proc` are left out |
 | `odoo_version` | always, when the configuration loads (only supported series load) | |
+| `agent_destructive` | always, when the configuration loads: the value of `[tooling].agent_destructive` (`ask`, `deny` or `allow`; `ask` when absent), see [Bash guard](bash-guard.md#the-setting) | an invalid value fails `configuration` |
 | `git` | `git --version` reports 2.31 or newer | `FAIL git=missing`, `FAIL git=<version> minimum=2.31` |
 | `docker`, `docker_compose` | `docker` is on PATH and `docker compose version` succeeds | `FAIL docker=missing` (no `docker_compose` line), `FAIL docker_compose=unavailable` |
 | `flock` | `flock` is on PATH | `WARN flock=missing`: the database service starts without the cross-checkout lock |

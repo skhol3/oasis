@@ -1,5 +1,6 @@
-// Classify bash commands that bypass the oasis guards. No Pi imports: the extension injects the
-// session's directory, home and a file check (GuardContext).
+// Classify bash commands that bypass the oasis guards (the deny tier) or that the user confirms
+// first (the ask tier, see AskAction). No Pi imports: the extension injects the session's
+// directory, home and a file check (GuardContext).
 // Only programs in command position count, so searching or printing their
 // names stays allowed. This is a guard rail for agents, not a sandbox.
 import { posix } from "node:path";
@@ -21,18 +22,28 @@ export const MENU = "menu";
 // it is an oasis menu script (see menuScript). Without one, only the installed bundle's spelling
 // counts (MENU_SCRIPT).
 const MENU_NAMES = new Set([MENU, "actions.py"]);
-const MENU_SCRIPT = /(^|\/)skills\/odoo19\/tools\/(menu|actions\.py)$/;
-const SPELLED_MENU_SCRIPT = /(^|\/)tools\/(menu|actions\.py)$/;
+// The ask tier's tool scripts, recognized like the menu's (see oasisScript): `stop` and `gc` are
+// common names too.
+const ASK_SCRIPTS = new Set(["drop-database", "stop", "gc"]);
+// A managed database name as the tools accept it; anything else is not known from the text.
+const DATABASE_NAME = /^[A-Za-z0-9_]+$/;
 // Expansion, globs or substitution leftovers: the word's path is not known from the text. A bare
 // `_` is what substitutions() leaves for `$(...)` and backticks.
 const NOT_LITERAL = /[$*?[\]{}`\\]/;
 const CHANGE_DIRECTORY = new Set(["cd", "pushd"]);
 
-/** Where the session runs, from the extension: its cwd, the home directory and a file check. */
+/**
+ * Where the session runs, from the extension: its cwd, the home directory and a file check.
+ * `settingFile` names the file that holds [tooling].agent_destructive a bash write reaches: called
+ * with the write target's absolute path, or null when the text does not tell it, and the word as
+ * written; it returns the file to name in the dialog, or null when the target is not such a file.
+ * Without it, no write is an ask command.
+ */
 export interface GuardContext {
   cwd: string;
   home: string;
   exists(path: string): boolean;
+  settingFile?(path: string | null, word: string): string | null;
 }
 
 /** The session context and the directory the next command runs in (null when unknown). */
@@ -107,21 +118,33 @@ function insideOasisTree(dir: string, context: GuardContext): boolean {
   }
 }
 
+/** Whether a word ends in `<directory>/<its name>`, or is exactly that. */
+function spelledIn(word: string, directory: string): boolean {
+  const tail = `${directory}/${basename(word)}`;
+  return word === tail || word.endsWith(`/${tail}`);
+}
+
 /**
- * Whether a word names the menu's script (`menu` or `actions.py`). Resolved to a file, it must sit
- * in a `tools` directory whose parent is an oasis tree. When its path is unknown (expansion, an
- * unknown `cd` target), it is blocked when spelled like the installed bundle (`.../skills/odoo19/tools/menu`)
- * or, spelled `tools/menu` or `tools/actions.py`, when the session works inside an oasis tree. Without a context, only the installed bundle's spelling counts.
+ * Whether a word names one of oasis's tool scripts `names` (the menu's `menu` or `actions.py`, or
+ * an ask command's). Resolved to a file, it must sit in a `tools` directory whose parent is an
+ * oasis tree. When its path is unknown (expansion, an unknown `cd` target), it counts when spelled
+ * like the installed bundle (`.../skills/odoo19/tools/menu`) or, spelled `tools/<name>`, when the
+ * session works inside an oasis tree. Without a context, only the installed bundle's spelling counts.
  */
-function menuScript(word: string, where: Where | undefined): boolean {
-  if (!MENU_NAMES.has(basename(word))) return false;
-  // The installed bundle's spelling is blocked from anywhere, as before the session context,
+function oasisScript(word: string, names: Set<string>, where: Where | undefined): boolean {
+  if (!names.has(basename(word))) return false;
+  // The installed bundle's spelling counts from anywhere, as before the session context,
   // also when the rest of the path is an expansion (`$HOME/...`, `${HOME}/...`).
-  if (MENU_SCRIPT.test(word) || !where) return MENU_SCRIPT.test(word);
+  const bundled = spelledIn(word, "skills/odoo19/tools");
+  if (bundled || !where) return bundled;
   const path = literalPath(word, where);
-  if (path === null) return SPELLED_MENU_SCRIPT.test(word) && insideOasisTree(where.context.cwd, where.context);
+  if (path === null) return spelledIn(word, "tools") && insideOasisTree(where.context.cwd, where.context);
   const tools = posix.dirname(path);
   return posix.basename(tools) === "tools" && oasisTree(posix.dirname(tools), where.context);
+}
+
+function menuScript(word: string, where: Where | undefined): boolean {
+  return oasisScript(word, MENU_NAMES, where);
 }
 
 /**
@@ -347,11 +370,47 @@ function skipOptions(words: string[], index: number, valueOptions: Set<string>):
   return index;
 }
 
-/** The entry point's command: the first word after its options (`--project <dir>` takes a value). */
-function entryPointCommand(words: string[], index: number): string | undefined {
+/**
+ * Whether a word is the entry point's --project option without its value: argparse also takes an
+ * unambiguous prefix of it (`--p` to `--project`; its other option is --help).
+ */
+function projectOption(word: string): boolean {
+  return word.length >= 3 && "--project".startsWith(word);
+}
+
+/**
+ * The entry point's options before its command: the index of the command (the first word after
+ * them; --project and its prefixes take a value, `--project=<dir>` holds it) and the --project
+ * value argparse keeps (the last one given), undefined without one.
+ */
+function entryPointOptions(words: string[], index: number): { command: number; project?: string; joined: boolean } {
   let i = index + 1;
-  while (i < words.length && words[i].startsWith("-")) i += words[i] === "--project" ? 2 : 1;
-  return words[i];
+  let project: string | undefined;
+  let joined = false;
+  while (i < words.length && words[i].startsWith("-")) {
+    const word = words[i];
+    const equals = word.indexOf("=");
+    if (equals > 0 && projectOption(word.slice(0, equals))) {
+      project = word.slice(equals + 1);
+      joined = true;
+      i += 1;
+    } else if (projectOption(word)) {
+      project = words[i + 1];
+      joined = false;
+      i += 2;
+    } else {
+      i += 1;
+    }
+  }
+  return { command: i, project, joined };
+}
+
+function entryPointCommandIndex(words: string[], index: number): number {
+  return entryPointOptions(words, index).command;
+}
+
+function entryPointCommand(words: string[], index: number): string | undefined {
+  return words[entryPointCommandIndex(words, index)];
 }
 
 /** Whether the arguments only ask for help: one help flag, redirections aside. */
@@ -395,12 +454,194 @@ function userRunTool(words: string[], index: number, where?: Where): string | nu
     if (args.includes(WORKTREE_INIT)) tool = WORKTREE_INIT;
     else if (entryPointCommand(words, index) === MIGRATE) tool = MIGRATE;
     else if (entryPointCommand(words, index) === MENU) tool = MENU;
-    // The entry point's own `--project <dir>` and the command name are not the tool's arguments.
-    const project = args.indexOf("--project");
+    // The entry point's own `--project <dir>` (or a prefix of it, see projectOption) and the command
+    // name are not the tool's arguments.
+    const project = args.findIndex(projectOption);
     toolArgs = args.filter((arg, k) => arg !== tool && (project < 0 || (k !== project && k !== project + 1)));
   }
   if (!tool || onlyHelp(toolArgs) || (tool === MIGRATE && onlyPlan(toolArgs))) return null;
   return tool;
+}
+
+/**
+ * An ask-tier command: the user confirms it before it runs (the extension's dialog), unless the
+ * project's `[tooling].agent_destructive` says otherwise. `database` is drop-database's first
+ * argument when it is a literal database name, else null (the user could not confirm it).
+ */
+export type AskAction =
+  | ({ command: "drop-database"; database: string | null } & Target)
+  | ({ command: "stop --database" } & Target)
+  | ({ command: "gc --apply --trash" } & Target)
+  | { command: "edit"; file: string };
+
+/**
+ * The project an ask command names (see targetOf): an absolute path, null when the text does not
+ * tell it (an expansion), absent when the command names none (the session's project applies).
+ */
+export interface Target {
+  project?: string | null;
+}
+
+// The variables a tool script reads its project root from (tools/oasis_env.sh oasis_variable):
+// OASIS_PROJECT_ROOT when it is not empty, else ODOO19_PROJECT_ROOT.
+const ROOT_VARIABLES = ["OASIS_PROJECT_ROOT", "ODOO19_PROJECT_ROOT"];
+
+/** A target path as written: absolute (normalized), or null when the text does not tell it. */
+function targetPath(value: string, where: Where | undefined, tilde: boolean): string | null {
+  // ` _ ` is what substitutions() leaves of `$(...)` inside quotes.
+  if ((!tilde && value.startsWith("~")) || /(^|\s)_(\s|$)/.test(value)) return null;
+  if (where) return literalPath(value, where);
+  return LITERAL_PATH.test(value) ? posix.normalize(value) : null;
+}
+
+/**
+ * The project the ask command at words[index] targets: the entry point's --project value, or the
+ * root variable a tool script gets from the assignments before it (`VAR=<dir> tool`, `env VAR=<dir>
+ * tool`; the last one of each name counts). Bash expands `~` in an assignment, not in `--project=~`.
+ */
+function targetOf(words: string[], index: number, where: Where | undefined): Target {
+  if (ENTRY_POINTS.has(basename(words[index]))) {
+    const { project, joined } = entryPointOptions(words, index);
+    if (project === undefined) return {};
+    return { project: targetPath(project, where, !joined) };
+  }
+  const values = new Map<string, string>();
+  for (const word of words.slice(0, index)) {
+    const equals = word.indexOf("=");
+    if (ASSIGNMENT.test(word) && ROOT_VARIABLES.includes(word.slice(0, equals))) {
+      values.set(word.slice(0, equals), word.slice(equals + 1));
+    }
+  }
+  const value = ROOT_VARIABLES.map((name) => values.get(name)).find((found) => found !== undefined && found !== "");
+  return value === undefined ? {} : { project: targetPath(value, where, true) };
+}
+
+/**
+ * The ask command words[index] runs: drop-database, stop --database or gc --apply --trash, through
+ * an entry point or the oasis tool script (see oasisScript). Asking only for help runs nothing.
+ */
+function askAction(words: string[], index: number, where?: Where): AskAction | null {
+  const word = words[index];
+  const name = basename(word);
+  let tool: string | undefined;
+  let args: string[];
+  if (ENTRY_POINTS.has(name)) {
+    const command = entryPointOptions(words, index).command;
+    tool = words[command];
+    args = words.slice(command + 1);
+  } else if (oasisScript(word, ASK_SCRIPTS, where)) {
+    tool = name;
+    args = words.slice(index + 1);
+  } else {
+    return null;
+  }
+  const rest = args.filter((arg) => !REDIRECTION.test(arg));
+  if (onlyHelp(rest)) return null;
+  const target = targetOf(words, index, where);
+  if (tool === "drop-database") {
+    const database = rest[0];
+    return { command: tool, database: database !== undefined && DATABASE_NAME.test(database) ? database : null, ...target };
+  }
+  if (tool === "stop" && rest.includes("--database")) return { command: "stop --database", ...target };
+  if (tool === "gc" && rest.includes("--apply") && rest.includes("--trash")) return { command: "gc --apply --trash", ...target };
+  return null;
+}
+
+/** What a simple command runs: a denied program, or an ask command. */
+type Finding = { program: string } | { ask: AskAction };
+
+/** The user-run tool words[index] runs as a finding, else the ask command it runs. */
+function toolFinding(words: string[], index: number, where?: Where): Finding[] {
+  const program = userRunTool(words, index, where);
+  if (program) return [{ program }];
+  const ask = askAction(words, index, where);
+  return ask ? [{ ask }] : [];
+}
+
+// A redirection to a file: `>`, `>>`, `2>`, `&>` (segments() leaves `>` of `&>` and `>|`), with
+// its target in the word or, when bare, in the next word. `>&2` duplicates a descriptor instead.
+const OUTPUT_REDIRECTION = /^\d*>>?(.*)$/;
+
+/** The words a simple command writes through redirections, and the command's other words. */
+function redirections(words: string[]): { targets: string[]; rest: string[] } {
+  const targets: string[] = [];
+  const rest: string[] = [];
+  for (let k = 0; k < words.length; k++) {
+    const match = OUTPUT_REDIRECTION.exec(words[k]);
+    if (!match) {
+      // An input redirection (`<`, `<<<`) reads its target, which is not the command's word either.
+      if (/^\d*<+$/.test(words[k])) k++;
+      else if (!REDIRECTION.test(words[k])) rest.push(words[k]);
+      continue;
+    }
+    const target = match[1].replace(/^\|/, "");
+    if (target === "" && match[1] === "") {
+      if (k + 1 < words.length) targets.push(words[++k]);
+    } else if (!target.startsWith("&")) {
+      targets.push(target);
+    }
+  }
+  return { targets, rest };
+}
+
+/** The operands of a command (its words that are not options; all of them after `--`). */
+function operands(args: string[]): string[] {
+  const end = args.indexOf("--");
+  const before = (end < 0 ? args : args.slice(0, end)).filter((word) => !word.startsWith("-"));
+  return end < 0 ? before : [...before, ...args.slice(end + 1)];
+}
+
+/** The files `tee`, `sed -i`, `mv` and `cp` at words[index] write (as words). */
+function writtenFiles(words: string[], index: number): string[] {
+  const name = basename(words[index]);
+  const args = words.slice(index + 1);
+  if (name === "tee") return operands(args);
+  if (name === "sed") {
+    const inPlace = args.some((word) => /^-[A-Za-z]*i/.test(word) || word.startsWith("--in-place"));
+    return inPlace ? operands(args) : [];
+  }
+  if (name !== "mv" && name !== "cp") return [];
+  let target: string | undefined;
+  const rest: string[] = [];
+  for (let k = 0; k < args.length; k++) {
+    const word = args[k];
+    if (word === "-t" || word === "--target-directory") target = args[++k];
+    else if (word.startsWith("--target-directory=")) target = word.slice("--target-directory=".length);
+    else if (/^-t./.test(word)) target = word.slice(2);
+    else rest.push(word);
+  }
+  const files = operands(rest);
+  const destination = target ?? files.pop();
+  if (destination === undefined) return [];
+  // Onto the destination, or into it when it is a directory.
+  return [destination, ...files.map((source) => `${destination.replace(/\/+$/, "")}/${basename(source)}`)];
+}
+
+/**
+ * The setting files (GuardContext.settingFile) one simple command writes: through its
+ * redirections, or as `tee`, `sed -i`, `mv` or `cp`, also behind wrappers. `carried` is a target
+ * the previous segment's bare redirection left (`>|`: segments() splits at the `|`).
+ */
+function settingWrites(words: string[], where: Where | undefined, carried: string | undefined): Finding[] {
+  const settingFile = where?.context.settingFile;
+  if (!where || !settingFile) return [];
+  const { targets, rest } = redirections(words);
+  if (carried !== undefined) targets.unshift(carried);
+  let i = 0;
+  for (;;) {
+    while (i < rest.length && (ASSIGNMENT.test(rest[i]) || KEYWORDS.has(rest[i]))) i++;
+    if (i >= rest.length) break;
+    const next = unwrap(rest, i);
+    if (next === undefined) targets.push(...writtenFiles(rest, i));
+    if (typeof next !== "number") break;
+    i = next;
+  }
+  const found: Finding[] = [];
+  for (const word of targets) {
+    const file = settingFile(literalPath(word, where), word);
+    if (file !== null) found.push({ ask: { command: "edit", file } });
+  }
+  return found;
 }
 
 /**
@@ -421,46 +662,47 @@ function unwrap(words: string[], index: number): number | null | undefined {
   return skipOptions(words, i + 1, DOCKER_VALUE_OPTIONS) + 1; // the service or container
 }
 
-function classifySegment(words: string[], where?: Where): string | null {
+/** What one simple command runs: at most one finding, or the findings of a command it runs (eval, sh -c). */
+function classifySegment(words: string[], where?: Where): Finding[] {
   let i = 0;
   for (;;) {
     while (i < words.length && (ASSIGNMENT.test(words[i]) || KEYWORDS.has(words[i]))) i++;
-    if (i >= words.length) return null;
+    if (i >= words.length) return [];
     const name = basename(words[i]);
     // `command -v/-V` only looks the program up.
-    if (name === "command" && words.slice(i + 1).some((w) => w === "-v" || w === "-V")) return null;
-    if (name === "eval") return blockedIn(words.slice(i + 1).join(" "), where);
+    if (name === "command" && words.slice(i + 1).some((w) => w === "-v" || w === "-V")) return [];
+    if (name === "eval") return findingsIn(words.slice(i + 1).join(" "), where);
     if ((name === "source" || name === ".") && i + 1 < words.length) {
       const sourced = basename(words[i + 1]);
-      return BLOCKED.has(sourced) ? sourced : null;
+      return BLOCKED.has(sourced) ? [{ program: sourced }] : [];
     }
     if (name === "find") {
       const exec = words.findIndex((w, k) => k > i && (w === "-exec" || w === "-execdir" || w === "-ok"));
-      return exec > 0 ? classifySegment(words.slice(exec + 1), where) : null;
+      return exec > 0 ? classifySegment(words.slice(exec + 1), where) : [];
     }
     const next = unwrap(words, i);
-    if (next === null) return null;
+    if (next === null) return [];
     if (next !== undefined) {
       i = next;
       continue;
     }
-    if (BLOCKED.has(name)) return name;
-    const userRun = userRunTool(words, i, where);
-    if (userRun) return userRun;
+    if (BLOCKED.has(name)) return [{ program: name }];
+    const found = toolFinding(words, i, where);
+    if (found.length) return found;
     if (/^python[\d.]*$/.test(name)) {
       const target = skipOptions(words, i + 1, PYTHON_VALUE_OPTIONS);
-      if (words.slice(i + 1, target).some((w) => w === "-c" || w === "-m")) return null;
-      if (target >= words.length) return null;
-      if (basename(words[target]) === "odoo-bin") return "odoo-bin";
-      return userRunTool(words, target, where);
+      if (words.slice(i + 1, target).some((w) => w === "-c" || w === "-m")) return [];
+      if (target >= words.length) return [];
+      if (basename(words[target]) === "odoo-bin") return [{ program: "odoo-bin" }];
+      return toolFinding(words, target, where);
     }
     if (SHELLS.has(name)) {
       const flag = words.findIndex((w, k) => k > i && SHELL_COMMAND_FLAG.test(w));
-      if (flag > 0) return flag + 1 < words.length ? blockedIn(words[flag + 1], where) : null;
+      if (flag > 0) return flag + 1 < words.length ? findingsIn(words[flag + 1], where) : [];
       const script = skipOptions(words, i + 1, new Set());
-      return script < words.length ? userRunTool(words, script, where) : null;
+      return script < words.length ? toolFinding(words, script, where) : [];
     }
-    return null;
+    return [];
   }
 }
 
@@ -478,19 +720,46 @@ export function blockedEverywhere(program: string): boolean {
  * menu's scripts are judged by the file they resolve to (see menuScript).
  */
 export function blockedProgram(command: string, context?: GuardContext): string | null {
-  return blockedIn(command, context ? { context, dir: context.cwd } : undefined);
+  return classifyBash(command, context).program;
 }
 
-function blockedIn(command: string, start: Where | undefined): string | null {
+/**
+ * The tiers of a bash command: `programs` are the denied programs it runs, in order, and `program`
+ * the first of them (blockedProgram), or null; `asks` lists the ask commands it runs, in order, a
+ * setting file once (see GuardContext.settingFile). Neither: allowed.
+ */
+export function classifyBash(
+  command: string, context?: GuardContext,
+): { program: string | null; programs: string[]; asks: AskAction[] } {
+  const findings = findingsIn(command, context ? { context, dir: context.cwd } : undefined);
+  const programs: string[] = [];
+  const asks: AskAction[] = [];
+  const edited = new Set<string>();
+  for (const found of findings) {
+    if (!("ask" in found)) programs.push(found.program);
+    else if (found.ask.command !== "edit") asks.push(found.ask);
+    else if (!edited.has(found.ask.file)) {
+      edited.add(found.ask.file);
+      asks.push(found.ask);
+    }
+  }
+  return { program: programs[0] ?? null, programs, asks };
+}
+
+/** Every finding of a command in the order bash would reach it: substitutions first, then the segments. */
+function findingsIn(command: string, start: Where | undefined): Finding[] {
+  const findings: Finding[] = [];
   const { text, data } = heredocs(command);
   const { outer, inner } = substitutions(text);
   for (const body of data) inner.push(...substitutions(body, false).inner);
-  for (const body of inner) {
-    const found = blockedIn(body, start);
-    if (found) return found;
-  }
+  for (const body of inner) findings.push(...findingsIn(body, start));
   let where = start;
+  let carried: string | undefined;
   for (const words of segments(outer)) {
+    // A bare `>` ending the previous segment writes to this one's first word (`>|`).
+    const target = carried;
+    carried = /^\d*>>?$/.test(words[words.length - 1]) ? "" : undefined;
+    const own = target === undefined ? words : words.slice(1);
     // A literal `cd`/`pushd` moves the later segments; `popd` makes the directory unknown.
     let i = 0;
     while (i < words.length && (ASSIGNMENT.test(words[i]) || KEYWORDS.has(words[i]))) i++;
@@ -502,10 +771,9 @@ function blockedIn(command: string, start: Where | undefined): string | null {
       where = { context: where.context, dir: null };
       continue;
     }
-    const found = classifySegment(words, where);
-    if (found) return found;
+    findings.push(...classifySegment(words, where), ...settingWrites(own, where, target === undefined ? undefined : words[0]));
   }
-  return null;
+  return findings;
 }
 
 export function blockReason(program: string, root: string): string {

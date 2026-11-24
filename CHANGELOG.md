@@ -9,6 +9,143 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-24
+
+Safer destructive operations and server control: dropped databases go to a trash, agents are asked
+before destructive commands under a setting the user owns, and the server can be restarted,
+force-stopped and followed from the menu.
+
+### Added
+
+- `trash` (new command): lists the checkout's trash, one `trash <name> original=<name>
+  dropped=<UTC time> age=<d>d<hh>h size=<size>` line per entry, then `trashed=<n>`; `trash restore
+  <trash name>` renames the database and its filestore back, refused when the original name or
+  its filestore path exists, with open sessions (exit 3), or when the name is not a trash entry
+  of this checkout. See `docs/trash.md`.
+- `gc --trash [--older-than <days>]` lists the trash entries dropped at least `<days>` days ago
+  (0 to 36500, default 7; other values print the usage, exit 2, before any query); with `--apply`
+  it drops them and their filestores (`dropped=<n>`, `failed=<m>`). A database dropped whose
+  filestore cannot be removed counts as failed, and stderr names the filestore path to remove by
+  hand. Plain `gc` and `gc --apply` are unchanged and never touch the trash.
+- Action menu and panel: *List trash*, *Restore from trash* and *Empty trash* (`gc --apply
+  --trash`, typed `yes`).
+- Gentle Shell ask tier: before the agent's `drop-database <name>`, `stop --database` or `gc
+  --apply --trash` (through `oasis`, `odoo19` or oasis's tool scripts) runs, a dialog shows the
+  exact command and asks the user to type the database name or `yes`. A wrong answer, Esc, no
+  answer within 2 minutes or a session without a dialog (subagent, headless) blocks it with a
+  reason that tells the agent to ask the user; `drop-database` needs a literal database name.
+  Each decision is recorded as an *Agent command approved/refused* session entry that is never
+  sent to the model. The deny tier is unchanged. See `docs/bash-guard.md`.
+- The ask tier also covers the files that hold `[tooling].agent_destructive`: Pi `edit` and
+  `write` tool calls and bash writes (redirection, `tee`, `sed -i`, `mv` or `cp` onto it) to an
+  `oasis-workspace.toml` or `.odoo19-agent.toml` in the session's directory or above it show a
+  dialog that names the file (type `yes`); no dialog blocks them. The prompt context names the
+  commands that ask the user. The workspace and profile examples document `agent_destructive`.
+- `[tooling].agent_destructive` (`ask`, the default, `deny` or `allow`) in the workspace file or
+  the profile decides that tier: `deny` blocks those commands, `allow` runs them without a dialog.
+  `oasis-checkout.toml` refuses it; an invalid value fails with `Invalid tooling
+  agent_destructive: use ask, deny or allow.` `tools/config.py` prints it last as
+  `AGENT_DESTRUCTIVE=<value>`.
+- `restart [odoo options]` (new command): stops this checkout's server as `stop` does, then starts
+  it as `start --detach [odoo options]`, keeping the port the stopped server had unless the options
+  name one (`-p`, `--http-port`), and the database its record names unless they name one (`-d`,
+  `--database`); a server started without a database restarts without one. What `start` would refuse (database guards, an invalid or busy
+  explicit port, `--stop-after-init`; `--detach` and informational options print the usage) is
+  refused before the server is stopped (exit 2); a server that does not stop is left running and
+  `restart` exits 1 after `stop`'s message with `Nothing was restarted: Odoo is still running for
+  this checkout.`; any other failure of `stop` (an unreadable runtime state, exit 2) prints its
+  message and `Nothing was restarted.` with `stop`'s exit code. See `docs/servers-and-ports.md`.
+- `stop --force`: after the graceful 20 s, SIGKILL to the server and every process of it still
+  running (the members of its session and of the process group it leads, and their descendants;
+  never the caller or its parents), then the record is removed: `Killed Odoo for this checkout
+  after 20 s (SIGKILL to its session): pid <pid>, port <port>.`, or `Stopped ...; killed <n>
+  process(es) of its session that outlived it.` when only those were left. The server gets SIGKILL
+  first, so a prefork master cannot replace a worker it sees die, and its processes are scanned
+  again until no new one appears. When the server's process list cannot be read, only the server
+  is killed (`Killed Odoo ... (SIGKILL; its other processes could not be read): ...`). A server
+  still running 5 s after SIGKILL exits 1 with `Odoo is still running after SIGKILL: pid <pid>,
+  port <port>.` and keeps its record.
+- `status` in a git checkout lists the live servers of every checkout of the repository after its
+  own line: `repository servers: <n>` and one `  <checkout>: pid <pid>, port <port>[, database
+  <database>][ (this checkout)]` line each. A project outside git prints only its own line, as
+  before. `start` records the database it is given with `-d`/`--database` for that list. When git
+  cannot list the worktrees (missing, failing), it prints `repository servers: unknown (<reason>)`
+  instead of a count; warnings of the read go to stderr and are never counted as servers.
+- Action menu and panel: *Restart the server* (optional database) and *Follow the server log*
+  (`tail -n 200 -f` until Ctrl+C in the terminal menu; in the Gentle Shell panel a live overlay
+  that reads the end of `server.log` again every second while open; a last line longer than the
+  64 KiB it reads shows its end, starting with `…`). The panel header shows the
+  checkout's server: `server: running on port <port> (pid <pid>)`, `server: stopped` or `server:
+  unknown (<reason>)`. The catalog's actions carry a `follow` key (true only for the live log).
+- Gentle Shell: `restart`, `stop --force` and `status` stay in the allow tier (they act on the
+  checkout's own server).
+
+### Changed
+
+- `drop-database` moves the database to the trash instead of dropping it: it prints the plan
+  (`database=`, `size=`, `sessions=`, `filestore=` or `none`, `trash=`), then renames the
+  database to `<name>_trash_<YYYYMMDD>_<HHMMSS>` (UTC; a name over 63 bytes keeps its first 34
+  bytes plus `_<6 hex of its SHA-256>`) with the comment `oasis-trash original=<name>`, and its
+  filestore directory under the data dir with it. It prints `Database moved to trash: <name> ->
+  <trash name>` instead of `Database dropped: <name>`. A missing database, the usage, the
+  session refusal (exit 3) and `--terminate` are unchanged. The menu action is now *Move a
+  database to the trash*.
+- `doctor` prints `PASS agent_destructive=<value>` after `odoo_version` when the configuration
+  loads.
+- `stop`: when Odoo does not stop within 20 s the message names the remedy: `Odoo did not stop
+  within 20 s: pid <pid>, port <port>; run oasis stop --force.` (`odoo19` through the alias). The
+  exit status stays 1.
+- Contract: names ending in `_trash_<8 digits>_<6 digits>` are reserved for the trash; every
+  command that takes a database refuses them (exit 2), `drop-database` and `module-status`
+  included. The `gc` usage line names `--trash`.
+- `start --detach` waits for the server on its HTTP interface (`--http-interface`, else the
+  `http_interface` of `odoo.conf`; `127.0.0.1` for none, empty, `0.0.0.0` or `::`) instead of
+  always `127.0.0.1`, for up to 30 s instead of 10 s. A server that does not listen in time no
+  longer counts as started: it is stopped (SIGTERM to its session, SIGKILL 5 s later), its record
+  is removed and `start` exits 1 with `Odoo did not listen on <address>:<port> within 30 s and was
+  stopped; the end of <log>:` and the last lines of its log. An explicit `--http-interface` is
+  also the address the port check probes.
+- Messages name the remedy (exit codes unchanged): `Odoo is already running for this checkout:
+  pid <pid>, port <port>; run oasis stop first.`; a busy port says `Port <port> is in use by
+  checkout <path> (pid <pid>); pass [another] --http-port or run oasis stop in that checkout.` when
+  another checkout's live server record names it, else `Port <port> is in use by another process;
+  pass [another] --http-port or stop that process.`; a wrong Odoo runtime prints `Odoo runtime
+  <series> is required; <odoo-bin> reports: <its version>.` and `Point [tooling].community at an
+  Odoo <series> source, then check it with oasis doctor.`; an existing disposable name prints
+  `Disposable test database already exists: <name>; it was left as it is.` and `Run the command
+  again for a new name; oasis gc --apply drops what interrupted runs left.` (`odoo19` through the
+  alias).
+- Gentle Shell ask tier: the mode is the stricter (`deny` over `ask` over `allow`) of the session
+  project's `[tooling].agent_destructive` and that of the project the command targets (the entry
+  point's `--project <dir>`, or `OASIS_PROJECT_ROOT`/`ODOO19_PROJECT_ROOT` assigned before a tool
+  script). A target that is not literal, not an Odoo project, unreadable or set elsewhere on the
+  line counts as `ask`; a refusal by the target names it. Before, `oasis --project <other>
+  drop-database <name>` from an `allow` project skipped the other project's `ask` or `deny`.
+- Prompt context: the `oasis_test_module` line says that full logs stay on disk and the
+  `oasis_test_summary` line to pass what `test-module --compact` printed (lost when the section
+  was shortened); other lines were shortened to stay under 1200 characters.
+
+### Fixed
+
+- Bash guard: a line is judged on every command it holds. Outside an Odoo project, `psql -l;
+  oasis --project <root> migrate --apply` (any line where `worktree-init`, `migrate` or `menu`
+  follows another denied program) ran, because only the first denied program counted; it is now
+  blocked with the reason of the user-run tool. Single commands and the reasons in Odoo projects
+  are unchanged.
+- Bash guard: an abbreviated `--project` of the entry points (`oasis --proj <dir> ...`, which
+  argparse accepts) hid the command from both tiers, so `oasis --proj /p migrate --apply` ran and
+  `oasis --proj /p drop-database <name>` ran without the dialog. Every unambiguous prefix of
+  `--project` now takes its value like `--project`.
+- `odoo-shell` refuses extra arguments with its usage (exit 2) instead of ignoring them.
+- `start --detach` read only `--http-interface` itself as the address to probe: an abbreviation
+  Odoo accepts (`--http-int=127.0.0.2`, `--http-i 127.0.0.2`) made it wait on the conf's address
+  and stop a healthy server. Every unambiguous prefix down to `--http-i`, with `=` or a separate
+  value, now counts, for the probe and the port check.
+- `start --detach`: a server that did not listen in time was stopped with SIGTERM to its session
+  and SIGKILL only when the server itself survived, so members of its session that ignore SIGTERM
+  or outlive it were left running. After the 5 s grace every process of the server still running
+  now gets SIGKILL, the server first, and processes it started meanwhile are killed too.
+
 ## [0.10.1] - 2026-11-24
 
 Documentation only: the README is a landing page and the detail lives in docs/.
@@ -657,7 +794,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/skhol3/oasis/releases/tag/v0.11.0
 [0.10.1]: https://github.com/skhol3/oasis/releases/tag/v0.10.1
 [0.10.0]: https://github.com/skhol3/oasis/releases/tag/v0.10.0
 [0.9.0]: https://github.com/skhol3/oasis/releases/tag/v0.9.0

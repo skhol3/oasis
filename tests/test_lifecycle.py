@@ -187,9 +187,19 @@ exit 0
     def test_wrong_odoo_runtime_rejects_before_docker(self):
         self.python.write_text(self.python.read_text().replace('Odoo Server 19.0', 'Odoo Server 119.0'))
         result = self.invoke('install-module', 'coffee')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', 'Odoo runtime 19.0 is required.\n'))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+            f'Odoo runtime 19.0 is required; {self.source / "odoo-bin"} reports: Odoo Server 119.0.\n'
+            'Point [tooling].community at an Odoo 19.0 source, then check it with oasis doctor.\n')))
         self.unchanged()
+
+    def test_odoo_shell_refuses_extra_arguments_with_its_usage(self):
+        usage = 'Usage: ' + str(self.root / 'dev/scripts/odoo-shell') + ' <database>\n'
+        self.env['FAKE_EXISTS'] = '1'
+        for args in (('cc_dev_coffee', 'extra'), ('cc_dev_coffee', '--', 'x'), ('--help', 'extra'), ()):
+            with self.subTest(args=args):
+                result = self.invoke('odoo-shell', *args, input='print(42)\n')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', usage))
+                self.unchanged()
 
     def test_invalid_module_rejects_before_docker(self):
         result = self.invoke('install-module', "coffee';DROP")
@@ -254,16 +264,24 @@ exit 0
         self.assertNotIn('odoo ', self.commands.read_text())
 
     def test_drop_requires_terminate_then_explicit_terminate(self):
-        self.env.update(FAKE_EXISTS='1', FAKE_SESSIONS='2')
+        # Only cc_dev_coffee exists (its trash name is free); drop-database moves it to the trash.
+        Path(str(self.commands) + '.databases').write_text('cc_dev_coffee\n')
+        self.env.update(FAKE_SESSIONS='2')
+        plan = (r'database=cc_dev_coffee\nsize=unknown\nsessions=2\nfilestore=none\n'
+                r'trash=(cc_dev_coffee_trash_\d{8}_\d{6})\n')
         result = self.invoke('drop-database', 'cc_dev_coffee')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (3, '', 'Refusing to drop database with 2 active session(s): cc_dev_coffee\n'
+        self.assertEqual((result.returncode, result.stderr),
+                         (3, 'Refusing to drop database with 2 active session(s): cc_dev_coffee\n'
                           'Retry with --terminate only after confirming those sessions may be closed.\n'))
+        self.assertRegex(result.stdout, rf'\A{plan}\Z')
         self.assertNotIn('pg_terminate_backend', self.commands.read_text())
+        self.assertNotIn('ALTER DATABASE', self.commands.read_text())
         result = self.invoke('drop-database', 'cc_dev_coffee', '--terminate')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (0, 'Database dropped: cc_dev_coffee\n', ''))
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertRegex(result.stdout, rf'\A{plan}Database moved to trash: cc_dev_coffee -> \1\n'
+                                        r'Restore it with: oasis trash restore \1\n\Z')
         self.assertIn('pg_terminate_backend', self.commands.read_text())
+        self.assertNotIn('dropdb', self.commands.read_text())
 
     def test_update_uses_explicit_existing_managed_database_and_test_defaults(self):
         result = self.invoke('update-module', 'coffee', 'other_db')

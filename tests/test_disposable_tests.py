@@ -115,6 +115,10 @@ def shortened(namespace, module):
     return namespace + module[:room] + '_' + hashlib.sha256(module.encode()).hexdigest()[:4]
 
 
+# What a refused disposable name tells the user to do (common.sh require_free_disposable_database).
+REMEDY = 'Run the command again for a new name; oasis gc --apply drops what interrupted runs left.'
+
+
 class DisposableFixture(unittest.TestCase):
     setUp_fixture = lifecycle.LifecycleTests.setUp
     invoke = lifecycle.LifecycleTests.invoke
@@ -314,7 +318,8 @@ class DisposableTestModuleTests(DisposableFixture):
         self.assertEqual(kind, 'exists')
         self.assertRegex(database, '^cc_test_coffee' + RUN + '$')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'Disposable test database already exists: {database}\n'))
+                         (2, '', f'Disposable test database already exists: {database}; it was left as it is.\n'
+                          f'{REMEDY}\n'))
         self.assertEqual(self.run_locks(), [])
 
     def test_a_failed_create_never_drops_the_name_and_removes_only_its_lock(self):
@@ -539,7 +544,8 @@ class DisposableVerifyModuleTests(DisposableFixture):
         [(_, database)] = self.events()
         self.assertRegex(database, '^cc_test_coffee' + RUN + '$')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'Disposable test database already exists: {database}\n'))
+                         (2, '', f'Disposable test database already exists: {database}; it was left as it is.\n'
+                          f'{REMEDY}\n'))
         self.assertEqual(self.run_locks(), [])
 
     def test_signals_drop_both_databases_and_leave_no_locks(self):
@@ -759,11 +765,11 @@ class GcTests(GcFixture):
     def test_usage_and_help(self):
         result = self.gc('--force')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'Usage: {CLI} gc [--apply] [--all-checkouts]\n'))
+                         (2, '', f'Usage: {CLI} gc [--apply] [--all-checkouts] | gc [--apply] --trash [--older-than <days>]\n'))
         self.unchanged()
         result = self.gc('--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertTrue(result.stdout.startswith(f'Usage: {CLI} gc [--apply] [--all-checkouts]\n'))
+        self.assertTrue(result.stdout.startswith(f'Usage: {CLI} gc [--apply] [--all-checkouts] | gc [--apply] --trash [--older-than <days>]\n'))
         self.assertIn('--apply', result.stdout)
         self.unchanged()
 
@@ -915,12 +921,13 @@ class ReservedRunNameTests(DisposableFixture):
         result = self.cli('drop-database', database)
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, f'Database does not exist: {database}\n', ''))
-        self.env['FAKE_EXISTS'] = '1'
+        Path(str(self.commands) + '.databases').write_text(f'{database}\n')
         self.commands.unlink()
         result = self.cli('drop-database', database)
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, f'Database dropped: {database}\n', ''))
-        [drop] = [entry for entry in entries(self.log()) if 'exec dropdb -U' in entry]
-        self.assertTrue(drop.endswith(f' sh {database}'), drop)
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertRegex(result.stdout, rf'\nDatabase moved to trash: {database} -> {database}_trash_\d{{8}}_\d{{6}}\n')
+        [rename] = [entry for entry in entries(self.log()) if 'ALTER DATABASE' in entry]
+        self.assertIn(f'ALTER DATABASE "{database}" RENAME TO "{database}_trash_', rename)
 
 
 if __name__ == '__main__':

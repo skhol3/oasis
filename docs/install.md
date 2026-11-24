@@ -2,7 +2,7 @@
 
 ## Released versions
 
-Releases follow Semantic Versioning and are tagged `vX.Y.Z`; see the [changelog](../CHANGELOG.md). Install a released version of the Gentle Shell layer with `gentle-shell install git:github.com/skhol3/oasis@v0.10.1`.
+Releases follow Semantic Versioning and are tagged `vX.Y.Z`; see the [changelog](../CHANGELOG.md). Install a released version of the Gentle Shell layer with `gentle-shell install git:github.com/skhol3/oasis@v0.11.0`.
 
 ## Installing with install.sh
 

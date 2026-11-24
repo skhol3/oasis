@@ -42,7 +42,8 @@ test_prefix = 'acme_test_'
 logs = 'logs'
 '''
 LEGACY_TAIL = ["WORKSPACE_ROOT=''", 'ODOO_VERSION=19.0', 'ODOO_SECOND_PORT_OPTION=--gevent-port',
-               'ODOO_DEMO_OFF_ARGS=--without-demo', "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12', "DATA_DIR=''"]
+               'ODOO_DEMO_OFF_ARGS=--without-demo', "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12', "DATA_DIR=''",
+               'AGENT_DESTRUCTIVE=ask']
 CHECKOUT_ONLY = 'oasis-checkout.toml may only set [tooling].checkout_slug and [tooling].environment: '
 # The same workspace with named environments instead of [tooling].environment.
 NAMED = WORKSPACE.replace("environment = 'environments/acme'\n", '') + '''
@@ -108,7 +109,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', f'ERROR: {message}\n'))
 
     def expected(self, checkout, kind, slug, environment='', python='3.12', path='environments/acme',
-                 data_dir=''):
+                 data_dir='', agent_destructive='ask'):
         project = self.project
         values = {
             'PROJECT_ROOT': str(checkout), 'PROJECT_NAME': checkout.name,
@@ -130,6 +131,8 @@ class WorkspaceTests(unittest.TestCase):
             'ENVIRONMENT_NAME': environment, 'PYTHON_VERSION': python,
             # Appended after them: [tooling].data_dir, empty when absent.
             'DATA_DIR': data_dir,
+            # Appended last: [tooling].agent_destructive, ask when absent.
+            'AGENT_DESTRUCTIVE': agent_destructive,
         }
         # ADDON_ROOTS spans two lines (a newline-separated list inside one quoted value).
         return ''.join(f'{name}={shlex.quote(value)}\n' for name, value in values.items())
@@ -148,6 +151,18 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(self.output(linked), self.expected(linked, 'linked', 'feat', data_dir=data))
         self.workspace.write_text(WORKSPACE + 'data_dir = ""\n')
         self.assert_rejected(main, 'Invalid tooling path: data_dir.')
+
+    def test_agent_destructive_applies_to_every_checkout_and_only_the_workspace_sets_it(self):
+        main = self.layout(WORKSPACE + "agent_destructive = 'deny'\n")
+        linked = self.linked()
+        self.assertEqual(self.output(main), self.expected(main, 'main', '', agent_destructive='deny'))
+        self.assertEqual(self.output(linked), self.expected(linked, 'linked', 'feat', agent_destructive='deny'))
+        self.workspace.write_text(WORKSPACE + "agent_destructive = 'sometimes'\n")
+        self.assert_rejected(main, 'Invalid tooling agent_destructive: use ask, deny or allow.')
+        # A checkout cannot loosen it: oasis-checkout.toml refuses the key.
+        self.workspace.write_text(WORKSPACE)
+        (linked / 'oasis-checkout.toml').write_text("[tooling]\nagent_destructive = 'allow'\n")
+        self.assert_rejected(linked, CHECKOUT_ONLY + 'tooling.agent_destructive')
 
     def test_linked_worktree_needs_no_profile_copy(self):
         self.layout()
@@ -240,7 +255,7 @@ class WorkspaceTests(unittest.TestCase):
         # A checkout file is not read in legacy mode.
         (main / 'oasis-checkout.toml').write_text("[odoo]\nversion = '18.0'\n")
         lines = self.assignments(main)
-        self.assertEqual(lines[-7:], LEGACY_TAIL)
+        self.assertEqual(lines[-8:], LEGACY_TAIL)
         self.assertIn('PROJECT_ENVIRONMENT=' + shlex.quote(str((main / '../../environments/example').resolve())),
                       lines)
         self.assertIn('ODOO_CONFIG=' + shlex.quote(str(main / 'dev/odoo.conf')), lines)
@@ -308,9 +323,10 @@ class WorkspaceTests(unittest.TestCase):
         example = ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml'
         main = self.layout(example.read_text())
         lines = self.output(main).splitlines()
-        self.assertEqual(lines[-7:], ['WORKSPACE_ROOT=' + shlex.quote(str(self.project)), 'ODOO_VERSION=19.0',
+        self.assertEqual(lines[-8:], ['WORKSPACE_ROOT=' + shlex.quote(str(self.project)), 'ODOO_VERSION=19.0',
                                       'ODOO_SECOND_PORT_OPTION=--gevent-port', 'ODOO_DEMO_OFF_ARGS=--without-demo',
-                                      "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12', "DATA_DIR=''"])
+                                      "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12', "DATA_DIR=''",
+                                      'AGENT_DESTRUCTIVE=ask'])
         self.assertIn('ODOO_CONFIG=' + shlex.quote(str(self.project / 'config/odoo.conf')), lines)
         self.assertIn('ADDON_ROOTS=' + shlex.quote(str(main)), lines)
 
@@ -325,9 +341,20 @@ class WorkspaceTests(unittest.TestCase):
                  + re.sub(r'^# ', '', block.group(0), flags=re.MULTILINE))
         main = self.layout(named)
         lines = self.output(main).splitlines()
-        self.assertEqual(lines[-3:], ['ENVIRONMENT_NAME=default', 'PYTHON_VERSION=3.12', "DATA_DIR=''"])
+        self.assertEqual(lines[-4:], ['ENVIRONMENT_NAME=default', 'PYTHON_VERSION=3.12', "DATA_DIR=''",
+                                      'AGENT_DESTRUCTIVE=ask'])
         self.assertIn('PROJECT_ENVIRONMENT=' + shlex.quote(str(self.project / 'environments/acme')), lines)
         self.assertRegex(raw, r"(?m)^#\s+environment = '[a-z_]+'$")
+
+    def test_shipped_example_documents_agent_destructive(self):
+        # Uncommenting the documented agent_destructive line with each value is accepted.
+        raw = (ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml').read_text()
+        self.assertIn("# agent_destructive = 'ask'\n", raw)
+        main = self.layout(raw)
+        for value in ('ask', 'deny', 'allow'):
+            with self.subTest(value=value):
+                self.workspace.write_text(raw.replace("# agent_destructive = 'ask'\n", f"agent_destructive = '{value}'\n"))
+                self.assertEqual(self.output(main).splitlines()[-1], f'AGENT_DESTRUCTIVE={value}')
 
     # -- named environments -----------------------------------------------------------------
 
