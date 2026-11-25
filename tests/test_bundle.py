@@ -212,6 +212,11 @@ class BundleTests(unittest.TestCase):
             self.assertIn(phrase, contract)
         skill = (ROOT / 'odoo19-environment/SKILL.md').read_text(encoding='utf-8')
         self.assertIn('assets/oasis-workspace.example.toml', skill)
+        # v0.14.0 S4: a linked worktree outside the workspace reads its main checkout's file through
+        # git, and worktree-init takes --path.
+        for phrase in ('through git', '`git rev-parse --git-common-dir`', 'worktree-init <feature> <branch> [--path <dir>]'):
+            self.assertIn(phrase, contract)
+        self.assertIn("its main checkout's through git", skill)
 
     def test_reference_and_package_docs(self):
         reference = ROOT / 'odoo19-environment/references/project-contract.md'

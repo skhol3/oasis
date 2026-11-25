@@ -157,6 +157,7 @@ class MigrateTests(unittest.TestCase):
         (source / 'odoo/release.py').write_text('version_info = (19, 0, 0, "final", 0)\n')
         python = self.project / 'environments/corpus/bin/python'
         python.parent.mkdir(parents=True)
+        (python.parent.parent / 'pyvenv.cfg').write_text('home = /usr/bin\n')  # an environment (S5)
         python.write_text(PYTHON)
         python.chmod(0o755)
         requirements = self.config / 'requirements'

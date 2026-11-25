@@ -168,6 +168,7 @@ exit 97
 '''.replace('PYTHON_VERSION', python))
         self.python.unlink()
         self.python.parent.rmdir()
+        (environment / 'pyvenv.cfg').unlink()
         environment.rmdir()
         self.env.update(FAKE_ENV=str(environment), FAKE_PYTHON=str(self.python),
                         FAKE_TEMPLATE=str(template), FAKE_SYNCED=str(self.root / 'synced'),
@@ -180,6 +181,7 @@ case "$1 $2" in
   'venv --python')
     echo venv >> "$FAKE_MUTATIONS"
     mkdir -p "${FAKE_PYTHON%/*}"
+    echo 'home = /usr/bin' > "$FAKE_ENV/pyvenv.cfg"
     cp "$FAKE_TEMPLATE" "$FAKE_PYTHON"
     chmod +x "$FAKE_PYTHON" ;;
   'pip sync')

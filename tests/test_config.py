@@ -144,12 +144,14 @@ class ConfigCliTests(unittest.TestCase):
         self.assertIn('isolated environments/corpus cafe', result.stdout)
 
     def test_environment_target_cannot_be_system_or_project_root(self):
-        for target in ('/', '.'):
+        root = self.root.resolve()
+        for target, resolved in (('/', '/'), ('.', root)):
             self.workspace.write_text(
                 WORKSPACE.replace('../../environments/corpus cafe', target))
             result = self.run_reader()
             self.assertEqual((result.returncode, result.stdout, result.stderr),
-                             (2, '', 'ERROR: Unsafe tooling environment target.\n'))
+                             (2, '', f'ERROR: Unsafe tooling environment target: {resolved} is or contains '
+                                     f'the checkout {root}.\n'))
 
     def test_space_in_project_path_is_shell_quoted(self):
         self.workspace.write_text(WORKSPACE)

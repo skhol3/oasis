@@ -80,7 +80,8 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('--project', metavar='/absolute/project',
-                        help=('absolute path to an existing checkout at or below an oasis-workspace.toml; '
+                        help=('absolute path to an existing checkout at or below an oasis-workspace.toml '
+                              '(a linked worktree may read its main checkout\'s); '
                               'without it, the git top level of the current directory (the current '
                               'directory outside git)'))
     parser.add_argument('command', nargs='?', help='public command to run')
@@ -106,7 +107,7 @@ def main() -> int:
         if args.command not in LEGACY_COMMANDS:
             print(f'ERROR: {config.legacy_profile_refusal(root / config.PROFILE_NAME, prog)}', file=sys.stderr)
             return 2
-    elif config is None or config.find_workspace(root) is None:
+    elif config is None or config.workspace_file(root) is None:
         message = (config.missing_configuration(root) if config is not None
                    else f'Missing tooling configuration: no oasis-workspace.toml at or above {root}.')
         print(f'ERROR: {message}', file=sys.stderr)

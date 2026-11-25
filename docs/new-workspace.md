@@ -128,9 +128,9 @@ checkout.
    [Dependency locks](checking-environment.md#dependency-locks)).
 
 5. Create the Python environment, with the same `python`, and install the locked packages into
-   it. The environment's folder sits in `environments/`, which is what the
-   [environment rule](#the-python-environment) asks for. Each block sets `python` itself, so it
-   also works in a new shell.
+   it. The environment's folder may be any folder the
+   [environment rule](#the-python-environment) accepts; here it sits in `environments/`. Each
+   block sets `python` itself, so it also works in a new shell.
 
    ```bash
    python=3.12
@@ -279,25 +279,30 @@ logs = '/home/you/odoo/19.0/projects/acme/logs'
 ### The Python environment
 
 The environment's folder (`[tooling].environment`, or the `path` of a named environment), once
-resolved, must be inside the checkout or directly in a folder whose name ends in
-`environments`. It may not be the checkout or one of its parents, and it may not be or contain
-the Odoo source. Anything else stops every command with
-`Unsafe tooling environment target.`
+resolved, may be any folder, with any name and in any place, that is a Python environment (it
+has `pyvenv.cfg`, as every `uv venv` or `python -m venv` environment does) or does not exist yet
+(`bootstrap` creates it). Two guards stay, even for a folder with `pyvenv.cfg`: it may not be or
+contain the checkout, and it may not be or contain the Odoo source. Anything else stops every
+command with one of:
+
+- `Unsafe tooling environment target: <folder> is or contains the checkout <checkout>.`
+- `Unsafe tooling environment target: <folder> is or contains the Odoo source <source>.`
+- `Unsafe tooling environment target: <folder> exists and is not a Python environment (no pyvenv.cfg).`
 
 | Value | Result |
 | --- | --- |
-| `'../../environments/acme'` | accepted: its folder is `environments` |
-| `'/home/you/odoo/19.0/environments/acme'` | accepted: absolute, its folder is `environments` |
-| `'/srv/odoo-environments/acme'` | accepted: `odoo-environments` ends in `environments` |
-| `'codigo/acme/.venv'` | accepted for the main checkout only: it is inside `codigo/acme`, but outside every linked worktree, which refuses it |
-| `'/opt/venvs/acme'` | refused: `venvs` does not end in `environments` |
-| `'../../environments/acme/venv'` | refused: only the folder right above the environment counts, and it is `acme` |
+| `'../../environments/acme'` | accepted: an environment (it has `pyvenv.cfg`), or not created yet |
+| `'/home/you/odoo/19.0/environments/acme'` | accepted: absolute, the same folder |
+| `'/opt/venvs/acme'` | accepted: any folder name, once it is an environment or before it exists |
+| `'../../environments/acme-new'` | accepted: it does not exist yet; `bootstrap` creates it |
+| `'codigo/acme/.venv'` | accepted: inside the main checkout, and the linked worktrees may use it too |
+| `'../../environments'` | refused: it exists and is not an environment (it holds them) |
 | `'../../source/odoo'` | refused: it is the Odoo source |
 | `'../../source'` | refused: it contains the Odoo source |
 | `'.'` or `'codigo'` | refused: it contains the checkout |
 
-In a workspace, keep the environments in an `environments` folder: an environment inside one
-checkout serves only that checkout.
+A folder you create by hand before `bootstrap` (an empty `mkdir`) is refused until it is an
+environment: leave it to `bootstrap`, or create it with `uv venv`.
 
 ## Environments
 

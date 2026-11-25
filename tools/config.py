@@ -3,7 +3,8 @@
 
 The caller must supply the project (checkout) root; this module never discovers it from its
 own (global installation) location. A checkout reads the nearest `oasis-workspace.toml` at or
-above it, with its own optional `oasis-checkout.toml`, over the optional machine file
+above it (a linked worktree without one, the file its main checkout reads, found through git), with
+its own optional `oasis-checkout.toml`, over the optional machine file
 (`$XDG_CONFIG_HOME/oasis/config.toml`, else `~/.config/oasis/config.toml`), whose per-series
 source paths are defaults the workspace overrides. A checkout that still has the legacy
 profile `.odoo19-agent.toml` is refused: only tools/migrate.py reads that file, to convert it.
@@ -199,6 +200,21 @@ def find_workspace(root: Path) -> Path | None:
     return None
 
 
+def workspace_file(root: Path) -> Path | None:
+    """The workspace file root reads: the nearest at or above it (find_workspace), else, for a linked
+    worktree, the one its main checkout reads, found through git (`--git-common-dir`); None without
+    either. Only a linked worktree with nothing above it asks git, so other layouts are unchanged.
+    """
+    found = find_workspace(root)
+    if found is not None:
+        return found
+    try:
+        kind, _top, main = git_checkout(root)
+    except GitFailed:
+        return None
+    return find_workspace(main) if kind == 'linked' else None
+
+
 def trusted(path: Path, kind: str = 'workspace file') -> Path:
     """path, refused unless it and its directory are owned by the current user or root and are
     not group- or other-writable: a file found above the checkout must not be one someone else
@@ -382,7 +398,7 @@ def configuration(root: Path) -> tuple[dict, Path, Path]:
     directory) and the workspace file. workspace_configuration() also names the selected
     environment.
 
-    The trusted workspace file at or above root with the checkout's overrides. Tools that read
+    The trusted workspace file root reads (workspace_file) with the checkout's overrides. Tools that read
     their own sections ([development], lint_rcfile) use this, so they see the same file and base
     as load().
     """
@@ -408,7 +424,7 @@ def layered_configuration(root: Path) -> tuple[dict, Path, Path, str, dict[str, 
     profile = root / PROFILE_NAME
     if profile.is_file():
         raise InvalidConfig(legacy_profile_refusal(profile, program_name()))
-    workspace = find_workspace(root)
+    workspace = workspace_file(root)
     if workspace is None:
         raise InvalidConfig(missing_configuration(root))
     overrides = checkout_overrides(root)
@@ -557,13 +573,7 @@ def resolve(document: dict, root: Path, base: Path, *, missing_source: str = '')
         output[variable] = str((base / value).resolve())
     # Optional; emitted last (empty when absent) so the previous assignments stay unchanged.
     logs_dir = optional_path(tooling, 'logs', base)
-    target = Path(output['PROJECT_ENVIRONMENT'])
-    source = Path(output['ODOO_SOURCE'])
-    if (target == root or target in root.parents or target == source
-            or target in source.parents or source.is_relative_to(target)
-            or (not target.is_relative_to(root)
-                and not target.parent.name.endswith('environments'))):
-        raise InvalidConfig('Unsafe tooling environment target.')
+    environment_target(Path(output['PROJECT_ENVIRONMENT']), root, Path(output['ODOO_SOURCE']))
     addons = tooling.get('addons_paths')
     if not isinstance(addons, list) or not addons or any(
             not isinstance(path, str) or not path or '\x00' in path or '\n' in path
@@ -599,6 +609,21 @@ def resolve(document: dict, root: Path, base: Path, *, missing_source: str = '')
     # Compact runs and browser evidence go to <LOGS_DIR>/<slug or main> when set.
     output['LOGS_DIR'] = logs_dir
     return output
+
+
+def environment_target(target: Path, root: Path, source: Path) -> None:
+    """Refuse an environment target (resolved) that is or contains the checkout root, is or contains
+    the Odoo source, or exists without being a Python environment (no pyvenv.cfg). Any other
+    directory is accepted, whatever its name or place (v0.14.0 S5)."""
+    if root.is_relative_to(target):
+        reason = f'is or contains the checkout {root}'
+    elif source.is_relative_to(target):
+        reason = f'is or contains the Odoo source {source}'
+    elif os.path.lexists(target) and not os.path.isfile(target / 'pyvenv.cfg'):
+        reason = 'exists and is not a Python environment (no pyvenv.cfg)'
+    else:
+        return
+    raise InvalidConfig(f'Unsafe tooling environment target: {target} {reason}.')
 
 
 def release_is(path: Path, version: str) -> bool:

@@ -11,6 +11,15 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Added
 
+- A linked worktree with no `oasis-workspace.toml` at or above it reads the workspace file its
+  main checkout reads, found through git (`git rev-parse --git-common-dir`), so worktrees can live
+  anywhere; the slug still comes from the worktree's directory name, the upward search still
+  comes first, and the file is trusted like any other. Gentle Shell's project detection resolves
+  the same root and workspace.
+- `worktree-init --path <dir>` creates the worktree at any absolute path (default unchanged:
+  `<main>-<feature>` next to the main checkout); it refuses a path inside the Odoo source or
+  another checkout, an existing directory that is not empty, and a folder below another
+  workspace file.
 - Optional machine file `$XDG_CONFIG_HOME/oasis/config.toml` (else `~/.config/oasis/config.toml`),
   the default place for each series' Odoo source: `[series."19.0"]` with `community`,
   `enterprise` and `environments`. A workspace's `[tooling].community` or `[tooling].enterprise`
@@ -31,6 +40,17 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- The Python environment may be any directory that is an environment (has `pyvenv.cfg`) or does
+  not exist yet; it no longer has to be inside the checkout or under a directory named
+  `*environments`. It still may not be or contain the checkout or the Odoo source. `Unsafe tooling
+  environment target.` now names the directory and the reason.
+- `worktree-init` no longer requires the new folder to be below the workspace directory.
+- Bash guard: after `builtin cd`, `command cd`, `time cd`, `eval`, `source`/`.` or a non-literal
+  command word, an entry point run without `--project` targets an unknown directory (ask).
+- Bash guard: the agent's changes to the workspace file a linked worktree reads through git, and
+  to the machine file (`$XDG_CONFIG_HOME/oasis/config.toml`, `~/.config/oasis/config.toml`), go
+  through the same always-ask dialog as a workspace file above the session, whatever
+  `agent_destructive` says.
 - A workspace without `[tooling].community` whose machine file gives no source for its series
   stops with `No Odoo source for <series>: create the machine file <path> with community under
   [series."<series>"], or set [tooling].community in <workspace>.` instead of `Invalid tooling

@@ -69,7 +69,7 @@ Database names are at most 63 bytes (PostgreSQL's identifier limit, counted in U
 
 ### Workspace layout
 
-Keep the checkouts in one folder below the workspace file and the files they share next to it, so every checkout reads the same configuration (see [Workspace file](workspace-file.md)):
+Keep the checkouts in one folder below the workspace file and the files they share next to it, so every checkout reads the same configuration (see [Workspace file](workspace-file.md)). A linked worktree may also live anywhere else: with no workspace file at or above it, it reads the one its main checkout reads, found through git, with its slug from its own directory name.
 
 ```text
 <project>/oasis-workspace.toml             the workspace file
@@ -97,19 +97,20 @@ A shared `odoo.conf` may name the main checkout in its `addons_path`. In a linke
 
 ### worktree-init
 
-`worktree-init` creates a linked worktree below the same workspace file. Run it yourself, in Gentle Shell or in a terminal, from the main checkout or any of its worktrees:
+`worktree-init` creates a linked worktree that reads the main checkout's workspace file. Run it yourself, in Gentle Shell or in a terminal, from the main checkout or any of its worktrees:
 
 ```text
 /oasis worktree <feature> <branch>
 ```
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/project worktree-init <feature> <branch> [--dry-run] [--resume]
+~/.agents/skills/odoo19/oasis --project /absolute/project worktree-init <feature> <branch> [--path <dir>] [--dry-run] [--resume]
 ```
 
 - The folder is `<main folder>-<feature>` next to the main checkout, so the feature becomes the checkout slug (`acme` with `shop feature` gives `acme-shop-feature`, slug `shop_feature`). An existing folder is refused, unless you pass `--resume` (below).
+- `--path <dir>` (or `--path=<dir>`) creates it at that absolute path instead (`--path requires an absolute path.` otherwise). The slug still comes from the folder name, so it must be `<feature>` or `<main folder>-<feature>` (`Folder <name> would not give the checkout slug <slug>.` otherwise). Refused: a folder inside the Odoo source (`The new worktree <path> would be inside the Odoo source <source>.`), inside another checkout, a linked worktree or any git work tree (`The new worktree <path> would be inside the checkout <checkout>.`), and an existing folder that is not an empty directory (`Worktree folder already exists and is not empty: <path>`). An empty directory is filled; missing parents are created by git. `/oasis worktree` always uses the default folder; pass `--path` in a terminal.
 - An existing local branch is checked out; otherwise `origin/<branch>` is tracked when it exists; otherwise the branch is created from the main checkout's `HEAD`. A branch already checked out in another worktree is refused.
-- Only `git worktree add` runs: the new worktree finds the workspace file the main checkout reads, so nothing is copied or linked. That file must be in a directory above the new folder (`The new worktree <path> would not be under the workspace <dir>; prepare the worktree by hand.` otherwise), and a main checkout that finds none is refused (`The main checkout <path> has no oasis-workspace.toml at or above it; prepare the worktree by hand.`); a workspace file the new worktree could not read is refused with the error every command gives for it (`Invalid TOML in <file>.` or `Refusing untrusted workspace file <file>: ...`).
+- Only `git worktree add` runs: the new worktree reads the workspace file the main checkout reads, above the new folder or, when there is none above it, through git, so nothing is copied or linked. A folder below another workspace file would read that one and is refused (`The new worktree <path> would read <file>, not the main checkout's <file>; choose another --path.`), and a main checkout that finds none is refused (`The main checkout <path> has no oasis-workspace.toml at or above it; prepare the worktree by hand.`); a workspace file the new worktree could not read is refused with the error every command gives for it (`Invalid TOML in <file>.` or `Refusing untrusted workspace file <file>: ...`).
 - It prints `worktree: <path>`, `branch: <branch> (...)` (`created from HEAD <commit>`, `existing`, `tracking origin/<branch>` or `resumed`), `slug: <slug>` and `workspace: <dir>`. `--dry-run` prints the same lines, then `dry run: nothing changed`, and changes nothing; `/oasis worktree` shows them and asks before creating anything.
 - `--resume` accepts an existing folder only when it is a worktree of this repository with `<branch>` checked out, and adds nothing to it. A plain folder, a symlink, another repository's worktree or a worktree on another branch is refused. Without the folder, `--resume` creates the worktree as usual.
 - Agents cannot run it: the bash guard blocks it because it adds a worktree and a branch for the user.

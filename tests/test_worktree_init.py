@@ -158,6 +158,116 @@ class WorktreeInitTests(unittest.TestCase):
         self.assertEqual(result.stdout, self.plan(new, f'two (created from HEAD {head[:12]})', 'two'))
         self.assert_prepared(new)
 
+    # -- --path (v0.14.0 S4) ----------------------------------------------------------------
+
+    def elsewhere(self):
+        """A directory outside the workspace directory: no oasis-workspace.toml at or above it."""
+        other = Path(tempfile.mkdtemp(prefix='oasis-worktree-elsewhere-')).resolve()
+        self.addCleanup(shutil.rmtree, other, ignore_errors=True)
+        self.env['GIT_CEILING_DIRECTORIES'] += os.pathsep + str(other)
+        return other
+
+    def workspace_root(self, root):
+        result = subprocess.run([sys.executable, '-B', str(READER), str(root)],
+                                capture_output=True, text=True, env=self.env)
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        return [line for line in result.stdout.splitlines() if line.startswith('WORKSPACE_ROOT=')]
+
+    def test_path_creates_the_worktree_anywhere_reading_the_main_checkouts_workspace(self):
+        main = self.repository()
+        head = self.head(main)
+        other = self.elsewhere()
+        new = other / 'deep' / 'proj-feat'
+        plan = self.plan(new, f'feature/f (created from HEAD {head[:12]})', 'feat')
+        for args in (('feat', 'feature/f', '--path', str(new), '--dry-run'),
+                     ('feat', 'feature/f', '--dry-run', f'--path={new}')):
+            with self.subTest(args=args):
+                before = (self.snapshot(), self.branches(main), self.worktrees(main))
+                result = self.invoke(main, *args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (0, plan + 'dry run: nothing changed\n', ''))
+                self.assertEqual((self.snapshot(), self.branches(main), self.worktrees(main)), before)
+                self.assertFalse(os.path.lexists(other / 'deep'))
+        result = self.invoke(main, 'feat', 'feature/f', '--path', f'{other}/deep/../deep/proj-feat')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, plan, ''))
+        self.assert_prepared(new)
+        self.assertEqual(self.git(new, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature/f')
+        self.assertEqual(self.identity(new), ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=feat'])
+        self.assertEqual(self.workspace_root(new), [f'WORKSPACE_ROOT={self.scratch}'])
+        # From that worktree, the default folder still goes next to the main checkout.
+        result = self.invoke(new, 'two', 'two')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.plan(self.scratch / 'proj-two', f'two (created from HEAD {head[:12]})', 'two'), ''))
+
+    def test_path_accepts_an_empty_directory_and_resumes_a_worktree(self):
+        main = self.repository()
+        head = self.head(main)
+        other = self.elsewhere()
+        empty = other / 'feat'
+        empty.mkdir()
+        result = self.invoke(main, 'feat', 'feat', '--path', str(empty))
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.plan(empty, f'feat (created from HEAD {head[:12]})', 'feat'), ''))
+        self.assert_prepared(empty)
+        before = (self.snapshot(), self.branches(main), self.worktrees(main))
+        result = self.invoke(main, 'feat', 'feat', '--path', str(empty), '--resume')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.plan(empty, 'feat (resumed)', 'feat'), ''))
+        self.assertEqual((self.snapshot(), self.branches(main), self.worktrees(main)), before)
+
+    def test_path_refuses_the_odoo_source_a_checkout_and_a_used_directory(self):
+        main = self.repository()
+        source = self.scratch / 'source' / 'odoo'
+        source.mkdir(parents=True)
+        self.assertEqual(self.invoke(main, 'one', 'one').returncode, 0)
+        another = self.scratch / 'another'
+        another.mkdir()
+        self.git(another, 'init', '-q')
+        other = self.elsewhere()
+        used, afile, link = (other / name / 'proj-x' for name in ('used', 'file', 'link'))
+        for folder in (used, afile, link):
+            folder.parent.mkdir()
+        used.mkdir()
+        (used / 'notes.txt').write_text('kept\n')
+        afile.write_text('kept\n')
+        link.symlink_to(other / 'missing')
+        cases = (
+            ('rel/proj-x', 'ERROR: --path requires an absolute path.\n'),
+            (str(source / 'proj-x'), f'ERROR: The new worktree {source / "proj-x"} would be inside the Odoo '
+                                     f'source {source}.\n'),
+            (str(main / 'sub' / 'proj-x'), f'ERROR: The new worktree {main / "sub" / "proj-x"} would be inside '
+                                           f'the checkout {main}.\n'),
+            (str(self.scratch / 'proj-one' / 'proj-x'),
+             f'ERROR: The new worktree {self.scratch / "proj-one" / "proj-x"} would be inside the checkout '
+             f'{self.scratch / "proj-one"}.\n'),
+            (str(another / 'proj-x'), f'ERROR: The new worktree {another / "proj-x"} would be inside the checkout '
+                                      f'{another}.\n'),
+            (str(used), f'ERROR: Worktree folder already exists and is not empty: {used}\n'),
+            (str(afile), f'ERROR: Worktree folder already exists and is not empty: {afile}\n'),
+            (str(link), f'ERROR: Worktree folder already exists and is not empty: {link}\n'),
+            # The slug still comes from the folder name.
+            (str(other / 'unrelated'), 'ERROR: Folder unrelated would not give the checkout slug x.\n'),
+        )
+        for path, stderr in cases:
+            with self.subTest(path=path):
+                feature = 'x'
+                self.assert_refused(main, (feature, 'feat-x', '--path', path), stderr)
+                if path != str(afile):
+                    self.assertFalse(os.path.lexists(Path(path) / '.git'))
+        self.assertEqual(sorted(str(path.relative_to(other)) for path in other.rglob('*')),
+                         ['file', 'file/proj-x', 'link', 'link/proj-x', 'used', 'used/proj-x', 'used/proj-x/notes.txt'])
+
+    def test_path_refuses_a_folder_that_would_read_another_workspace_file(self):
+        main = self.repository()
+        other = self.elsewhere()
+        nearer = other / 'oasis-workspace.toml'
+        nearer.write_text(WORKSPACE)
+        new = other / 'proj-x'
+        self.assert_refused(main, ('x', 'x', '--path', str(new)),
+                            f'ERROR: The new worktree {new} would read {nearer}, not the main checkout\'s '
+                            f'{self.scratch / "oasis-workspace.toml"}; choose another --path.\n')
+        self.assertFalse(os.path.lexists(new))
+
     # -- resume -----------------------------------------------------------------------------
 
     def test_resume_accepts_the_existing_worktree_and_adds_nothing(self):
@@ -251,9 +361,12 @@ class WorktreeInitTests(unittest.TestCase):
 
     def test_usage_errors_are_refused(self):
         main = self.repository()
-        usage = 'ERROR: Usage: worktree-init <feature> <branch> [--dry-run] [--resume]\n'
+        usage = 'ERROR: Usage: worktree-init <feature> <branch> [--path <dir>] [--dry-run] [--resume]\n'
         for args in ((), ('feat',), ('feat', 'branch', 'extra'), ('feat', '-b'), ('feat', 'b', '--force'),
-                     ('feat', 'b', '--resume', '--resume'), ('feat', 'b', '--dry-run', '--dry-run')):
+                     ('feat', 'b', '--resume', '--resume'), ('feat', 'b', '--dry-run', '--dry-run'),
+                     ('feat', 'b', '--path'), ('feat', 'b', '--path='), ('feat', 'b', '--path', '--dry-run'),
+                     ('feat', 'b', '--path', '/a/proj-feat', '--path', '/b/proj-feat'),
+                     ('feat', 'b', '--path=/a/proj-feat', '--path', '/b/proj-feat')):
             with self.subTest(args=args):
                 self.assert_refused(main, args, usage)
 

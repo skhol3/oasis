@@ -35,6 +35,7 @@ class LintModuleTests(unittest.TestCase):
         (self.module / 'models.py').write_text('value = 1\n')
         self.python = self.root / '.venv/bin/python'
         self.python.parent.mkdir(parents=True)
+        (self.python.parent.parent / 'pyvenv.cfg').write_text('home = /usr/bin\n')  # an environment (S5)
         self.python.write_text(f'#!{sys.executable}\n' + '''import json, os, sys
 from pathlib import Path
 

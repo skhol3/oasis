@@ -127,6 +127,8 @@ class LifecycleTests(unittest.TestCase):
         self.python = (self.root / '../../environments/example/bin/python').resolve()
         self.source.mkdir(parents=True, exist_ok=True)
         self.python.parent.mkdir(parents=True, exist_ok=True)
+        # A Python environment has pyvenv.cfg (the environment rule, v0.14.0 S5).
+        (self.python.parent.parent / 'pyvenv.cfg').write_text('home = /usr/bin\n')
         for name in ('dev/odoo.conf', 'dev/.env', 'dev/compose.yml', 'coffee/__manifest__.py'):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)

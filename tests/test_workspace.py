@@ -173,6 +173,75 @@ class WorkspaceTests(unittest.TestCase):
         self.assertFalse((linked / '.odoo19-agent.toml').exists())
         self.assertEqual(self.output(linked), self.expected(linked, 'linked', 'feat'))
 
+    # -- worktrees found through git (v0.14.0 S4) ---------------------------------------------
+
+    def outside(self, name='acme-feat', branch='feat'):
+        """A linked worktree of the main checkout outside the workspace directory: no workspace file
+        at or above it."""
+        new = self.scratch / 'elsewhere' / name
+        self.git(self.main, 'worktree', 'add', '-q', '-b', branch, str(new))
+        return new
+
+    def test_a_worktree_outside_the_workspace_reads_the_main_checkouts_workspace_file(self):
+        main = self.layout(WORKSPACE + "data_dir = 'data'\n")
+        linked = self.outside()
+        self.assertIsNone(next((d for d in (linked, *linked.parents) if (d / 'oasis-workspace.toml').is_file()), None))
+        data = str(self.project / 'data')
+        # Paths resolve from the main checkout's workspace directory; the slug still comes from the
+        # worktree's own directory name, and addon roots from the worktree.
+        self.assertEqual(self.output(linked), self.expected(linked, 'linked', 'feat', data_dir=data))
+        self.assertEqual(self.output(main), self.expected(main, 'main', '', data_dir=data))
+        other = self.outside('Other Place', 'other')
+        self.assertEqual(self.output(other), self.expected(other, 'linked', 'other_place', data_dir=data))
+
+    def test_a_worktree_outside_the_workspace_keeps_its_own_checkout_file(self):
+        self.layout(NAMED)
+        linked = self.outside()
+        (linked / 'oasis-checkout.toml').write_text("[tooling]\ncheckout_slug = 'mrp_2'\nenvironment = 'next'\n")
+        self.assertEqual(self.output(linked), self.expected(linked, 'linked', 'mrp_2', 'next', '3.13',
+                                                            'environments/acme-next'))
+
+    def test_the_upward_search_comes_before_the_main_checkouts_workspace_file(self):
+        self.layout()
+        linked = self.outside()
+        nearer = self.scratch / 'elsewhere' / 'oasis-workspace.toml'
+        nearer.write_text(WORKSPACE.replace('acme_dev_', 'near_dev_').replace('acme_test_', 'near_test_'))
+        lines = self.assignments(linked)
+        self.assertIn('DEV_PREFIX=near_dev_', lines)
+        self.assertIn(self.line('WORKSPACE_ROOT', nearer.parent), lines)
+
+    def test_the_main_checkouts_workspace_file_found_through_git_is_trusted_like_any_other(self):
+        main = self.layout()
+        linked = self.outside()
+        self.assert_writable_refused(linked, self.workspace, (self.workspace, self.project))
+        self.workspace.write_text('workspace_version = \n')
+        self.assert_rejected(linked, f'Invalid TOML in {self.workspace}.')
+        self.workspace.write_text(WORKSPACE)
+        self.assertEqual(self.output(linked), self.expected(linked, 'linked', 'feat'))
+        self.assertEqual(self.output(main), self.expected(main, 'main', ''))
+
+    def test_a_worktree_whose_main_checkout_has_no_workspace_file_is_still_missing_one(self):
+        self.layout()
+        linked = self.outside()
+        self.workspace.unlink()
+        self.assert_rejected(linked, f'Missing tooling configuration: no oasis-workspace.toml at or above {linked}.')
+        # Outside git and in a main checkout nothing is asked of git: the missing file stays missing.
+        plain = self.scratch / 'plain'
+        plain.mkdir()
+        self.assert_rejected(plain, f'Missing tooling configuration: no oasis-workspace.toml at or above {plain}.')
+
+    def test_entry_point_runs_in_a_worktree_outside_the_workspace(self):
+        self.layout()
+        shutil.copytree(MODEL_INFO / 'source', self.project / 'source')
+        linked = self.outside()
+        shutil.copytree(MODEL_INFO / 'project' / 'addons', linked / 'addons')
+        explicit = self.invoke(linked, 'model-info', 'coffee.order')
+        self.assertEqual((explicit.returncode, explicit.stderr), (0, ''))
+        self.assertIn('extended by (2): coffee_loyalty, coffee_shop(+mail.activity.mixin)\n', explicit.stdout)
+        result = self.invoke_in(linked / 'addons', 'model-info', 'coffee.order', program='oasis')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (explicit.returncode, explicit.stdout, explicit.stderr))
+
     def test_checkout_file_sets_only_the_slug(self):
         main = self.layout()
         (main / 'oasis-checkout.toml').write_text("[tooling]\ncheckout_slug = 'mrp_2'\n")
@@ -439,10 +508,17 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_environment_path_keeps_the_environment_rules(self):
         main = self.layout(NAMED)
-        for path in ('.', 'codigo', 'codigo/acme', '/', 'source/odoo', 'source', 'other/acme'):
+        source = self.project / 'source/odoo'
+        for path in ('.', 'codigo', 'codigo/acme', '/', 'source/odoo', 'source'):
             with self.subTest(path=path):
                 self.workspace.write_text(NAMED.replace("path = 'environments/acme'\n", f"path = '{path}'\n"))
-                self.assert_rejected(main, 'Unsafe tooling environment target.')
+                target = (self.project / path).resolve()
+                reason = (f'is or contains the checkout {main}' if main.is_relative_to(target)
+                          else f'is or contains the Odoo source {source}')
+                self.assert_rejected(main, f'Unsafe tooling environment target: {target} {reason}.')
+        # Any directory that does not exist yet, whatever its parent's name (v0.14.0 S5).
+        self.workspace.write_text(NAMED.replace("path = 'environments/acme'\n", "path = 'other/acme'\n"))
+        self.assertIn(self.line('PROJECT_ENVIRONMENT', self.project / 'other/acme'), self.assignments(main))
         for line in ("path = ''\n", 'path = 7\n', 'path = "a\\u0000b"\n', ''):
             with self.subTest(line=line):
                 self.workspace.write_text(NAMED.replace("path = 'environments/acme'\n", line))
@@ -497,33 +573,67 @@ class WorkspaceTests(unittest.TestCase):
         self.assertIn(self.line('PROJECT_ENVIRONMENT', shared / 'environments/acme'), lines)
         self.assertIn('ENVIRONMENT_NAME=default', lines)
 
-    def test_environment_rule_accepts_an_environments_parent_and_refuses_the_rest(self):
+    def with_environment(self, path):
+        self.workspace.write_text(WORKSPACE.replace("environment = 'environments/acme'", f"environment = '{path}'"))
+
+    def test_environment_rule_accepts_an_environment_or_a_new_directory_and_refuses_the_rest(self):
+        # v0.14.0 S5: no directory name is required; an existing directory must be an environment.
         main = self.layout()
-        accepted = (f'{self.scratch}/x/environments/acme', f'{self.scratch}/x/odoo-environments/acme',
+        venvs = self.scratch / 'opt' / 'venvs' / 'acme'
+        venvs.mkdir(parents=True)
+        (venvs / 'pyvenv.cfg').write_text('home = /usr/bin\n')
+        accepted = (str(venvs),                                       # an environment, any parent name
+                    f'{self.scratch}/x/environments/acme',            # not created yet
+                    f'{self.scratch}/new/venvs/acme',                 # not created yet, any parent name
+                    'environments/acme/venv',                         # not created yet, any depth
                     '../environments/acme')
         for path in accepted:
             with self.subTest(accepted=path):
-                self.workspace.write_text(WORKSPACE.replace("environment = 'environments/acme'",
-                                                            f"environment = '{path}'"))
+                self.with_environment(path)
                 self.assertIn(self.line('PROJECT_ENVIRONMENT', (self.project / path).resolve()),
                               self.assignments(main))
-        refused = ('/opt/venvs/acme',                           # parent venvs does not end in environments
-                   'environments/acme/venv',                    # parent acme: only the direct parent counts
-                   f'{self.project}/source/odoo',               # is the Odoo source
-                   f'{self.project}/source',                    # contains the Odoo source
-                   '.')                                         # contains the checkout
-        for path in refused:
+        # A link to an environment is the environment it resolves to.
+        link = self.scratch / 'link-to-acme'
+        link.symlink_to(venvs, target_is_directory=True)
+        self.with_environment(str(link))
+        self.assertIn(self.line('PROJECT_ENVIRONMENT', venvs), self.assignments(main))
+        source = self.project / 'source/odoo'
+        source.mkdir(parents=True)
+        plain = self.scratch / 'opt' / 'plain'
+        plain.mkdir()
+        afile = self.scratch / 'opt' / 'file'
+        afile.write_text('not a directory\n')
+        refused = ((str(plain), f'{plain} exists and is not a Python environment (no pyvenv.cfg)'),
+                   (str(afile), f'{afile} exists and is not a Python environment (no pyvenv.cfg)'),
+                   (str(venvs.parent), f'{venvs.parent} exists and is not a Python environment (no pyvenv.cfg)'),
+                   (str(source), f'{source} is or contains the Odoo source {source}'),
+                   (f'{self.project}/source', f'{self.project / "source"} is or contains the Odoo source {source}'),
+                   ('.', f'{self.project} is or contains the checkout {main}'),
+                   ('codigo/acme', f'{main} is or contains the checkout {main}'))
+        for path, reason in refused:
             with self.subTest(refused=path):
-                self.workspace.write_text(WORKSPACE.replace("environment = 'environments/acme'",
-                                                            f"environment = '{path}'"))
-                self.assert_rejected(main, 'Unsafe tooling environment target.')
+                self.with_environment(path)
+                self.assert_rejected(main, f'Unsafe tooling environment target: {reason}.')
+        # The Odoo source stays refused when it holds a pyvenv.cfg, and so does a directory holding
+        # the checkout.
+        (source / 'pyvenv.cfg').write_text('home = /usr/bin\n')
+        (self.project / 'pyvenv.cfg').write_text('home = /usr/bin\n')
+        for path, reason in ((str(source), f'{source} is or contains the Odoo source {source}'),
+                             ('.', f'{self.project} is or contains the checkout {main}')):
+            with self.subTest(environment_marker=path):
+                self.with_environment(path)
+                self.assert_rejected(main, f'Unsafe tooling environment target: {reason}.')
 
-    def test_environment_inside_a_checkout_serves_only_that_checkout(self):
+    def test_environment_inside_a_checkout_serves_every_checkout(self):
+        # An environment inside the main checkout is no longer refused by the linked worktrees.
         main = self.layout(WORKSPACE.replace("environment = 'environments/acme'",
                                              "environment = 'codigo/acme/.venv'"))
         self.assertIn(self.line('PROJECT_ENVIRONMENT', main / '.venv'), self.assignments(main))
         linked = self.linked()
-        self.assert_rejected(linked, 'Unsafe tooling environment target.')
+        self.assertIn(self.line('PROJECT_ENVIRONMENT', main / '.venv'), self.assignments(linked))
+        (main / '.venv').mkdir()
+        (main / '.venv' / 'pyvenv.cfg').write_text('home = /usr/bin\n')
+        self.assertIn(self.line('PROJECT_ENVIRONMENT', main / '.venv'), self.assignments(linked))
 
     def test_home_shorthand_is_not_expanded(self):
         # TOML values are taken literally: ~ is a folder below the workspace directory.
@@ -592,6 +702,39 @@ class WorkspaceTests(unittest.TestCase):
         lines = self.assignments(linked)
         self.assertIn(self.line('PROJECT_ENVIRONMENT', series / 'environments/acme-next'), lines)
         self.assertEqual(lines[-4:-2], ['ENVIRONMENT_NAME=next', 'PYTHON_VERSION=3.13'])
+
+    def test_guide_environment_table_matches_the_rule(self):
+        # Each relative value of the table under "The Python environment" in docs/new-workspace.md,
+        # in its example tree (the Odoo source and the environments/acme environment exist).
+        guide = (ROOT / 'docs' / 'new-workspace.md').read_text(encoding='utf-8')
+        section = guide.split('### The Python environment', 1)[1].split('\n## ', 1)[0]
+        rows = re.findall(r'^\| (.+?) \| (accepted|refused)\b', section, re.MULTILINE)
+        series = self.scratch / 'odoo' / '19.0'
+        self.project = series / 'projects' / 'acme'
+        self.workspace = self.project / 'oasis-workspace.toml'
+        self.main = self.project / 'codigo' / 'acme'
+        workspace = self.guide_block('# projects/acme/oasis-workspace.toml')
+        main = self.layout(workspace)
+        (series / 'source' / 'odoo').mkdir(parents=True)
+        (series / 'environments' / 'acme').mkdir(parents=True)
+        (series / 'environments' / 'acme' / 'pyvenv.cfg').write_text('home = /usr/bin\n')
+        environment = re.search(r"^environment = '[^']*'\n", workspace, re.MULTILINE).group(0)
+        checked = 0
+        for cell, result in rows:
+            for value in re.findall(r"`'([^'`]+)'`", cell):
+                if value.startswith('/'):
+                    continue  # absolute examples name paths of the reader's machine
+                with self.subTest(value=value, result=result):
+                    self.workspace.write_text(workspace.replace(environment, f"environment = '{value}'\n"))
+                    outcome = self.run_reader(main)
+                    if result == 'accepted':
+                        self.assertEqual((outcome.returncode, outcome.stderr), (0, ''))
+                    else:
+                        self.assertEqual((outcome.returncode, outcome.stdout), (2, ''))
+                        self.assertTrue(outcome.stderr.startswith('ERROR: Unsafe tooling environment target: '),
+                                        outcome.stderr)
+                    checked += 1
+        self.assertGreaterEqual(checked, 6, rows)
 
     # -- odoo19 entry point -----------------------------------------------------------------
 
@@ -686,16 +829,32 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in new.iterdir()), ['.git', 'README.md'])
         self.assertEqual(self.output(new), self.expected(new, 'linked', 'shop'))
 
-    def test_worktree_init_refuses_a_workspace_inside_the_main_checkout(self):
+    def test_worktree_init_uses_a_workspace_inside_the_main_checkout_through_git(self):
+        # v0.14.0 S4: the new worktree is not below that file, and reads it through git.
         main = self.layout()
         self.workspace.unlink()
+        (main / 'oasis-workspace.toml').write_text(WORKSPACE)
+        new = self.project / 'codigo' / 'acme-shop'
+        result = self.invoke(main, 'worktree-init', 'shop', 'feature/shop')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.endswith(f'slug: shop\nworkspace: {main}\n'), result.stdout)
+        self.assertEqual(sorted(path.name for path in new.iterdir()), ['.git', 'README.md'])
+        # Whole lines of the output: ADDON_ROOTS spans two lines inside one quoted value.
+        text = '\n' + self.output(new)
+        for name, value in (('WORKSPACE_ROOT', main), ('CHECKOUT_SLUG', 'shop'), ('ODOO_SOURCE', main / 'source/odoo'),
+                            ('ADDON_ROOTS', f'{new}\n{new / "addons"}')):
+            with self.subTest(name=name):
+                self.assertIn('\n' + self.line(name, value) + '\n', text)
+
+    def test_worktree_init_refuses_a_new_worktree_that_would_read_another_workspace_file(self):
+        main = self.layout()
         (main / 'oasis-workspace.toml').write_text(WORKSPACE)
         before = self.snapshot()
         result = self.invoke(main, 'worktree-init', 'shop', 'feature/shop')
         new = self.project / 'codigo' / 'acme-shop'
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'ERROR: The new worktree {new} would not be under the workspace {main}; '
-                                 'prepare the worktree by hand.\n'))
+                         (2, '', f'ERROR: The new worktree {new} would read {self.workspace}, not the main '
+                                 f"checkout's {main / 'oasis-workspace.toml'}; choose another --path.\n"))
         self.assertEqual(self.snapshot(), before)
 
 
