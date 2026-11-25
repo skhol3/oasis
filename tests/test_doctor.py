@@ -6,6 +6,7 @@ host's tools never decide a result. Doctor must never start a service, connect t
 or print file contents: the fake docker records every call, and only `docker compose version`
 may appear.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import os
 from pathlib import Path
 import re

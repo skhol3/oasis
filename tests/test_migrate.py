@@ -11,6 +11,7 @@ a ceiling at the scratch directory, so nothing reads or writes a real project):
 The odoo.conf carries an admin_passwd marker that must never be printed; the environment
 file is named neutrally (runtime-env) and is never opened.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import hashlib
 import importlib.util
 import os

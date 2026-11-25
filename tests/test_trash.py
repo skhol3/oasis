@@ -7,6 +7,7 @@ answers the queries common.sh sends (existence, sessions, size, rename with comm
 listing, dropdb). Every docker argv is logged as one JSON line, so a refusal can be checked to
 send no mutating statement. Filestores live under the fixture's data_dir (odoo.conf).
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import hashlib

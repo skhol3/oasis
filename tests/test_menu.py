@@ -4,6 +4,7 @@ The lifecycle fixture (fake docker/python recording every argv, private XDG_RUNT
 terminal menu runs on a pseudo-terminal created by the test. Detached fake servers are killed in
 cleanup.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from pathlib import Path
 import hashlib
 import importlib.util

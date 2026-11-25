@@ -1,4 +1,5 @@
 """Public staged diagnostics/preview checks; all commands and inputs are fixture-local."""
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from pathlib import Path
 import hashlib
 import shutil

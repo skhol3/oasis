@@ -5,6 +5,7 @@ of test_lifecycle that records every Odoo argv. The shared configuration directo
 to the checkouts (`<projects>/config`), as in the recommended layout; the environment file
 has a neutral name. Git never reads the user's configuration.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from pathlib import Path
 import json
 import os

@@ -1,4 +1,5 @@
 """The Odoo capability table (tools/odoo_versions.py) and the version-neutral tool sources."""
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from pathlib import Path
 import importlib.util
 import re

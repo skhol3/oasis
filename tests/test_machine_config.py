@@ -6,6 +6,7 @@ Every machine file, home and project lives in a fresh system temp directory: XDG
 HOME point there, so the real ~/.config is never read. git runs with an empty global configuration
 and a ceiling at the scratch directory.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import os
 from pathlib import Path
 import shlex

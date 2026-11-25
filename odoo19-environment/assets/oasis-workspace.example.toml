@@ -10,6 +10,13 @@
 #   acme/logs/                       compact runs and browser evidence
 #
 # oasis finds this file by walking up from the checkout, as git finds .git.
+#
+# The Odoo source is the machine's, not the project's: it is declared once per machine in
+# ~/.config/oasis/config.toml ($XDG_CONFIG_HOME/oasis/config.toml when that is set), and every
+# project of the series uses it without repeating it here:
+#   [series."19.0"]
+#   community = '/srv/odoo/19.0/source/odoo'
+#   enterprise = '/srv/odoo/19.0/source/enterprise'
 workspace_version = 1
 # Odoo series of every checkout; the tooling version derives from it, and Python is the
 # series' default (3.12 on 19.0) unless a named environment below declares another one that
@@ -21,8 +28,9 @@ odoo_version = '19.0'
 # Paths are relative to this file's directory, except addons_paths, which is relative to
 # each checkout ('.' is the checkout itself), because the modules live in every checkout.
 [tooling]
-community = 'source/odoo'
-# Optional Enterprise source.
+# Only to override the machine file's source for this project (relative to this file, or absolute);
+# setting enterprise = false means no Enterprise here, whatever the machine file says.
+# community = 'source/odoo'
 # enterprise = 'source/enterprise'
 # Either this one environment (the series' default Python), or named [environments] below, not both.
 environment = 'environments/acme'

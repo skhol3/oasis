@@ -3,6 +3,7 @@
 Each test builds a requirements directory in a fresh temporary directory; bootstrap's use of
 these commands is covered in test_environment.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from pathlib import Path
 import hashlib
 import shutil

@@ -5,6 +5,7 @@ relative to that directory; a legacy lock lists them relative to the project roo
 also when the requirements directory lies outside it. The real sha256sum checks them; the rest of
 the environment comes from the fake harness of test_environment.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import hashlib
 import shutil
 import subprocess

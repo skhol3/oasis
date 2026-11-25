@@ -7,6 +7,7 @@ one JSON line. The main checkout is a real git repository with real linked workt
 (test_shared_conf.shared_layout), so the other checkouts' slugs come from `git worktree list`
 as gc and the trash read them.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import subprocess
 import unittest
 

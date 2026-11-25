@@ -4,6 +4,7 @@ Every project lives in a fresh system temp directory. git runs with explicit -c 
 an empty global configuration and a ceiling at the scratch directory, so it never reads or
 writes the user's configuration or a real project.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import importlib.util
 import os
 from pathlib import Path
@@ -326,21 +327,44 @@ class WorkspaceTests(unittest.TestCase):
         finally:
             table['python_default'] = '3.12'
 
+    def shipped_example(self):
+        """The shipped example and, in this test's scratch XDG_CONFIG_HOME, the machine file it
+        documents (its commented [series."19.0"] block), which gives the source (v0.14.0 S10)."""
+        raw = (ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml').read_text()
+        block = re.search(r'^#   \[series\."19\.0"\]\n(?:#   [a-z]+ = .*\n)+', raw, re.MULTILINE)
+        self.assertIsNotNone(block, raw)
+        machine = self.scratch / 'xdg' / 'oasis' / 'config.toml'
+        machine.parent.mkdir(mode=0o700, parents=True)
+        machine.write_text(re.sub(r'^#   ', '', block.group(0), flags=re.MULTILINE))
+        machine.chmod(0o600)
+        return raw
+
     def test_shipped_example_is_accepted(self):
-        example = ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml'
-        main = self.layout(example.read_text())
+        raw = self.shipped_example()
+        main = self.layout(raw)
         lines = self.output(main).splitlines()
+        # The source comes from the machine file the example documents.
+        self.assertIn('ODOO_SOURCE=/srv/odoo/19.0/source/odoo', lines)
+        self.assertIn('ENTERPRISE_SOURCE=/srv/odoo/19.0/source/enterprise', lines)
         self.assertEqual(lines[-8:], ['WORKSPACE_ROOT=' + shlex.quote(str(self.project)), 'ODOO_VERSION=19.0',
                                       'ODOO_SECOND_PORT_OPTION=--gevent-port', 'ODOO_DEMO_OFF_ARGS=--without-demo',
                                       "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12', "DATA_DIR=''",
                                       'AGENT_DESTRUCTIVE=ask'])
         self.assertIn('ODOO_CONFIG=' + shlex.quote(str(self.project / 'config/odoo.conf')), lines)
         self.assertIn('ADDON_ROOTS=' + shlex.quote(str(main)), lines)
+        # Uncommenting the documented overrides makes the project's source win over the machine's.
+        self.assertIn("# community = 'source/odoo'\n", raw)
+        self.assertIn("# enterprise = 'source/enterprise'\n", raw)
+        self.workspace.write_text(raw.replace("# community = 'source/odoo'\n", "community = 'source/odoo'\n")
+                                  .replace("# enterprise = 'source/enterprise'\n", 'enterprise = false\n'))
+        lines = self.output(main).splitlines()
+        self.assertIn('ODOO_SOURCE=' + shlex.quote(str(self.project / 'source/odoo')), lines)
+        self.assertFalse(any(line.startswith('ENTERPRISE_SOURCE=') for line in lines), lines)
 
     def test_shipped_example_documents_named_environments(self):
         # Uncommenting the documented [environments.default] block in place of
         # [tooling].environment gives a working workspace that selects it.
-        raw = (ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml').read_text()
+        raw = self.shipped_example()
         block = re.search(r'^# \[environments\.default\]\n(?:# [a-z]+ = .*\n)+', raw, re.MULTILINE)
         self.assertIsNotNone(block, raw)
         self.assertIn("environment = 'environments/acme'\n", raw)
@@ -355,7 +379,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_shipped_example_documents_agent_destructive(self):
         # Uncommenting the documented agent_destructive line with each value is accepted.
-        raw = (ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml').read_text()
+        raw = self.shipped_example()
         self.assertIn("# agent_destructive = 'ask'\n", raw)
         main = self.layout(raw)
         for value in ('ask', 'deny', 'allow'):

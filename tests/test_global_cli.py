@@ -1,4 +1,5 @@
 """Public global CLI checks with isolated fake tools and project roots."""
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import json
 import os
 from pathlib import Path

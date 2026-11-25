@@ -1,4 +1,5 @@
 """view-info and xmlid-info contracts on the committed synthetic source tree; no runtime, service or database."""
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import os
 from pathlib import Path
 import subprocess

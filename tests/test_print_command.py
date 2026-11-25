@@ -6,6 +6,7 @@ server log. The lifecycle fixture (fake docker/python recording every argv, priv
 XDG_RUNTIME_DIR); detached fake servers listen like Odoo (test_menu.SERVING) and are killed in
 cleanup; the linked worktree comes from the shared-conf fixture.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import re
 import shlex
 import socket

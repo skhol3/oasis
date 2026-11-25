@@ -5,6 +5,7 @@ directory; git runs with explicit -c identity flags, an empty global configurati
 at the scratch directory, so it never reads or writes the user's configuration or a real
 project.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import os
 from pathlib import Path
 import shutil

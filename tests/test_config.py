@@ -1,4 +1,5 @@
 """Public CLI checks for the staged, non-secret tooling configuration reader."""
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import os
 from pathlib import Path
 import shlex

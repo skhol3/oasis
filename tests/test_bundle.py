@@ -1,4 +1,6 @@
 """Structural checks for shipped guidance, not a runtime config validator."""
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
+import ast
 import re
 import tomllib
 import unittest
@@ -73,8 +75,9 @@ def broken_links(files, root):
 
 
 WORKSPACE = ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml'
+# The Odoo source is the machine file's (v0.14.0 S10): the example sets no community or enterprise.
 WORKSPACE_TOOLING = {
-    'community': str, 'environment': str, 'config': str, 'env_file': str, 'compose': str,
+    'environment': str, 'config': str, 'env_file': str, 'compose': str,
     'requirements': str, 'addons_paths': list, 'db_service': str, 'dev_prefix': str, 'test_prefix': str,
 }
 
@@ -162,6 +165,29 @@ class BundleTests(unittest.TestCase):
         comment = raw[:raw.index("# agent_destructive = 'ask'")].rsplit('\n\n', 1)[-1]
         for value in ("'ask'", "'deny'", "'allow'"):
             self.assertIn(value, comment)
+
+    def test_the_workspace_example_leaves_the_source_to_the_machine_file(self):
+        # S10: the machine file is the default place for the source; a project sets it only to override.
+        raw = WORKSPACE.read_text(encoding='utf-8')
+        tooling = tomllib.loads(raw)['tooling']
+        self.assertNotIn('community', tooling)
+        self.assertNotIn('enterprise', tooling)
+        self.assertEqual(re.findall(r"^# (community|enterprise) = ", raw, re.MULTILINE), ['community', 'enterprise'])
+        for phrase in ('~/.config/oasis/config.toml', '$XDG_CONFIG_HOME', '[series."19.0"]', 'override'):
+            self.assertIn(phrase, raw)
+
+    def test_every_test_module_isolates_the_machine_file_first(self):
+        # AGENTS.md: tests never read the real configuration. oasis_test_env points XDG_CONFIG_HOME
+        # at scratch; each test module imports it before anything else, so that holds for the whole
+        # suite and for one module run alone.
+        missing = []
+        for path in sorted((ROOT / 'tests').glob('test_*.py')):
+            imports = [node for node in ast.parse(path.read_text(encoding='utf-8')).body
+                       if isinstance(node, (ast.Import, ast.ImportFrom))]
+            first = imports[0] if imports else None
+            if not (isinstance(first, ast.Import) and [alias.name for alias in first.names] == ['oasis_test_env']):
+                missing.append(path.name)
+        self.assertEqual(missing, [])
 
     def test_workspace_example_schema_and_negative_examples(self):
         raw = WORKSPACE.read_text(encoding='utf-8')

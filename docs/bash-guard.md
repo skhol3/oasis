@@ -42,7 +42,9 @@ oasis's and runs. When one command holds a denied program and an ask command, th
 decides first, exactly as before. The entry points' `--project` is also recognized as argparse
 takes it: `--project=<dir>` and its unambiguous prefixes (`--proj <dir>`, `--p=<dir>`), so
 `oasis --proj /p migrate --apply` is blocked and `oasis --proj /p drop-database <name>` asks,
-like their `--project` forms.
+like their `--project` forms. `--project` is optional: an entry point run without it works on the
+git top level of the directory it runs in, and the guard judges it against that directory (see
+[The setting](#the-setting)).
 
 A command line is judged on every command it holds, not only the first denied one: `psql -l;
 oasis --project /p migrate --apply` is blocked outside an Odoo project too, because `migrate` is
@@ -99,6 +101,15 @@ agent_destructive = 'ask'    # default: the dialog; 'deny' blocks them; 'allow' 
   the configuration of <root>`). A session outside an Odoo project, a configuration that cannot be read,
   and a target that is not literal (`--project "$DIR"`), not an Odoo project, unreadable, or set
   elsewhere on the line (`export OASIS_PROJECT_ROOT=...; <tool>`) count as `ask`.
+- An entry point without `--project` targets the directory it runs in, as the command line tells
+  it: the session's directory (the session's project alone decides), or the directory after a
+  literal `cd <dir>` or `pushd <dir>` earlier on the line, `env -C <dir>` (`--chdir`) or `sudo -D
+  <dir>` (`--chdir`). There the stricter of the session's and that directory's project decides, as
+  with `--project <dir>`: `cd /work/other && oasis drop-database <name>` from an `allow` project
+  is denied when `/work/other` says `deny`. A directory the text does not tell (`cd "$DIR"`, after
+  `popd`, or a substitution such as `$(oasis stop --database)` on a line that changes directory)
+  and a directory outside any Odoo project count as `ask`. Nothing is loosened: a command that
+  asked before still asks.
 - `deny` turns the ask tier into deny; `allow` lets those commands run without a dialog (each run
   is still recorded). Neither changes the allow or deny tiers.
 - Only the user sets it: `oasis-checkout.toml` refuses the key, no tool or command argument

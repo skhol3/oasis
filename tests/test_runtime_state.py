@@ -4,6 +4,7 @@ The lifecycle fixture (fake docker/python recording every argv) with a private
 XDG_RUNTIME_DIR per test; the linked checkout comes from the shared-conf fixture. Every
 socket a test binds uses 127.0.0.1 only, and every spawned process is killed in cleanup.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path

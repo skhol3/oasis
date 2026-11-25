@@ -1,4 +1,5 @@
 """Fresh development initialization through the public CLI, isolated from Odoo/PG."""
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import hashlib
 import json
 import os
