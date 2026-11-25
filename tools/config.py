@@ -10,6 +10,11 @@ source paths are defaults the workspace overrides. A checkout that still has the
 profile `.odoo19-agent.toml` is refused: only tools/migrate.py reads that file, to convert it.
 So is a checkout whose module manifests declare another Odoo series than its odoo_version (load,
 series_mismatch). Path declarations do not grant access consent.
+
+workspace_version 2 (v0.15.0 S3, S4) holds several series: a checkout's series is its
+oasis-checkout.toml odoo_version, else the series of its module manifests (checkout_series), else
+the workspace odoo_version; its [series."<x.y>"] section overrides [tooling], whose paths may use
+`{series}` (series_tooling). Every assignment then follows that series, so the tools do too.
 """
 import ast
 import functools
@@ -81,12 +86,26 @@ PROFILE_NAME = '.odoo19-agent.toml'
 WORKSPACE_NAME = 'oasis-workspace.toml'
 CHECKOUT_NAME = 'oasis-checkout.toml'
 WORKSPACE_VERSION = 1
+# The workspace_version values read: 1 (one series) and 2 (series sections, v0.15.0 S3).
+WORKSPACE_VERSIONS = (1, 2)
+# What a workspace_version 2 [series."<x.y>"] section may set over [tooling] (S3), and the modules the
+# series guard and the series detection leave out for that series (series_exceptions, S4).
+SERIES_KEYS = ('community', 'enterprise', 'environment', 'config', 'env_file', 'compose', 'requirements',
+               'db_service', 'dev_prefix', 'test_prefix', 'test_database', 'logs', 'data_dir', 'series_exceptions')
+# The path values in which workspace_version 2 replaces SERIES_PLACEHOLDER with the checkout's series.
+SERIES_PLACEHOLDER = '{series}'
+SERIES_PATHS = (*PATHS, 'logs', 'data_dir', 'lint_rcfile')
+MODULE_NAME = re.compile(r'[A-Za-z0-9_]+')
 DEFAULT_ENVIRONMENT = 'default'
 MISSING = object()
 
 
 class InvalidConfig(ValueError):
     pass
+
+
+class MissingSeries(InvalidConfig):
+    """A checkout of a series its workspace file has no section for: oasis setup adds it."""
 
 
 def legacy_profile_refusal(profile: Path, program: str) -> str:
@@ -315,15 +334,23 @@ def read_toml(path: Path) -> dict:
         raise InvalidConfig(f'Invalid TOML in {path}.') from exc
 
 
-def workspace_document(workspace: Path, selected=None) -> tuple[dict, str]:
-    """The workspace document, trusted and versions checked, with the derived [tooling] keys,
-    and the name of its environment (empty without named [environments]).
+def workspace_document(workspace: Path, selected=None, series=None) -> tuple[dict, str]:
+    """The workspace document, trusted and versions checked, with the derived [tooling] keys of series
+    (None: the workspace odoo_version), and the name of its environment (empty without named
+    [environments]).
 
     selected is the checkout's environment name (None: the default one).
     """
+    document = checked_workspace(workspace)
+    return series_document(document, workspace, selected, document['odoo_version'] if series is None else series)
+
+
+def checked_workspace(workspace: Path) -> dict:
+    """The workspace document as written, trusted, with its versions, [tooling] and (version 2) its
+    series sections checked; series_document derives a checkout's [tooling] from it."""
     document = read_toml(trusted(workspace))
     version = document.get('workspace_version', MISSING)
-    if type(version) is not int or version != WORKSPACE_VERSION:
+    if type(version) is not int or version not in WORKSPACE_VERSIONS:
         raise InvalidConfig(f'Unsupported workspace_version {shown(version)} in {workspace}.')
     odoo = document.get('odoo_version', MISSING)
     if not isinstance(odoo, str) or odoo not in versions().CAPABILITIES:
@@ -339,16 +366,81 @@ def workspace_document(workspace: Path, selected=None) -> tuple[dict, str]:
         # One slug for every checkout would give them all one database namespace.
         raise InvalidConfig("[tooling].checkout_slug belongs in a checkout's oasis-checkout.toml, "
                             f'not in {workspace}.')
-    # Derived: the Odoo series from odoo_version, Python from the named environment, else the
+    if version == 2:
+        if 'series_exceptions' in tooling:
+            raise InvalidConfig(f'[tooling].series_exceptions belongs in a [series."<version>"] section of {workspace}.')
+        series_sections(document, workspace)
+    return document
+
+
+def series_sections(document: dict, workspace: Path) -> dict[str, dict]:
+    """The checked [series."<x.y>"] sections of a version 2 document, in file order ({} for version 1,
+    which does not read them): supported series only, SERIES_KEYS only, series_exceptions a list of
+    module names. Their values keep the [tooling] rules (resolve checks them once merged)."""
+    if document['workspace_version'] == 1:
+        return {}
+    tables = document.get('series', {})
+    if not isinstance(tables, dict):
+        raise InvalidConfig(f'Invalid [series] in {workspace}.')
+    for name, table in tables.items():
+        if name not in versions().CAPABILITIES:
+            raise InvalidConfig(f'Unknown series {shown(name)} in {workspace}; '
+                                f'supported: {", ".join(versions().supported())}.')
+        if not isinstance(table, dict):
+            raise InvalidConfig(f'Invalid [series.{shown(name)}] in {workspace}.')
+        for key in table:
+            if key not in SERIES_KEYS:
+                raise InvalidConfig(f'Unknown key series.{shown(name)}.{key} in {workspace}; '
+                                    f'a series section may set: {", ".join(SERIES_KEYS)}.')
+        exceptions = table.get('series_exceptions', [])
+        if not isinstance(exceptions, list) or not all(isinstance(module, str) and MODULE_NAME.fullmatch(module)
+                                                       for module in exceptions):
+            raise InvalidConfig(f'Invalid series.{shown(name)}.series_exceptions in {workspace}: '
+                                'use a list of module names.')
+    return tables
+
+
+def declared_series(document: dict, workspace: Path) -> list[str]:
+    """Every series a checked document configures: odoo_version first, then its sections in file order."""
+    default = document['odoo_version']
+    return [default, *(name for name in series_sections(document, workspace) if name != default)]
+
+
+def placed(value, series: str):
+    """A version 2 path value with SERIES_PLACEHOLDER replaced by series; any other value unchanged."""
+    return value.replace(SERIES_PLACEHOLDER, series) if isinstance(value, str) else value
+
+
+def series_tooling(document: dict, workspace: Path, series: str) -> dict:
+    """[tooling] of a checked document for series, before the derived keys and named environments:
+    version 1 as written; version 2 with its [series."<series>"] values over it, SERIES_PLACEHOLDER
+    replaced in SERIES_PATHS and series_exceptions (empty without one). Doctor reads every series of
+    the workspace with it (series isolation)."""
+    tooling = dict(document['tooling'])
+    if document['workspace_version'] == 1:
+        return tooling
+    tooling.update(series_sections(document, workspace).get(series, {}))
+    tooling.setdefault('series_exceptions', [])
+    return {key: placed(value, series) if key in SERIES_PATHS else value for key, value in tooling.items()}
+
+
+def series_document(document: dict, workspace: Path, selected, series: str) -> tuple[dict, str]:
+    """workspace_document for a checked document and the checkout's series."""
+    version2 = document['workspace_version'] == 2
+    section = series_sections(document, workspace).get(series, {})
+    # Derived: the Odoo series of the checkout, Python from the named environment, else the
     # series' default (tools/odoo_versions.py python_default).
-    tooling = {**tooling, 'version': odoo, 'python_version': versions().capability(odoo, 'python_default')}
+    tooling = {**series_tooling(document, workspace, series), 'version': series,
+               'python_version': versions().capability(series, 'python_default')}
     name = ''
-    if 'environments' in document or selected is not None:
-        name, environment, python = named_environment(document, workspace, odoo, selected)
+    # Version 2: the checkout's named environment, else the section's environment path, else the
+    # default named environment, else [tooling].environment.
+    if selected is not None or ('environments' in document and 'environment' not in section):
+        name, environment, python = named_environment(document, workspace, series, selected)
         # The selected path takes the place of [tooling].environment and keeps its rules.
         tooling['python_version'] = python
         if environment is not MISSING:
-            tooling['environment'] = environment
+            tooling['environment'] = placed(environment, series) if version2 else environment
     document['tooling'] = tooling
     return document, name
 
@@ -381,17 +473,76 @@ CHECKOUT_ONLY = f'{CHECKOUT_NAME} may only set ' + ' and '.join(f'[tooling].{key
 
 def checkout_overrides(root: Path) -> dict:
     """[tooling] keys of the optional checkout file; only CHECKOUT_KEYS are accepted."""
+    return dict(checkout_file(root).get('tooling', {}))
+
+
+def checkout_file(root: Path) -> dict:
+    """The optional checkout file ({} without one): [tooling] with only CHECKOUT_KEYS, and the
+    checkout's series as a top-level odoo_version (checked by checkout_series)."""
     path = root / CHECKOUT_NAME
     if not path.is_file():
         return {}
     document = read_toml(trusted(path))
     for key, value in document.items():
+        if key == 'odoo_version':
+            continue
         if key != 'tooling' or not isinstance(value, dict):
             raise InvalidConfig(f'{CHECKOUT_ONLY}: {key}')
         for name in value:
             if name not in CHECKOUT_KEYS:
                 raise InvalidConfig(f'{CHECKOUT_ONLY}: tooling.{name}')
-    return dict(document.get('tooling', {}))
+    return document
+
+
+def series_key(series: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in series.split('.'))
+
+
+def checkout_series(root: Path, document: dict, workspace: Path, declared) -> tuple[str, str]:
+    """The series of the checkout root and where it came from: `checkout` (declared, its
+    oasis-checkout.toml odoo_version; MISSING when absent), `manifests` (version 2: detected_series)
+    or `workspace` (the workspace odoo_version). A series other than the workspace odoo_version needs
+    its section (MissingSeries, which names oasis setup)."""
+    default = document['odoo_version']
+    if declared is not MISSING:
+        path = root / CHECKOUT_NAME
+        if not isinstance(declared, str) or declared not in versions().CAPABILITIES:
+            raise InvalidConfig(f'Unsupported odoo_version {shown(declared)} in {path}; '
+                                f'supported: {", ".join(versions().supported())}.')
+        series, origin, reason = declared, 'checkout', f'odoo_version in {path}'
+    else:
+        detected = detected_series(root, document, workspace) if document['workspace_version'] == 2 else None
+        series, origin, reason = ((detected, 'manifests', 'the series of its module manifests') if detected
+                                  else (default, 'workspace', ''))
+    if series != default and series not in series_sections(document, workspace):
+        raise MissingSeries(f'{root} is an Odoo {series} checkout ({reason}), but {workspace} has no '
+                            f'[series.{json.dumps(series)}] section: run {program_name()} setup to add it.')
+    return series, origin
+
+
+def detected_series(root: Path, document: dict, workspace: Path) -> str | None:
+    """The one supported series the module manifests of root's addons paths declare (manifest_series),
+    the series_exceptions of every section left out; None without any (or with invalid addons paths,
+    which resolve refuses). Several series are refused, naming each with its first module."""
+    addons = document['tooling'].get('addons_paths')
+    if not isinstance(addons, list) or not all(isinstance(path, str) and path and '\x00' not in path
+                                               and '\n' not in path for path in addons):
+        return None
+    ignored = {module for table in series_sections(document, workspace).values()
+               for module in table.get('series_exceptions', [])}
+    found = {}
+    for manifest in addon_manifests(str((root / path).resolve()) for path in addons):
+        if manifest.parent.name in ignored:
+            continue
+        declared = manifest_series(manifest, document['odoo_version'])
+        if declared is not None and declared[0] in versions().CAPABILITIES:
+            found.setdefault(declared[0], manifest.parent.name)
+    if len(found) > 1:
+        listed = ', '.join(f'{series} ({found[series]})' for series in sorted(found, key=series_key))
+        raise InvalidConfig(f'The modules of {root} declare several Odoo series: {listed}; set odoo_version in '
+                            f'{root / CHECKOUT_NAME} to the series of this checkout, or list the modules of the '
+                            f'other series in series_exceptions under its [series."<version>"] in {workspace}.')
+    return next(iter(found), None)
 
 
 def configuration(root: Path) -> tuple[dict, Path, Path]:
@@ -428,10 +579,13 @@ def layered_configuration(root: Path) -> tuple[dict, Path, Path, str, dict[str, 
     workspace = workspace_file(root)
     if workspace is None:
         raise InvalidConfig(missing_configuration(root))
-    overrides = checkout_overrides(root)
+    checkout = checkout_file(root)
+    overrides = dict(checkout.get('tooling', {}))
     # The checkout's environment is a name of [environments], not the [tooling] path.
     selected = overrides.pop('environment', None)
-    document, name = workspace_document(workspace, selected)
+    document = checked_workspace(workspace)
+    series, series_from = checkout_series(root, document, workspace, checkout.get('odoo_version', MISSING))
+    document, name = series_document(document, workspace, selected, series)
     document['tooling'].update(overrides)
     tooling = document['tooling']
     machine, defaults = machine_series(tooling['version'])
@@ -445,6 +599,8 @@ def layered_configuration(root: Path) -> tuple[dict, Path, Path, str, dict[str, 
             origins[f'{variable}_FROM'] = 'workspace' if tooling.get(key) not in (None, False) else ''
     origins['PROJECT_ENVIRONMENT_FROM'] = 'checkout' if selected is not None else 'workspace'
     origins['CHECKOUT_SLUG_FROM'] = 'checkout' if 'checkout_slug' in overrides else ''
+    if document['workspace_version'] == 2:
+        origins['ODOO_VERSION_FROM'] = series_from
     refusal = missing_source(tooling['version'], machine, workspace)
     return document, workspace.parent, workspace, name, origins, refusal
 
@@ -512,31 +668,62 @@ def manifest_series(manifest: Path, expected: str | None = None) -> tuple[str, s
     return series, version
 
 
-def series_mismatch(values: dict[str, str]) -> dict | None:
-    """The first module of the addons paths (in their order, then by directory name) whose manifest
-    declares another series than ODOO_VERSION: its module, manifest, series and version; None when
-    there is none. Only `<addons path>/<module>/__manifest__.py` is read, hidden directories skipped."""
-    expected = values['ODOO_VERSION']
-    for addons in values['ADDON_ROOTS'].splitlines():
+def addon_manifests(roots):
+    """`<addons path>/<module>/__manifest__.py` of each addons path, in their order, then by module
+    directory name; hidden directories skipped."""
+    for addons in roots:
         for manifest in sorted(Path(addons).glob('*/__manifest__.py')):
-            if manifest.parent.name.startswith('.'):
-                continue
-            declared = manifest_series(manifest, expected)
-            if declared is not None and declared[0] != expected:
-                return {'module': manifest.parent.name, 'manifest': str(manifest), 'series': declared[0],
-                        'version': declared[1]}
+            if not manifest.parent.name.startswith('.'):
+                yield manifest
+
+
+def series_mismatch(values: dict[str, str]) -> dict | None:
+    """The first module of the addons paths (addon_manifests) whose manifest declares another series
+    than ODOO_VERSION, SERIES_EXCEPTIONS left out (version 2, S4): its module, manifest, series and
+    version; None when there is none."""
+    expected = values['ODOO_VERSION']
+    ignored = set(values.get('SERIES_EXCEPTIONS', '').splitlines())
+    for manifest in addon_manifests(values['ADDON_ROOTS'].splitlines()):
+        if manifest.parent.name in ignored:
+            continue
+        declared = manifest_series(manifest, expected)
+        if declared is not None and declared[0] != expected:
+            return {'module': manifest.parent.name, 'manifest': str(manifest), 'series': declared[0],
+                    'version': declared[1]}
     return None
 
 
-def series_fix(mismatch: dict, expected: str) -> str:
-    """How to fix a series mismatch (doctor's fix line and the end of series_refusal)."""
+def series_fix(mismatch: dict, expected: str, values: dict[str, str] | None = None) -> str:
+    """How to fix a series mismatch (doctor's fix line and the end of series_refusal). With the
+    assignments of a version 2 checkout (values), the fix also names series_exceptions. For a
+    supported series it ends with the series model (S3): the checkout file's odoo_version when the
+    workspace configures that series, else oasis setup to add its section."""
     program, module, found = program_name(), mismatch['module'], mismatch['series']
     fix = (f'run {program} in a checkout of an Odoo {expected} branch, or set the version of {module} to '
            f'{expected}.x.y.z if it is an Odoo {expected} module')
-    if found in versions().CAPABILITIES:
-        return fix + (f'; for Odoo {found} here, give this checkout its own {WORKSPACE_NAME} with '
-                      f"odoo_version = '{found}'")
-    return fix + f'; {program} does not support Odoo {found} (supported: {", ".join(versions().supported())})'
+    if values is None:
+        workspace, configured = None, []
+    else:
+        workspace = Path(values['WORKSPACE_ROOT']) / WORKSPACE_NAME
+        configured = workspace_series(workspace) if values.get('WORKSPACE_VERSION') == '2' else []
+    if configured:
+        fix += f', or list {module} in series_exceptions under [series.{json.dumps(expected)}] in {workspace}'
+    if found not in versions().CAPABILITIES:
+        return fix + f'; {program} does not support Odoo {found} (supported: {", ".join(versions().supported())})'
+    if found in configured:
+        return fix + (f"; for Odoo {found} here, set odoo_version = '{found}' in "
+                      f'{Path(values["PROJECT_ROOT"]) / CHECKOUT_NAME}')
+    return fix + (f'; for Odoo {found} here, run {program} setup to add a [series.{json.dumps(found)}] section to '
+                  f'{workspace if workspace is not None else WORKSPACE_NAME}')
+
+
+def workspace_series(workspace: Path) -> list[str]:
+    """declared_series of a version 2 workspace file, [] when it cannot be read (a message only)."""
+    try:
+        document = checked_workspace(workspace)
+    except InvalidConfig:
+        return []
+    return declared_series(document, workspace) if document['workspace_version'] == 2 else []
 
 
 def series_refusal(mismatch: dict, values: dict[str, str]) -> str:
@@ -545,7 +732,7 @@ def series_refusal(mismatch: dict, values: dict[str, str]) -> str:
     workspace = Path(values['WORKSPACE_ROOT']) / WORKSPACE_NAME
     return (f'The module {mismatch["module"]} declares Odoo {mismatch["series"]} (version {mismatch["version"]} '
             f'in {mismatch["manifest"]}), but {values["PROJECT_ROOT"]} is configured for Odoo {expected} by '
-            f'{workspace}: {series_fix(mismatch, expected)}.')
+            f'{workspace}: {series_fix(mismatch, expected, values)}.')
 
 
 def origins(root: Path) -> dict[str, str]:
@@ -555,7 +742,7 @@ def origins(root: Path) -> dict[str, str]:
     ENTERPRISE_SOURCE_FROM (`machine` or `workspace`; empty without Enterprise),
     PROJECT_ENVIRONMENT_FROM (`checkout` when oasis-checkout.toml selects the named environment,
     else `workspace`) and CHECKOUT_SLUG_FROM (`checkout`, `derived` from a linked worktree's
-    directory name, empty without a slug)."""
+    directory name, empty without a slug); version 2 adds ODOO_VERSION_FROM (checkout_series)."""
     document, base, workspace, name, found, refusal = layered_configuration(root)
     values = assignments(document, root, base, workspace, name, missing_source=refusal)
     if values['CHECKOUT_SLUG'] and not found['CHECKOUT_SLUG_FROM']:
@@ -583,8 +770,13 @@ def assignments(document: dict, root: Path, base: Path, workspace: Path | None, 
     # Appended after them: Odoo's data directory, passed as --data-dir (empty when absent:
     # the odoo.conf data_dir, if any, applies as before).
     output['DATA_DIR'] = optional_path(document['tooling'], 'data_dir', base)
-    # Appended last: what the Gentle Shell layer does with the agent's destructive commands.
+    # Appended after them: what the Gentle Shell layer does with the agent's destructive commands.
     output['AGENT_DESTRUCTIVE'] = agent_destructive(document['tooling'])
+    # Appended last, only for workspace_version 2 (version 1 output is unchanged): the version and the
+    # checkout series' exceptions (newline-separated module names), which series_mismatch leaves out.
+    if document.get('workspace_version') == 2:
+        output['WORKSPACE_VERSION'] = '2'
+        output['SERIES_EXCEPTIONS'] = '\n'.join(document['tooling'].get('series_exceptions', []))
     return output
 
 

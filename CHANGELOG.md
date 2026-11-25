@@ -9,6 +9,43 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Added
+
+- Odoo 15.0 in the series table (`tools/odoo_versions.py`), read from the 15.0 source: Python
+  3.7-3.12 (default 3.10), PostgreSQL 12 minimum and 14 by default, `--longpolling-port` as the
+  second port (after the odoo.conf `longpolling_port` in a linked worktree), no demo data with
+  `--without-demo=all` (the 15.0 option takes a value), demo data by default (no `--with-demo`),
+  the `--test-tags` class filter, and the `--dev` features ipdb, pdb, pudb, wdb, qweb, reload,
+  werkzeug and xml (`all` = pdb, reload, qweb, werkzeug, xml).
+- Series keys `demo_on_args`, `user_groups_field` and `second_port_conf_option`:
+  `install-module --with-demo`, `init-dev-database` (demo options, the `res.users` groups field:
+  `group_ids` on 19.0, `groups_id` on 15.0) and a linked worktree's second port take them from the
+  table. `view-info` ranks `tree` views (15.0) with list views.
+- `workspace_version = 2`: one `oasis-workspace.toml` for several Odoo series. `[tooling]` holds the
+  shared keys and its paths may use `{series}`; `[series."<x.y>"]` sections override what differs
+  (source, environment, odoo.conf, env file, compose file, requirements, db service, prefixes,
+  test database, logs, data). A checkout's series comes from `odoo_version` in its
+  `oasis-checkout.toml`, else its module manifests, else the workspace `odoo_version`; a series
+  without a section is refused, naming `oasis setup`. Every value `tools/config.py` emits follows
+  the checkout's series, so all tools do too.
+- `series_exceptions` in a series section: modules the series guard and series detection ignore
+  (e.g. `report_xlsx` declaring 16.0 in a 15.0 branch).
+- `doctor` (version 2): `PASS series=<x.y> from=<checkout|manifests|workspace>`,
+  `PASS series_exceptions=<modules>`, and `PASS|FAIL series_isolation` when two series share a
+  database port, compose project, prefixes or env file, each with a fix.
+
+### Changed
+
+- The menu's start / restart flow takes the dev mode option and choices from the series table.
+- Unsupported-series messages list every supported series (`supported: 19.0, 15.0`); the series
+  guard's fix for a module of a supported series points to the series model (`run oasis setup to
+  add a [series."<x.y>"] section to <workspace file>`, or `odoo_version` in oasis-checkout.toml
+  when the section exists). `oasis-checkout.toml` accepts a top-level `odoo_version`.
+- The agent's changes to a checkout's `oasis-checkout.toml` ask the user in the same dialog as the
+  workspace file, whatever `[tooling].agent_destructive` says; its dialog says it sets
+  `checkout_slug`, the database namespace, and the environment.
+- 19.0 command lines, the 19.0 menu catalog and version 1 workspace output are unchanged.
+
 ## [0.14.0] - 2026-11-25
 
 ### Added

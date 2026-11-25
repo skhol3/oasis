@@ -108,7 +108,7 @@ class ConfigCliTests(unittest.TestCase):
         self.workspace.write_text(WORKSPACE.replace('odoo_version = "19.0"', 'odoo_version = "18.0"'))
         result = self.run_reader()
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'ERROR: Unsupported odoo_version "18.0" in {self.workspace}; supported: 19.0.\n'))
+                         (2, '', f'ERROR: Unsupported odoo_version "18.0" in {self.workspace}; supported: 19.0, 15.0.\n'))
 
     def test_unsafe_prefix_rejected_without_emitting_assignments(self):
         self.workspace.write_text(WORKSPACE.replace('cc_test_', 'cc_test_; echo bad'))

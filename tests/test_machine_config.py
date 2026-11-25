@@ -247,7 +247,7 @@ class MachineConfigTests(unittest.TestCase):
                 ("community = '/x'\n", f'Unknown key community in {file}; the machine file holds only '
                                        '[series."<version>"] tables.'),
                 ('series = 1\n', f'Invalid [series] in {file}.'),
-                ("[series.\"18.0\"]\ncommunity = '/x'\n", f'Unknown series "18.0" in {file}; supported: 19.0.'),
+                ("[series.\"18.0\"]\ncommunity = '/x'\n", f'Unknown series "18.0" in {file}; supported: 19.0, 15.0.'),
                 ("[series]\n\"19.0\" = '/x'\n", f'Invalid [series."19.0"] in {file}.'),
                 ("[series.\"19.0\"]\npython = '3.12'\n",
                  f'Unknown key series."19.0".python in {file}; use community, enterprise or environments.'),

@@ -59,14 +59,16 @@ FAIL python=missing
 | Failure | `fix:` |
 | --- | --- |
 | `configuration`: the legacy profile | `oasis migrate --plan, then oasis migrate --apply` |
-| `configuration`: no workspace file (`Missing tooling configuration: ...`), or no Odoo source (`No Odoo source for <x.y>: ...`); `odoo_conf=missing`, `compose=missing`, `env_file=missing` | `oasis setup --apply` |
+| `configuration`: no workspace file (`Missing tooling configuration: ...`), no section for the checkout's series (`... has no [series."<x.y>"] section: ...`), or no Odoo source (`No Odoo source for <x.y>: ...`); `odoo_conf=missing`, `compose=missing`, `env_file=missing` | `oasis setup --apply` |
 | `configuration`: any other error | `correct the setting the error names, then run oasis doctor again` |
 | `git` | `install git 2.31 or newer on PATH` |
 | `docker`, `docker_compose` | `install Docker with its compose plugin on PATH`; `install the Docker Compose plugin: docker compose version must succeed` |
 | `python=missing` | `oasis bootstrap --apply` |
 | `python=unavailable`, `python=<found> expected=<version>` | `move <environment> away, then oasis bootstrap --apply` |
 | `odoo_release=missing`, `odoo_release=<found> expected=<x.y>` | `set community under [series."<x.y>"] in <machine file> to an Odoo <x.y> source`, or `set [tooling].community in <workspace file> ...`: the file the source came from |
-| `module_series` | `run oasis in a checkout of an Odoo <x.y> branch, or set the version of <module> to <x.y>.x.y.z ...` (see [Workspace file](workspace-file.md#discovery-precedence-and-versions)) |
+| `module_series` | `run oasis in a checkout of an Odoo <x.y> branch, or set the version of <module> to <x.y>.x.y.z ...` (see [Workspace file](workspace-file.md#discovery-precedence-and-versions)); with `workspace_version = 2` also `..., or list <module> in series_exceptions under [series."<x.y>"] in <workspace file>` |
+| `series_isolation=db_port`, `series_isolation=compose_project` | `publish another port to 5432 in <compose file> and set db_port in <odoo.conf> to it`; `set another top-level name: in <compose file>`; both `set compose under [series."<x.y>"] in <workspace file> to a compose file of its own` when the series share one compose file |
+| `series_isolation=prefixes`, `series_isolation=env_file` | `set dev_prefix and test_prefix under [series."<x.y>"] in <workspace file> to a pair of its own`; `set env_file under [series."<x.y>"] in <workspace file> to a file of its own` |
 | `odoo_conf=unreadable`, `compose=unreadable`, `env_file=unreadable` | `make <file> readable by you` |
 | `odoo_conf=invalid`; `compose=missing_top_level_name` | `correct the syntax of <odoo.conf>`; `add a top-level name: to <compose file>` |
 | `env_file=empty <names>` | `fill <names> in <env file>` |
@@ -78,7 +80,9 @@ The entry point's name is the one that ran doctor (`odoo19` through the alias). 
 | Check | Passes when | Otherwise |
 | --- | --- | --- |
 | `configuration` | the workspace file loads; the value is `workspace` | `FAIL configuration=<error>` (a checkout that still has the file of earlier versions gives the refusal that names `oasis migrate`, see [Migrating](migrating.md)); the checks after `proc` are left out |
-| `odoo_version` | always, when the configuration loads (only supported series load) | |
+| `odoo_version` | always, when the configuration loads (only supported series load): the checkout's series | |
+| `series`, `series_exceptions` | with `workspace_version = 2` only: `series=<x.y> from=<checkout\|manifests\|workspace>`, where the checkout's series came from (see [The checkout's series](workspace-file.md#the-checkouts-series)); `series_exceptions=<modules>` when its section lists any | a series without a section fails `configuration` |
+| `series_isolation` | with `workspace_version = 2` and several series: no two series resolve to the same database port (published by their compose files), compose project, `dev_prefix` or `test_prefix`, or env file; the value lists the series (`19.0,15.0`) | `FAIL series_isolation=<db_port\|compose_project\|prefixes\|env_file> series=<x.y>,<x.y>`, one per group of series sharing it (see [Isolation](workspace-file.md#isolation)) |
 | `agent_destructive` | always, when the configuration loads: the value of `[tooling].agent_destructive` (`ask`, `deny` or `allow`; `ask` when absent), see [Bash guard](bash-guard.md#the-setting) | an invalid value fails `configuration` |
 | `odoo_source_from`, `enterprise_source_from`, `project_environment_from`, `checkout_slug_from` | always, when the configuration loads, one line per layered value that is set: where it came from (`tools/config.py --origins`, see [Workspace file](workspace-file.md#what-the-tools-read-from-it)), as `machine:<machine file>`, `workspace:<workspace file>`, `checkout:<checkout>/oasis-checkout.toml` or `derived` (a linked worktree's slug from its directory name). No Enterprise, no slug: no line | |
 | `git` | `git --version` reports 2.31 or newer | `FAIL git=missing`, `FAIL git=<version> minimum=2.31` |
