@@ -15,8 +15,8 @@ CLI = ROOT / 'oasis'
 PROGRAMS = ('oasis', 'odoo19')
 PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
           'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases',
-          'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'restart', 'start', 'status',
-          'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info', 'worktree-init',
+          'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'restart', 'setup', 'start',
+          'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info', 'worktree-init',
           'xmlid-info')
 
 
@@ -189,6 +189,33 @@ class GlobalCliTests(unittest.TestCase):
                 self.assertEqual(json.loads(self.log.read_text()), {
                     'argv': ['--plan'], 'root': str(self.project), 'stdin': '', 'tool': command})
                 self.log.unlink()
+
+    def test_setup_runs_without_a_workspace_file_and_every_other_command_still_needs_one(self):
+        # v0.14.0 S1: setup creates the workspace file, so it is the one command that runs before it.
+        (self.project / 'oasis-workspace.toml').unlink()
+        plain = self.temp / 'plain'
+        plain.mkdir()
+        for program in PROGRAMS:
+            for args, cwd in ((('--project', str(self.project), 'setup', '--plan'), self.temp),
+                              (('setup', '--plan'), plain)):
+                with self.subTest(program=program, args=args):
+                    self.log.unlink(missing_ok=True)
+                    result = self.invoke(*args, program=program, cwd=cwd)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                     (17, 'delegated\n', 'delegated error\n'))
+                    root = self.project if '--project' in args else plain
+                    self.assertEqual(json.loads(self.log.read_text()),
+                                     {'argv': ['--plan'], 'root': str(root), 'stdin': '', 'tool': 'setup'})
+            self.log.unlink(missing_ok=True)
+            self.assert_no_calls(self.invoke('--project', str(self.project), 'status', program=program),
+                                 f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above '
+                                 f'{self.project}.\n')
+        # A legacy profile is still refused before setup: migrate converts it.
+        profile = self.project / '.odoo19-agent.toml'
+        profile.write_text('[tooling]\n')
+        self.assert_no_calls(self.invoke('--project', str(self.project), 'setup'), (
+            f'ERROR: {profile} is the old profile format, no longer read: run oasis migrate --plan to '
+            'see its conversion to oasis-workspace.toml, then oasis migrate --apply.\n'))
 
     def test_checkout_below_a_workspace_file_dispatches(self):
         (self.project / 'oasis-workspace.toml').unlink()

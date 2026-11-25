@@ -5,6 +5,10 @@ first test run, with one `oasis-workspace.toml` for every checkout of the projec
 is the fictional `acme`; replace its names, paths and module with your own. The reference for
 every key is [Workspace file](workspace-file.md).
 
+`oasis setup` does most of these steps for you, in one command that shows its plan first and keeps
+what exists: see [Setting up a checkout with oasis setup](setup.md). The steps below are the manual
+way, and what to read to understand what it creates.
+
 - [The example tree](#the-example-tree): every folder and the workspace file that points at it.
 - [Steps](#steps): the commands, in order.
 - [Paths](#paths): relative and absolute values, and the rule for the Python environment.

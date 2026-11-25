@@ -8,6 +8,7 @@ One topic per file. Start from the group that matches what you are doing; the
 | Documentation | Purpose |
 | --- | --- |
 | [Install or update](install.md) | Which install does what: `install.sh` (skills and CLI) and the package (tools, `/oasis`, panel) |
+| [Setting up a checkout with oasis setup](setup.md) | `oasis setup`: the plan, then `--apply` creates only what is missing |
 | [Setting up a new workspace](new-workspace.md) | From an empty folder to `doctor`, a database and a test run; example tree and paths |
 | [New project: deliberate setup](project-setup.md) | Workspace file, entry point and optional project wrappers |
 | [Checking the environment](checking-environment.md) | `doctor`, `check-environment` and `lock.sha256` |

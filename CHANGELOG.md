@@ -11,6 +11,21 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Added
 
+- `oasis setup` configures a checkout in one command (docs/setup.md). Without `--apply` it prints
+  the plan and changes nothing (`--plan` asks for it explicitly); `--apply` creates only what is
+  missing and keeps every existing file: the machine file's `[series."<x.y>"]` entry with the
+  Odoo source (never edited once it exists), `oasis-workspace.toml` without source keys, a
+  path-free `odoo.conf`, a compose file with PostgreSQL on a free port, the environment file with
+  the variable names only (empty, 0600, never printed), `runtime.in` and `dev.in`, the locks and
+  the uv environment, then prints the next steps. It infers the series from the module manifests
+  and the source from the machine file, asks only on a terminal, and every answer has a flag
+  (`--series`, `--community`, `--enterprise`/`--no-enterprise`, `--workspace`, `--name`). Without
+  a workspace file, the workspace is the checkout itself (`oasis-workspace.toml` and `.oasis/`,
+  listed in `.git/info/exclude`, never `.gitignore`); an existing workspace file is adopted. It
+  rolls back if the result does not load. It is the one command that runs without a workspace
+  file.
+- Gentle Shell: agents may run `oasis setup` (the plan); the bash guard blocks `setup --apply` and
+  any `setup` whose arguments it cannot read literally, like `migrate --apply`.
 - A linked worktree with no `oasis-workspace.toml` at or above it reads the workspace file its
   main checkout reads, found through git (`git rev-parse --git-common-dir`), so worktrees can live
   anywhere; the slug still comes from the worktree's directory name, the upward search still
@@ -40,6 +55,8 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- `bootstrap --apply` compiles the locks through `tools/locks.py compile`, the code `oasis setup
+  --apply` uses; its output and messages are unchanged.
 - The Python environment may be any directory that is an environment (has `pyvenv.cfg`) or does
   not exist yet; it no longer has to be inside the checkout or under a directory named
   `*environments`. It still may not be or contain the checkout or the Odoo source. `Unsafe tooling

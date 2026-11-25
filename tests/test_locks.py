@@ -6,6 +6,7 @@ these commands is covered in test_environment.
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from pathlib import Path
 import hashlib
+import importlib.util
 import shutil
 import subprocess
 import sys
@@ -87,7 +88,21 @@ class LocksTests(unittest.TestCase):
         result = self.run_locks('compile', self.requirements)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (
             2, '', 'Usage: locks.py state <requirements dir> <project root> | '
-                   'fingerprint <requirements dir>\n'))
+                   'fingerprint <requirements dir> | compile <requirements dir> <python> <command to rerun>\n'))
+
+    def test_current_accepts_what_sha256sum_check_accepts_from_either_base(self):
+        spec = importlib.util.spec_from_file_location('oasis_locks_test', LOCKS)
+        locks = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(locks)
+        self.assertFalse(locks.current(self.requirements, self.root))
+        self.write_lock()
+        self.assertTrue(locks.current(self.requirements, self.root))
+        self.write_lock('dev/requirements/')
+        self.assertTrue(locks.current(self.requirements, self.root))
+        (self.requirements / 'dev.txt').write_text('# changed\n')
+        self.assertFalse(locks.current(self.requirements, self.root))
+        (self.requirements / 'lock.sha256').write_text('')
+        self.assertFalse(locks.current(self.requirements, self.root))
 
 
 if __name__ == '__main__':

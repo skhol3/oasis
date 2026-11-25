@@ -41,20 +41,6 @@ if [[ "$locks_state" == edited ]]; then
     "$REQUIREMENTS_DIR" >&2
   exit 2
 fi
-# `uv pip compile <input> -o <lock>` in the requirements directory with the declared Python, as
-# docs/new-workspace.md runs it by hand (the -r and -c paths of an input are relative to it); uv
-# also echoes the lock to stdout, which is dropped. A failure stops before lock.sha256.
-compile_lock() {
-  local input=$1 output=$2 status=0
-  (cd "$REQUIREMENTS_DIR" && uv pip compile --python-version "$PYTHON_VERSION" "$input" -o "$output" >/dev/null) \
-    || status=$?
-  if (( status != 0 )); then
-    printf 'uv pip compile of %s failed (exit %s); lock.sha256 was left as it was.\n' "$input" "$status" >&2
-    printf 'Fix %s or its access to the package index, then run %s bootstrap --apply again.\n' \
-      "$REQUIREMENTS_DIR/$input" "$(program_name)" >&2
-    exit 2
-  fi
-}
 if [[ -e "$PROJECT_ENVIRONMENT" && ! -x "$PYTHON" ]]; then
   printf 'Refusing to replace a non-virtualenv path: %s\n' "$PROJECT_ENVIRONMENT" >&2
   exit 2
@@ -96,10 +82,12 @@ snapshot_dir=$(server_log_path)
 snapshot_dir=${snapshot_dir%/*}
 if [[ "$locks_state" != current ]]; then
   printf 'locks=%s\n' "$locks_state"
-  # runtime.txt first: dev.in constrains itself with it (-c runtime.txt).
-  compile_lock runtime.in runtime.txt
-  compile_lock dev.in dev.txt
-  python3 -I -B "$(dirname "$0")/locks.py" fingerprint "$REQUIREMENTS_DIR"
+  # `uv pip compile <input> -o <lock>` in the requirements directory with the declared Python, as
+  # docs/new-workspace.md runs it by hand: runtime.txt first (dev.in constrains itself with it), then
+  # lock.sha256 (tools/locks.py compile, which oasis setup runs too). A failure stops before
+  # lock.sha256 and names the input.
+  python3 -I -B "$(dirname "$0")/locks.py" compile "$REQUIREMENTS_DIR" "$PYTHON_VERSION" \
+    "$(program_name) bootstrap --apply"
   printf 'locks_compiled=runtime.txt,dev.txt,lock.sha256\n'
 fi
 mkdir -p "$ENVIRONMENTS_DIR"
