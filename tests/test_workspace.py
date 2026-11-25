@@ -44,7 +44,7 @@ dev_prefix = 'acme_dev_'
 test_prefix = 'acme_test_'
 logs = 'logs'
 '''
-CHECKOUT_ONLY = 'oasis-checkout.toml may only set [tooling].checkout_slug and [tooling].environment: '
+CHECKOUT_ONLY = 'oasis-checkout.toml may only set odoo_version, [tooling].checkout_slug and [tooling].environment: '
 # The same workspace with named environments instead of [tooling].environment.
 NAMED = WORKSPACE.replace("environment = 'environments/acme'\n", '') + '''
 [environments.default]

@@ -348,7 +348,11 @@ def workspace_document(workspace: Path, selected=None, series=None) -> tuple[dic
 def checked_workspace(workspace: Path) -> dict:
     """The workspace document as written, trusted, with its versions, [tooling] and (version 2) its
     series sections checked; series_document derives a checkout's [tooling] from it."""
-    document = read_toml(trusted(workspace))
+    return checked_document(read_toml(trusted(workspace)), workspace)
+
+
+def checked_document(document: dict, workspace: Path) -> dict:
+    """checked_workspace for a document already read (oasis setup checks the file it is about to write)."""
     version = document.get('workspace_version', MISSING)
     if type(version) is not int or version not in WORKSPACE_VERSIONS:
         raise InvalidConfig(f'Unsupported workspace_version {shown(version)} in {workspace}.')
@@ -468,7 +472,8 @@ def named_environment(document: dict, workspace: Path, odoo: str, selected) -> t
 
 
 CHECKOUT_KEYS = ('checkout_slug', 'environment')
-CHECKOUT_ONLY = f'{CHECKOUT_NAME} may only set ' + ' and '.join(f'[tooling].{key}' for key in CHECKOUT_KEYS)
+CHECKOUT_ONLY = (f'{CHECKOUT_NAME} may only set odoo_version, '
+                 + ' and '.join(f'[tooling].{key}' for key in CHECKOUT_KEYS))
 
 
 def checkout_overrides(root: Path) -> dict:
@@ -520,16 +525,17 @@ def checkout_series(root: Path, document: dict, workspace: Path, declared) -> tu
     return series, origin
 
 
-def detected_series(root: Path, document: dict, workspace: Path) -> str | None:
+def detected_series(root: Path, document: dict, workspace: Path, also_ignored=()) -> str | None:
     """The one supported series the module manifests of root's addons paths declare (manifest_series),
-    the series_exceptions of every section left out; None without any (or with invalid addons paths,
-    which resolve refuses). Several series are refused, naming each with its first module."""
+    the series_exceptions of every section left out (and the modules also_ignored: oasis setup's
+    --exception); None without any (or with invalid addons paths, which resolve refuses). Several
+    series are refused, naming each with its first module."""
     addons = document['tooling'].get('addons_paths')
     if not isinstance(addons, list) or not all(isinstance(path, str) and path and '\x00' not in path
                                                and '\n' not in path for path in addons):
         return None
     ignored = {module for table in series_sections(document, workspace).values()
-               for module in table.get('series_exceptions', [])}
+               for module in table.get('series_exceptions', [])} | set(also_ignored)
     found = {}
     for manifest in addon_manifests(str((root / path).resolve()) for path in addons):
         if manifest.parent.name in ignored:
@@ -565,13 +571,15 @@ def workspace_configuration(root: Path) -> tuple[dict, Path, Path, str]:
     return document, base, workspace, name
 
 
-def layered_configuration(root: Path) -> tuple[dict, Path, Path, str, dict[str, str], str]:
+def layered_configuration(root: Path, planned: dict | None = None) -> tuple[dict, Path, Path, str, dict[str, str], str]:
     """workspace_configuration() plus where its layered values came from (see origins) and the
     refusal resolve() gives when neither the workspace nor the machine file sets the community
     source (missing_source).
 
     The machine file's series values fill only the source keys the workspace does not set;
     `enterprise = false` in the workspace means no Enterprise, whatever the machine file says.
+    planned, when given, is the checked document oasis setup is about to write to the workspace file,
+    read in its place (it is changed).
     """
     profile = root / PROFILE_NAME
     if profile.is_file():
@@ -583,7 +591,7 @@ def layered_configuration(root: Path) -> tuple[dict, Path, Path, str, dict[str, 
     overrides = dict(checkout.get('tooling', {}))
     # The checkout's environment is a name of [environments], not the [tooling] path.
     selected = overrides.pop('environment', None)
-    document = checked_workspace(workspace)
+    document = checked_workspace(workspace) if planned is None else planned
     series, series_from = checkout_series(root, document, workspace, checkout.get('odoo_version', MISSING))
     document, name = series_document(document, workspace, selected, series)
     document['tooling'].update(overrides)

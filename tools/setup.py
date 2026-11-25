@@ -14,7 +14,12 @@ environment under .oasis/, both excluded in .git/info/exclude (never the tracked
 machine file, never to a new workspace file. The locks are compiled with tools/locks.py, as
 bootstrap does, then the environment is created with uv and synced. The environment file gets only
 the variable names, with empty values: it is never read or printed.
+
+In a checkout of a series its workspace file has no section for (v0.15.0 S5), setup appends a
+[series."<x.y>"] section to that file (a version 1 file becomes version 2, that line only) and plans
+the files of that series, adopting a folder that already holds them (series_plan).
 """
+import copy
 import hashlib
 import importlib.util
 import json
@@ -26,10 +31,20 @@ import subprocess
 import sys
 import tomllib
 
-VALUE_OPTIONS = ('--series', '--community', '--enterprise', '--workspace', '--name')
+VALUE_OPTIONS = ('--series', '--community', '--enterprise', '--workspace', '--name', '--config-dir')
+REPEATED_OPTIONS = ('--exception',)
 FLAG_OPTIONS = ('--apply', '--plan', '--no-enterprise')
 # Options that only answer the questions of a new configuration (an existing one is only filled in).
 SOURCE_OPTIONS = ('--community', '--enterprise', '--no-enterprise')
+# Options that only apply when setup adds a series section to an existing workspace file, and every
+# option accepted then.
+SECTION_OPTIONS = ('--exception', '--config-dir')
+SERIES_PLAN_OPTIONS = ('--apply', '--plan', *SOURCE_OPTIONS, *SECTION_OPTIONS)
+# The workspace_version line a version 1 file must have, once, to be converted (only the 1 changes).
+VERSION_LINE = re.compile(r'(?m)^(workspace_version[ \t]*=[ \t]*)(1)([ \t]*(?:#[^\r\n]*)?\r?)$')
+SECTION_COMMENT = ('# Added by oasis setup: what differs for the Odoo {series} checkouts '
+                   '(docs/setup.md#another-odoo-series).\n')
+COMPOSE_NAMES = ('compose.yml', 'compose.yaml', 'docker-compose.yml', 'docker-compose.yaml')
 NAME = re.compile(r'[a-z][a-z0-9_]{1,19}')
 NAME_RULE = '2 to 20 lowercase letters, digits or underscores, starting with a letter'
 PORTS = range(5432, 5532)
@@ -100,6 +115,13 @@ can never apply. With --apply it creates only what is missing and keeps everythi
   - the locks (uv pip compile, as bootstrap --apply) and the Python environment (uv venv, uv pip sync).
 The series comes from the module manifests (<series>.x.y.z), else from the machine file's single series,
 else --series. It ends with the next steps.
+
+In a checkout of a series the existing workspace file has no section for (its oasis-checkout.toml
+odoo_version, else its module manifests, the modules of --exception <module> left out), it appends a
+[series."<x.y>"] section to that file (a workspace_version 1 file becomes 2, that line only) and
+creates that series' missing files: by default in <config folder>/<x.y>/, or in a folder that already
+holds its odoo.conf or compose file (<config folder>/odoo-<major>/, ...; --config-dir <dir> names one),
+which is adopted. --exception (repeatable) writes series_exceptions.
 '''
 
 
@@ -120,7 +142,8 @@ config, migrate, locks = sibling('config'), sibling('migrate'), sibling('locks')
 
 def usage() -> str:
     return (f'Usage: {config.usage_name()} setup [--series <x.y>] [--community <dir>] '
-            '[--enterprise <dir> | --no-enterprise] [--workspace <dir>] [--name <name>] [--apply | --plan]')
+            '[--enterprise <dir> | --no-enterprise] [--workspace <dir>] [--name <name>] '
+            '[--exception <module>]... [--config-dir <dir>] [--apply | --plan]')
 
 
 def parse_arguments(arguments: list[str]) -> dict | None:
@@ -131,6 +154,11 @@ def parse_arguments(arguments: list[str]) -> dict | None:
         key, equals, value = argument.partition('=')
         if argument in FLAG_OPTIONS and argument not in options:
             options[argument] = True
+        elif equals and key in REPEATED_OPTIONS:
+            options.setdefault(key, []).append(value)
+        elif argument in REPEATED_OPTIONS and index + 1 < len(arguments):
+            index += 1
+            options.setdefault(argument, []).append(arguments[index])
         elif equals and key in VALUE_OPTIONS and key not in options:
             options[key] = value
         elif argument in VALUE_OPTIONS and argument not in options and index + 1 < len(arguments):
@@ -330,8 +358,10 @@ def directories(target: Path, planned: set) -> list:
     return [('mkdir', directory) for directory in reversed(missing)]
 
 
-def free_port() -> int:
+def free_port(taken=()) -> int:
     for port in PORTS:
+        if port in taken:
+            continue
         with socket.socket() as probe:
             try:
                 probe.bind(('127.0.0.1', port))
@@ -372,6 +402,9 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
     workspace = config.workspace_file(root)
     machine = read_machine()
     if workspace is not None:
+        target = section_target(root, workspace, options)
+        if target is not None:
+            return series_plan(root, kind, options, questions, workspace, machine, target, lines)
         try:
             document, base, workspace, name, origins, refusal = config.layered_configuration(root)
         except config.InvalidConfig as exc:
@@ -407,6 +440,10 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                          'Odoo source')
         directory, new = workspace.parent, False
     else:
+        for option in SECTION_OPTIONS:
+            if option in options:
+                raise Refused(f'{option}: {root} has no workspace file; it only applies when setup adds a '
+                              '[series."<x.y>"] section to one.')
         if kind == 'linked':
             raise Refused(f'{root} is a linked worktree of {main}: run {config.program_name()} setup in the main '
                           'checkout.')
@@ -477,6 +514,301 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
     return plan
 
 
+# -- another series in an existing workspace file (v0.15.0 S5) ------------------------------------
+
+def section_target(root: Path, workspace: Path, options: dict) -> tuple[str, str, dict] | None:
+    """(series, where it came from, the checked workspace document) when root is a checkout of a series
+    the workspace file has no section for, else None: every other case, an invalid configuration
+    included, is the existing configuration's (make_plan refuses it as before). The series is the
+    checkout file's odoo_version, else the one its module manifests declare (config.detected_series,
+    the series_exceptions of every section and the --exception modules left out), also for a version 1
+    file; manifests of several series are left to the existing refusal."""
+    if (root / config.PROFILE_NAME).is_file():
+        return None
+    try:
+        document = config.checked_workspace(workspace)
+        declared = config.checkout_file(root).get('odoo_version', config.MISSING)
+        if declared is config.MISSING:
+            series = config.detected_series(root, document, workspace, options.get('--exception', ()))
+            origin = 'from the module manifests'
+        elif isinstance(declared, str) and declared in config.versions().CAPABILITIES:
+            series, origin = declared, f'from {root / config.CHECKOUT_NAME}'
+        else:
+            return None
+    except config.InvalidConfig:
+        return None
+    configured = (config.declared_series(document, workspace) if document['workspace_version'] == 2
+                  else [document['odoo_version']])
+    if series is None or series in configured:
+        return None
+    return series, origin, document
+
+
+def as_version2(document: dict) -> dict:
+    """A copy of a checked document read as workspace_version 2 (a version 1 file's [series] tables,
+    which it does not read, left out): what its series would get once converted."""
+    view = copy.deepcopy(document)
+    if view['workspace_version'] == 1:
+        view.pop('series', None)
+    view['workspace_version'] = 2
+    return view
+
+
+def series_folder(document: dict, workspace: Path, series: str, options: dict) -> tuple[Path, Path | None, str]:
+    """(the default folder of the series' files, relative as written or absolute; the folder to adopt,
+    resolved, or None; where it came from). The default is <folder of [tooling].config>/<x.y>; a
+    folder next to it named for the series (<x.y>, odoo-<major>, odoo<major>, odoo-<x.y>, odoo<x.y>,
+    <major>) that holds an odoo.conf or a compose file is adopted, or the --config-dir folder."""
+    view, base = as_version2(document), workspace.parent
+    current = config.series_tooling(view, workspace, document['odoo_version']).get('config')
+    placed = config.series_tooling(view, workspace, series).get('config')
+    if not isinstance(current, str) or not current or not isinstance(placed, str) or not placed:
+        raise Refused('Invalid tooling path: config.')
+    parent = Path(current).parent if placed == current else Path(placed).parent.parent
+    if str(parent) == '.':
+        parent = Path('config')
+    if '--config-dir' in options:
+        return parent / series, Path(options['--config-dir']).resolve(), 'from --config-dir'
+    major = series.split('.')[0]
+    found = []
+    for name in (series, f'odoo-{major}', f'odoo{major}', f'odoo-{series}', f'odoo{series}', major):
+        folder = (base / parent / name).resolve()
+        holds = folder.is_dir() and any((folder / item).is_file() for item in ('odoo.conf', *COMPOSE_NAMES))
+        if holds and folder not in found:
+            found.append(folder)
+    if len(found) > 1:
+        raise Refused(f'Several folders hold Odoo {series} files: {", ".join(map(str, found))}; pass --config-dir '
+                      '<dir>.')
+    return parent / series, (found[0] if found else None), 'found'
+
+
+def relative(path: Path, base: Path) -> str:
+    """A path for the workspace file: relative to its directory when below it, else absolute."""
+    return path.relative_to(base).as_posix() if path.is_relative_to(base) else str(path)
+
+
+def series_section(document, workspace, series, exceptions, sources, environments, options):
+    """The [series."<series>"] values (in config.SERIES_KEYS order) and the adoption plan lines: only
+    what [tooling] would otherwise share with the default series. The per-series files go to the
+    series folder (series_folder), the environment next to [tooling]'s (<environment>-<x.y>, or
+    <environments>/<name><major> with the machine file's environments), logs and data_dir to
+    <logs>/<x.y> and <data_dir>/<x.y>, the prefixes to <name><major>_dev_ and _test_ (<name> from the
+    default series' dev_prefix, its own major left out). A source that [tooling] sets is overridden
+    with this series' (sources: community and enterprise or None)."""
+    view, base, default = as_version2(document), workspace.parent, document['odoo_version']
+    old = config.series_tooling(view, workspace, default)
+    new = config.series_tooling(view, workspace, series)
+
+    def varies(key):
+        return key in new and new.get(key) != old.get(key)
+    section, lines = {}, []
+    community, enterprise = sources
+    if 'community' in old and not varies('community'):
+        section['community'] = str(community)
+    if 'enterprise' in old and not varies('enterprise'):
+        value = str(enterprise) if enterprise is not None else False
+        if value != old['enterprise']:
+            section['enterprise'] = value
+    dev = old.get('dev_prefix')
+    if not isinstance(dev, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]+_dev_', dev):
+        raise Refused('Unsafe tooling database prefixes.')
+    name, own = dev[:-len('_dev_')], default.split('.')[0]
+    if name.endswith(own) and name[:-len(own)].rstrip('_'):
+        name = name[:-len(own)].rstrip('_')
+    name += series.split('.')[0]
+    environment = old.get('environment')
+    if environment is None and isinstance(view.get('environments'), dict):
+        environment = view['environments'].get('default', {}).get('path') if isinstance(
+            view['environments'].get('default'), dict) else None
+        varying = config.placed(environment, series) != config.placed(environment, default)
+    else:
+        varying = varies('environment')
+    if not varying and environments:
+        section['environment'] = f'{environments}/{name}'
+    elif not varying and isinstance(environment, str) and environment:
+        section['environment'] = (Path(environment).parent / f'{Path(environment).name}-{series}').as_posix()
+    folder, adopted, origin = series_folder(document, workspace, series, options)
+    files = {'config': 'odoo.conf', 'compose': 'compose.yml', 'env_file': '.env', 'requirements': 'requirements'}
+    if adopted is not None:
+        compose = next((item for item in COMPOSE_NAMES if (adopted / item).is_file()), 'compose.yml')
+        files['compose'] = compose
+        held = [(key, item) for key, item in files.items()
+                if ((adopted / item).is_dir() if key == 'requirements' else (adopted / item).is_file())]
+        lines.append(f'adopt {adopted} ({origin}): '
+                     + (', '.join(item + ('/' if key == 'requirements' else '') for key, item in held) or 'no files yet'))
+        for key, item in files.items():
+            if key in dict(held) or not varies(key):
+                section[key] = relative(adopted / item, base)
+    else:
+        for key, item in files.items():
+            if not varies(key):
+                written = old.get(key)
+                if isinstance(written, str) and written and key != 'requirements':
+                    item = Path(written).name
+                section[key] = (folder / item).as_posix()
+    # A key that only repeats what the series already gets from [tooling] is left out.
+    for key in list(section):
+        if key in files and varies(key) and (base / section[key]).resolve() == (base / new[key]).resolve():
+            del section[key]
+    section['dev_prefix'], section['test_prefix'] = f'{name}_dev_', f'{name}_test_'
+    database, test = old.get('test_database'), old.get('test_prefix')
+    if (isinstance(database, str) and isinstance(test, str) and database.startswith(test)
+            and not varies('test_database')):
+        section['test_database'] = f'{name}_test_' + database[len(test):]
+    for key, directory in (('logs', 'logs'), ('data_dir', 'data')):
+        if not varies(key):
+            written = old.get(key)
+            section[key] = (f'{written.rstrip("/")}/{series}' if isinstance(written, str) and written
+                            else f'{directory}/{series}')
+    if exceptions:
+        section['series_exceptions'] = exceptions
+    return {key: section[key] for key in config.SERIES_KEYS if key in section}, lines
+
+
+def effective(document: dict, workspace: Path, series: str) -> list:
+    """What a checked document gives a checkout of series, for every environment it may select: the
+    derived [tooling] and the environment name, or the refusal (series_exceptions [] left out, which
+    version 2 adds)."""
+    environments = document.get('environments')
+    found = []
+    for selected in [None, *(environments if isinstance(environments, dict) else ())]:
+        try:
+            derived, name = config.series_document(copy.deepcopy(document), workspace, selected, series)
+        except config.InvalidConfig as exc:
+            found.append(str(exc))
+            continue
+        tooling = derived['tooling']
+        if tooling.get('series_exceptions') == []:
+            del tooling['series_exceptions']
+        found.append((tooling, name))
+    return found
+
+
+def extended_workspace(workspace: Path, document: dict, series: str, section: dict):
+    """(the new bytes, the original ones, the plan lines, the checked new document) of the workspace
+    file with the section appended and, for version 1, its workspace_version line changed to 2. The
+    result must parse to the same document with only those changes, pass the workspace checks, and
+    give every series it configured the same configuration; otherwise it is refused."""
+    table = f'[series.{json.dumps(series)}]'
+    try:
+        raw = workspace.read_bytes()
+        text = raw.decode('utf-8')
+    except (OSError, UnicodeError) as exc:
+        raise Refused(f'Cannot read {workspace}.') from exc
+    lines = []
+    if document['workspace_version'] == 1:
+        found = list(VERSION_LINE.finditer(text))
+        if len(found) != 1:
+            raise Refused(f'Cannot convert {workspace} to workspace_version 2: no single line workspace_version = 1; '
+                          f'set workspace_version = 2 yourself, then run {config.program_name()} setup again.')
+        text = text[:found[0].start(2)] + '2' + text[found[0].end(2):]
+        lines.append(f'change workspace_version = 1 to workspace_version = 2 in {workspace} (that line only)')
+    addition = SECTION_COMMENT.format(series=series) + migrate.toml_table(f'series.{json.dumps(series)}', section)
+    separator = '' if not text.strip() else '\n' if text.endswith('\n') else '\n\n'
+    lines += [f'add {table} to {workspace}:', *(f'  {line}' if line else '' for line in addition.splitlines())]
+    expected = copy.deepcopy(document)
+    expected['workspace_version'] = 2
+    try:
+        parsed = tomllib.loads(text + separator + addition)
+        expected.setdefault('series', {})[series] = section
+    except (tomllib.TOMLDecodeError, TypeError, AttributeError):
+        parsed = None
+    if parsed != expected:
+        raise Refused(f'Cannot add {table} to {workspace}: the result is not the same file with that section added; '
+                      'edit the file yourself.')
+    try:
+        checked = config.checked_document(copy.deepcopy(parsed), workspace)
+    except config.InvalidConfig as exc:
+        raise Refused(f'Cannot add {table} to {workspace}: as workspace_version 2 it would be refused ({exc}); edit '
+                      'the file yourself.') from exc
+    configured = (config.declared_series(document, workspace) if document['workspace_version'] == 2
+                  else [document['odoo_version']])
+    for other in configured:
+        if effective(document, workspace, other) != effective(checked, workspace, other):
+            raise Refused(f'Cannot add {table} to {workspace}: the change would alter the configuration of Odoo '
+                          f'{other} ({{series}} or a [series] table that version 1 does not read); edit the file '
+                          'yourself.')
+    return (text + separator + addition).encode(), raw, lines, checked
+
+
+def configured_port(conf: Path) -> int | None:
+    """The port an existing odoo.conf connects to (db_port, PostgreSQL's default without one), None when
+    it cannot be read. Only db_port is read, never the rest of odoo.conf."""
+    reader = sibling('odoo_addons_path')
+    try:
+        return int(reader.read_option(conf, 'db_port') or POSTGRES_PORT)
+    except (ValueError, reader.ConfError):
+        return None
+
+
+def series_ports(document: dict, workspace: Path) -> set[int]:
+    """The ports the series a workspace configures already use (their odoo.conf and compose files), which
+    a new series' compose file must not publish."""
+    taken = set()
+    configured = (config.declared_series(document, workspace) if document['workspace_version'] == 2
+                  else [document['odoo_version']])
+    for series in configured:
+        tooling = config.series_tooling(document, workspace, series)
+        for key, read in (('config', configured_port), ('compose', published_port)):
+            value = tooling.get(key)
+            if isinstance(value, str) and value and '\x00' not in value and (workspace.parent / value).is_file():
+                port = read(workspace.parent / value)
+                if port is not None:
+                    taken.add(port)
+    return taken
+
+
+def series_plan(root, kind, options, questions, workspace, machine, target, lines) -> dict:
+    """make_plan for a checkout of a series the workspace file has no section for (section_target)."""
+    series, origin, document = target
+    lines.append(f'workspace: {workspace} (existing)')
+    for option in options:
+        if option not in SERIES_PLAN_OPTIONS:
+            raise Refused(f'{option}: {root} is already configured by {workspace}; setup only fills what is '
+                          'missing.')
+    exceptions = list(dict.fromkeys(options.get('--exception', [])))
+    for module in exceptions:
+        if not config.MODULE_NAME.fullmatch(module):
+            raise Refused(f'Invalid --exception {module}: use a module name.')
+    # The series guard of the section about to be written, before any question.
+    addons = document['tooling'].get('addons_paths')
+    if isinstance(addons, list) and addons and all(isinstance(path, str) and path and '\x00' not in path
+                                                   and '\n' not in path for path in addons):
+        mismatch = config.series_mismatch({'ODOO_VERSION': series, 'SERIES_EXCEPTIONS': '\n'.join(exceptions),
+                                           'ADDON_ROOTS': '\n'.join(str((root / path).resolve()) for path in addons)})
+        if mismatch is not None:
+            raise Refused(f'The module {mismatch["module"]} declares Odoo {mismatch["series"]} (version '
+                          f'{mismatch["version"]} in {mismatch["manifest"]}), but {root} is an Odoo {series} checkout: '
+                          f'pass --exception {mismatch["module"]} to list it in series_exceptions under '
+                          f'[series.{json.dumps(series)}], or set its version to {series}.x.y.z if it is an Odoo '
+                          f'{series} module.')
+    community, enterprise, source_origin, machine_lines, machine_actions, environments = choose_sources(
+        root, series, options, machine, questions)
+    lines += [f'series: {series} ({origin}; {workspace} has no [series.{json.dumps(series)}] section)',
+              f'community: {community} ({source_origin[0]})', f'enterprise: {enterprise or "none"} ({source_origin[1]})',
+              *machine_lines]
+    section, adoption = series_section(document, workspace, series, exceptions, (community, enterprise),
+                                       environments, options)
+    new, raw, workspace_lines, checked = extended_workspace(workspace, document, series, section)
+    lines += [*workspace_lines, *adoption]
+    try:
+        planned, base, _workspace, name, _origins, _refusal = config.layered_configuration(root, planned=checked)
+        # A new machine entry is not written yet: its source, as the existing flow does.
+        if 'community' not in planned['tooling']:
+            planned['tooling']['community'] = str(community)
+        if enterprise is not None and 'enterprise' not in planned['tooling']:
+            planned['tooling']['enterprise'] = str(enterprise)
+        values = config.assignments(planned, root, base, workspace, name)
+    except config.InvalidConfig as exc:
+        raise Refused(str(exc)) from exc
+    guarded(values)
+    plan = {'root': root, 'workspace': workspace, 'values': values, 'lines': lines,
+            'actions': [*machine_actions, ('extend', workspace, raw, new)], 'after': [], 'created': set(),
+            'new': False, 'taken': series_ports(document, workspace)}
+    gaps(plan, base, set())
+    return plan
+
+
 def guarded(values: dict):
     """Refuse a configuration whose modules declare another Odoo series (config.series_mismatch, S11)."""
     mismatch = config.series_mismatch(values)
@@ -515,21 +847,18 @@ def gaps(plan: dict, directory: Path, planned: set):
     # that disagree are reported; only without either is a free port chosen.
     conf_port = compose_port = None
     if conf.exists():
-        reader = sibling('odoo_addons_path')
-        try:
-            # Only db_port is read, never the rest of odoo.conf.
-            conf_port = int(reader.read_option(conf, 'db_port') or POSTGRES_PORT)
-        except (ValueError, reader.ConfError):
-            conf_port = None
+        conf_port = configured_port(conf)
     if compose.exists():
         compose_port = published_port(compose)
     port, unread = None, False
+    # A new series' compose file never publishes a port another series of the workspace uses.
+    taken = plan.get('taken', set())
     if conf.exists() and not compose.exists():
-        port = conf_port if conf_port is not None else free_port()
+        port = conf_port if conf_port is not None else free_port(taken)
     elif compose.exists() and not conf.exists():
-        port, unread = (compose_port, False) if compose_port is not None else (free_port(), True)
+        port, unread = (compose_port, False) if compose_port is not None else (free_port(taken), True)
     elif not conf.exists():
-        port = free_port()
+        port = free_port(taken)
     series = values['ODOO_VERSION']
     postgres = config.versions().capability(series, 'postgres_default')
     name = values['DEV_PREFIX'][:-len('_dev_')].lower().replace('_', '-')
@@ -722,10 +1051,10 @@ def main(arguments: list[str]) -> int:
     if options is None:
         print(usage(), file=sys.stderr)
         return 2
-    if '--workspace' in options and (not os.path.isabs(options['--workspace'])
-                                     or not os.path.isdir(options['--workspace'])):
-        print('ERROR: --workspace requires an absolute existing directory.', file=sys.stderr)
-        return 2
+    for option in ('--workspace', '--config-dir'):
+        if option in options and (not os.path.isabs(options[option]) or not os.path.isdir(options[option])):
+            print(f'ERROR: {option} requires an absolute existing directory.', file=sys.stderr)
+            return 2
     root = config.selected_root()
     if root is None:
         print(f'ERROR: {config.PROJECT_ROOT_REQUIRED}', file=sys.stderr)

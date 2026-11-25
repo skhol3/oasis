@@ -11,6 +11,15 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Added
 
+- `oasis setup` in a checkout of an Odoo series the workspace file has no section for (a 15.0
+  branch of a 19.0 project) adds a `[series."x.y"]` section to that file (a `workspace_version = 1`
+  file becomes version 2, that line only) and the machine file entry of the series, and creates
+  only that series' missing files: `config/<x.y>/` by default, `logs/<x.y>` and `data/<x.y>`,
+  prefixes `<name><major>_dev_` and `<name><major>_test_`, PostgreSQL of the series on a port no
+  other series uses, the series' Python. A folder that already holds the series' files
+  (`config/odoo-15/`, or `--config-dir <dir>`) is adopted; `--exception <module>` (repeatable)
+  writes `series_exceptions`. A file that cannot be extended without changing another series is
+  refused (docs/setup.md#another-odoo-series).
 - Odoo 15.0 in the series table (`tools/odoo_versions.py`), read from the 15.0 source: Python
   3.7-3.12 (default 3.10), PostgreSQL 12 minimum and 14 by default, `--longpolling-port` as the
   second port (after the odoo.conf `longpolling_port` in a linked worktree), no demo data with
@@ -36,6 +45,8 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- An `oasis-checkout.toml` with a key it may not set is refused with `oasis-checkout.toml may only
+  set odoo_version, [tooling].checkout_slug and [tooling].environment: <key>`.
 - The menu's start / restart flow takes the dev mode option and choices from the series table.
 - Unsupported-series messages list every supported series (`supported: 19.0, 15.0`); the series
   guard's fix for a module of a supported series points to the series model (`run oasis setup to

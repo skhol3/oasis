@@ -15,12 +15,14 @@ cd /absolute/checkout
 
 ```text
 oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enterprise <dir> | --no-enterprise]
-                                   [--workspace <dir>] [--name <name>] [--apply | --plan]
+                                   [--workspace <dir>] [--name <name>] [--exception <module>]...
+                                   [--config-dir <dir>] [--apply | --plan]
 ```
 
 - [Plan and apply](#plan-and-apply): what is printed, what changes, exit status.
 - [What it infers and what it asks](#what-it-infers-and-what-it-asks): the checkout, the series, the source.
 - [What it creates and what it keeps](#what-it-creates-and-what-it-keeps): every file and directory.
+- [Another Odoo series](#another-odoo-series): a checkout of a series the workspace file has no section for.
 - [Next steps](#next-steps): what is left for you.
 - [oasis setup and /oasis setup](#oasis-setup-and-oasis-setup): two different commands.
 
@@ -126,7 +128,118 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
   configuration already has a source) are then refused (`<option>: <checkout> is already configured
   by <file>; setup only fills what is missing.`). A workspace file without a source gets the machine
   file entry. A checkout that still has the legacy profile is refused before setup runs: run
-  [migrate](migrating.md) first.
+  [migrate](migrating.md) first. A checkout of another series than the file configures gets a
+  section instead ([Another Odoo series](#another-odoo-series)). `--exception` and `--config-dir` apply
+  only then; without a workspace file they are refused (`<option>: <checkout> has no workspace file; it
+  only applies when setup adds a [series."<x.y>"] section to one.`).
+
+## Another Odoo series
+
+One workspace file can hold [several Odoo series](workspace-file.md#several-series-workspace_version-2).
+Run `setup` in a checkout of a series the file has no section for, and the plan adds that section and
+that series' files, next to the other series and without touching them:
+
+- The checkout's series: `odoo_version` in its `oasis-checkout.toml`, else the series its module
+  manifests declare, the modules of `--exception <module>` (repeatable) and of every section's
+  `series_exceptions` left out. Manifests of several supported series are refused as before. A module
+  of another series that is not an exception is refused before any question: `The module <module>
+  declares Odoo 16.0 (version 16.0.2.0.2 in <manifest>), but <checkout> is an Odoo 15.0 checkout: pass
+  --exception <module> to list it in series_exceptions under [series."15.0"], or set its version to
+  15.0.x.y.z if it is an Odoo 15.0 module.`
+- The machine file entry of the series, when it is missing, exactly as for a new checkout (`--community`,
+  `--enterprise` or `--no-enterprise`, else a question). `--series`, `--name` and `--workspace` are refused.
+- The workspace file: `add [series."<x.y>"] to <file>:` shows the section, appended after a one-line
+  comment; nothing else in the file changes. A `workspace_version = 1` file becomes version 2 by that line
+  only (`change workspace_version = 1 to workspace_version = 2 in <file> (that line only)`). The result
+  is checked before anything is written: it must parse to the same document plus the section, pass the
+  workspace checks, and give every series it configured the same configuration. Otherwise it is
+  refused (exit 2), for example `Cannot add [series."15.0"] to <file>: the change would alter the
+  configuration of Odoo 19.0 ({series} or a [series] table that version 1 does not read); edit the file
+  yourself.`, or, when the version line is not a plain `workspace_version = 1`, `Cannot convert <file> to
+  workspace_version 2: no single line workspace_version = 1; set workspace_version = 2 yourself, then
+  run oasis setup again.`
+- The section sets only what `[tooling]` would otherwise share with the default series (a path that
+  already uses `{series}` is left to `[tooling]`): `config`, `env_file`, `compose` and `requirements` in
+  `<folder of [tooling].config>/<x.y>/` (`config/15.0/`), the environment next to `[tooling]`'s
+  (`environments/acme` gives `environments/acme-15.0`; with the machine file's `environments` for the
+  series, `<environments>/<name><major>`), `logs` and `data_dir` in `<logs>/<x.y>` and `<data_dir>/<x.y>`,
+  the prefixes `<name><major>_dev_` and `<name><major>_test_` (`cc_dev_` gives `cc15_dev_`), the source
+  when `[tooling]` sets one, and `series_exceptions` from `--exception`.
+- Adopted files: a folder next to the default one named for the series (`<x.y>`, `odoo-<major>`,
+  `odoo<major>`, `odoo-<x.y>`, `odoo<x.y>` or `<major>`) that holds an `odoo.conf` or a compose file
+  (`compose.yml`, `compose.yaml`, `docker-compose.yml`, `docker-compose.yaml`), or the folder
+  `--config-dir <dir>` names (an absolute existing directory), is adopted: `adopt <folder> (found):
+  odoo.conf, compose.yml, .env, requirements/`. The section points to its files, setup keeps them and
+  creates only the missing ones there. Two such folders are refused (`Several folders hold Odoo 15.0
+  files: <folder>, <folder>; pass --config-dir <dir>.`).
+- The missing files as for any checkout ([What it creates](#what-it-creates-and-what-it-keeps)), with
+  the series' values: the compose file with its `postgres_default` (`postgres:14` on 15.0) on a free port
+  that no other series of the workspace uses, its own compose project (`oasis-<name><major>-...`), the
+  requirement inputs of its source, and the locks and environment with its `python_default` (3.10 on
+  15.0).
+
+After `--apply` the next run in that checkout finds the section and only prints `kept` lines; the
+checkouts of the other series read the file as before. Agents may run the plan; `setup --apply` stays
+the user's.
+
+For example, corpus-cafe has a 19.0 workspace file and a 15.0 worktree, `codigo/facturacion`, whose
+`report_xlsx` declares `16.0.2.0.2`; an earlier setup left the 15.0 files in `config/odoo-15/`
+(`odoo.conf` with `db_port = 5415` and `dbfilter = ^cc15_`, `compose.yml` with `postgres:14-alpine` on
+5415, `.env`):
+
+```toml
+# corpus-cafe/oasis-workspace.toml before, example only.
+workspace_version = 1
+odoo_version = '19.0'
+
+[tooling]
+environment = 'environments/corpus-cafe'
+config = 'config/odoo.conf'
+env_file = 'config/.env'
+compose = 'config/compose.yml'
+requirements = 'config/requirements'
+addons_paths = ['.']
+db_service = 'db'
+dev_prefix = 'cc_dev_'
+test_prefix = 'cc_test_'
+logs = 'logs'
+data_dir = 'data'
+```
+
+```bash
+cd corpus-cafe/codigo/facturacion
+~/.agents/skills/odoo19/oasis setup --exception report_xlsx            # the plan
+~/.agents/skills/odoo19/oasis setup --exception report_xlsx --apply
+```
+
+```text
+series: 15.0 (from the module manifests; <corpus-cafe>/oasis-workspace.toml has no [series."15.0"] section)
+...
+change workspace_version = 1 to workspace_version = 2 in <corpus-cafe>/oasis-workspace.toml (that line only)
+add [series."15.0"] to <corpus-cafe>/oasis-workspace.toml:
+  # Added by oasis setup: what differs for the Odoo 15.0 checkouts (docs/setup.md#another-odoo-series).
+  [series."15.0"]
+  environment = 'environments/corpus-cafe-15.0'
+  config = 'config/odoo-15/odoo.conf'
+  env_file = 'config/odoo-15/.env'
+  compose = 'config/odoo-15/compose.yml'
+  requirements = 'config/odoo-15/requirements'
+  dev_prefix = 'cc15_dev_'
+  test_prefix = 'cc15_test_'
+  logs = 'logs/15.0'
+  data_dir = 'data/15.0'
+  series_exceptions = ['report_xlsx']
+adopt <corpus-cafe>/config/odoo-15 (found): odoo.conf, compose.yml, .env
+kept <corpus-cafe>/config/odoo-15/odoo.conf
+kept <corpus-cafe>/config/odoo-15/compose.yml
+kept <corpus-cafe>/config/odoo-15/.env
+create <corpus-cafe>/config/odoo-15/requirements/runtime.in: -r <15.0 source>/requirements.txt
+...
+create the environment <corpus-cafe>/environments/corpus-cafe-15.0 with Python 3.10 (uv venv) and sync dev.txt (uv pip sync)
+```
+
+The 19.0 checkouts keep `config/odoo.conf`, `cc_dev_` and their environment; `doctor` in either shows
+`PASS series_isolation=19.0,15.0` once the two compose files publish different ports.
 
 ## Next steps
 

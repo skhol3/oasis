@@ -207,9 +207,11 @@ class SetupTests(unittest.TestCase):
     def test_usage_errors_change_nothing(self):
         before = self.tree()
         usage = (f'Usage: {CLI} setup [--series <x.y>] [--community <dir>] [--enterprise <dir> | --no-enterprise] '
-                 '[--workspace <dir>] [--name <name>] [--apply | --plan]\n')
+                 '[--workspace <dir>] [--name <name>] [--exception <module>]... [--config-dir <dir>] '
+                 '[--apply | --plan]\n')
         for args in (('--apply', '--plan'), ('--plan', '--apply'), ('--enterprise', '/x', '--no-enterprise'),
-                     ('--app',), ('--community',), ('--apply', '--apply'), ('extra',), ('--',), ('--a',)):
+                     ('--app',), ('--community',), ('--apply', '--apply'), ('extra',), ('--',), ('--a',),
+                     ('--exception',), ('--config-dir', '/x', '--config-dir', '/y')):
             with self.subTest(args=args):
                 result = self.setup_cmd(*args)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', usage))
@@ -452,7 +454,8 @@ class SetupTests(unittest.TestCase):
             f'create the environment {project / "envs/shop"} with Python 3.12 (uv venv) and sync dev.txt '
             '(uv pip sync)']) + '\n' + DRY_RUN)
         self.assertEqual(self.tree(), before)
-        for flag in (('--community', str(self.source)), ('--name', 'other'), ('--series', '19.0')):
+        for flag in (('--community', str(self.source)), ('--name', 'other'), ('--series', '19.0'),
+                     ('--exception', 'shop_sale'), ('--config-dir', str(project / 'config'))):
             with self.subTest(flag=flag[0]):
                 self.assert_refused(self.setup_cmd(*flag), f'{flag[0]}: {self.checkout} is already configured by '
                                     f'{project / "oasis-workspace.toml"}; setup only fills what is missing.', before)
@@ -503,6 +506,15 @@ class SetupTests(unittest.TestCase):
         self.assert_refused(self.setup_cmd('--name', '9x', '--community', str(self.source), '--no-enterprise'),
                             'Invalid --name 9x: use 2 to 20 lowercase letters, digits or underscores, starting '
                             'with a letter.', before)
+
+    def test_series_section_options_are_refused_without_a_workspace_file(self):
+        # v0.15.0 S5: --exception and --config-dir only apply when setup adds a series section.
+        before = self.tree()
+        for flag in (('--exception', 'shop_sale'), ('--config-dir', str(self.scratch))):
+            with self.subTest(flag=flag[0]):
+                self.assert_refused(self.setup_cmd(*flag, '--community', str(self.source), '--no-enterprise'),
+                                    f'{flag[0]}: {self.checkout} has no workspace file; it only applies when setup '
+                                    'adds a [series."<x.y>"] section to one.', before)
 
 
     # -- review follow-ups (review-f6708244dde86835) and the series guard (S11) ----------------
@@ -600,7 +612,7 @@ class SetupTests(unittest.TestCase):
         before = self.tree()
         result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
         self.assertEqual((result.returncode, result.stderr), (1, (
-            'ERROR: Verification failed (oasis-checkout.toml may only set [tooling].checkout_slug and '
+            'ERROR: Verification failed (oasis-checkout.toml may only set odoo_version, [tooling].checkout_slug and '
             '[tooling].environment: tooling.unknown); every change was undone.\n')))
         self.assertIn(f'add [series."19.0"] to {self.machine}:\n', result.stdout)
         self.assertIn(f'create {self.checkout / "oasis-workspace.toml"} (mode 0600):\n', result.stdout)
