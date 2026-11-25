@@ -381,6 +381,95 @@ class SeriesSetupTests(unittest.TestCase):
         self.assertIn(f'create the environment {self.project / "environments/corpus-cafe-15.0"} with Python '
                       f'{PYTHON_15} (uv venv)', result.stdout)
 
+    # -- the adopted odoo.conf's data_dir and the folder's logs (L18) ---------------------------
+
+    def adopted_conf(self, data_dir, workspace=V1):
+        """config/odoo-15 with its files, its odoo.conf setting data_dir (a password line kept in it)."""
+        self.workspace.write_text(workspace)
+        self.write_machine(f"[series.\"19.0\"]\ncommunity = '{self.source19}'\n"
+                           f"[series.\"15.0\"]\ncommunity = '{self.source15}'\n")
+        folder = self.project / 'config/odoo-15'
+        self.series_files(folder, 5415, 'corpus-cafe-15')
+        with (folder / 'odoo.conf').open('a') as stream:
+            stream.write(f'data_dir = {data_dir}\ndb_password = {MARKER}\n')
+        return folder
+
+    def test_the_adopted_odoo_conf_data_dir_and_the_folder_logs_are_the_section_ones(self):
+        folder = self.adopted_conf(self.project / 'data/odoo-15')
+        (self.project / 'logs/odoo-15').mkdir(parents=True)
+        before = self.tree()
+        result = self.setup_cmd('--exception', 'report_xlsx')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertIn("  dev_prefix = 'cc15_dev_'\n  test_prefix = 'cc15_test_'\n  logs = 'logs/odoo-15'\n"
+                      "  data_dir = 'data/odoo-15'\n  series_exceptions = ['report_xlsx']\n"
+                      f'adopt {folder} (found): odoo.conf, compose.yml, .env\n'
+                      f'data_dir: {self.project / "data/odoo-15"} (data_dir from {folder / "odoo.conf"})\n'
+                      f'logs: {self.project / "logs/odoo-15"} (named for {folder})\n', result.stdout)
+        self.assertIn(f'kept {self.project / "logs/odoo-15"}/\ncreate {self.project / "data/odoo-15"}/\n',
+                      result.stdout)
+        self.assertNotIn('logs/15.0', result.stdout)
+        self.assertNotIn('data/15.0', result.stdout)
+        self.assertNotIn(MARKER, result.stdout)
+        self.assertTrue(result.stdout.endswith(DRY_RUN))
+        self.assertEqual(self.tree(), before)
+        applied = self.setup_cmd('--apply', '--exception', 'report_xlsx')
+        self.assertEqual((applied.returncode, applied.stderr), (0, ''), applied.stdout)
+        self.assertNotIn(MARKER, applied.stdout)
+        self.assertIn("logs = 'logs/odoo-15'\ndata_dir = 'data/odoo-15'\n", self.workspace.read_text())
+        values = self.reader(self.checkout)
+        self.assertEqual((values.returncode, values.stderr), (0, ''))
+        self.assertIn(f'LOGS_DIR={self.project / "logs/odoo-15"}\n', values.stdout)
+        self.assertIn(f'DATA_DIR={self.project / "data/odoo-15"}\n', values.stdout)
+        self.assertFalse((self.project / 'data/15.0').exists())
+        self.assertFalse((self.project / 'logs/15.0').exists())
+
+    def test_a_relative_or_home_data_dir_is_read_as_odoo_reads_it_and_logs_keep_the_default(self):
+        # Odoo makes a relative data_dir absolute from its working directory (setup_cmd runs in the scratch
+        # directory) and expands ~; a directory outside the workspace is written absolute.
+        for value, expected, written in (
+                ('corpus-cafe/data/odoo-15', self.project / 'data/odoo-15', 'data/odoo-15'),
+                ('~/filestore15', self.scratch / 'home/filestore15', str(self.scratch / 'home/filestore15'))):
+            with self.subTest(value=value):
+                folder = self.adopted_conf(value)
+                result = self.setup_cmd('--exception', 'report_xlsx')
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                self.assertIn(f"  logs = 'logs/15.0'\n  data_dir = '{written}'\n", result.stdout)
+                self.assertIn(f'adopt {folder} (found): odoo.conf, compose.yml, .env\n'
+                              f'data_dir: {expected} (data_dir from {folder / "odoo.conf"})\nkept ', result.stdout)
+                self.assertNotIn('logs: ', result.stdout)
+                self.assertIn(f'create {self.project / "logs/15.0"}/\ncreate {expected}/\n', result.stdout)
+                self.assertNotIn(MARKER, result.stdout)
+
+    def test_a_data_dir_with_series_in_tooling_is_overridden_unless_it_is_the_same(self):
+        folder = self.adopted_conf(self.project / 'data/odoo-15', workspace=V2)
+        result = self.setup_cmd('--exception', 'report_xlsx')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertIn("  test_prefix = 'cc15_test_'\n  data_dir = 'data/odoo-15'\n  series_exceptions", result.stdout)
+        self.assertIn(f'data_dir: {self.project / "data/odoo-15"} (data_dir from {folder / "odoo.conf"})\n',
+                      result.stdout)
+        # The data_dir [tooling] already gives the series is not repeated.
+        folder = self.adopted_conf(self.project / 'data/15.0', workspace=V2)
+        result = self.setup_cmd('--exception', 'report_xlsx')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertIn("  test_prefix = 'cc15_test_'\n  series_exceptions", result.stdout)
+        self.assertIn(f'data_dir: {self.project / "data/15.0"} (data_dir from {folder / "odoo.conf"})\n',
+                      result.stdout)
+
+    def test_an_adopted_odoo_conf_without_data_dir_keeps_the_default_data_dir(self):
+        self.workspace.write_text(V1)
+        folder = self.project / 'config/odoo-15'
+        self.series_files(folder, 5415, 'corpus-cafe-15')
+        (self.project / 'data/odoo-15').mkdir(parents=True)
+        for conf in ('[options]\ndb_port = 5415\n', '[options]\ndb_port = 5415\ndata_dir =\n'):
+            with self.subTest(conf=conf):
+                (folder / 'odoo.conf').write_text(conf + f'admin_passwd = {MARKER}\n')
+                result = self.setup_cmd('--community', str(self.source15), '--no-enterprise',
+                                        '--exception', 'report_xlsx')
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                self.assertIn("  logs = 'logs/15.0'\n  data_dir = 'data/15.0'\n", result.stdout)
+                self.assertNotIn('data_dir: ', result.stdout)
+                self.assertNotIn(MARKER, result.stdout)
+
     def test_config_dir_names_the_folder_to_adopt_and_missing_pieces_are_created_there(self):
         self.workspace.write_text(V1)
         folder = self.scratch / 'legacy15'

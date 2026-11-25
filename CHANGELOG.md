@@ -34,6 +34,9 @@ names) may still change in a minor release; every such change is listed here und
   A kept `odoo.conf` or compose file whose PostgreSQL port another series uses is refused, naming
   both series, the port and the fix. A failed verification, `uv pip compile` or `uv venv` undoes
   every change, including the workspace file edit, the machine entry and rewritten locks.
+  The adopted folder keeps that series' data and logs where they are: the `data_dir` of its kept
+  `odoo.conf` (only that option is read) becomes the section's `data_dir`, and an existing
+  `logs/<folder name>` (`logs/odoo-15` for `config/odoo-15`) becomes its `logs`.
 - Odoo 15.0 in the series table (`tools/odoo_versions.py`), read from the 15.0 source: Python
   3.7-3.12 (default 3.10), PostgreSQL 12 minimum and 14 by default, `--longpolling-port` as the
   second port (after the odoo.conf `longpolling_port` in a linked worktree), no demo data with

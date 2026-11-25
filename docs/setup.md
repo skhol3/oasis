@@ -166,7 +166,8 @@ that series' files, next to the other series and without touching them:
   already uses `{series}` is left to `[tooling]`): `config`, `env_file`, `compose` and `requirements` in
   `<folder of [tooling].config>/<x.y>/` (`config/15.0/`), the environment next to `[tooling]`'s
   (`environments/acme` gives `environments/acme-15.0`; with the machine file's `environments` for the
-  series, `<environments>/<name><major>`), `logs` and `data_dir` in `<logs>/<x.y>` and `<data_dir>/<x.y>`,
+  series, `<environments>/<name><major>`), `logs` and `data_dir` in `<logs>/<x.y>` and `<data_dir>/<x.y>`
+  (an adopted folder's own, below),
   the prefixes `<name><major>_dev_` and `<name><major>_test_` (`cc_dev_` gives `cc15_dev_`), the source
   when `[tooling]` sets one, and `series_exceptions` from `--exception`.
 - Adopted files: a folder next to the default one named for the series (`<x.y>`, `odoo-<major>`,
@@ -174,7 +175,19 @@ that series' files, next to the other series and without touching them:
   (`compose.yml`, `compose.yaml`, `docker-compose.yml`, `docker-compose.yaml`), or the folder
   `--config-dir <dir>` names (an absolute existing directory), is adopted: `adopt <folder> (found):
   odoo.conf, compose.yml, .env, requirements/`. The section points to its files, setup keeps them and
-  creates only the missing ones there. Two such folders are refused (`Several folders hold Odoo 15.0
+  creates only the missing ones there. The data and logs of the folder stay where they are:
+  - When its kept `odoo.conf` sets `data_dir`, that directory is the section's `data_dir` instead of
+    `<data_dir>/<x.y>`, read as Odoo reads it (variables and `~` expanded, a relative path from the
+    directory setup runs in, as Odoo's working directory), written relative to the workspace file's
+    directory when it is below it: `data_dir: <corpus-cafe>/data/odoo-15 (data_dir from
+    <corpus-cafe>/config/odoo-15/odoo.conf)`. Only `data_dir` is read from that file. Without one, or with
+    an empty one, the default stays.
+  - When `logs/<folder name>` exists next to the folder's parent (`logs/odoo-15` for `config/odoo-15`), it
+    is the section's `logs`: `logs: <corpus-cafe>/logs/odoo-15 (named for <corpus-cafe>/config/odoo-15)`;
+    otherwise `<logs>/<x.y>`.
+  - Either is left out when it is what `[tooling]` already gives the series.
+
+  Two such folders are refused (`Several folders hold Odoo 15.0
   files: <folder>, <folder>; pass --config-dir <dir>.`).
 - The missing files as for any checkout ([What it creates](#what-it-creates-and-what-it-keeps)), with
   the series' values: the compose file with its `postgres_default` (`postgres:14` on 15.0) on a free port

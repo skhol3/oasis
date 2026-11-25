@@ -136,8 +136,10 @@ odoo_version, else its module manifests, the modules of --exception <module> lef
 [series."<x.y>"] section to that file (a workspace_version 1 file becomes 2, that line only) and
 creates that series' missing files: by default in <config folder>/<x.y>/, or in a folder that already
 holds its odoo.conf or compose file (<config folder>/odoo-<major>/, ...; --config-dir <dir> names one),
-which is adopted. --exception (repeatable) writes series_exceptions. A kept odoo.conf or compose file on a
-port another series of the workspace uses is refused; a failed verification, compile or uv venv then
+which is adopted: the data_dir its kept odoo.conf sets becomes the section's data_dir, and an existing
+logs/<folder name> next to the folder's parent (logs/odoo-15 for config/odoo-15) its logs; otherwise
+they go to <data_dir>/<x.y> and <logs>/<x.y>. --exception (repeatable) writes series_exceptions. A
+kept odoo.conf or compose file on a port another series of the workspace uses is refused; a failed verification, compile or uv venv then
 undoes every change, the workspace file's included. When that folder holds requirements-extra.txt or
 requirements-overrides.txt, a new runtime.in includes the first after the Odoo requirements and a new
 requirements/overrides.txt includes the second (uv pip compile --override); those files are never
@@ -663,7 +665,9 @@ def series_section(document, workspace, series, exceptions, sources, environment
     <logs>/<x.y> and <data_dir>/<x.y>, the prefixes to <name><major>_dev_ and _test_ (<name> from the
     default series' dev_prefix, its own major left out). A source that [tooling] sets is overridden
     with this series' (sources: community and enterprise or None). An adopted environment (adopted: its
-    path and Python, S7) is the section's environment, with python when it is not the series' default."""
+    path and Python, S7) is the section's environment, with python when it is not the series' default. An
+    adopted folder gives data_dir from its kept odoo.conf's data_dir (conf_data_dir) and logs from an existing
+    logs/<folder name> next to the folder's parent."""
     view, base, default = as_version2(document), workspace.parent, document['odoo_version']
     old = config.series_tooling(view, workspace, default)
     new = config.series_tooling(view, workspace, series)
@@ -741,6 +745,21 @@ def series_section(document, workspace, series, exceptions, sources, environment
             written = old.get(key)
             section[key] = (f'{written.rstrip("/")}/{series}' if isinstance(written, str) and written
                             else f'{directory}/{series}')
+    if adopted is not None:
+        # An adopted folder keeps its data and logs where they are (L18): the data_dir its kept odoo.conf
+        # sets, and a logs/<folder name> folder next to the folder's parent (config/odoo-15 gives
+        # logs/odoo-15).
+        data = conf_data_dir(adopted / files['config']) if (adopted / files['config']).is_file() else None
+        if data is not None:
+            section['data_dir'] = relative(data, base)
+            lines.append(f'data_dir: {data} (data_dir from {adopted / files["config"]})')
+        logs = adopted.parent.parent / 'logs' / adopted.name
+        if logs.is_dir():
+            section['logs'] = relative(logs, base)
+            lines.append(f'logs: {logs} (named for {adopted})')
+        for key in ('logs', 'data_dir'):
+            if key in section and varies(key) and (base / section[key]).resolve() == (base / new[key]).resolve():
+                del section[key]
     if exceptions:
         section['series_exceptions'] = exceptions
     return {key: section[key] for key in config.SERIES_KEYS if key in section}, lines, adopted
@@ -810,6 +829,23 @@ def extended_workspace(workspace: Path, document: dict, series: str, section: di
                           f'{other} ({{series}} or a [series] table that version 1 does not read); edit the file '
                           'yourself.')
     return (text + separator + addition).encode(), raw, lines, checked
+
+
+def conf_data_dir(conf: Path) -> Path | None:
+    """The directory an existing odoo.conf's data_dir names, as Odoo reads it (its config.py _normalize:
+    variables and ~ expanded, a relative path made absolute from the working directory, symlinks
+    resolved), or None: no data_dir, an empty one, or a file that cannot be read. Only data_dir is read,
+    never the rest of odoo.conf."""
+    reader = sibling('odoo_addons_path')
+    try:
+        value = (reader.read_option(conf, 'data_dir') or '').strip()
+    except reader.ConfError:
+        return None
+    if not value:
+        return None
+    if '\x00' in value or '\n' in value:
+        raise Refused(f'Invalid data_dir in {conf}: it must be one directory path.')
+    return Path(os.path.realpath(os.path.abspath(os.path.expanduser(os.path.expandvars(value)))))
 
 
 def configured_port(conf: Path) -> int | None:
