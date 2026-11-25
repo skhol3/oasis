@@ -7,7 +7,7 @@ Two commands, for two questions:
 
 ## The declared Python
 
-The environment's Python is the one the configuration declares: the series' default for a workspace with `[tooling].environment` (`python_default` in `tools/odoo_versions.py`, 3.12 on 19.0), else the `python` of the selected named environment (see [Workspace file](workspace-file.md#checkout-file-and-named-environments)). `bootstrap` creates a missing environment with it (`bootstrap --preview` prints `planned_action=create_python_<version>_and_sync_lock`) and refuses an existing one with another Python; `check-environment` reports `PASS python_version=<version>`, and on a mismatch stops with exit 2 before any other check:
+The environment's Python is the one the configuration declares: the series' default for a workspace with `[tooling].environment` (`python_default` in `tools/odoo_versions.py`, 3.12 on 19.0), else the `python` of the selected named environment (see [Workspace file](workspace-file.md#checkout-file-and-named-environments)). `bootstrap` creates a missing environment with it (`bootstrap --preview` prints `planned_action=create_python_<version>_and_sync_lock`, or `compile_locks_then_create_python_<version>_and_sync_lock` when it also compiles the [locks](#dependency-locks)), compiles the locks with it, and refuses an existing environment with another Python; `check-environment` reports `PASS python_version=<version>`, and on a mismatch stops with exit 2 before any other check:
 
 ```text
 Python 3.13 is required; found 3.12.
@@ -19,6 +19,31 @@ Move /home/you/odoo/19.0/environments/acme-next away and run oasis bootstrap --a
 ## Dependency locks
 
 `lock.sha256` lists the dependency inputs and locks (`runtime.in`, `runtime.txt`, `dev.in`, `dev.txt`) with their SHA-256, in `sha256sum` format, relative to its own directory: regenerate it there with `sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256`. `check-environment` (`dependency_locks`) and `bootstrap` run `sha256sum --check --strict lock.sha256` from that directory first and, for a legacy lock whose entries are relative to the project root (the checkout), from the project root next; either one passing is enough. `oasis migrate` rewrites a legacy lock relative to its directory with the same hashes.
+
+`bootstrap` compiles the locks itself when they need it, before it creates or syncs the environment:
+
+| Locks | `bootstrap --preview` | `bootstrap --apply` |
+| --- | --- | --- |
+| current: `lock.sha256` passes | unchanged output (`uv pip sync --dry-run`) | syncs; the requirement files stay byte-identical |
+| missing: `runtime.txt`, `dev.txt` or `lock.sha256` does not exist | `locks=missing` | compiles, then creates or syncs |
+| stale: `lock.sha256` does not record the current `runtime.in` and `dev.in` (an input changed, or the file cannot be read) | `locks=stale` | compiles, then creates or syncs |
+| edited: `lock.sha256` records the current inputs but not a lock (changed by hand) | refused, exit 2 | refused, exit 2 |
+
+When it compiles, `--preview` changes nothing and names both steps: `planned_action=compile_locks_then_sync_lock` for an existing environment, `planned_action=compile_locks_then_create_python_<version>_and_sync_lock` for a missing one. `--apply` runs, in the requirements directory and with the [declared Python](#the-declared-python), the commands of [Setting up a new workspace](new-workspace.md#steps) step 4: `uv pip compile --python-version <version> runtime.in -o runtime.txt`, then the same for `dev.in` and `dev.txt` (an existing lock keeps its pins where it can, as uv prefers them), writes `lock.sha256` as `sha256sum` would, prints `locks_compiled=runtime.txt,dev.txt,lock.sha256` and goes on as before. It never writes `runtime.in` or `dev.in`; both must exist (`Missing required local path: <path>`, exit 2). A failed compile stops with exit 2 before `lock.sha256` and the environment change:
+
+```text
+uv pip compile of dev.in failed (exit 1); lock.sha256 was left as it was.
+Fix /home/you/odoo/19.0/projects/acme/config/requirements/dev.in or its access to the package index, then run oasis bootstrap --apply again.
+```
+
+An edited lock is never overwritten:
+
+```text
+Refusing bootstrap because dependency inputs or locks do not match lock.sha256.
+runtime.in and dev.in match it, so a lock was changed by hand: move that lock away for bootstrap to compile it again, or fingerprint it again in <requirements> with sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256.
+```
+
+Without uv on PATH, `bootstrap` stops with exit 2: `uv is required to bootstrap this environment.`, then `Install uv (https://docs.astral.sh/uv/), then run oasis bootstrap again.`
 
 ## The doctor report
 

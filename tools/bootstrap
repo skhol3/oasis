@@ -4,7 +4,7 @@ source "$(dirname "$0")/common.sh"
 source "$(dirname "$0")/compact.sh"
 mode=${1:---preview}
 lockfile="$REQUIREMENTS_DIR/dev.txt"
-required_paths=("$ODOO_BIN" "$ODOO_CONFIG" "$COMPOSE_FILE" "$ENV_FILE" "$lockfile")
+required_paths=("$ODOO_BIN" "$ODOO_CONFIG" "$COMPOSE_FILE" "$ENV_FILE")
 if (( $# > 1 )) || [[ "$mode" != "--preview" && "$mode" != "--apply" ]]; then
   printf 'Usage: %s [--preview|--apply]\n' "$(usage_name)" >&2
   exit 2
@@ -18,13 +18,43 @@ done
 require_source
 if ! command -v uv >/dev/null 2>&1; then
   printf 'uv is required to bootstrap this environment.\n' >&2
+  printf 'Install uv (https://docs.astral.sh/uv/), then run %s bootstrap again.\n' "$(program_name)" >&2
   exit 2
 fi
-if ! dependency_locks_current; then
+# The locks: current ones are left as they are (byte-identical); missing ones, or ones whose
+# lock.sha256 no longer records the current runtime.in and dev.in (stale), are compiled from
+# those inputs before the sync (tools/locks.py); a lock changed by hand under current inputs
+# (edited) is refused, never overwritten. The inputs are only read.
+locks_state=current
+if [[ ! -f "$REQUIREMENTS_DIR/runtime.txt" || ! -f "$lockfile" ]] || ! dependency_locks_current; then
+  for path in "$REQUIREMENTS_DIR/runtime.in" "$REQUIREMENTS_DIR/dev.in"; do
+    if [[ ! -f "$path" ]]; then
+      printf 'Missing required local path: %s\n' "$path" >&2
+      exit 2
+    fi
+  done
+  locks_state=$(python3 -I -B "$(dirname "$0")/locks.py" state "$REQUIREMENTS_DIR" "$PROJECT_ROOT")
+fi
+if [[ "$locks_state" == edited ]]; then
   printf 'Refusing bootstrap because dependency inputs or locks do not match lock.sha256.\n' >&2
-  printf 'Regenerate the locks and fingerprint before preview or apply.\n' >&2
+  printf 'runtime.in and dev.in match it, so a lock was changed by hand: move that lock away for bootstrap to compile it again, or fingerprint it again in %s with sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256.\n' \
+    "$REQUIREMENTS_DIR" >&2
   exit 2
 fi
+# `uv pip compile <input> -o <lock>` in the requirements directory with the declared Python, as
+# docs/new-workspace.md runs it by hand (the -r and -c paths of an input are relative to it); uv
+# also echoes the lock to stdout, which is dropped. A failure stops before lock.sha256.
+compile_lock() {
+  local input=$1 output=$2 status=0
+  (cd "$REQUIREMENTS_DIR" && uv pip compile --python-version "$PYTHON_VERSION" "$input" -o "$output" >/dev/null) \
+    || status=$?
+  if (( status != 0 )); then
+    printf 'uv pip compile of %s failed (exit %s); lock.sha256 was left as it was.\n' "$input" "$status" >&2
+    printf 'Fix %s or its access to the package index, then run %s bootstrap --apply again.\n' \
+      "$REQUIREMENTS_DIR/$input" "$(program_name)" >&2
+    exit 2
+  fi
+}
 if [[ -e "$PROJECT_ENVIRONMENT" && ! -x "$PYTHON" ]]; then
   printf 'Refusing to replace a non-virtualenv path: %s\n' "$PROJECT_ENVIRONMENT" >&2
   exit 2
@@ -39,6 +69,18 @@ printf 'environment=%s\n' "$PROJECT_ENVIRONMENT"
 printf 'lockfile=%s\n' "${lockfile#$PROJECT_ROOT/}"
 if [[ "$mode" == "--preview" ]]; then
   printf 'mutation=none\n'
+  if [[ "$locks_state" != current ]]; then
+    # The lock to sync does not exist yet, so no dry-run sync: the plan names both steps.
+    printf 'locks=%s\n' "$locks_state"
+    if [[ -x "$PYTHON" ]]; then
+      printf 'environment_state=ready\n'
+      printf 'planned_action=compile_locks_then_sync_lock\n'
+    else
+      printf 'environment_state=missing\n'
+      printf 'planned_action=compile_locks_then_create_python_%s_and_sync_lock\n' "$PYTHON_VERSION"
+    fi
+    exit 0
+  fi
   if [[ -x "$PYTHON" ]]; then
     printf 'environment_state=ready\n'
     exec uv pip sync --dry-run --python "$PYTHON" "$lockfile"
@@ -52,6 +94,14 @@ printf 'mutation=isolated_project_virtualenv\n'
 # (tools/log_dirs.py, created 0700), never under global tools; resolved before any change.
 snapshot_dir=$(server_log_path)
 snapshot_dir=${snapshot_dir%/*}
+if [[ "$locks_state" != current ]]; then
+  printf 'locks=%s\n' "$locks_state"
+  # runtime.txt first: dev.in constrains itself with it (-c runtime.txt).
+  compile_lock runtime.in runtime.txt
+  compile_lock dev.in dev.txt
+  python3 -I -B "$(dirname "$0")/locks.py" fingerprint "$REQUIREMENTS_DIR"
+  printf 'locks_compiled=runtime.txt,dev.txt,lock.sha256\n'
+fi
 mkdir -p "$ENVIRONMENTS_DIR"
 if [[ ! -x "$PYTHON" ]]; then
   uv venv --python "$PYTHON_VERSION" "$PROJECT_ENVIRONMENT"

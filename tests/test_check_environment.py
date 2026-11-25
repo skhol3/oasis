@@ -86,11 +86,12 @@ class DependencyLockTests(unittest.TestCase):
         result = self.run_tool('bootstrap', '--preview')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertTrue(result.stdout.startswith('mode=preview\n'), result.stdout)
+        # v0.14.0 (S9): a stale input is no longer refused; bootstrap plans to compile the locks.
         (requirements / 'dev.in').write_text('# changed\n')
         result = self.run_tool('bootstrap', '--preview')
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (
-            2, '', 'Refusing bootstrap because dependency inputs or locks do not match lock.sha256.\n'
-                   'Regenerate the locks and fingerprint before preview or apply.\n'))
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn('mutation=none\nlocks=stale\n', result.stdout)
+        self.assertTrue(result.stdout.endswith('planned_action=compile_locks_then_sync_lock\n'), result.stdout)
 
 
 if __name__ == '__main__':

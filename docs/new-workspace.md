@@ -122,6 +122,11 @@ checkout.
    sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256
    ```
 
+   Only `runtime.in` and `dev.in` are yours to write: `bootstrap --apply` (step 5) runs the
+   last three commands itself, with the declared Python, when the locks are missing or no
+   longer match their inputs, and leaves current locks byte-identical (see
+   [Dependency locks](checking-environment.md#dependency-locks)).
+
 5. Create the Python environment, with the same `python`, and install the locked packages into
    it. The environment's folder sits in `environments/`, which is what the
    [environment rule](#the-python-environment) asks for. Each block sets `python` itself, so it
@@ -135,10 +140,11 @@ checkout.
    ```
 
    Once steps 6 to 8 are done, `oasis --project <checkout> bootstrap --preview` shows the same
-   plan and `bootstrap --apply` carries it out: it creates the environment with the declared
-   Python, syncs `dev.txt`, saves the packages it found before as `bootstrap-before.txt` in the
-   checkout's log directory (`logs/main/` here), and ends with `check-environment --full`, which
-   needs the database service running.
+   plan and `bootstrap --apply` carries it out: it compiles the locks of step 4 when they are
+   missing or stale (the preview then says `planned_action=compile_locks_then_...`), creates the
+   environment with the declared Python, syncs `dev.txt`, saves the packages it found before as
+   `bootstrap-before.txt` in the checkout's log directory (`logs/main/` here), and ends with
+   `check-environment --full`, which needs the database service running.
 
 6. Write the compose file and the environment file. The compose file needs a top-level `name:`
    (`doctor` checks it); oasis runs it as `docker compose --env-file <env_file> -f <compose>`
