@@ -746,6 +746,36 @@ class Odoo15CommandLineTests(unittest.TestCase):
         self.assertEqual(result.stdout.splitlines()[1], 'Default: --without-demo=all. The database must be managed '
                                                         '(cc_dev_/cc_test_) and defaults to cc_dev_<module>.')
 
+    def test_a_batch_start_gets_a_free_longpolling_port(self):
+        # As on 19.0 (--gevent-port): a free ephemeral --http-port and a distinct free second port,
+        # here --longpolling-port; an explicit port of either kind is passed as given.
+        head = [str(self.python), str(self.source / 'odoo-bin'), '-c', self.conf]
+        for given in ((), ('--http-port', '9000'), ('--longpolling-port', '9001'), ('--longpolling-port=9001',)):
+            with self.subTest(given=given):
+                result = self.invoke('start', '--print-command', '--stop-after-init', '-u', 'coffee', *given)
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                words = shlex.split(result.stdout)
+                self.assertEqual(result.stdout.count('\n'), 1)
+                added = words[4:-3 - len(given)]
+                self.assertEqual(words[:4] + words[4 + len(added):], [*head, '--stop-after-init', '-u', 'coffee', *given])
+                if not given:
+                    match = re.fullmatch(r'--http-port=(\d+) --longpolling-port=(\d+)', ' '.join(added))
+                    self.assertIsNotNone(match, added)
+                    self.assertNotEqual(match.group(1), match.group(2))
+                elif given[0] == '--http-port':
+                    self.assertRegex(' '.join(added), r'^--longpolling-port=\d+$')
+                    self.assertNotEqual(added[0], '--longpolling-port=9000')
+                else:
+                    self.assertRegex(' '.join(added), r'^--http-port=\d+$')
+                self.unchanged()
+        # The batch run execs that kind of line.
+        result = self.invoke('start', '--stop-after-init', '-u', 'coffee', '-d', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        lines = [line for line in self.commands.read_text().splitlines() if line.startswith('odoo ')]
+        self.assertEqual(len(lines), 1)
+        self.assertRegex(lines[0], '^' + re.escape(f'{self.odoo} -c {self.conf}') +
+                         r' --http-port=\d+ --longpolling-port=\d+ --stop-after-init -u coffee -d cc_dev_coffee$')
+
     def test_verify_runs_every_phase_to_its_end(self):
         result = self.invoke('verify-module', 'coffee')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -797,6 +827,7 @@ class SecondPortConfTests(unittest.TestCase):
     def assert_busy_range(self, series, name, option):
         self.setUp_fixture()
         self.layout(series)
+        self.hold_range()
         self.conf.write_text(self.conf.read_text().replace(f' = {self.gevent_port}\n', f' = {self.busy}\n', 1))
         result = self.start('--print-command')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
@@ -805,13 +836,28 @@ class SecondPortConfTests(unittest.TestCase):
     unchanged = LifecycleTests.unchanged
 
     def hold_range(self):
-        """Bind busy + 1 .. busy + 50 on 127.0.0.1 for the rest of the test."""
-        self.busy = quiet_ports(51)
-        for port in range(self.busy + 1, self.busy + 51):
-            listener = socket.socket()
-            self.addCleanup(listener.close)
-            listener.bind(('127.0.0.1', port))
-            listener.listen()
+        """Bind busy + 1 .. busy + 50 on 127.0.0.1 for the rest of the test, once the layout is
+        built: the range never holds a port of the layout (its HTTP port and the linked worktree's,
+        both second ports and the ports after them), and a range another process takes between
+        the choice and the binds is given up for another one."""
+        layout = {port + offset for port in (self.http_port, self.gevent_port, self.other_port) for offset in (0, 1)}
+        for _ in range(20):
+            self.busy = quiet_ports(51, excluded=layout)
+            listeners = []
+            try:
+                for port in range(self.busy + 1, self.busy + 51):
+                    listener = socket.socket()
+                    listeners.append(listener)
+                    listener.bind(('127.0.0.1', port))
+                    listener.listen()
+            except OSError:
+                for listener in listeners:
+                    listener.close()
+                continue
+            for listener in listeners:
+                self.addCleanup(listener.close)
+            return
+        raise AssertionError('no port range on 127.0.0.1 could be held')
 
     def test_odoo_19_follows_gevent_port(self):
         self.assert_second_port('19.0', '--gevent-port')
@@ -822,9 +868,21 @@ class SecondPortConfTests(unittest.TestCase):
     def test_a_busy_range_names_the_series_port(self):
         for series, name, option in (('19.0', 'gevent', '--gevent-port'), ('15.0', 'longpolling', '--longpolling-port')):
             with self.subTest(series=series):
-                self.hold_range()
                 self.assert_busy_range(series, name, option)
                 self.doCleanups()
+
+    def test_an_explicit_longpolling_port_on_odoo_15_is_the_only_second_port(self):
+        # As --gevent-port on 19.0: the user's --longpolling-port (as a separate word or with =)
+        # suppresses the added one and reaches Odoo as given.
+        self.setUp_fixture()
+        self.layout('15.0')
+        head = [str(self.python), str(self.source / 'odoo-bin'), '-c', str(self.conf), f'--addons-path={self.addons}',
+                f'--http-port={self.http_port + 1}']
+        for given in (('--longpolling-port', '9001'), ('--longpolling-port=9001',), ('--workers=2', '--longpolling-port=9001')):
+            with self.subTest(given=given):
+                result = self.start('--print-command', *given)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, shlex.join([*head, *given]) + '\n', ''))
+        self.unchanged()
 
     def test_an_invalid_longpolling_port_is_refused_naming_the_option(self):
         self.setUp_fixture()

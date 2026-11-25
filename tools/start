@@ -5,7 +5,7 @@ set -Eeuo pipefail
 # tools/runtime_state.py: the main checkout (or a project outside git) uses the odoo.conf
 # http_port (8069 when absent), a linked worktree the first free port after it; an explicit
 # -p/--http-port wins. The record also names the database given with -d/--database, if any. A
-# linked worktree also gets a free second (gevent) port, passed with the Odoo series' option
+# linked worktree also gets a free second (gevent or longpolling) port, passed with the series' option
 # ($ODOO_SECOND_PORT_OPTION from config.py) unless one is given. A server started without
 # -d/--database prints `WARNING: no database given (-d); Odoo will use odoo.conf's db_name (<name>).`
 # to stderr when odoo.conf names one (server_args.sh warn_without_database); nothing else changes.
