@@ -16,7 +16,7 @@ cd /absolute/checkout
 ```text
 oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enterprise <dir> | --no-enterprise]
                                    [--workspace <dir>] [--name <name>] [--exception <module>]...
-                                   [--config-dir <dir>] [--apply | --plan]
+                                   [--config-dir <dir>] [--environment <dir>] [--apply | --plan]
 ```
 
 - [Plan and apply](#plan-and-apply): what is printed, what changes, exit status.
@@ -92,9 +92,10 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
 | `odoo.conf` | Path-free (no `addons_path`, no `data_dir`; see [Path-free odoo.conf](path-free-odoo-conf.md)): `db_host = 127.0.0.1`, the `db_port` of the compose file, `db_user` and `db_password` empty. Mode 0600. |
 | Compose file | `name: oasis-<name>-<6 hex of the workspace directory>` and the PostgreSQL service (`postgres:<postgres_default>` of the series in `tools/odoo_versions.py`: `postgres:17` on 19.0) with the variables oasis uses, published on `127.0.0.1` on the [port](#one-port-for-odooconf-and-the-compose-file) `odoo.conf` connects to. |
 | Environment file | `ODOO_DB_USER=` and `ODOO_DB_PASSWORD=`, names only, empty values; mode 0600. Never read or printed. |
-| `runtime.in`, `dev.in` | `-r <community>/requirements.txt`; `-c runtime.txt` and `-r runtime.in`, to which you add your development tools. |
+| `runtime.in`, `dev.in` | `-r <community>/requirements.txt`; `-c runtime.txt` and `-r runtime.in`, to which you add your development tools. With an adopted series folder that holds `requirements-extra.txt`, `runtime.in` also includes it ([Another Odoo series](#the-projects-requirement-files)). |
+| `overrides.txt` | Only with an adopted series folder that holds `requirements-overrides.txt`: `-r <that file>`, given to `uv pip compile` as `--override` ([Another Odoo series](#the-projects-requirement-files)). |
 | Locks | `runtime.txt`, `dev.txt` and `lock.sha256`, compiled with the series' Python by the same code as `bootstrap --apply` when they are missing or stale; current locks are kept, and a lock changed by hand is kept and leaves the environment uncreated. |
-| Environment | `uv venv --python <python>` and `uv pip sync` of `dev.txt`. An existing environment is kept and not synced (run `bootstrap --apply` for that). |
+| Environment | `uv venv --python <python>` and `uv pip sync` of `dev.txt`. An existing environment is kept and not synced (run `bootstrap --apply` for that); `--environment <dir>` [adopts one](#an-existing-environment) instead of creating it. |
 | `logs`, `data_dir` | The directories (mode 0700). |
 
 ### One port for odoo.conf and the compose file
@@ -194,6 +195,8 @@ that series' files, next to the other series and without touching them:
   not support the `default` environment's `python` (`3.13` on 15.0), the section sets the path with
   `{series}` replaced (or `<environments>/<name><major>` with the machine file's `environments`), so the
   series uses its `python_default`.
+- The project's requirement files: see [below](#the-projects-requirement-files); `--environment <dir>`
+  adopts an [existing environment](#an-existing-environment) for the series.
 - The workspace file and the machine file are edited first. A failed verification, `uv pip compile`
   or `uv venv` gives them back their bytes (their modes are kept), restores the locks the compile
   rewrote and removes every file and directory setup created; a failed `uv pip sync` keeps
@@ -262,6 +265,95 @@ create the environment <corpus-cafe>/environments/corpus-cafe-15.0 with Python 3
 The 19.0 checkouts keep `config/odoo.conf`, `cc_dev_` and their environment; `doctor` in either shows
 `PASS series_isolation=19.0,15.0` once the two compose files publish different ports.
 
+### The project's requirement files
+
+An adopted series folder (found, or `--config-dir`) may hold the project's own requirement files, which
+setup references and never copies or edits:
+
+- `requirements-extra.txt`, the packages the project's modules need besides Odoo's: a new `runtime.in`
+  includes it after the Odoo requirements, with `-r <path>` relative to the requirements directory
+  (`-r ../requirements-extra.txt` for `<folder>/requirements/`; absolute when either is outside the
+  workspace directory).
+- `requirements-overrides.txt`, pins that replace Odoo's (an older `cryptography` for an older Python, for
+  example): setup creates `<requirements>/overrides.txt` with `-r ../requirements-overrides.txt`, and
+  every compile of that directory, by setup or `bootstrap`, passes it to `uv pip compile` as `--override
+  overrides.txt` (uv reads the nested `-r`). `lock.sha256` records `overrides.txt`, so adding, changing or
+  removing it makes the locks stale ([Dependency locks](checking-environment.md#dependency-locks)).
+
+The plan names them in the `adopt` line, then `create <requirements>/runtime.in: -r <source>/requirements.txt,
+-r ../requirements-extra.txt` and `create <requirements>/overrides.txt: -r ../requirements-overrides.txt (uv pip
+compile --override)`. A `runtime.in` or `overrides.txt` that exists is kept as it is. `lock.sha256` records
+`runtime.in` and `overrides.txt`, not the files they include: after you change `requirements-extra.txt` or
+`requirements-overrides.txt`, move `lock.sha256` away and run `bootstrap --apply` to compile the locks again.
+
+For example, the corpus-cafe 15.0 runtime above is an environment the user built before oasis,
+`billing-o15` (Python 3.8), with `config/odoo-15/requirements-extra.txt` (the packages of its
+e-invoicing modules) and `config/odoo-15/requirements-overrides.txt` (`cryptography==3.4.8`,
+`pyopenssl==21.0.0`, `python-ldap==3.4.4`). With the same workspace file and the machine file's 15.0
+entry:
+
+```bash
+cd corpus-cafe/codigo/facturacion
+~/.agents/skills/odoo19/oasis setup --exception report_xlsx --environment <environments>/billing-o15
+~/.agents/skills/odoo19/oasis setup --exception report_xlsx --environment <environments>/billing-o15 --apply
+```
+
+```text
+add [series."15.0"] to <corpus-cafe>/oasis-workspace.toml:
+  # Added by oasis setup: what differs for the Odoo 15.0 checkouts (docs/setup.md#another-odoo-series).
+  [series."15.0"]
+  environment = '<environments>/billing-o15'
+  python = '3.8'
+  config = 'config/odoo-15/odoo.conf'
+  env_file = 'config/odoo-15/.env'
+  compose = 'config/odoo-15/compose.yml'
+  requirements = 'config/odoo-15/requirements'
+  dev_prefix = 'cc15_dev_'
+  test_prefix = 'cc15_test_'
+  logs = 'logs/15.0'
+  data_dir = 'data/15.0'
+  series_exceptions = ['report_xlsx']
+adopt <corpus-cafe>/config/odoo-15 (found): odoo.conf, compose.yml, .env, requirements-extra.txt, requirements-overrides.txt
+kept <corpus-cafe>/config/odoo-15/odoo.conf
+kept <corpus-cafe>/config/odoo-15/compose.yml
+kept <corpus-cafe>/config/odoo-15/.env
+create <corpus-cafe>/config/odoo-15/requirements/runtime.in: -r <15.0 source>/requirements.txt, -r ../requirements-extra.txt
+create <corpus-cafe>/config/odoo-15/requirements/dev.in: -c runtime.txt, -r runtime.in
+create <corpus-cafe>/config/odoo-15/requirements/overrides.txt: -r ../requirements-overrides.txt (uv pip compile --override)
+create <corpus-cafe>/logs/15.0/
+create <corpus-cafe>/data/15.0/
+compile <corpus-cafe>/config/odoo-15/requirements/runtime.txt, dev.txt and lock.sha256 with Python 3.8 (uv pip compile)
+adopt the environment <environments>/billing-o15 (from --environment): Python 3.8 (its pyvenv.cfg); setup never creates, syncs or deletes it
+```
+
+After `--apply` the next steps start with `the locks in <corpus-cafe>/config/odoo-15/requirements describe
+runtime.in, dev.in and overrides.txt: oasis --project <checkout> bootstrap --apply syncs the adopted
+environment <environments>/billing-o15 to them (it changes the packages installed there)`.
+
+### An existing environment
+
+`--environment <dir>` uses an environment you already have instead of creating one, in a new workspace
+or in a new [series section](#another-odoo-series) (an existing configuration refuses it, like the other
+options: `--environment: <checkout> is already configured by <file>; setup only fills what is missing.`):
+
+- `<dir>` is an absolute existing directory (`--environment requires an absolute existing directory.`)
+  with a `pyvenv.cfg` (`--environment <dir> is not a Python environment (no pyvenv.cfg).`). Its Python is
+  read from the `version` line of `pyvenv.cfg` (`version_info` as uv and virtualenv write it), never by
+  running it, and must be one the series supports: `--environment <dir> has no Python version in its
+  pyvenv.cfg (version or version_info).`, `--environment <dir> has Python 3.6, which Odoo 15.0 does not
+  support (3.7 to 3.12).`
+- The path is written relative to the workspace file's directory when it is below it, else absolute. In a
+  series section it is that section's `environment`, with `python = '<3.minor>'` when its Python is not the
+  series' default ([Workspace file](workspace-file.md#several-series-workspace_version-2)); in a new
+  workspace it is `[tooling].environment`, or, for another Python, the `[environments.default]` table with
+  its `path` and `python`.
+- The plan says `adopt the environment <dir> (from --environment): Python <x.y> (its pyvenv.cfg); setup
+  never creates, syncs or deletes it`. The locks are compiled with that Python; no `uv venv`, no `uv pip
+  sync`, and a rollback after a failed compile never touches the environment.
+- The next steps say that the locks describe the inputs and that `oasis --project <checkout> bootstrap
+  --apply` syncs the adopted environment to them, which changes the packages installed there: read
+  `bootstrap --preview` (its `uv pip sync --dry-run`) first.
+
 ## Next steps
 
 After `--apply`, setup prints what is left, numbered, for example:
@@ -276,7 +368,10 @@ next steps:
 ```
 
 The first step appears only for the files setup created, and `bootstrap --apply` is added when it
-compiled the locks of an environment it kept. Choose your own local database account; setup never
+compiled the locks of an environment it kept. With an [adopted environment](#an-existing-environment) that
+step reads `the locks in <requirements> describe runtime.in and dev.in (or runtime.in, dev.in and
+overrides.txt): oasis --project <checkout> bootstrap --apply syncs the adopted environment <dir> to them (it
+changes the packages installed there)`. Choose your own local database account; setup never
 generates or prints one. Then follow [Development database](dev-database.md) and
 [Tests and test databases](testing.md).
 

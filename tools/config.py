@@ -89,8 +89,10 @@ WORKSPACE_VERSION = 1
 # The workspace_version values read: 1 (one series) and 2 (series sections, v0.15.0 S3).
 WORKSPACE_VERSIONS = (1, 2)
 # What a workspace_version 2 [series."<x.y>"] section may set over [tooling] (S3), and the modules the
-# series guard and the series detection leave out for that series (series_exceptions, S4).
-SERIES_KEYS = ('community', 'enterprise', 'environment', 'config', 'env_file', 'compose', 'requirements',
+# series guard and the series detection leave out for that series (series_exceptions, S4). python
+# (v0.15.0 S7) is the Python of the environment the section or [tooling] gives the series (an adopted
+# one, oasis setup --environment), instead of the series' python_default.
+SERIES_KEYS = ('community', 'enterprise', 'environment', 'python', 'config', 'env_file', 'compose', 'requirements',
                'db_service', 'dev_prefix', 'test_prefix', 'test_database', 'logs', 'data_dir', 'series_exceptions')
 # The path values in which workspace_version 2 replaces SERIES_PLACEHOLDER with the checkout's series.
 SERIES_PLACEHOLDER = '{series}'
@@ -401,6 +403,10 @@ def series_sections(document: dict, workspace: Path) -> dict[str, dict]:
                                                        for module in exceptions):
             raise InvalidConfig(f'Invalid series.{shown(name)}.series_exceptions in {workspace}: '
                                 'use a list of module names.')
+        if 'python' in table and not versions().python_supported(name, table['python']):
+            low, high = versions().capability(name, 'python')
+            raise InvalidConfig(f'Unsupported python {shown(table["python"])} for [series.{shown(name)}] in '
+                                f'{workspace}; Odoo {name} supports {low} to {high}.')
     return tables
 
 
@@ -432,10 +438,12 @@ def series_document(document: dict, workspace: Path, selected, series: str) -> t
     """workspace_document for a checked document and the checkout's series."""
     version2 = document['workspace_version'] == 2
     section = series_sections(document, workspace).get(series, {})
-    # Derived: the Odoo series of the checkout, Python from the named environment, else the
-    # series' default (tools/odoo_versions.py python_default).
-    tooling = {**series_tooling(document, workspace, series), 'version': series,
-               'python_version': versions().capability(series, 'python_default')}
+    # Derived: the Odoo series of the checkout, Python from the named environment, else the section's
+    # python (S7), else the series' default (tools/odoo_versions.py python_default).
+    tooling = series_tooling(document, workspace, series)
+    tooling.pop('python', None)
+    tooling = {**tooling, 'version': series,
+               'python_version': section.get('python', versions().capability(series, 'python_default'))}
     name = ''
     # Version 2: the checkout's named environment, else the section's environment path, else the
     # default named environment, else [tooling].environment.

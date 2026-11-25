@@ -98,7 +98,73 @@ class LocksTests(unittest.TestCase):
         result = self.run_locks('compile', self.requirements)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (
             2, '', 'Usage: locks.py state <requirements dir> <project root> | '
-                   'fingerprint <requirements dir> | compile <requirements dir> <python> <command to rerun>\n'))
+                   'fingerprint <requirements dir> | compile <requirements dir> <python> <command to rerun> | '
+                   'recorded <requirements dir> <project root>\n'))
+
+    # -- overrides.txt (v0.15.0 S7) -------------------------------------------------------------
+
+    def test_without_overrides_the_fingerprint_is_byte_identical_to_earlier_versions(self):
+        # The digests of these exact inputs, as lock.sha256 recorded them before overrides.txt existed.
+        result = self.run_locks('fingerprint', self.requirements)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual((self.requirements / 'lock.sha256').read_text(), (
+            '9ed86bb7d542ca99d69cfd1208d2bd37dcff833dbbe98c0d91d60cb1ede1f27f  runtime.in\n'
+            '01e308c75d9532d9919f602d57a1686b07d716eb83e399b1420ef9effaa97e06  runtime.txt\n'
+            'adc9689d3b0d81dbf01ead6b4be3e43a158bb3019aa5b69663070c495972b440  dev.in\n'
+            '0b1ba697667bcf55c7164481b690e64f197547f691d98cd7725cec97618e6218  dev.txt\n'))
+        self.assertEqual(sorted(path.name for path in self.requirements.iterdir()), sorted([*FILES, 'lock.sha256']))
+
+    def test_overrides_go_to_both_compiles_and_into_the_fingerprint(self):
+        overrides = self.requirements / 'overrides.txt'
+        overrides.write_text('-r ../requirements-overrides.txt\n')
+        env = self.fake_uv()
+        result = self.run_locks('compile', self.requirements, '3.8', 'oasis bootstrap --apply', env=env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(Path(env['FAKE_LOG']).read_text().splitlines(), [
+            f'pip compile --python-version 3.8 --override overrides.txt runtime.in -o runtime.txt (in {self.requirements})',
+            f'pip compile --python-version 3.8 --override overrides.txt dev.in -o dev.txt (in {self.requirements})'])
+        expected = ''.join(f'{hashlib.sha256((self.requirements / name).read_bytes()).hexdigest()}  {name}\n'
+                           for name in (*FILES, 'overrides.txt'))
+        self.assertEqual((self.requirements / 'lock.sha256').read_text(), expected)
+        self.assertEqual(overrides.read_text(), '-r ../requirements-overrides.txt\n')
+        if shutil.which('sha256sum'):
+            check = subprocess.run(['sha256sum', '--check', '--strict', 'lock.sha256'], cwd=self.requirements,
+                                   capture_output=True)
+            self.assertEqual(check.returncode, 0)
+        self.assert_state('edited')
+        self.assertEqual(self.run_locks('recorded', self.requirements, self.root).returncode, 0)
+
+    def test_an_added_changed_or_removed_overrides_file_makes_the_locks_stale(self):
+        spec = importlib.util.spec_from_file_location('oasis_locks_overrides_test', LOCKS)
+        locks = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(locks)
+        overrides = self.requirements / 'overrides.txt'
+        for prefix in ('', 'dev/requirements/'):
+            with self.subTest(prefix=prefix):
+                # Added after the locks: lock.sha256 does not record it, so the locks are stale and not current.
+                self.write_lock(prefix)
+                overrides.write_text('cryptography==3.4.8\n')
+                self.assert_state('stale')
+                self.assertFalse(locks.current(self.requirements, self.root))
+                recorded = self.run_locks('recorded', self.requirements, self.root)
+                self.assertEqual((recorded.returncode, recorded.stdout, recorded.stderr), (1, '', ''))
+                # Recorded, then changed.
+                (self.requirements / 'lock.sha256').write_text(''.join(
+                    f'{hashlib.sha256((self.requirements / name).read_bytes()).hexdigest()}  {prefix}{name}\n'
+                    for name in (*FILES, 'overrides.txt')))
+                self.assertTrue(locks.current(self.requirements, self.root))
+                self.assertEqual(self.run_locks('recorded', self.requirements, self.root).returncode, 0)
+                overrides.write_text('cryptography==3.4.7\n')
+                self.assert_state('stale')
+                self.assertFalse(locks.current(self.requirements, self.root))
+                # Recorded, then removed.
+                overrides.unlink()
+                self.assert_state('stale')
+                self.assertFalse(locks.current(self.requirements, self.root))
+        # Without overrides.txt nothing needs recording.
+        self.write_lock()
+        recorded = self.run_locks('recorded', self.requirements, self.root)
+        self.assertEqual((recorded.returncode, recorded.stdout, recorded.stderr), (0, '', ''))
 
     def test_compile_writes_both_locks_then_the_fingerprint(self):
         # review-f6708244dde86835 R3-locks-compile-subcommand-untested-directly.

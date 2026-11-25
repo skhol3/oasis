@@ -208,7 +208,7 @@ class SetupTests(unittest.TestCase):
         before = self.tree()
         usage = (f'Usage: {CLI} setup [--series <x.y>] [--community <dir>] [--enterprise <dir> | --no-enterprise] '
                  '[--workspace <dir>] [--name <name>] [--exception <module>]... [--config-dir <dir>] '
-                 '[--apply | --plan]\n')
+                 '[--environment <dir>] [--apply | --plan]\n')
         for args in (('--apply', '--plan'), ('--plan', '--apply'), ('--enterprise', '/x', '--no-enterprise'),
                      ('--app',), ('--community',), ('--apply', '--apply'), ('extra',), ('--',), ('--a',),
                      ('--exception',), ('--config-dir', '/x', '--config-dir', '/y')):
@@ -516,6 +516,82 @@ class SetupTests(unittest.TestCase):
                                     f'{flag[0]}: {self.checkout} has no workspace file; it only applies when setup '
                                     'adds a [series."<x.y>"] section to one.', before)
 
+
+    # -- an existing environment (v0.15.0 S7) ---------------------------------------------------
+
+    def existing_environment(self, name, version):
+        """An environment outside the checkout: pyvenv.cfg declares version; bin/python leaves a mark when run."""
+        path = self.scratch / 'envs' / name
+        (path / 'bin').mkdir(parents=True)
+        (path / 'pyvenv.cfg').write_text(f'home = /usr/bin\nversion = {version}\n')
+        (path / 'bin/python').write_text(f'#!/bin/sh\ntouch {self.scratch / "python-ran"}\n')
+        (path / 'bin/python').chmod(0o755)
+        return path
+
+    def test_environment_adopts_an_existing_environment_of_the_default_python_in_tooling(self):
+        environment = self.existing_environment('shop', '3.12.3')
+        workspace = self.checkout / 'oasis-workspace.toml'
+        config = self.checkout / '.oasis/config'
+        requirements = config / 'requirements'
+        result = self.setup_cmd('--apply', '--environment', str(environment), '--community', str(self.source),
+                                '--no-enterprise')
+        port = self.port_of(result.stdout)
+        plan = self.plan(port).replace(f"  environment = '.oasis/venv'", f"  environment = '{environment}'").replace(
+            f'create the environment {self.checkout / ".oasis/venv"} with Python 3.12 (uv venv) and sync dev.txt '
+            '(uv pip sync)',
+            f'adopt the environment {environment} (from --environment): Python 3.12 (its pyvenv.cfg); setup never '
+            'creates, syncs or deletes it')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout, plan + (
+            f'verified: {self.checkout} loads its configuration from {workspace}\n'
+            f'compiled {requirements}/runtime.txt, dev.txt and lock.sha256\n'
+            'next steps:\n'
+            f'  1. fill in ODOO_DB_USER and ODOO_DB_PASSWORD in {config / ".env"}, and the same values as '
+            f'db_user and db_password in {config / "odoo.conf"}\n'
+            f'  2. the locks in {requirements} describe runtime.in and dev.in: oasis --project {self.checkout} '
+            f'bootstrap --apply syncs the adopted environment {environment} to them (it changes the packages '
+            'installed there)\n'
+            f'  3. docker compose --env-file {config / ".env"} -f {config / "compose.yml"} up -d --wait\n'
+            f'  4. oasis --project {self.checkout} doctor\n'
+            f'  5. add a [development] table with administrator_login to {workspace} (docs/dev-database.md)\n'
+            f'  6. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n'))
+        self.assertEqual(workspace.read_text(), WORKSPACE.format(base='.oasis/').replace(
+            "environment = '.oasis/venv'", f"environment = '{environment}'"))
+        self.assertEqual(self.log.read_text().splitlines(), [
+            f'uv pip compile --python-version 3.12 runtime.in -o runtime.txt (in {requirements})',
+            f'uv pip compile --python-version 3.12 dev.in -o dev.txt (in {requirements})'])
+        self.assertEqual(sorted(path.name for path in environment.rglob('*')), ['bin', 'python', 'pyvenv.cfg'])
+        self.assertFalse((self.scratch / 'python-ran').exists())
+        self.assertFalse((self.checkout / '.oasis/venv').exists())
+
+    def test_environment_of_another_python_of_the_series_becomes_the_default_named_environment(self):
+        environment = self.existing_environment('shop-313', '3.13.1')
+        workspace = self.checkout / 'oasis-workspace.toml'
+        result = self.setup_cmd('--apply', '--environment', str(environment), '--community', str(self.source),
+                                '--no-enterprise')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn(f'adopt the environment {environment} (from --environment): Python 3.13 (its pyvenv.cfg)',
+                      result.stdout)
+        self.assertEqual(workspace.read_text(), WORKSPACE.format(base='.oasis/').replace(
+            "environment = '.oasis/venv'\n", '') + f"\n[environments.default]\npath = '{environment}'\npython = '3.13'\n")
+        self.assertIn('--python-version 3.13 runtime.in', self.log.read_text())
+        values = subprocess.run([sys.executable, '-B', str(READER), str(self.checkout)], capture_output=True,
+                                text=True, env=self.env)
+        self.assertEqual((values.returncode, values.stderr), (0, ''))
+        for line in (f'PROJECT_ENVIRONMENT={environment}', 'ENVIRONMENT_NAME=default', 'PYTHON_VERSION=3.13'):
+            self.assertIn(line + '\n', values.stdout)
+        self.assertFalse((self.scratch / 'python-ran').exists())
+        # Outside the series' range: refused before anything is written.
+        other = self.existing_environment('shop-39', '3.9.18')
+        self.checkout = self.scratch / 'work' / 'other'
+        self.module('other_sale', MANIFEST)
+        self.git(self.checkout, 'init', '-q')
+        self.log.unlink()
+        before = self.tree()
+        self.assert_refused(self.setup_cmd('--environment', str(other), '--community', str(self.source),
+                                           '--no-enterprise'),
+                            f'--environment {other} has Python 3.9, which Odoo 19.0 does not support (3.10 to 3.14).',
+                            before)
 
     # -- review follow-ups (review-f6708244dde86835) and the series guard (S11) ----------------
 

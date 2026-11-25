@@ -11,6 +11,17 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Added
 
+- `oasis setup --environment <dir>` adopts an existing Python environment (a `pyvenv.cfg` whose
+  `version` is a Python the series supports, read and never run) for a new workspace or a new
+  `[series."x.y"]` section; setup never creates, syncs or deletes it, and the next steps say that
+  `bootstrap --apply` syncs it to the locks. `[series."x.y"]` sections accept `python`
+  (`'3.<minor>'`, within the series' range) for the environment the section or `[tooling]` gives.
+- `overrides.txt` in a requirements directory is an optional lock input: `uv pip compile` gets
+  `--override overrides.txt`, `lock.sha256` records it, and adding, changing or removing it makes
+  the locks stale. Without it, the locks, the compile commands and the messages are unchanged.
+  When setup adopts a series folder with `requirements-extra.txt` or `requirements-overrides.txt`,
+  a new `runtime.in` includes the first and a new `overrides.txt` the second; those files are never
+  copied or edited.
 - `oasis setup` in a checkout of an Odoo series the workspace file has no section for (a 15.0
   branch of a 19.0 project) adds a `[series."x.y"]` section to that file (a `workspace_version = 1`
   file becomes version 2, that line only) and the machine file entry of the series, and creates

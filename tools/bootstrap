@@ -24,9 +24,16 @@ fi
 # The locks: current ones are left as they are (byte-identical); missing ones, or ones whose
 # lock.sha256 no longer records the current runtime.in and dev.in (stale), are compiled from
 # those inputs before the sync (tools/locks.py); a lock changed by hand under current inputs
-# (edited) is refused, never overwritten. The inputs are only read.
+# (edited) is refused, never overwritten. The inputs are only read. An optional overrides.txt there
+# (v0.15.0 S7) is an input too: compiled with --override and recorded in lock.sha256, which
+# `sha256sum --check` alone cannot require (locks.py recorded).
 locks_state=current
-if [[ ! -f "$REQUIREMENTS_DIR/runtime.txt" || ! -f "$lockfile" ]] || ! dependency_locks_current; then
+overrides_recorded() {
+  [[ ! -f "$REQUIREMENTS_DIR/overrides.txt" ]] \
+    || python3 -I -B "$(dirname "$0")/locks.py" recorded "$REQUIREMENTS_DIR" "$PROJECT_ROOT"
+}
+if [[ ! -f "$REQUIREMENTS_DIR/runtime.txt" || ! -f "$lockfile" ]] || ! dependency_locks_current \
+    || ! overrides_recorded; then
   for path in "$REQUIREMENTS_DIR/runtime.in" "$REQUIREMENTS_DIR/dev.in"; do
     if [[ ! -f "$path" ]]; then
       printf 'Missing required local path: %s\n' "$path" >&2
@@ -36,9 +43,13 @@ if [[ ! -f "$REQUIREMENTS_DIR/runtime.txt" || ! -f "$lockfile" ]] || ! dependenc
   locks_state=$(python3 -I -B "$(dirname "$0")/locks.py" state "$REQUIREMENTS_DIR" "$PROJECT_ROOT")
 fi
 if [[ "$locks_state" == edited ]]; then
+  inputs='runtime.in and dev.in' fingerprinted='runtime.in runtime.txt dev.in dev.txt'
+  if [[ -f "$REQUIREMENTS_DIR/overrides.txt" ]]; then
+    inputs='runtime.in, dev.in and overrides.txt' fingerprinted+=' overrides.txt'
+  fi
   printf 'Refusing bootstrap because dependency inputs or locks do not match lock.sha256.\n' >&2
-  printf 'runtime.in and dev.in match it, so a lock was changed by hand: move that lock away for bootstrap to compile it again, or fingerprint it again in %s with sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256.\n' \
-    "$REQUIREMENTS_DIR" >&2
+  printf '%s match it, so a lock was changed by hand: move that lock away for bootstrap to compile it again, or fingerprint it again in %s with sha256sum %s > lock.sha256.\n' \
+    "$inputs" "$REQUIREMENTS_DIR" "$fingerprinted" >&2
   exit 2
 fi
 if [[ -e "$PROJECT_ENVIRONMENT" && ! -x "$PYTHON" ]]; then
@@ -84,8 +95,8 @@ if [[ "$locks_state" != current ]]; then
   printf 'locks=%s\n' "$locks_state"
   # `uv pip compile <input> -o <lock>` in the requirements directory with the declared Python, as
   # docs/new-workspace.md runs it by hand: runtime.txt first (dev.in constrains itself with it), then
-  # lock.sha256 (tools/locks.py compile, which oasis setup runs too). A failure stops before
-  # lock.sha256 and names the input.
+  # lock.sha256 (tools/locks.py compile, which oasis setup runs too; with --override overrides.txt
+  # when that file exists). A failure stops before lock.sha256 and names the input.
   python3 -I -B "$(dirname "$0")/locks.py" compile "$REQUIREMENTS_DIR" "$PYTHON_VERSION" \
     "$(program_name) bootstrap --apply"
   printf 'locks_compiled=runtime.txt,dev.txt,lock.sha256\n'

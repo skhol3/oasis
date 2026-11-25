@@ -39,6 +39,12 @@ def fingerprint(requirements):
                    for name in FILES)
 
 
+def fingerprint_with_overrides(requirements):
+    """lock.sha256 with overrides.txt last, as tools/locks.py writes it when that file exists (S7)."""
+    return fingerprint(requirements) + (
+        f'{hashlib.sha256((requirements / "overrides.txt").read_bytes()).hexdigest()}  overrides.txt\n')
+
+
 def contents(requirements):
     """The bytes of every file of the requirements directory."""
     return {path.name: path.read_bytes() for path in sorted(requirements.iterdir())}
@@ -515,6 +521,68 @@ esac
                        f'{requirements} with sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256.\n'))
             self.unchanged()
             self.assertEqual(contents(requirements), before)
+
+    # -- overrides.txt (v0.15.0 S7) -----------------------------------------------------------
+
+    def test_an_overrides_file_the_fingerprint_does_not_record_makes_bootstrap_compile_with_it(self):
+        self.prepare()
+        requirements = self.lockable()
+        self.running_database()
+        (requirements / 'overrides.txt').write_text('-r ../requirements-overrides.txt\n')
+        before = contents(requirements)
+        # sha256sum --check passes (lock.sha256 does not name it), but the locks are stale.
+        preview = self.invoke('bootstrap', '--preview')
+        self.assertEqual((preview.returncode, preview.stdout, preview.stderr),
+                         (0, self.preview_output(self.python.parent.parent, 'stale'), ''))
+        self.unchanged()
+        self.assertEqual(contents(requirements), before)
+        result = self.invoke('bootstrap', '--apply')
+        # The full check that ends the apply passes dependency_locks with the recorded overrides.txt.
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.expected_apply_output(self.python.parent.parent, locks='stale'), ''))
+        self.assertEqual(self.commands.read_text().splitlines()[:2], [
+            f'uv pip compile --python-version 3.12 --override overrides.txt runtime.in -o runtime.txt (in {requirements})',
+            f'uv pip compile --python-version 3.12 --override overrides.txt dev.in -o dev.txt (in {requirements})'])
+        self.assertEqual((requirements / 'lock.sha256').read_text(), fingerprint_with_overrides(requirements))
+        self.assertEqual((requirements / 'overrides.txt').read_text(), '-r ../requirements-overrides.txt\n')
+        # A changed overrides.txt makes them stale again.
+        (requirements / 'overrides.txt').write_text('cryptography==3.4.8\n')
+        self.commands.unlink()
+        preview = self.invoke('bootstrap')
+        self.assertEqual((preview.returncode, preview.stdout, preview.stderr),
+                         (0, self.preview_output(self.python.parent.parent, 'stale'), ''))
+        self.unchanged()
+
+    def test_check_environment_fails_an_overrides_file_the_fingerprint_does_not_record(self):
+        self.prepare()
+        requirements = self.lockable()
+        result = self.invoke('check-environment')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, self.expected_quick_output(), ''))
+        (requirements / 'overrides.txt').write_text('cryptography==3.4.8\n')
+        result = self.invoke('check-environment')
+        self.assertEqual((result.returncode, result.stderr), (1, 'FAIL dependency_locks=stale_or_modified\n'))
+        self.assertEqual(result.stdout, self.expected_quick_output().replace(
+            'PASS dependency_locks=current\n', '').replace('environment_failures=0', 'environment_failures=1'))
+        (requirements / 'lock.sha256').write_text(fingerprint_with_overrides(requirements))
+        result = self.invoke('check-environment')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, self.expected_quick_output(), ''))
+
+    def test_a_lock_edited_by_hand_with_overrides_names_overrides_in_the_refusal(self):
+        self.prepare()
+        requirements = self.lockable()
+        (requirements / 'overrides.txt').write_text('cryptography==3.4.8\n')
+        (requirements / 'lock.sha256').write_text(fingerprint_with_overrides(requirements))
+        (requirements / 'dev.txt').write_text('pylint==3.0.0\n')
+        before = contents(requirements)
+        result = self.invoke('bootstrap', '--apply')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            2, '', 'Refusing bootstrap because dependency inputs or locks do not match lock.sha256.\n'
+                   'runtime.in, dev.in and overrides.txt match it, so a lock was changed by hand: move that lock '
+                   'away for bootstrap to compile it again, or fingerprint it again in '
+                   f'{requirements} with sha256sum runtime.in runtime.txt dev.in dev.txt overrides.txt > '
+                   'lock.sha256.\n'))
+        self.unchanged()
+        self.assertEqual(contents(requirements), before)
 
     def test_a_missing_input_stops_before_compiling(self):
         self.prepare()

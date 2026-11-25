@@ -18,7 +18,7 @@ Move /home/you/odoo/19.0/environments/acme-next away and run oasis bootstrap --a
 
 ## Dependency locks
 
-`lock.sha256` lists the dependency inputs and locks (`runtime.in`, `runtime.txt`, `dev.in`, `dev.txt`) with their SHA-256, in `sha256sum` format, relative to its own directory: regenerate it there with `sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256`. `check-environment` (`dependency_locks`) and `bootstrap` run `sha256sum --check --strict lock.sha256` from that directory first and, for a legacy lock whose entries are relative to the project root (the checkout), from the project root next; either one passing is enough. `oasis migrate` rewrites a legacy lock relative to its directory with the same hashes.
+`lock.sha256` lists the dependency inputs and locks (`runtime.in`, `runtime.txt`, `dev.in`, `dev.txt`, and `overrides.txt` last when it [exists](#overridestxt)) with their SHA-256, in `sha256sum` format, relative to its own directory: regenerate it there with `sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256` (`... dev.txt overrides.txt > lock.sha256` with that file). `check-environment` (`dependency_locks`) and `bootstrap` run `sha256sum --check --strict lock.sha256` from that directory first and, for a legacy lock whose entries are relative to the project root (the checkout), from the project root next; either one passing is enough. `oasis migrate` rewrites a legacy lock relative to its directory with the same hashes.
 
 `bootstrap` compiles the locks itself when they need it, before it creates or syncs the environment:
 
@@ -26,7 +26,7 @@ Move /home/you/odoo/19.0/environments/acme-next away and run oasis bootstrap --a
 | --- | --- | --- |
 | current: `lock.sha256` passes | unchanged output (`uv pip sync --dry-run`) | syncs; the requirement files stay byte-identical |
 | missing: `runtime.txt`, `dev.txt` or `lock.sha256` does not exist | `locks=missing` | compiles, then creates or syncs |
-| stale: `lock.sha256` does not record the current `runtime.in` and `dev.in` (an input changed, or the file cannot be read) | `locks=stale` | compiles, then creates or syncs |
+| stale: `lock.sha256` does not record the current `runtime.in` and `dev.in`, or the current [`overrides.txt`](#overridestxt) (an input changed, or the file cannot be read) | `locks=stale` | compiles, then creates or syncs |
 | edited: `lock.sha256` records the current inputs but not a lock (changed by hand) | refused, exit 2 | refused, exit 2 |
 
 When it compiles, `--preview` changes nothing and names both steps: `planned_action=compile_locks_then_sync_lock` for an existing environment, `planned_action=compile_locks_then_create_python_<version>_and_sync_lock` for a missing one. `--apply` runs, in the requirements directory and with the [declared Python](#the-declared-python), the commands of [Setting up a new workspace](new-workspace.md#steps) step 4: `uv pip compile --python-version <version> runtime.in -o runtime.txt`, then the same for `dev.in` and `dev.txt` (an existing lock keeps its pins where it can, as uv prefers them), writes `lock.sha256` as `sha256sum` would, prints `locks_compiled=runtime.txt,dev.txt,lock.sha256` and goes on as before. It never writes `runtime.in` or `dev.in`; both must exist (`Missing required local path: <path>`, exit 2). A failed compile stops with exit 2 before `lock.sha256` and the environment change:
@@ -44,6 +44,16 @@ runtime.in and dev.in match it, so a lock was changed by hand: move that lock aw
 ```
 
 Without uv on PATH, `bootstrap` stops with exit 2: `uv is required to bootstrap this environment.`, then `Install uv (https://docs.astral.sh/uv/), then run oasis bootstrap again.`
+
+### overrides.txt
+
+`overrides.txt` in the requirements directory, next to `runtime.in`, is an optional lock input: requirements that replace the ones Odoo's `requirements.txt` pins, such as `cryptography==3.4.8` for an older Python. [`oasis setup`](setup.md#the-projects-requirement-files) writes it, as `-r ../requirements-overrides.txt`, when it adopts a series folder that holds `requirements-overrides.txt`; you may also write it yourself. When it exists:
+
+- Every compile, by `bootstrap --apply` or `oasis setup`, runs `uv pip compile --python-version <version> --override overrides.txt runtime.in -o runtime.txt`, then the same for `dev.in` and `dev.txt`; uv follows a nested `-r` in it.
+- `lock.sha256` records it after the four files. An `overrides.txt` that `lock.sha256` does not record (added after the locks), one whose digest changed, or one it records that no longer exists makes the locks stale: `bootstrap` compiles them again (`locks=stale`), and `check-environment` fails `dependency_locks=stale_or_modified` until then, since `sha256sum --check` alone cannot see a file `lock.sha256` omits.
+- A lock changed by hand under current inputs is refused as before, naming it: `runtime.in, dev.in and overrides.txt match it, so a lock was changed by hand: ... fingerprint it again in <requirements> with sha256sum runtime.in runtime.txt dev.in dev.txt overrides.txt > lock.sha256.`
+
+Without it, the compile commands, `lock.sha256` and every message are exactly as before. `lock.sha256` records `runtime.in` and `overrides.txt`, not the files they include with `-r`: after changing an included file, move `lock.sha256` away so that `bootstrap --apply` compiles the locks again.
 
 ## The doctor report
 

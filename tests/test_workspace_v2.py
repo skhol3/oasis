@@ -54,7 +54,7 @@ series_exceptions = ['report_xlsx']
 '''
 SECTION_15 = WORKSPACE[WORKSPACE.index('[series."15.0"]'):]
 WITHOUT_15 = WORKSPACE.replace(SECTION_15, '')
-SECTION_KEYS = ('community, enterprise, environment, config, env_file, compose, requirements, db_service, '
+SECTION_KEYS = ('community, enterprise, environment, python, config, env_file, compose, requirements, db_service, '
                 'dev_prefix, test_prefix, test_database, logs, data_dir, series_exceptions')
 
 
@@ -395,6 +395,39 @@ class WorkspaceVersion2Tests(unittest.TestCase):
         self.assertEqual(self.refused(shop), (
             f'Unsupported python "3.13" for environment "old" in {self.workspace}; Odoo 15.0 supports '
             f'{" to ".join(self.config.versions().capability("15.0", "python"))}.'))
+
+    def test_a_section_python_is_the_python_of_its_environment_within_the_series_range(self):
+        """S7: an adopted environment's Python (billing-o15, 3.8) is the series' declared Python."""
+        shop = self.checkout('shop15', ('cafe_sale', '15.0.1.0.0'), ('report_xlsx', '16.0.2.0.2'))
+        adopted = WORKSPACE + "environment = '/srv/environments/billing-o15'\npython = '3.8'\n"
+        self.workspace.write_text(adopted)
+        self.assertEqual(self.config.load(shop), self.expected(
+            shop, '15.0', SERIES_EXCEPTIONS='report_xlsx', PROJECT_ENVIRONMENT='/srv/environments/billing-o15',
+            PYTHON='/srv/environments/billing-o15/bin/python', ENVIRONMENTS_DIR='/srv/environments',
+            PYTHON_VERSION='3.8', **self.section_15()))
+        # With [tooling]'s environment too; the other series keeps its default.
+        self.workspace.write_text(WORKSPACE + "python = '3.8'\n")
+        self.assertEqual(self.config.load(shop)['PYTHON_VERSION'], '3.8')
+        main = self.checkout('shop', ('shop_sale', '19.0.1.0.0'))
+        self.assertEqual(self.config.load(main), self.expected(main, '19.0'))
+        # A checkout's named environment keeps its own Python.
+        self.workspace.write_text(adopted.replace("environment = 'environments/acme-{series}'\n", '')
+                                  + "[environments.default]\npath = 'environments/acme-{series}'\npython = '3.12'\n"
+                                  "[environments.old]\npath = 'environments/old-{series}'\npython = '3.10'\n")
+        self.assertEqual(self.config.load(shop)['PYTHON_VERSION'], '3.8')
+        self.assertEqual(self.config.load(main)['PYTHON_VERSION'], '3.12')
+        (shop / 'oasis-checkout.toml').write_text("[tooling]\nenvironment = 'old'\n")
+        self.assertEqual(self.config.load(shop)['PYTHON_VERSION'], '3.10')
+        (shop / 'oasis-checkout.toml').unlink()
+        # Outside the series' range, or not '3.<minor>': refused, for every series' checkout.
+        low, high = self.config.versions().capability('15.0', 'python')
+        for value, shown in (("'3.13'", '"3.13"'), ("'3.6'", '"3.6"'), ('3.8', '3.8'), ("'3.8.20'", '"3.8.20"')):
+            with self.subTest(value=value):
+                self.workspace.write_text(WORKSPACE + f'python = {value}\n')
+                message = (f'Unsupported python {shown} for [series."15.0"] in {self.workspace}; Odoo 15.0 supports '
+                           f'{low} to {high}.')
+                self.assert_rejected(shop, message)
+                self.assert_rejected(main, message)
 
     def test_configuration_readers_see_the_series_values(self):
         """Tools that read their own keys (lint_rcfile) get the checkout's series too (S3 item 4)."""

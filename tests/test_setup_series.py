@@ -458,7 +458,8 @@ class SeriesSetupTests(unittest.TestCase):
                                     f'{flag[0]}: {self.checkout} is already configured by {self.workspace}; setup '
                                     'only fills what is missing.', before)
         # In a checkout of the workspace's own series there is no section to add.
-        for flag in (('--exception', 'report_xlsx'), ('--config-dir', str(self.project))):
+        for flag in (('--exception', 'report_xlsx'), ('--config-dir', str(self.project)),
+                     ('--environment', str(self.project))):
             with self.subTest(flag=flag[0]):
                 self.assert_refused(self.setup_cmd(*flag, root=self.checkout19),
                                     f'{flag[0]}: {self.checkout19} is already configured by {self.workspace}; setup '
@@ -625,6 +626,194 @@ class SeriesSetupTests(unittest.TestCase):
             'setup --apply again.\n'), before)
         self.assertIn(f'compiled {folder / "requirements"}/runtime.txt, dev.txt and lock.sha256\n', result.stdout)
         self.assertFalse((self.project / 'environments').exists())
+
+    # -- an adopted environment and the project's requirement files (S7) ------------------------
+
+    def existing_environment(self, path, cfg):
+        """An environment that setup may adopt: its pyvenv.cfg, and a bin/python that leaves a mark when run."""
+        (path / 'bin').mkdir(parents=True)
+        (path / 'pyvenv.cfg').write_text(cfg)
+        (path / 'bin/python').write_text(f'#!/bin/sh\ntouch {self.scratch / "python-ran"}\n')
+        (path / 'bin/python').chmod(0o755)
+        (path / 'lib/site-packages').mkdir(parents=True)
+        (path / 'lib/site-packages/cryptography.py').write_text('# installed\n')
+        return path
+
+    def billing_o15(self):
+        """The corpus-cafe case (L14): config/odoo-15 with the project's requirement files, and billing-o15."""
+        self.workspace.write_text(V1)
+        self.write_machine(f"[series.\"19.0\"]\ncommunity = '{self.source19}'\n"
+                           f"[series.\"15.0\"]\ncommunity = '{self.source15}'\n")
+        folder = self.project / 'config/odoo-15'
+        self.series_files(folder, 5415, 'corpus-cafe-15')
+        (folder / 'requirements-extra.txt').write_text('xmlsig==0.1.2\n')
+        (folder / 'requirements-overrides.txt').write_text('cryptography==3.4.8\npyopenssl==21.0.0\n'
+                                                           'python-ldap==3.4.4\n')
+        environment = self.existing_environment(self.scratch / 'environments/billing-o15',
+                                                'home = /usr/bin\nimplementation = CPython\nversion = 3.8.20\n')
+        return folder, environment
+
+    def test_an_adopted_environment_and_the_project_requirement_files_set_up_the_series_locks(self):
+        folder, environment = self.billing_o15()
+        requirements = folder / 'requirements'
+        held = {path: data for path, data in self.tree().items()
+                if path.startswith(('corpus-cafe/config/odoo-15', 'environments'))}
+        section = SECTION_COMMENT + f'''
+[series."15.0"]
+environment = '{environment}'
+python = '3.8'
+config = 'config/odoo-15/odoo.conf'
+env_file = 'config/odoo-15/.env'
+compose = 'config/odoo-15/compose.yml'
+requirements = 'config/odoo-15/requirements'
+dev_prefix = 'cc15_dev_'
+test_prefix = 'cc15_test_'
+logs = 'logs/15.0'
+data_dir = 'data/15.0'
+series_exceptions = ['report_xlsx']
+'''
+        plan = '\n'.join([
+            f'checkout: {self.checkout} (main)', f'workspace: {self.workspace} (existing)',
+            f'series: 15.0 (from the module manifests; {self.workspace} has no [series."15.0"] section)',
+            f'community: {self.source15} (from the machine file)', 'enterprise: none (from the machine file)',
+            f'kept {self.machine}: [series."15.0"] gives the Odoo source',
+            f'change workspace_version = 1 to workspace_version = 2 in {self.workspace} (that line only)',
+            f'add [series."15.0"] to {self.workspace}:', *self.indented(section),
+            f'adopt {folder} (found): odoo.conf, compose.yml, .env, requirements-extra.txt, '
+            'requirements-overrides.txt',
+            f'kept {folder / "odoo.conf"}', f'kept {folder / "compose.yml"}', f'kept {folder / ".env"}',
+            f'create {requirements / "runtime.in"}: -r {self.source15}/requirements.txt, -r ../requirements-extra.txt',
+            f'create {requirements / "dev.in"}: -c runtime.txt, -r runtime.in',
+            f'create {requirements / "overrides.txt"}: -r ../requirements-overrides.txt (uv pip compile --override)',
+            f'create {self.project / "logs/15.0"}/', f'create {self.project / "data/15.0"}/',
+            f'compile {requirements}/runtime.txt, dev.txt and lock.sha256 with Python 3.8 (uv pip compile)',
+            f'adopt the environment {environment} (from --environment): Python 3.8 (its pyvenv.cfg); setup never '
+            'creates, syncs or deletes it']) + '\n'
+        before = self.tree()
+        result = self.setup_cmd('--environment', str(environment), '--exception', 'report_xlsx')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, plan + DRY_RUN, ''))
+        self.assertEqual(self.tree(), before)
+        self.assertFalse(self.log.exists())
+        applied = self.setup_cmd('--apply', '--environment', str(environment), '--exception', 'report_xlsx')
+        self.assertEqual((applied.returncode, applied.stderr), (0, ''), applied.stdout)
+        self.assertEqual(applied.stdout, plan + '\n'.join([
+            f'verified: {self.checkout} loads its configuration from {self.workspace}',
+            f'compiled {requirements}/runtime.txt, dev.txt and lock.sha256',
+            'next steps:',
+            f'  1. the locks in {requirements} describe runtime.in, dev.in and overrides.txt: oasis --project '
+            f'{self.checkout} bootstrap --apply syncs the adopted environment {environment} to them (it changes '
+            'the packages installed there)',
+            f'  2. docker compose --env-file {folder / ".env"} -f {folder / "compose.yml"} up -d --wait',
+            f'  3. oasis --project {self.checkout} doctor',
+            f'  4. add a [development] table with administrator_login to {self.workspace} (docs/dev-database.md)',
+            f'  5. oasis --project {self.checkout} init-dev-database <module> cc15_dev_manual']) + '\n')
+        self.assertEqual(self.workspace.read_text(),
+                         V1.replace('workspace_version = 1', 'workspace_version = 2') + '\n' + section)
+        # Both compiles with the overrides, with the environment's Python; no uv venv, no uv pip sync.
+        self.assertEqual(self.log.read_text().splitlines(), [
+            f'uv pip compile --python-version 3.8 --override overrides.txt runtime.in -o runtime.txt (in {requirements})',
+            f'uv pip compile --python-version 3.8 --override overrides.txt dev.in -o dev.txt (in {requirements})'])
+        self.assertEqual((requirements / 'runtime.in').read_text(), (
+            '# Written by oasis setup: the requirements of the Odoo source.\n'
+            f'-r {self.source15}/requirements.txt\n'
+            "# The project's own requirements (oasis setup found them in the series folder).\n"
+            '-r ../requirements-extra.txt\n'))
+        self.assertEqual((requirements / 'overrides.txt').read_text(), (
+            "# Written by oasis setup: the project's pins that replace Odoo's, given to uv pip compile as "
+            '--override for runtime.txt and dev.txt.\n-r ../requirements-overrides.txt\n'))
+        self.assertEqual((requirements / 'lock.sha256').read_text(), ''.join(
+            f'{hashlib.sha256((requirements / name).read_bytes()).hexdigest()}  {name}\n'
+            for name in ('runtime.in', 'runtime.txt', 'dev.in', 'dev.txt', 'overrides.txt')))
+        # The project's files and the environment are as they were; its Python never ran.
+        self.assertEqual({path: data for path, data in self.tree().items()
+                          if path.startswith(('corpus-cafe/config/odoo-15', 'environments'))
+                          and not path.startswith('corpus-cafe/config/odoo-15/requirements/')
+                          and path != 'corpus-cafe/config/odoo-15/requirements'}, held)
+        self.assertFalse((self.scratch / 'python-ran').exists())
+        values = self.reader(self.checkout)
+        self.assertEqual((values.returncode, values.stderr), (0, ''))
+        for line in (f'PROJECT_ENVIRONMENT={environment}', 'PYTHON_VERSION=3.8', f'REQUIREMENTS_DIR={requirements}'):
+            self.assertIn(line + '\n', values.stdout)
+        # A second run keeps everything; --environment is then an option that does not apply.
+        before = self.tree()
+        self.log.unlink()
+        again = self.setup_cmd('--apply')
+        self.assertEqual((again.returncode, again.stderr), (0, ''))
+        self.assertIn(f'kept {requirements / "overrides.txt"}\n', again.stdout)
+        self.assertTrue(again.stdout.endswith(f'kept the locks in {requirements}: current\n'
+                                              f'kept the environment {environment}\n'
+                                              f'nothing to set up: run oasis --project {self.checkout} doctor\n'),
+                        again.stdout)
+        self.assert_refused(self.setup_cmd('--environment', str(environment)),
+                            f'--environment: {self.checkout} is already configured by {self.workspace}; setup only '
+                            'fills what is missing.', before)
+
+    def test_the_documented_billing_o15_example_plans_the_documented_lines(self):
+        _folder, environment = self.billing_o15()
+        docs = (ROOT / 'docs/setup.md').read_text()
+        start = docs.index('# corpus-cafe/oasis-workspace.toml before, example only.\n')
+        self.workspace.write_text(docs[start:docs.index('```', start)])
+        command = docs.index('--environment <environments>/billing-o15 --apply\n')
+        start = docs.index('add [series."15.0"] to <corpus-cafe>/oasis-workspace.toml:\n', command)
+        documented = docs[start:docs.index('```', start)].replace('<corpus-cafe>', str(self.project)).replace(
+            '<15.0 source>', str(self.source15)).replace('<environments>', str(environment.parent))
+        result = self.setup_cmd('--exception', 'report_xlsx', '--environment', str(environment))
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.endswith(documented + DRY_RUN), result.stdout)
+
+    def test_an_environment_under_the_workspace_is_written_relative_and_its_default_python_is_not(self):
+        self.workspace.write_text(V1)
+        environment = self.existing_environment(self.project / 'environments/cc15-own',
+                                                'home = /usr/bin\nuv = 0.13.10\nversion_info = 3.10.12\n')
+        before = self.tree()
+        result = self.setup_cmd('--environment', str(environment), '--community', str(self.source15),
+                                '--no-enterprise', '--exception', 'report_xlsx')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertIn("  [series.\"15.0\"]\n  environment = 'environments/cc15-own'\n  config = 'config/15.0/odoo.conf'\n",
+                      result.stdout)
+        # Without the project's requirement files: runtime.in from Odoo's only, no overrides.txt.
+        self.assertIn(f'create {self.project / "config/15.0/requirements/runtime.in"}: -r '
+                      f'{self.source15}/requirements.txt\n', result.stdout)
+        self.assertNotIn('overrides', result.stdout)
+        self.assertTrue(result.stdout.endswith(
+            f'adopt the environment {environment} (from --environment): Python {PYTHON_15} (its pyvenv.cfg); setup '
+            'never creates, syncs or deletes it\n' + DRY_RUN), result.stdout)
+        self.assertEqual(self.tree(), before)
+        self.assertFalse(self.log.exists())
+
+    def test_an_environment_setup_cannot_adopt_is_refused(self):
+        self.workspace.write_text(V1)
+        before = self.tree()
+        self.assert_refused(self.setup_cmd('--environment', 'environments/billing-o15'),
+                            '--environment requires an absolute existing directory.', before)
+        plain = self.scratch / 'plain'
+        plain.mkdir()
+        before = self.tree()
+        self.assert_refused(self.setup_cmd('--environment', str(plain), '--exception', 'report_xlsx'),
+                            f'--environment {plain} is not a Python environment (no pyvenv.cfg).', before)
+        low, high = table().capability('15.0', 'python')
+        for name, cfg, message in (
+                ('unknown', 'home = /usr/bin\n', 'has no Python version in its pyvenv.cfg (version or version_info)'),
+                ('old', 'version = 3.6.15\n', f'has Python 3.6, which Odoo 15.0 does not support ({low} to {high})'),
+                ('new', 'version_info = 3.13.1\n',
+                 f'has Python 3.13, which Odoo 15.0 does not support ({low} to {high})')):
+            with self.subTest(name=name):
+                environment = self.existing_environment(self.scratch / name, cfg)
+                before = self.tree()
+                self.assert_refused(self.setup_cmd('--environment', str(environment), '--community',
+                                                   str(self.source15), '--no-enterprise', '--exception', 'report_xlsx'),
+                                    f'--environment {environment} {message}.', before)
+        self.assertFalse((self.scratch / 'python-ran').exists())
+
+    def test_a_failed_compile_with_an_adopted_environment_undoes_every_change_and_leaves_it_alone(self):
+        _folder, environment = self.billing_o15()
+        before = self.tree()
+        self.env['FAKE_COMPILE_FAIL'] = '1'
+        result = self.setup_cmd('--apply', '--environment', str(environment), '--exception', 'report_xlsx')
+        self.assertEqual((result.returncode, result.stderr.splitlines()[-1]),
+                         (2, 'ERROR: uv pip compile failed; every change was undone.'), result.stdout)
+        self.assertEqual(self.tree(), before)
+        self.assertFalse((self.scratch / 'python-ran').exists())
 
     # -- files setup cannot extend safely -------------------------------------------------------
 
