@@ -6,6 +6,8 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
  * that has one (`oasis migrate` converts it); found here only so that refusal shows. */
 export const PROFILE_NAME = ".odoo19-agent.toml";
 export const WORKSPACE_NAME = "oasis-workspace.toml";
+/** A checkout's own file at its root (tools/config.py CHECKOUT_NAME): checkout_slug and environment. */
+export const CHECKOUT_NAME = "oasis-checkout.toml";
 
 /** Git top level of a directory, or null when git cannot tell (injected: this lib runs no commands). */
 export type GitTopLevel = (start: string) => string | null;
