@@ -9,6 +9,51 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-24
+
+### Added
+
+- `start --print-command [odoo options]` and `restart --print-command [odoo options]` print the
+  odoo-bin command line the command would exec (python, odoo-bin, `-c`, addons path, data dir,
+  the chosen ports and the given options) as one shell-quoted line on stdout and exit 0, without
+  side effects: no database service, no Odoo run (not even `odoo-bin --version`), no record, no
+  log. `restart --print-command` includes the port and database it would keep and counts the
+  running server's ports as free. `odoo.conf` is never printed and password option values show
+  as `***`. `--print-command` must be the first argument: elsewhere before `--` both commands
+  exit 2 with `--print-command must be the first argument.` instead of passing it to Odoo (and,
+  for restart, stopping the server).
+- Gentle Shell: typing `/oa` or `/odoo` (before the space) suggests `/oasis <subcommand>` and
+  `/odoo19 <subcommand>` with their descriptions; no new command names.
+- Gentle Shell panel: typing in a list of the start / restart form filters it (substring,
+  case-insensitive; `filter: <text>` shown, backspace edits it, Esc clears it before cancelling);
+  `(none)` and `(type a name)` stay listed; with no match nothing is highlighted, so Enter does
+  nothing until you move to one of them.
+- Gentle Shell panel: the start / restart form shows the native `odoo-bin` line (from
+  `--print-command`), abbreviated (home as `~`, values over 40 characters shortened with `…`),
+  falling back to the oasis command with a note while it loads or when it cannot be read; the
+  full line is added to the run's result entry (`native: …`), never sent to the model.
+
+### Changed
+
+- README and Install or update: oasis is described as an Odoo development harness, with 19.0 the
+  supported series today; the `odoo19` names (install directory, skills, CLI alias) stay until a
+  second series is supported. A table says which install does what: `./install.sh` installs the
+  skills and the `oasis` CLI into `~/.agents/skills/odoo19` for any agent and the terminal; the
+  Gentle Shell package (`gentle-shell install git:github.com/skhol3/oasis@<tag>`) adds the
+  `oasis_*` tools, `/oasis` and the panel. Install examples use `<tag>` instead of the stale
+  `v0.11.0` and show how to move between tags.
+
+### Fixed
+
+- Gentle Shell panel: the start / restart form's list scrolls: it shows a window around the
+  selected row with `↑ n more` / `↓ n more` markers, keeping the header and the command visible
+  (with many databases the selector was out of view).
+- `/oasis setup` in a session Gentle Shell did not start no longer writes the subagent overlay:
+  it reports `oasis setup: the subagent overlay applies only to Gentle Shell, and this session is
+  not running in it; nothing written.`, and the session-start overlay reminder is not shown
+  there. Gentle Shell is recognised by `PI_PROGRAM_STATUS_APP=gentle-shell`, which its launcher
+  sets, or an absolute `GENTLE_PI_CONFIG_HOME`.
+
 ## [0.12.0] - 2026-11-24
 
 ### Added
@@ -899,7 +944,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/skhol3/oasis/releases/tag/v0.13.0
 [0.12.0]: https://github.com/skhol3/oasis/releases/tag/v0.12.0
 [0.11.0]: https://github.com/skhol3/oasis/releases/tag/v0.11.0
 [0.10.1]: https://github.com/skhol3/oasis/releases/tag/v0.10.1

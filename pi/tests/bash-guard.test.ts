@@ -617,6 +617,24 @@ test("classifyBash allows every other oasis command, help alone and unrelated sc
   }
 });
 
+test("agents may run start and restart --print-command: neither tier blocks or asks (v0.12.1 S5)", () => {
+  for (const command of [
+    "oasis --project /p start --print-command",
+    "oasis --project /p start --print-command --detach -d cc_dev_x --dev xml",
+    "odoo19 --project /p start --print-command --stop-after-init -u coffee",
+    "oasis --project /p restart --print-command",
+    "odoo19 --project /p restart --print-command -d cc_dev_x --http-port 8070",
+    "~/.agents/skills/odoo19/tools/start --print-command --workers=0",
+    "~/.agents/skills/odoo19/tools/restart --print-command",
+    "oasis --project /p start --print-command -w secret 2>&1 | head -1",
+  ]) {
+    for (const context of [undefined, at("/work/shop")]) {
+      assert.deepEqual(classifyBash(command, context), { program: null, programs: [], asks: [] }, command);
+      assert.equal(blockedProgram(command, context), null, command);
+    }
+  }
+});
+
 test("the deny tier is unchanged: blockedProgram ignores the ask commands and still finds the denied ones", () => {
   for (const command of [
     "oasis --project /p drop-database cc_dev_x",

@@ -4,8 +4,10 @@ import {
   mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
+import { dirname, join } from "node:path";
+import {
+  configHome, gentleShellHost, installOverlay, NOT_GENTLE_SHELL, overlayReminder, overlayState, overlayTarget, runSetup,
+} from "../lib/setup.ts";
 
 const TEMPLATE_BODY = '{\n  "gentle-ai-worker": { "add": ["odoo19_test_module"] }\n}\n';
 
@@ -120,5 +122,117 @@ test("installOverlay refuses a directory target", () => {
     mkdirSync(target, { recursive: true });
     assert.throws(() => installOverlay(template, target), /directory/);
     assert.deepEqual(readdirSync(target), []);
+  });
+});
+
+// S7: the overlay is read only by Gentle Shell's subagents. Its launcher sets
+// PI_PROGRAM_STATUS_APP=gentle-shell; an absolute GENTLE_PI_CONFIG_HOME names its config home.
+const GENTLE_SHELL = { PI_PROGRAM_STATUS_APP: "gentle-shell" };
+
+function fakeUi(answers: boolean[] = []) {
+  const notices: { message: string; level: string | undefined }[] = [];
+  const confirms: string[] = [];
+  return {
+    notices, confirms,
+    ui: {
+      notify: (message: string, level?: "info" | "warning" | "error") => notices.push({ message, level }),
+      confirm: async (_title: string, message: string) => {
+        confirms.push(message);
+        assert.ok(answers.length > 0, `unexpected confirm: ${message}`);
+        return answers.shift() as boolean;
+      },
+    },
+  };
+}
+
+function tree(dir: string): string[] {
+  return readdirSync(dir, { recursive: true }).map(String).sort();
+}
+
+test("gentleShellHost: the launcher marker or an absolute GENTLE_PI_CONFIG_HOME", () => {
+  assert.equal(gentleShellHost(GENTLE_SHELL), true);
+  assert.equal(gentleShellHost({ GENTLE_PI_CONFIG_HOME: "/x/cfg" }), true);
+  assert.equal(gentleShellHost({}), false);
+  assert.equal(gentleShellHost({ PI_PROGRAM_STATUS_APP: "" }), false);
+  assert.equal(gentleShellHost({ PI_PROGRAM_STATUS_APP: "pi" }), false);
+  assert.equal(gentleShellHost({ GENTLE_PI_CONFIG_HOME: "rel/cfg" }), false);
+  assert.equal(gentleShellHost({ GENTLE_SHELL_CONFIG_HOME: "/x/cfg" }), false);
+});
+
+test("runSetup outside Gentle Shell says the overlay is Gentle Shell only and writes nothing", async () => {
+  const dir = scratch();
+  try {
+    const template = join(dir, "template.json");
+    writeFileSync(template, TEMPLATE_BODY);
+    const home = join(dir, "home");
+    mkdirSync(home);
+    // Even a leftover ~/.gentle-shell/gentle-ai does not make a vanilla Pi session Gentle Shell.
+    mkdirSync(join(home, ".gentle-shell", "gentle-ai"), { recursive: true });
+    const before = tree(dir);
+    const run = fakeUi();
+    await runSetup({ env: {}, homedir: home, template, ui: run.ui });
+    assert.deepEqual(run.notices, [{ message: NOT_GENTLE_SHELL, level: "info" }]);
+    assert.equal(NOT_GENTLE_SHELL,
+      "oasis setup: the subagent overlay applies only to Gentle Shell, and this session is not running in it; nothing written.");
+    assert.deepEqual(run.confirms, []);
+    assert.deepEqual(tree(dir), before);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runSetup in Gentle Shell still asks, then creates the overlay under the config home", async () => {
+  const dir = scratch();
+  try {
+    const template = join(dir, "template.json");
+    writeFileSync(template, TEMPLATE_BODY);
+    const home = join(dir, "home");
+    const target = join(home, ".gentle-shell", "gentle-ai", "agent-overlays.d", "oasis.json");
+    const run = fakeUi([true]);
+    await runSetup({ env: GENTLE_SHELL, homedir: home, template, ui: run.ui });
+    assert.deepEqual(run.confirms, [`Create ${target} so gentle-ai-worker and gentle-ai-verify get the oasis tools?`]);
+    assert.deepEqual(run.notices, [{
+      message: `oasis setup: subagent overlay created at ${target}. Start a new session or /reload for subagents to use it.`,
+      level: "info",
+    }]);
+    assert.equal(readFileSync(target, "utf8"), TEMPLATE_BODY);
+    const again = fakeUi();
+    await runSetup({ env: GENTLE_SHELL, homedir: home, template, ui: again.ui });
+    assert.deepEqual(again.notices, [{ message: `oasis setup: subagent overlay is up to date (${target})`, level: "info" }]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runSetup in Gentle Shell writes nothing when the user declines", async () => {
+  const dir = scratch();
+  try {
+    const template = join(dir, "template.json");
+    writeFileSync(template, TEMPLATE_BODY);
+    const before = tree(dir);
+    const run = fakeUi([false]);
+    await runSetup({ env: { GENTLE_PI_CONFIG_HOME: join(dir, "cfg") }, homedir: join(dir, "home"), template, ui: run.ui });
+    assert.equal(run.confirms.length, 1);
+    assert.deepEqual(run.notices, [{ message: "oasis setup: nothing changed.", level: "info" }]);
+    assert.deepEqual(tree(dir), before);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("overlayReminder: none outside Gentle Shell; missing, outdated or none in it", () => {
+  withScratch((dir, template) => {
+    const home = join(dir, "home");
+    const target = join(home, ".gentle-shell", "gentle-ai", "agent-overlays.d", "oasis.json");
+    assert.equal(overlayReminder({ env: {}, homedir: home, template }), null);
+    assert.equal(overlayReminder({ env: GENTLE_SHELL, homedir: home, template }),
+      "oasis: subagents do not have the oasis tools yet; run /oasis setup");
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, "{}");
+    assert.equal(overlayReminder({ env: {}, homedir: home, template }), null);
+    assert.equal(overlayReminder({ env: GENTLE_SHELL, homedir: home, template }),
+      "oasis: overlay is outdated; run /oasis setup");
+    writeFileSync(target, TEMPLATE_BODY);
+    assert.equal(overlayReminder({ env: GENTLE_SHELL, homedir: home, template }), null);
   });
 });

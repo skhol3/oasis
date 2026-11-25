@@ -1,30 +1,43 @@
-# oasis — portable Odoo 19 agent bundle
+# oasis — Odoo development harness
+
+oasis is an Odoo development harness for agents and the terminal: the guarded `oasis` CLI, six
+agent skills, and a thin Gentle Shell layer that wraps the CLI with compact, token-saving
+output. It runs tests, databases and servers per checkout without letting an agent bypass the
+database prefix guards.
+
+Odoo 19.0 is the supported series today; further series are added in
+[`tools/odoo_versions.py`](tools/odoo_versions.py), the one table of what differs between them. The `odoo19` names (the install directory
+`~/.agents/skills/odoo19`, the `odoo19-*` skills and the `odoo19` alias of `oasis`) stay as they
+are until a second series is supported.
 
 *Odoo Agent Skills & Infrastructure Scripts.* This repository is the source of the reusable global package installed at `~/.agents/skills/odoo19`, **not a seventh skill** and not a project staging directory. Contributor rules are in `AGENTS.md` in the source repository (not installed).
 
 Built with Gentle Shell (`github.com/Gentleman-Programming/gentle-shell`).
 
-oasis is an Odoo development harness: the guarded `oasis` CLI (with its `odoo19` alias), six
-`odoo19-*` agent skills, and a thin Gentle Shell layer that wraps the CLI with compact,
-token-saving output. It runs tests, databases and servers per checkout without letting an agent
-bypass the database prefix guards.
-
 ## Install or update
 
-Install the committed bundle into `~/.agents/skills/odoo19` from this repository, after the test
-suite passes:
+Two installs, each with its own job. Install both to get everything.
+
+| Install | What you get | Where it works |
+| --- | --- | --- |
+| `./install.sh` from this repository | The six `odoo19-*` skills and the `oasis` CLI (with its `odoo19` alias) in `~/.agents/skills/odoo19` | Any agent (Claude Code, Codex, Gentle Shell) and the terminal |
+| The package from a release tag | The `oasis_*` agent tools, `/oasis`, the `alt+o` panel and the bash guard | Gentle Shell |
+
+The package does not bring the skills; `install.sh` does not add the tools, `/oasis` or the panel
+to Gentle Shell.
 
 ```bash
+# Skills and CLI: from this repository, after the test suite passes
 python3 -B -m unittest discover -s tests
 ./install.sh
+
+# Gentle Shell package: <tag> is a release from the changelog, for example v0.13.0
+gentle-shell install git:github.com/skhol3/oasis@<tag>
 ```
 
-Then install the Gentle Shell layer from a release tag (see the [changelog](CHANGELOG.md)) and
-`/reload` open sessions:
-
-```bash
-gentle-shell install git:github.com/skhol3/oasis@v0.11.0
-```
+Then `/reload` open sessions. To move the package to another release, remove the installed tag
+and install the new one ([Install or update](docs/install.md#moving-the-package-to-another-release)).
+Releases are listed in the [changelog](CHANGELOG.md).
 
 [Docs →](docs/install.md) · [Gentle Shell package →](docs/gentle-shell-layer.md#installing-the-package)
 
@@ -45,8 +58,8 @@ gentle-shell install git:github.com/skhol3/oasis@v0.11.0
    ~/.agents/skills/odoo19/oasis --project /absolute/project test-module --compact your_module
    ```
 
-4. In Gentle Shell, run `/oasis` for the checkout's status, `/oasis setup` once for the subagent
-   overlay, and `alt+o` for the action menu.
+4. With the package, run `/oasis` for the checkout's status and `alt+o` for the action menu; in
+   Gentle Shell, also run `/oasis setup` once for the subagent overlay.
 
 ## Features
 
@@ -96,10 +109,10 @@ command that still reads it, converts the profiles of every checkout into one wo
 | Documentation | Purpose |
 | --- | --- |
 | [docs/README.md](docs/README.md) | Index of the documentation by reader |
-| [Install or update](docs/install.md) | `install.sh`, release tags and what gets installed |
+| [Install or update](docs/install.md) | Which install does what: `install.sh` (skills and CLI) and the package (tools, `/oasis`, panel) |
 | [Gentle Shell layer](docs/gentle-shell-layer.md) | The agent tools, prompt context, `/oasis` and aliases |
 | [Bash guard](docs/bash-guard.md) | Which agent bash commands run, wait for the user's confirmation or are blocked; `agent_destructive` |
-| [Subagents](docs/subagents.md) | The overlay that gives subagents the `oasis_*` tools |
+| [Subagents](docs/subagents.md) | The overlay that gives Gentle Shell subagents the `oasis_*` tools |
 | [Setting up a new workspace](docs/new-workspace.md) | From an empty folder to `doctor`, a database and a test run; example tree and paths |
 | [New project setup](docs/project-setup.md) | Workspace file, entry point and optional project wrappers |
 | [Checking the environment](docs/checking-environment.md) | `doctor`, `check-environment` and `lock.sha256` |

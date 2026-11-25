@@ -1,7 +1,8 @@
 // The action panel's TUI pieces, on the public Pi extension API only: the group and action picker,
 // the start / restart form and the live server log view, shown with ctx.ui.custom as overlays, and
-// the renderer of the result entries. The logic they show (rows, selection, scrolling, form steps
-// and lines, entry lines, log lines, header) is in lib/menu.ts, tested without Pi.
+// the renderer of the result entries. The logic they show (rows, selection, scrolling, form steps,
+// window, filter and lines, entry lines, log lines, header) is in lib/menu.ts and the native line in
+// lib/native.ts, tested without Pi.
 import type { EntryRenderer, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import {
   Box, type Component, decodeKittyPrintable, type Keybinding, Text, truncateToWidth, type TUI, visibleWidth,
@@ -134,14 +135,17 @@ const FORM_STYLES: Record<FormLine["style"], (theme: Theme, text: string) => str
   typed: (theme, text) => theme.fg("accent", `${text}▏`),
   error: (theme, text) => theme.fg("error", text),
   command: (theme, text) => theme.fg("dim", text),
+  more: (theme, text) => theme.fg("dim", text),
   plain: (_theme, text) => text,
 };
 
 /**
  * The start / restart form: one overlay asking database, dev mode and port, then Run / Cancel,
- * with the filled command as its last lines (wrapped, never truncated), drawn again after every
- * answer. Up/down move, enter chooses or accepts the typed value, typing and backspace edit it,
- * escape cancels (nothing runs).
+ * with the native odoo-bin line (the oasis command until it is read) as its last lines (wrapped,
+ * never truncated), drawn again after every answer and when a native line arrives. A long list is
+ * a window around the selected row. Up/down move, enter chooses or accepts the typed value, typing
+ * and backspace edit the typed value or a list's filter, escape clears the filter or cancels
+ * (nothing runs).
  */
 export class RunFormPanel implements Component {
   private readonly form: RunForm;
@@ -149,6 +153,8 @@ export class RunFormPanel implements Component {
   private readonly theme: Theme;
   private readonly keybindings: KeybindingsManager;
   private readonly done: (answers: Answers | undefined) => void;
+  private readonly unsubscribe: () => void;
+  private closed = false;
   private cache: { width: number; lines: string[] } | undefined;
 
   constructor(form: RunForm, tui: TUI, theme: Theme, keybindings: KeybindingsManager,
@@ -158,28 +164,33 @@ export class RunFormPanel implements Component {
     this.theme = theme;
     this.keybindings = keybindings;
     this.done = done;
+    this.unsubscribe = form.spec.native?.onChange(() => {
+      if (this.closed) return;
+      this.invalidate();
+      this.tui.requestRender();
+    }) ?? (() => {});
   }
 
   handleInput(data: string): void {
     const form = this.form;
     if (this.keybindings.matches(data, "tui.select.cancel")) {
-      form.cancel();
+      form.escape();
     } else if (this.keybindings.matches(data, "tui.select.confirm")) {
       form.submit();
-    } else if (form.typing && this.keybindings.matches(data, "tui.editor.deleteCharBackward")) {
+    } else if (this.keybindings.matches(data, "tui.editor.deleteCharBackward")) {
       form.backspace();
-    } else if (form.typing) {
-      // Printable keys only: an escape sequence (arrows, function keys) is not text.
-      const text = decodeKittyPrintable(data) ?? (data.includes("\x1b") ? undefined : data);
-      if (text) form.type(text);
-    } else if (this.keybindings.matches(data, "tui.select.up")) {
+    } else if (!form.typing && this.keybindings.matches(data, "tui.select.up")) {
       form.move(-1);
-    } else if (this.keybindings.matches(data, "tui.select.down")) {
+    } else if (!form.typing && this.keybindings.matches(data, "tui.select.down")) {
       form.move(1);
     } else {
-      return;
+      // Printable keys only (the typed value or the filter): an escape sequence is not text.
+      const text = decodeKittyPrintable(data) ?? (data.includes("\x1b") ? undefined : data);
+      if (!text) return;
+      form.type(text);
     }
     if (form.finished) {
+      this.dispose();
       this.done(form.result);
       return;
     }
@@ -198,12 +209,12 @@ export class RunFormPanel implements Component {
     };
     const title = truncateToWidth(`─ oasis: ${this.form.spec.action.label} `, inner + 2);
     const lines = [theme.fg("border", `╭${title}${"─".repeat(Math.max(0, inner + 2 - visibleWidth(title)))}╮`)];
-    const body = this.form.lines(inner);
-    // Too tall for the terminal: the header and earlier answers go first, never the command.
+    // A long list is a window (RunForm.lines with the room); only when even that is too tall do
+    // the header and earlier answers go first, never the command.
     const room = Math.max(5, Math.floor(this.tui.terminal.rows * 0.9) - FORM_CHROME_ROWS);
+    const body = this.form.lines(inner, room);
     for (const line of body.slice(Math.max(0, body.length - room))) lines.push(frame(FORM_STYLES[line.style](theme, line.text)));
-    const hint = this.form.typing ? "type · enter accept · esc cancel" : "↑↓ move · enter choose · esc cancel";
-    lines.push(frame(theme.fg("dim", hint)));
+    lines.push(frame(theme.fg("dim", this.form.hint())));
     lines.push(theme.fg("border", `╰${"─".repeat(inner + 2)}╯`));
     this.cache = { width, lines };
     return lines;
@@ -211,6 +222,11 @@ export class RunFormPanel implements Component {
 
   invalidate(): void {
     this.cache = undefined;
+  }
+
+  dispose(): void {
+    this.closed = true;
+    this.unsubscribe();
   }
 }
 
@@ -295,13 +311,17 @@ export const renderMenuEntry: EntryRenderer<MenuEntry> = (entry, options, theme)
   if (!data) return undefined;
   const lines = entryLines(data, options.expanded, PREVIEW_LINES);
   const failed = data.exit !== undefined && data.exit !== 0;
-  const [title, command, ...output] = lines;
+  // entryLines: title, command, the native line of a start / restart run when it has one, output.
+  const [title, command, ...rest] = lines;
+  const native = data.native ? rest.shift() : undefined;
+  const output = rest;
   // entryLines put the "… N earlier lines" marker first.
   const hidden = !options.expanded && data.output.split("\n").length > PREVIEW_LINES;
   if (hidden) output[0] = `${output[0]} (${options.keyHint("app.tools.expand", "to expand")})`;
   const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
   box.addChild(new Text(theme.fg(failed ? "error" : "accent", theme.bold(title)), 0, 0));
   box.addChild(new Text(theme.fg("dim", command), 0, 0));
+  if (native) box.addChild(new Text(theme.fg("dim", native), 0, 0));
   if (output.length > 0) box.addChild(new Text(output.join("\n"), 0, 0));
   return box;
 };

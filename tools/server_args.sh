@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Sourced by start and restart after common.sh; defines functions only. What both read from the
-# Odoo options of a server and how they check its port, so restart refuses before it stops the
-# running server whatever start would refuse.
+# Sourced by start and restart after common.sh; defines functions (and the empty freed_ports) only.
+# What both read from the Odoo options of a server, how they check and choose its ports and how
+# they print its command line, so restart refuses before it stops the running server whatever start
+# would refuse, and restart --print-command prints what start would exec.
 
 # parse_server_arguments <odoo option>...: guards every database odoo-bin would receive (optparse's
 # unambiguous abbreviations of --database included) and sets
@@ -67,13 +68,125 @@ valid_port() {
   [[ "$1" =~ ^[0-9]{1,5}$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 ))
 }
 
+# The ports of the running server that restart --print-command counts as free, because restart
+# stops that server before start probes them; empty for every other command.
+freed_ports=()
+
 # probe <first> <last> [<excluded>...]: sets found to the first port free on $interface, returns 1
 # when none. Any other bind failure exits 2 with runtime_state.py's `Cannot bind port <p>: <reason>.`.
+# A port of freed_ports in the range, not excluded, counts as free.
 probe() {
-  local status=0
+  local status=0 candidate excluded
   found=$(runtime_state port "$interface" "$@") || status=$?
   if (( status == 2 )); then exit 2; fi
+  for candidate in "${freed_ports[@]}"; do
+    if (( candidate < $1 || candidate > $2 )); then continue; fi
+    for excluded in "${@:3}"; do
+      if (( candidate == excluded )); then continue 2; fi
+    done
+    if (( status != 0 || candidate < found )); then
+      found=$candidate status=0
+    fi
+  done
   return "$status"
+}
+
+# choose_server_ports: start's port rules for a server (not a batch run); $interface must be set.
+# Sets port (the HTTP port) and port_arguments (what start adds: --http-port=<port> unless one is
+# given, and a linked worktree's free second port unless one is given); refuses with exit 2.
+choose_server_ports() {
+  local conf_port gevent_port
+  port_arguments=()
+  if [[ -n "$explicit_port" ]]; then
+    if ! valid_port "$explicit_port"; then
+      printf 'Invalid HTTP port: %s\n' "$explicit_port" >&2
+      exit 2
+    fi
+    port=$(( 10#$explicit_port ))
+    if ! probe "$port" "$port"; then
+      busy "$port" 'pass another --http-port'
+      exit 2
+    fi
+  else
+    conf_port=$(odoo_conf_option http_port)
+    conf_port=${conf_port:-8069}
+    if [[ "${CHECKOUT_KIND:-}" == linked ]]; then
+      if ! probe $(( conf_port + 1 )) $(( conf_port + 50 )); then
+        printf 'No free HTTP port from %s to %s; pass --http-port or stop another server.\n' \
+          $(( conf_port + 1 )) $(( conf_port + 50 )) >&2
+        exit 2
+      fi
+      port=$found
+    else
+      port=$conf_port
+      if ! probe "$port" "$port"; then
+        busy "$port" 'pass --http-port'
+        exit 2
+      fi
+    fi
+    port_arguments+=("--http-port=$port")
+  fi
+  if [[ "${CHECKOUT_KIND:-}" == linked ]] && ! "$explicit_gevent"; then
+    gevent_port=$(odoo_conf_option gevent_port)
+    gevent_port=${gevent_port:-8072}
+    if ! probe $(( gevent_port + 1 )) $(( gevent_port + 50 )) "$port"; then
+      printf 'No free gevent port from %s to %s; pass %s or stop another server.\n' \
+        $(( gevent_port + 1 )) $(( gevent_port + 50 )) "$ODOO_SECOND_PORT_OPTION" >&2
+      exit 2
+    fi
+    port_arguments+=("$ODOO_SECOND_PORT_OPTION=$found")
+  fi
+}
+
+# running_second_port <pid>: the second (gevent) port on the command line of a running server
+# ($ODOO_SECOND_PORT_OPTION=<port> or as a separate word, the last one), or nothing, silently,
+# when that command line cannot be read (the server ended after its record was read).
+running_second_port() {
+  local words=() index value=''
+  # stderr is redirected first, so a failing input redirection prints nothing.
+  mapfile -d '' words 2>/dev/null < "/proc/$1/cmdline" || return 0
+  for (( index = 0; index < ${#words[@]}; index++ )); do
+    case ${words[index]} in
+      --) break ;;
+      "$ODOO_SECOND_PORT_OPTION") value=${words[index + 1]:-}; (( index += 1 )) ;;
+      "$ODOO_SECOND_PORT_OPTION"=*) value=${words[index]#*=} ;;
+    esac
+  done
+  if valid_port "$value"; then printf '%s\n' $(( 10#$value )); fi
+}
+
+# print_server_command <word>...: the command line as one POSIX shell-quoted line (Python's
+# shlex.join) on stdout, for start --print-command and restart --print-command. The values of the
+# password options (-w, --db_password, --smtp-password and their unambiguous abbreviations from
+# --db_pa and --smtp-pa, as Odoo's optparse reads them) are printed as ***; nothing after `--`.
+print_server_command() {
+  python3 -I -B - "$@" <<'PYTHON'
+import shlex, sys
+SECRETS = (('--db_pa', '--db_password'), ('--smtp-pa', '--smtp-password'))
+
+def secret(option):
+    return option == '-w' or any(len(option) >= len(shortest) and full.startswith(option)
+                                 for shortest, full in SECRETS)
+
+words, shown, index = sys.argv[1:], [], 0
+while index < len(words):
+    word = words[index]
+    if word == '--':
+        shown.extend(words[index:])
+        break
+    name, equals, _ = word.partition('=')
+    if secret(word) and index + 1 < len(words):
+        shown.extend([word, '***'])
+        index += 1
+    elif equals and name.startswith('--') and secret(name):
+        shown.append(f'{name}=***')
+    elif word.startswith('-w') and len(word) > 2:
+        shown.append('-w***')
+    else:
+        shown.append(word)
+    index += 1
+print(shlex.join(shown))
+PYTHON
 }
 
 # busy <port> <what to pass>: why the port is busy and what to do. A live record of another

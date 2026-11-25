@@ -93,6 +93,9 @@ test("allowed commands run without a dialog, an entry or reading the setting", a
     "oasis --project /work/shop status", "~/.agents/skills/odoo19/tools/stop --force",
     "~/.agents/skills/odoo19/tools/restart",
     "oasis --project /work/shop drop-database --help", "git status",
+    // v0.12.1 S5: the native odoo-bin line only prints.
+    "oasis --project /work/shop start --print-command -d shop_dev_x", "odoo19 --project /work/shop restart --print-command",
+    "~/.agents/skills/odoo19/tools/restart --print-command --http-port 8070",
   ]) {
     assert.equal(await run.gate(command), undefined, command);
   }

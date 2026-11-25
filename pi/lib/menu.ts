@@ -1,6 +1,7 @@
 // The action panel's logic over the core catalog (`oasis menu --catalog`, tools/actions.py): template
 // fill, input order and validation, confirmations, output and picker navigation. No Pi imports: the
 // panel (pi/ui/menu-panel.ts, pi/extensions/oasis.ts) injects the dialogs and the command runner.
+import { abbreviateCommand, type NativeSource, printCommandArgv } from "./native.ts";
 import { limitLines } from "./output.ts";
 import { type CoreResult, formatTestRun, formatUpdateRun } from "./tools.ts";
 
@@ -358,6 +359,8 @@ export interface MenuEntry {
   command: string;
   exit?: number;
   note?: string;
+  /** The native odoo-bin line of a start / restart run (S4), when it could be read. */
+  native?: string;
   output: string;
 }
 
@@ -374,6 +377,7 @@ export function plainLine(line: string): string {
 export function entryLines(entry: MenuEntry, expanded: boolean, previewLines: number): string[] {
   const status = entry.note ?? (entry.exit !== undefined ? `exit ${entry.exit}` : "");
   const lines = [`oasis: ${entry.label}${status ? ` (${status})` : ""}`, `$ ${entry.command}`];
+  if (entry.native) lines.push(`native: ${entry.native}`);
   if (!entry.output) return lines;
   const output = entry.output.split("\n").map(plainLine);
   if (expanded || output.length <= previewLines) return [...lines, ...output];
@@ -520,6 +524,10 @@ export interface FormSpec {
   databases: string[];
   /** Remembered answers (Repeat): the form opens at its confirmation. */
   answers?: Answers;
+  /** The native odoo-bin lines (S4): shown instead of the oasis command once read. */
+  native?: NativeSource;
+  /** The home directory the native line shows as `~`. */
+  home?: string;
 }
 
 export interface FormOption {
@@ -527,32 +535,48 @@ export interface FormOption {
   value: string;
   /** Choosing it switches to typing a value. */
   type?: boolean;
+  /** Always listed, whatever the filter: (none) and (type a name). */
+  keep?: boolean;
+  /** What the filter matches (default: the label). */
+  match?: string;
 }
 
 export interface FormLine {
   text: string;
-  style: "header" | "answer" | "warning" | "question" | "option" | "selected" | "typed" | "error" | "command" | "plain";
+  style: "header" | "answer" | "warning" | "question" | "option" | "selected" | "typed" | "error" | "command" | "more" |
+    "plain";
 }
 
 const NONE_OPTION = "(none)";
 const CONFIRM_OPTIONS: FormOption[] = [{ label: "Run", value: "run" }, { label: "Cancel", value: "cancel" }];
 const PRINTABLE = /[^\x00-\x1f\x7f-\x9f]/g;
+const NO_MATCH = "  no match: backspace edits the filter";
+const NATIVE_LOADING = "(loading the odoo-bin command…)";
+// Marker rows around a window of a long list (one above, one below).
+const MARKER_ROWS = 2;
 
 /**
  * The start / restart flow as one form (S3, S5): its inputs in catalog order, then a Run / Cancel
- * confirmation; lines() ends with the command filled with the answers so far. Pure state: the
- * overlay (pi/ui/menu-panel.ts RunFormPanel) maps keys to move, type, backspace, submit and cancel.
+ * confirmation; lines() ends with the command filled with the answers so far (the native odoo-bin
+ * line once read, v0.12.1 S4). A long list shows a window around the selected row (S1); typing in
+ * a list filters it (S2). Pure state: the overlay (pi/ui/menu-panel.ts RunFormPanel) maps keys to
+ * move, type, backspace, submit and escape.
  */
 export class RunForm {
   readonly spec: FormSpec;
   readonly answers: Answers = {};
   step = 0;
+  /** The highlighted row of the shown (filtered) options; -1 (none) while a filter matches no real option. */
   selected = 0;
   typing = false;
   buffer = "";
+  /** The text that narrows the current list (S2). */
+  filter = "";
   error: string | null = null;
   finished = false;
   result: Answers | undefined = undefined;
+  /** The first shown row of a windowed list, kept while the selection stays in it (visibleStart). */
+  private listStart = 0;
 
   constructor(spec: FormSpec) {
     this.spec = spec;
@@ -568,6 +592,7 @@ export class RunForm {
     return this.spec.action.inputs[this.step];
   }
 
+  /** Every option of the current list (the confirmation: Run and Cancel). */
   options(): FormOption[] {
     const input = this.input;
     if (!input) return CONFIRM_OPTIONS;
@@ -577,39 +602,102 @@ export class RunForm {
     const listed = input.source === "databases" ? this.spec.databases
       : input.source === "modules" ? this.spec.catalog.sources.modules.choices : [];
     const preset = typeof input.default === "string" && input.default ? input.default : null;
-    const options: FormOption[] = preset ? [{ label: `${preset} (default)`, value: preset }] : [];
-    if (!input.required && !preset) options.push({ label: `${NONE_OPTION} (default)`, value: "" });
+    const options: FormOption[] = preset ? [{ label: `${preset} (default)`, value: preset, match: preset }] : [];
+    if (!input.required && !preset) options.push({ label: `${NONE_OPTION} (default)`, value: "", keep: true });
     options.push(...listed.filter((name) => name !== preset).map((name) => ({ label: name, value: name })));
-    if (!input.required && preset) options.push({ label: NONE_OPTION, value: "" });
-    if (input.allow_new) options.push({ label: TYPE_OPTION, value: "", type: true });
+    if (!input.required && preset) options.push({ label: NONE_OPTION, value: "", keep: true });
+    if (input.allow_new) options.push({ label: TYPE_OPTION, value: "", type: true, keep: true });
     return options;
+  }
+
+  /** The options shown: those containing the filter (case-insensitive), and the kept ones. */
+  shownOptions(): FormOption[] {
+    const filter = this.filter.toLowerCase();
+    if (!filter) return this.options();
+    return this.options().filter((option) => option.keep || (option.match ?? option.label).toLowerCase().includes(filter));
+  }
+
+  /** Whether typing filters the current list: an input's list, not a typed value or the confirmation. */
+  private filtering(): boolean {
+    return this.input !== undefined && !this.typing && !this.finished;
+  }
+
+  private defaultIndex(): number {
+    const input = this.input;
+    const index = input?.choices ? input.choices.findIndex((choice) => choice.value === input.default) : 0;
+    return Math.max(0, index);
+  }
+
+  /**
+   * After the filter changed: the first matching option, from the top of the list. Without a real
+   * match no row is highlighted, so Enter answers nothing until the user moves to a kept row.
+   */
+  private refilter(): void {
+    this.listStart = 0;
+    if (!this.filter) {
+      this.selected = this.defaultIndex();
+      return;
+    }
+    this.selected = this.shownOptions().findIndex((option) => !option.keep);
   }
 
   private enter(): void {
     const input = this.input;
     this.error = null;
+    this.filter = "";
+    this.listStart = 0;
     this.typing = input?.kind === "text";
     this.buffer = this.typing && typeof input?.default === "string" ? input.default : "";
-    const index = input?.choices ? input.choices.findIndex((choice) => choice.value === input.default) : 0;
-    this.selected = Math.max(0, index);
+    this.selected = this.defaultIndex();
   }
 
   move(delta: number): void {
     if (this.typing || this.finished) return;
-    this.selected = Math.min(Math.max(this.selected + delta, 0), this.options().length - 1);
+    this.selected = Math.min(Math.max(this.selected + delta, 0), Math.max(0, this.shownOptions().length - 1));
   }
 
+  /** Printable text: the typed value, or the filter of a list. */
   type(text: string): void {
-    if (this.typing && !this.finished) this.buffer += (text.match(PRINTABLE) ?? []).join("");
+    const printable = (text.match(PRINTABLE) ?? []).join("");
+    if (this.finished || !printable) return;
+    if (this.typing) {
+      this.buffer += printable;
+    } else if (this.filtering()) {
+      this.filter += printable;
+      this.refilter();
+    }
   }
 
   backspace(): void {
-    if (this.typing) this.buffer = Array.from(this.buffer).slice(0, -1).join("");
+    if (this.typing) {
+      this.buffer = Array.from(this.buffer).slice(0, -1).join("");
+    } else if (this.filtering() && this.filter) {
+      this.filter = Array.from(this.filter).slice(0, -1).join("");
+      this.refilter();
+    }
   }
 
   cancel(): void {
     this.finished = true;
     this.result = undefined;
+  }
+
+  /** Escape: clears a list's filter first; otherwise cancels the form (nothing runs). */
+  escape(): void {
+    if (this.filtering() && this.filter) {
+      this.filter = "";
+      this.refilter();
+      return;
+    }
+    this.cancel();
+  }
+
+  /** The key hint under the form. */
+  hint(): string {
+    if (this.typing) return "type · enter accept · esc cancel";
+    if (!this.filtering()) return "↑↓ move · enter choose · esc cancel";
+    if (this.filter) return "↑↓ move · backspace edits the filter · enter choose · esc clears the filter";
+    return "↑↓ move · type to filter · enter choose · esc cancel";
   }
 
   /** Enter: accept the highlighted option or the typed value (checked like textError), or run / cancel. */
@@ -632,11 +720,13 @@ export class RunForm {
       this.accept(input, input.kind === "text" && value === input.default ? "" : value);
       return;
     }
-    const option = this.options()[this.selected];
+    const option = this.shownOptions()[this.selected];
     if (!option) return;
     if (option.type) {
+      // Typing starts from the filter: a name that is not listed yet.
       this.typing = true;
-      this.buffer = "";
+      this.buffer = this.filter;
+      this.filter = "";
       return;
     }
     this.accept(input, input.kind === "boolean" ? option.value === "yes" : option.value);
@@ -653,6 +743,52 @@ export class RunForm {
     return shellJoin(fillTemplate(this.spec.action, this.answers, true));
   }
 
+  /**
+   * The command lines, wrapped to `width`: the native odoo-bin line of the answers so far
+   * (abbreviated) once read, else the oasis command with a note while it loads or when it failed.
+   * Reading the native line of new answers starts here.
+   */
+  private commandLines(width: number): FormLine[] {
+    const action = this.spec.action;
+    const argv = this.spec.native ? printCommandArgv(action.command, fillTemplate(action, this.answers, true)) : null;
+    const native = argv ? this.spec.native?.get(argv) : undefined;
+    const shown = native?.state === "ready" ? abbreviateCommand(native.line, this.spec.home) : this.command();
+    const lines: FormLine[] = wrapLine(`$ ${shown}`, width).map((text) => ({ text, style: "command" }));
+    const note = native?.state === "loading" ? NATIVE_LOADING
+      : native?.state === "failed" ? `(the odoo-bin command is unavailable: ${native.reason}; this is the oasis command)`
+        : null;
+    // The note is indented under the command; wrapLine drops leading spaces, so they are added here.
+    if (note) lines.push(...wrapLine(note, width - 2).map((text): FormLine => ({ text: `  ${text}`, style: "command" })));
+    return lines;
+  }
+
+  /**
+   * The options as rows that fit in `room` rows (S1): all of them when they fit, else a window
+   * around the selected row (visibleStart, keeping its start while the selection stays in view)
+   * with `↑ n more` and `↓ n more` markers.
+   */
+  private optionLines(room: number): FormLine[] {
+    const options = this.shownOptions();
+    this.selected = Math.min(this.selected, Math.max(0, options.length - 1));
+    const row = (option: FormOption, index: number): FormLine => {
+      const chosen = index === this.selected;
+      return { text: `${chosen ? "›" : " "} ${option.label}`, style: chosen ? "selected" : "option" };
+    };
+    if (options.length <= room) {
+      this.listStart = 0;
+      return options.map(row);
+    }
+    const height = Math.max(1, room - MARKER_ROWS);
+    const start = visibleStart(options.length, this.selected, height, this.listStart);
+    this.listStart = start;
+    const lines: FormLine[] = [];
+    if (start > 0) lines.push({ text: `  ↑ ${start} more`, style: "more" });
+    lines.push(...options.slice(start, start + height).map((option, offset) => row(option, start + offset)));
+    const below = options.length - start - height;
+    if (below > 0) lines.push({ text: `  ↓ ${below} more`, style: "more" });
+    return lines;
+  }
+
   private shown(input: CatalogInput): string {
     const value = this.answers[input.id];
     if (typeof value === "boolean") return value ? "Yes" : "No";
@@ -662,7 +798,11 @@ export class RunForm {
     return NONE_OPTION;
   }
 
-  lines(width: number): FormLine[] {
+  /**
+   * The form's lines at `width` columns. With `room` (the rows it may use), a long list is a window
+   * so the header, the answers, the question and the command lines stay visible.
+   */
+  lines(width: number, room = Number.POSITIVE_INFINITY): FormLine[] {
     const lines: FormLine[] = this.spec.header.split("\n").map((text) => ({ text, style: "header" }));
     lines.push({ text: "", style: "plain" });
     for (const input of this.spec.action.inputs.slice(0, this.step)) {
@@ -683,14 +823,16 @@ export class RunForm {
         lines.push({ text: `> ${this.buffer}`, style: "typed" });
         if (this.error) lines.push({ text: `! ${this.error}`, style: "error" });
       } else {
-        for (const [index, option] of this.options().entries()) {
-          const chosen = index === this.selected;
-          lines.push({ text: `${chosen ? "›" : " "} ${option.label}`, style: chosen ? "selected" : "option" });
+        if (this.filter) {
+          lines.push({ text: `filter: ${this.filter}`, style: "typed" });
+          if (!this.shownOptions().some((option) => !option.keep)) lines.push({ text: NO_MATCH, style: "more" });
         }
+        const bottom = 1 + this.commandLines(width).length;
+        lines.push(...this.optionLines(room - lines.length - bottom));
       }
     }
     lines.push({ text: "", style: "plain" });
-    for (const text of wrapLine(`$ ${this.command()}`, width)) lines.push({ text, style: "command" });
+    lines.push(...this.commandLines(width));
     return lines;
   }
 }

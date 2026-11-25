@@ -8,7 +8,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
-  parseCommand, SUBCOMMAND_SUMMARY, type SubcommandName, subcommandCompletions, USAGE,
+  parseCommand, registerSubcommandAutocomplete, SUBCOMMAND_SUMMARY, type SubcommandName, subcommandCompletions, USAGE,
 } from "../lib/commands.ts";
 import { withHeartbeat } from "../lib/heartbeat.ts";
 import { DECISION_ENTRY, type GateEffects, settingReader, toolCallRouter } from "../lib/destructive.ts";
@@ -16,7 +16,7 @@ import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/m
 import { findWorkspaceFile, legacyProfile, notProject, projectContext, projectRootResolver } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
 import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
-import { configHome, installOverlay, overlayState, overlayTarget } from "../lib/setup.ts";
+import { overlayReminder, runSetup, type SetupInput } from "../lib/setup.ts";
 import { type Answers, menuShortcut, type PickerChoice, RunForm } from "../lib/menu.ts";
 import { actionPanel, type ExecPurpose } from "../lib/panel.ts";
 import { readTail } from "../lib/log-tail.ts";
@@ -150,39 +150,9 @@ export default function oasisLayer(pi: ExtensionAPI) {
     return status;
   }
 
-  function currentOverlayTarget(): string {
-    return overlayTarget(configHome(process.env, homedir()));
-  }
-
-  // User-run only (no tool registers it): install or update the subagent overlay after confirmation.
-  async function setup(ctx: { ui: { notify: (message: string, level?: "info" | "warning" | "error") => void;
-    confirm: (title: string, message: string) => Promise<boolean> } }): Promise<void> {
-    try {
-      const target = currentOverlayTarget();
-      const state = overlayState(OVERLAY_TEMPLATE, target);
-      if (state === "current") {
-        ctx.ui.notify(`oasis setup: subagent overlay is up to date (${target})`, "info");
-        return;
-      }
-      const verb = state === "missing" ? "Create" : "Update";
-      const question = `${verb} ${target} so gentle-ai-worker and gentle-ai-verify get the oasis tools?`;
-      if (!(await ctx.ui.confirm("oasis setup", question))) {
-        ctx.ui.notify("oasis setup: nothing changed.", "info");
-        return;
-      }
-      const result = installOverlay(OVERLAY_TEMPLATE, target);
-      if (result.state === "unchanged") {
-        ctx.ui.notify(`oasis setup: subagent overlay is up to date (${target})`, "info");
-        return;
-      }
-      ctx.ui.notify(
-        `oasis setup: subagent overlay ${result.state} at ${target}. ` +
-          "Start a new session or /reload for subagents to use it.",
-        "info",
-      );
-    } catch (error) {
-      ctx.ui.notify(`oasis setup failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-    }
+  // User-run only (no tool registers it); outside Gentle Shell it writes nothing (lib/setup.ts).
+  async function setup(ctx: { ui: SetupInput["ui"] }): Promise<void> {
+    await runSetup({ env: process.env, homedir: homedir(), template: OVERLAY_TEMPLATE, ui: ctx.ui });
   }
 
   // User-run only (agents are blocked from worktree-init): show the dry-run plan, then create it on yes.
@@ -265,13 +235,14 @@ export default function oasisLayer(pi: ExtensionAPI) {
   // The action panel (alt+o or OASIS_MENU_KEY, and /oasis menu): user-run only, no agent tool opens
   // it. lib/panel.ts decides everything (catalog, inputs, confirmation, run, result); this adapter
   // gives it pi.exec in the project root, the Pi dialogs and the overlays (the picker, with the
-  // checkout's server state from runtime_state in its header, the start / restart form, and the live
-  // server log, which reads the end of server.log again every second while open), records results as
-  // custom session entries (pi.appendEntry with an entry renderer): Pi shows them but never sends
-  // them to the model, and remembers the action that ran for Repeat (runtime_state.py remember).
+  // checkout's server state from runtime_state in its header, the start / restart form with the
+  // native odoo-bin line from `start --print-command`, and the live server log, which reads the end
+  // of server.log again every second while open), records results as custom session entries
+  // (pi.appendEntry with an entry renderer, the full native line included): Pi shows them but never
+  // sends them to the model, and remembers the action that ran for Repeat (runtime_state.py remember).
   pi.registerEntryRenderer(MENU_ENTRY, renderMenuEntry);
   const EXEC_TIMEOUTS: Record<ExecPurpose, number> = {
-    catalog: STATUS_TIMEOUT_MS, list: TOOL_TIMEOUT_MS, run: MENU_TIMEOUT_MS,
+    catalog: STATUS_TIMEOUT_MS, list: TOOL_TIMEOUT_MS, print: STATUS_TIMEOUT_MS, run: MENU_TIMEOUT_MS,
   };
   const openPanel = actionPanel({
     projectRoot: (cwd) => projectRoot(cwd),
@@ -280,6 +251,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     exec: (argv, cwd, purpose) => pi.exec(argv[0], argv.slice(1), { cwd, timeout: EXEC_TIMEOUTS[purpose] }),
     exists: existsSync,
     readLog,
+    home: homedir(),
     appendEntry: (entry) => pi.appendEntry(MENU_ENTRY, entry),
     serverState: (root) => serverState(root),
     remember: async (root, action, answers) => {
@@ -379,6 +351,14 @@ export default function oasisLayer(pi: ExtensionAPI) {
   pi.registerCommand("oasis", command);
   pi.registerCommand("odoo19", { ...command, description: `Alias of /oasis. ${COMMAND_DESCRIPTION}` });
 
+  // Typing `/oa` or `/odoo` (no space yet) also suggests `/oasis <subcommand>` and `/odoo19
+  // <subcommand>` (lib/commands.ts subcommandAutocomplete); everything else goes to the provider it
+  // wraps. Pi drops extension providers when it rebinds a session, so each session registers it once,
+  // in the TUI only (registerSubcommandAutocomplete).
+  pi.on("session_start", async (_event, ctx) => {
+    registerSubcommandAutocomplete(ctx);
+  });
+
   // The oasis_* tools are registered inactive; activate them only in sessions inside an Odoo
   // project so other projects pay no tokens for their schemas and guidelines. Other tools, the
   // odoo19_* aliases included, are untouched.
@@ -390,17 +370,17 @@ export default function oasisLayer(pi: ExtensionAPI) {
     if (next.length !== active.length || next.some((name, index) => name !== active[index])) pi.setActiveTools(next);
   });
 
-  // Session notice: remind the user once when the subagent overlay is missing or outdated.
+  // Session notice: remind the user once when the subagent overlay is missing or outdated, only in
+  // Gentle Shell (lib/setup.ts overlayReminder).
   let overlayNoticeShown = false;
   pi.on("session_start", async (_event, ctx) => {
     if (overlayNoticeShown) return;
     try {
       if (!(await projectRoot(ctx.cwd))) return;
-      const state = overlayState(OVERLAY_TEMPLATE, currentOverlayTarget());
-      if (state === "current") return;
+      const reminder = overlayReminder({ env: process.env, homedir: homedir(), template: OVERLAY_TEMPLATE });
+      if (!reminder) return;
       overlayNoticeShown = true;
-      const problem = state === "missing" ? "subagents do not have the oasis tools yet" : "overlay is outdated";
-      ctx.ui.notify(`oasis: ${problem}; run /oasis setup`, "info");
+      ctx.ui.notify(reminder, "info");
     } catch {
       // Never block startup on the overlay check.
     }

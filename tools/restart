@@ -10,6 +10,11 @@ set -Eeuo pipefail
 # exits with stop's status after stop's own message: a server that did not stop in time is left
 # running (`Nothing was restarted: Odoo is still running for this checkout.`, exit 1); any other
 # failure (an unreadable state, exit 2) says only `Nothing was restarted.`.
+# restart --print-command [odoo options] (first argument only; anywhere else before `--` it is
+# refused, exit 2) prints the odoo-bin command line that start --detach would exec for this restart
+# (start --print-command: one shell-quoted line on stdout, exit 0), with the port and database it
+# would keep; the running server's ports count as free since restart stops it first. Nothing is
+# stopped or started, and the refusals are restart's.
 source "$(dirname "$0")/oasis_env.sh"
 usage() {
   printf 'Usage: %s restart [odoo options]\n' "$(usage_name)"
@@ -21,7 +26,14 @@ if [[ $# -eq 1 && ( $1 == --help || $1 == -h ) ]]; then
   printf 'and the database the stopped server had unless the options name others (-p or\n'
   printf -- '--http-port, -d or --database); a server started without a database restarts without\n'
   printf 'one. When the server does not stop, nothing is restarted (exit 1): run stop --force first.\n'
+  printf 'With --print-command as the first argument it only prints the odoo-bin command line the\n'
+  printf 'restart would run (one shell-quoted line, exit 0): nothing is stopped or started.\n'
   exit 0
+fi
+print_command=false
+if [[ ${1:-} == --print-command ]]; then
+  print_command=true
+  shift
 fi
 for argument in "$@"; do
   if [[ "$argument" == -- ]]; then break; fi
@@ -29,9 +41,17 @@ for argument in "$@"; do
     usage >&2
     exit 2
   fi
+  if [[ "$argument" == --print-command ]]; then
+    printf -- '--print-command must be the first argument.\n' >&2
+    exit 2
+  fi
 done
 source "$(dirname "$0")/common.sh"
-require_runtime
+if "$print_command"; then
+  require_runtime_paths
+else
+  require_runtime
+fi
 source "$(dirname "$0")/server_args.sh"
 parse_server_arguments "$@"
 if "$informational"; then
@@ -43,9 +63,10 @@ if "$batch"; then
   exit 2
 fi
 server=$(runtime_state show "$PROJECT_ROOT")
-old_port='' old_database=''
+old_pid='' old_port='' old_database=''
 if [[ -n "$server" ]]; then
-  read -r _ old_port <<< "$server"
+  read -r old_pid old_port <<< "$server"
+  old_pid=${old_pid#pid=}
   old_port=${old_port#port=}
   if [[ -z "$explicit_database" ]]; then
     old_database=$(runtime_state database "$PROJECT_ROOT")
@@ -67,6 +88,29 @@ if [[ -n "$explicit_port" ]]; then
     fi
   fi
 fi
+kept=()
+if [[ -z "$explicit_port" && -n "$old_port" ]]; then
+  kept+=("--http-port=$old_port")
+fi
+if [[ -n "$old_database" ]]; then
+  kept+=(-d "$old_database")
+fi
+if "$print_command"; then
+  # What start --detach "${kept[@]}" "$@" would exec once the server is stopped: its port rules
+  # with the stopped server's HTTP and second ports free.
+  if [[ -n "$server" ]]; then
+    freed_ports=("$old_port")
+    second=$(running_second_port "$old_pid")
+    if [[ -n "$second" ]]; then freed_ports+=("$second"); fi
+  fi
+  parse_server_arguments "${kept[@]}" "$@"
+  odoo_config_arguments
+  interface=$(server_interface)
+  choose_server_ports
+  print_server_command "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" \
+    "${kept[@]}" "$@"
+  exit 0
+fi
 # stop's stdout goes straight through; its stderr is kept to tell a timeout from other failures,
 # then passed on unchanged.
 stop_status=0 stop_error=''
@@ -83,12 +127,5 @@ if (( stop_status != 0 )); then
     printf 'Nothing was restarted.\n' >&2
   fi
   exit "$stop_status"
-fi
-kept=()
-if [[ -z "$explicit_port" && -n "$old_port" ]]; then
-  kept+=("--http-port=$old_port")
-fi
-if [[ -n "$old_database" ]]; then
-  kept+=(-d "$old_database")
 fi
 exec bash "$(dirname "$0")/start" --detach "${kept[@]}" "$@"

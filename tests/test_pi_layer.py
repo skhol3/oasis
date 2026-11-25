@@ -108,8 +108,9 @@ class PiLayerTests(unittest.TestCase):
         panel_ui = (ROOT / 'pi/ui/menu-panel.ts').read_text()
         imports = set(re.findall(r'^import .*? from "([^"]+)";$', panel_ui, re.M | re.S))
         self.assertEqual(imports, {'@earendil-works/pi-coding-agent', '@earendil-works/pi-tui', '../lib/menu.ts'})
-        for name, allowed in (('menu.ts', {'./output.ts', './tools.ts'}),
-                              ('panel.ts', {'./heartbeat.ts', './menu.ts', './tools.ts'})):
+        for name, allowed in (('menu.ts', {'./native.ts', './output.ts', './tools.ts'}),
+                              ('native.ts', {'./tools.ts'}),
+                              ('panel.ts', {'./heartbeat.ts', './menu.ts', './native.ts', './tools.ts'})):
             lib = (ROOT / 'pi/lib' / name).read_text()
             self.assertEqual(set(re.findall(r' from "([^"]+)";', lib)), allowed, name)
 
