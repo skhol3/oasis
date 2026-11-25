@@ -44,9 +44,15 @@ names) may still change in a minor release; every such change is listed here und
   not exist yet; it no longer has to be inside the checkout or under a directory named
   `*environments`. It still may not be or contain the checkout or the Odoo source. `Unsafe tooling
   environment target.` now names the directory and the reason.
-- `worktree-init` no longer requires the new folder to be below the workspace directory.
-- Bash guard: after `builtin cd`, `command cd`, `time cd`, `eval`, `source`/`.` or a non-literal
-  command word, an entry point run without `--project` targets an unknown directory (ask).
+- An existing environment directory without `pyvenv.cfg` (an empty `mkdir`, a conda environment)
+  is now refused, where the old rule accepted it under an `*environments` parent; `bootstrap` or
+  `uv venv` creates the environment.
+- `worktree-init` no longer requires the new folder to be below the workspace directory. It
+  refuses an `oasis-workspace.toml` the main checkout tracks in git: each worktree would check out
+  and read its own copy; untrack it or keep the workspace file above the checkouts.
+- Bash guard: after `builtin cd`, `command cd`, `time cd` (also with `--` or `time -p`), `eval`,
+  `source`/`.` or a non-literal command word, an entry point run without `--project` targets an
+  unknown directory (ask). Only `command`'s own `-v`/`-V` count as a lookup, not a later `-v`.
 - Bash guard: the agent's changes to the workspace file a linked worktree reads through git, and
   to the machine file (`$XDG_CONFIG_HOME/oasis/config.toml`, `~/.config/oasis/config.toml`), go
   through the same always-ask dialog as a workspace file above the session, whatever

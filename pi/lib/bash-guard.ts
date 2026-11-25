@@ -802,15 +802,20 @@ function unknownCommand(word: string): boolean {
 /**
  * Whether the simple command at words[index] may change the shell's directory in a way the text
  * does not tell, so later commands run in an unknown directory: `cd`, `pushd` or `popd` behind
- * `builtin`, `command` (not `-v`/`-V`, which only look up) or `time`; `eval`, `source` and `.`,
- * whatever they run; and a command word that is not literal (`$CD /x`), which may be `cd`.
+ * `builtin`, `command` (not with its own `-v`/`-V`, which only look up) or `time`, with or
+ * without `--`; `eval`, `source` and `.`, whatever they run; and a command word that is not
+ * literal (`$CD /x`), which may be `cd`.
  */
 function untrackedChange(words: string[], index: number): boolean {
   let i = index;
   let behind = false;
   while (i < words.length && BUILTIN_RUNNERS.has(words[i])) {
-    if (words[i] === "command" && words.slice(i + 1).some((word) => word === "-v" || word === "-V")) return false;
-    i = skipOptions(words, i + 1, new Set());
+    const next = skipOptions(words, i + 1, new Set());
+    // Its own options end at `--`; a -v after it, or after cd, is an argument (a directory `-v`).
+    const options = words.slice(i + 1, next);
+    const own = options.includes("--") ? options.slice(0, options.indexOf("--")) : options;
+    if (words[i] === "command" && own.some((word) => /^-[A-Za-z]*[vV]/.test(word))) return false;
+    i = next;
     behind = true;
   }
   const word = words[i];

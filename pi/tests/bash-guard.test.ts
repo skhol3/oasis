@@ -588,6 +588,16 @@ test("a directory change the guard cannot follow makes the target of an entry po
     "builtin cd /work/other && oasis stop --database",
     "command cd /work/other && oasis stop --database",
     "command -p cd /work/other; odoo19 stop --database",
+    // L10 R3-001: `--` ends the runner's options; the forms with it change the directory too.
+    "command -- cd /work/other && oasis stop --database",
+    "builtin -- cd /work/other && oasis stop --database",
+    "command -p -- cd /work/other; oasis stop --database",
+    "time -p cd /work/other && oasis stop --database",
+    "time -p -- cd /work/other && oasis stop --database",
+    "command -- popd; oasis stop --database",
+    // Only command's own options look a program up: a later -v is cd's argument (a directory).
+    "command cd -- -v && oasis stop --database",
+    "command -- cd -- -V; oasis stop --database",
     "builtin pushd /work/other && oasis stop --database",
     "command popd; oasis stop --database",
     "time cd /work/other && oasis stop --database",
@@ -610,6 +620,8 @@ test("a directory change the guard cannot follow makes the target of an entry po
   // Unchanged: what the guard follows, what only looks a program up, and --project.
   const kept: [string, object[]][] = [
     ["command -v oasis && oasis stop --database", [STOP]],
+    ["command -pv cd && oasis stop --database", [STOP]],
+    ["command -p -V cd; oasis stop --database", [STOP]],
     ["[ -d addons ] && oasis stop --database", [STOP]],
     ["[[ -d addons ]] && oasis stop --database", [STOP]],
     ["echo cd /work/other && oasis stop --database", [STOP]],

@@ -26,7 +26,9 @@ checkout, nor an existing directory that is not empty.
 
 The new worktree reads the oasis-workspace.toml the main checkout reads: one above the new
 folder, else the main checkout's through git. Only `git worktree add` runs: nothing is copied
-or linked. A folder below another workspace file is refused.
+or linked. A folder below another workspace file is refused, and so is a workspace file the
+main checkout tracks in git: each worktree would read its own committed copy. Untrack it or
+keep the workspace file above the checkouts.
 
 --dry-run prints the same plan and changes nothing. --resume accepts an existing folder that
 is a worktree of this repository on <branch>.
@@ -130,13 +132,28 @@ def registered_branch(main, folder):
     return None
 
 
+def tracked(main, path):
+    """Whether git tracks path in the main checkout (a path outside it is never tracked there).
+    A git failure here is a refusal: the check decides whether worktrees share the file."""
+    if not path.is_relative_to(main):
+        return False
+    relative = path.relative_to(main).as_posix()
+    result = git(main, 'ls-files', '-z', '--', relative)
+    if result.returncode != 0:
+        message = result.stderr.strip().splitlines()
+        raise Refused(f'Cannot ask git whether {path} is tracked: '
+                      + (message[-1] if message else f'exit {result.returncode}') + '.')
+    return relative in result.stdout.split('\0')
+
+
 def workspace_dir(config, main, new):
     """The directory of the workspace file the main checkout reads, which new will read too.
 
     The new worktree needs nothing but `git worktree add`, provided it reads the same workspace
     file: the nearest one at or above new must be that file, or there must be none (the new
-    linked worktree then reads it through git, config.workspace_file). It must be trusted and
-    readable TOML (config.InvalidConfig otherwise, as every command reports it).
+    linked worktree then reads it through git, config.workspace_file). The main checkout must not
+    track it in git: the new worktree would check out its own copy and read that one. It must be
+    trusted and readable TOML (config.InvalidConfig otherwise, as every command reports it).
     """
     try:
         workspace = config.find_workspace(main)
@@ -146,6 +163,10 @@ def workspace_dir(config, main, new):
     if workspace is None:
         raise Refused(f'The main checkout {main} has no {config.WORKSPACE_NAME} at or above it; '
                       'prepare the worktree by hand.')
+    if tracked(main, workspace):
+        raise Refused(f'{workspace} is tracked by git in the main checkout {main}: each worktree would '
+                      'read its own committed copy, not this file. Untrack it (git rm --cached '
+                      f'{workspace.relative_to(main).as_posix()}) or keep the workspace file above the checkouts.')
     try:
         nearest = config.find_workspace(new)
     except OSError as exc:

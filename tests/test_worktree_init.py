@@ -268,6 +268,41 @@ class WorktreeInitTests(unittest.TestCase):
                             f'{self.scratch / "oasis-workspace.toml"}; choose another --path.\n')
         self.assertFalse(os.path.lexists(new))
 
+    def inside_workspace(self, main):
+        """Move the workspace file into the main checkout (its source path from there)."""
+        (self.scratch / 'oasis-workspace.toml').unlink()
+        workspace = main / 'oasis-workspace.toml'
+        workspace.write_text(WORKSPACE.replace("'source/odoo'", "'../source/odoo'"))
+        return workspace
+
+    def test_a_workspace_file_tracked_by_the_main_checkout_is_refused(self):
+        # Each worktree would check out its own committed copy and read it, not the main one.
+        main = self.repository()
+        workspace = self.inside_workspace(main)
+        self.git(main, 'add', 'oasis-workspace.toml')
+        self.git(main, 'commit', '-q', '-m', 'track the workspace file')
+        other = self.elsewhere()
+        stderr = (f'ERROR: {workspace} is tracked by git in the main checkout {main}: each worktree would '
+                  'read its own committed copy, not this file. Untrack it (git rm --cached '
+                  'oasis-workspace.toml) or keep the workspace file above the checkouts.\n')
+        for args in (('feat', 'feat'), ('feat', 'feat', '--dry-run'),
+                     ('feat', 'feat', '--path', str(other / 'proj-feat'))):
+            with self.subTest(args=args):
+                self.assert_refused(main, args, stderr)
+        self.assertFalse(os.path.lexists(self.scratch / 'proj-feat'))
+        self.assertFalse(os.path.lexists(other / 'proj-feat'))
+
+    def test_an_untracked_workspace_file_in_the_main_checkout_is_read_through_git(self):
+        main = self.repository()
+        self.inside_workspace(main)
+        head = self.head(main)
+        new = self.scratch / 'proj-feat'
+        result = self.invoke(main, 'feat', 'feat')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, f'worktree: {new}\nbranch: feat (created from HEAD {head[:12]})\nslug: feat\n'
+                             f'workspace: {main}\n', ''))
+        self.assertEqual(self.workspace_root(new), [f'WORKSPACE_ROOT={main}'])
+
     # -- resume -----------------------------------------------------------------------------
 
     def test_resume_accepts_the_existing_worktree_and_adds_nothing(self):
