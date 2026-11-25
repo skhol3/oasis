@@ -302,6 +302,63 @@ test("a target whose setting cannot be read, outside a project or not literal co
     { reason: string }).reason, /in the configuration of \/work\/other;/);
 });
 
+// v0.14.0 S8: without --project the entry point runs in the git top level of its directory. The
+// gate judges it against the session's project, and after a literal cd (or env -C) against the
+// stricter of the session's and that directory's project; nothing is loosened.
+test("an entry point without --project still asks, judged against the session's project", async () => {
+  const command = "oasis drop-database shop_dev_old";
+  const asked = harness({ answers: ["shop_dev_old"] });
+  assert.equal(await asked.gate(command), undefined);
+  assert.match(asked.prompts[0].title, /Type shop_dev_old to allow drop-database shop_dev_old\./);
+  assert.deepEqual(asked.entries, [{ label: "Agent command approved", command, note: "typed shop_dev_old", output: "" }]);
+  assert.deepEqual(asked.settingsRead, [ROOT]);
+  const headless = harness({ hasUI: false });
+  assert.equal((await headless.gate(command))?.block, true);
+  assert.deepEqual(headless.entries.map((entry) => entry.note), ["no dialog"]);
+  const denied = harness({ setting: "deny" });
+  assert.match((await denied.gate("odoo19 stop --database") as { reason: string }).reason,
+    /^stop --database is denied to agents by \[tooling\]\.agent_destructive = "deny" in this project's configuration;/);
+  // A literal cd inside the session's own project reads the session's setting once.
+  const inside = harness({ roots, settings: { [ROOT]: "ask" }, hasUI: false });
+  assert.equal((await inside.gate("cd /work/shop && oasis gc --apply --trash"))?.block, true);
+  assert.deepEqual(inside.settingsRead, [ROOT]);
+});
+
+test("without --project the stricter of the session's and the directory's project decides", async () => {
+  const drop = "cd /work/other && oasis drop-database other_dev_old";
+  // allow here, deny there: denied, naming that project.
+  const there = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "deny" } });
+  assert.deepEqual(await there.gate(drop), {
+    block: true,
+    reason: "drop-database other_dev_old is denied to agents by [tooling].agent_destructive = \"deny\" in the " +
+      "configuration of /work/other; nothing ran. Ask the user to run it.",
+  });
+  assert.deepEqual(there.settingsRead, [ROOT, OTHER]);
+  // deny here wins over allow there.
+  const here = harness({ roots, settings: { [ROOT]: "deny", [OTHER]: "allow" } });
+  assert.match((await here.gate(drop) as { reason: string }).reason, /in this project's configuration; nothing ran/);
+  // allow here, ask there: the dialog, so refused without a UI.
+  const ask = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "ask" }, hasUI: false });
+  assert.equal((await ask.gate(drop))?.block, true);
+  assert.deepEqual(ask.entries.map((entry) => entry.note), ["no dialog"]);
+  // A directory the text does not tell, or one outside any project, counts as ask.
+  for (const command of ["cd $DIR && oasis stop --database", "pushd /work/other; popd; oasis stop --database",
+    "cd /tmp/elsewhere && oasis stop --database", "cd /work/other && echo $(oasis stop --database)"]) {
+    const unknown = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "allow" }, hasUI: false });
+    assert.equal((await unknown.gate(command))?.block, true, command);
+    assert.deepEqual(unknown.entries.map((entry) => entry.note), ["no dialog"], command);
+  }
+  // env -C and sudo -D change the directory too.
+  for (const command of ["env -C /work/other oasis stop --database", "sudo -D /work/other oasis stop --database"]) {
+    const wrapped = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "deny" } });
+    assert.match((await wrapped.gate(command) as { reason: string }).reason, /in the configuration of \/work\/other;/, command);
+  }
+  // allow in both runs without a dialog, as with --project.
+  const both = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "allow" }, hasUI: false });
+  assert.equal(await both.gate(drop), undefined);
+  assert.deepEqual(both.entries, [{ label: "Agent command approved", command: drop, note: "agent_destructive = allow", output: "" }]);
+});
+
 // The extension's tool_call handler is toolCallRouter: Pi's event and context in, the gates' result out.
 function piContext(options: { hasUI?: boolean; answers?: (string | undefined)[] } = {}) {
   const prompts: { title: string; options: unknown }[] = [];

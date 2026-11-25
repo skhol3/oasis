@@ -542,6 +542,45 @@ test("classifyBash names the project an ask command targets, as the entry point 
   }
 });
 
+test("without --project an entry point targets the directory it runs in: the session's, a literal cd, else unknown", () => {
+  // v0.14.0 S8: the entry point then takes the git top level of its current directory. Absent: the
+  // session's own directory; null: a directory the text does not tell.
+  const OTHER = "/work/other";
+  const cases: [string, object[]][] = [
+    ["oasis drop-database cc_dev_x", [DROP("cc_dev_x")]],
+    ["odoo19 stop --database", [STOP]],
+    ["cd /work/shop && oasis gc --apply --trash", [PURGE]],
+    ["cd /work/other && oasis drop-database cc_dev_x", [AT(DROP("cc_dev_x"), OTHER)]],
+    ["cd ../other; odoo19 stop --database", [AT(STOP, OTHER)]],
+    ["pushd /work/other && oasis gc --apply --trash", [AT(PURGE, OTHER)]],
+    ["cd addons && oasis stop --database", [AT(STOP, "/work/shop/addons")]],
+    ["cd && oasis stop --database", [AT(STOP, "/home/u")]],
+    ["cd $DIR && oasis stop --database", [AT(STOP, null)]],
+    ["cd - && oasis stop --database", [AT(STOP, null)]],
+    ["pushd /work/other; popd; oasis stop --database", [AT(STOP, null)]],
+    // Wrappers that change the directory of the command they run.
+    ["env -C /work/other oasis stop --database", [AT(STOP, OTHER)]],
+    ["env --chdir=/work/other oasis stop --database", [AT(STOP, OTHER)]],
+    ["env --chdir /work/other A=1 oasis stop --database", [AT(STOP, OTHER)]],
+    ["sudo -D /work/other oasis stop --database", [AT(STOP, OTHER)]],
+    ["sudo --chdir=/work/other odoo19 stop --database", [AT(STOP, OTHER)]],
+    ["env -C $D oasis stop --database", [AT(STOP, null)]],
+    // A shell command starts where the line is; a substitution on a line that changes directory is unknown.
+    ["cd /work/other && bash -c 'oasis stop --database'", [AT(STOP, OTHER)]],
+    ["bash -c 'cd /work/other && oasis stop --database'", [AT(STOP, OTHER)]],
+    ["cd /work/other && echo $(oasis stop --database)", [AT(STOP, null)]],
+    ["echo $(oasis stop --database)", [STOP]],
+    // --project still names the target, wherever the line runs.
+    ["cd /work/other && oasis --project /work/shop stop --database", [AT(STOP, "/work/shop")]],
+    ["env -C /work/shop oasis --project /work/other stop --database", [AT(STOP, OTHER)]],
+    // A tool script reads its root variable, not the directory: unchanged.
+    ["cd /work/other && ~/.agents/skills/odoo19/tools/stop --database", [STOP]],
+  ];
+  for (const [command, asks] of cases) {
+    assert.deepEqual(classifyBash(command, at("/work/shop")), { program: null, programs: [], asks }, command);
+  }
+});
+
 test("the entry point's --project abbreviations do not hide its command from either tier", () => {
   for (const [command, programs] of [
     ["oasis --proj /p migrate --apply", ["migrate"]],

@@ -9,6 +9,40 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Added
+
+- Optional machine file `$XDG_CONFIG_HOME/oasis/config.toml` (else `~/.config/oasis/config.toml`),
+  the default place for each series' Odoo source: `[series."19.0"]` with `community`,
+  `enterprise` and `environments`. A workspace's `[tooling].community` or `[tooling].enterprise`
+  overrides it, and `enterprise = false` turns a machine Enterprise off. Checked like the
+  workspace file (owner and mode, invalid TOML, unknown keys); without it everything works as
+  before.
+- `tools/config.py --origins <checkout>` prints where the layered values came from
+  (`MACHINE_FILE`, `MACHINE_ENVIRONMENTS_DIR`, `ODOO_SOURCE_FROM`, `ENTERPRISE_SOURCE_FROM`,
+  `PROJECT_ENVIRONMENT_FROM`, `CHECKOUT_SLUG_FROM`).
+- `--project` is optional for `oasis` and `odoo19`: without it, the project is the git top level
+  of the current directory (the current directory outside git).
+- `bootstrap --apply` compiles the dependency locks when they are missing or stale against
+  `runtime.in` and `dev.in` (`uv pip compile --python-version <declared Python>`, then
+  `lock.sha256` as `sha256sum` writes it), then creates or syncs the environment as before.
+  `bootstrap --preview` names the step (`locks=missing|stale`,
+  `planned_action=compile_locks_then_...`) and changes nothing. Current locks stay
+  byte-identical; the `.in` files are never written.
+
+### Changed
+
+- A workspace without `[tooling].community` whose machine file gives no source for its series
+  stops with `No Odoo source for <series>: create the machine file <path> with community under
+  [series."<series>"], or set [tooling].community in <workspace>.` instead of `Invalid tooling
+  path: community.`
+- `bootstrap` no longer refuses a stale `lock.sha256` with `Regenerate the locks and fingerprint
+  before preview or apply.`; it compiles instead. A lock changed by hand while the inputs still
+  match is still refused (exit 2), now with how to fix it. Without uv, `bootstrap` says how to
+  install it.
+- The Gentle Shell bash guard judges an entry point run without `--project` against the
+  directory it runs in (the session's, a literal `cd`/`pushd`, `env -C`, `sudo -D`); an unknown
+  directory counts as ask. `sudo --chdir <dir>` is parsed as taking a value.
+
 ## [0.13.0] - 2026-11-24
 
 ### Added

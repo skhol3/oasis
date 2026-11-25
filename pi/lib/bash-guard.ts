@@ -46,10 +46,14 @@ export interface GuardContext {
   settingFile?(path: string | null, word: string): string | null;
 }
 
-/** The session context and the directory the next command runs in (null when unknown). */
+/**
+ * The session context and the directory the next command runs in (null when unknown). `unsure`: the
+ * command is in a substitution of a line that changes directory, so `dir` may not be where it runs.
+ */
 interface Where {
   context: GuardContext;
   dir: string | null;
+  unsure?: boolean;
 }
 // The entry point and its alias: worktree-init, migrate and menu are blocked through either.
 const ENTRY_POINTS = new Set(["oasis", "odoo19"]);
@@ -68,7 +72,7 @@ const KEYWORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", 
 const SHELL_COMMAND_FLAG = /^-[A-Za-z]*c[A-Za-z]*$/;
 // Wrappers that run the next word as the command, with options that take a value.
 const WRAPPERS: Record<string, Set<string>> = {
-  sudo: new Set(["-u", "-g", "-h", "-p", "-C", "-D", "-U", "--user", "--group"]),
+  sudo: new Set(["-u", "-g", "-h", "-p", "-C", "-D", "-U", "--user", "--group", "--chdir"]),
   env: new Set(["-u", "-C", "--unset", "--chdir"]),
   time: new Set(),
   nohup: new Set(),
@@ -82,6 +86,11 @@ const WRAPPERS: Record<string, Set<string>> = {
   stdbuf: new Set(["-i", "-o", "-e"]),
   ionice: new Set(["-c", "-n", "-p"]),
   doas: new Set(["-u", "-C"]),
+};
+// The wrapper options that run the command in another directory (`env -C <dir>`, `sudo -D <dir>`).
+const CHANGE_DIRECTORY_OPTIONS: Record<string, { short: string; long: string }> = {
+  env: { short: "-C", long: "--chdir" },
+  sudo: { short: "-D", long: "--chdir" },
 };
 const DOCKER_VALUE_OPTIONS = new Set([
   "-f", "--file", "-p", "--project-name", "--project-directory", "--env-file", "--profile",
@@ -476,7 +485,8 @@ export type AskAction =
 
 /**
  * The project an ask command names (see targetOf): an absolute path, null when the text does not
- * tell it (an expansion), absent when the command names none (the session's project applies).
+ * tell it (an expansion, an unknown directory), absent when the command names none or runs the
+ * entry point without --project in the session's own directory (the session's project applies).
  */
 export interface Target {
   project?: string | null;
@@ -498,12 +508,17 @@ function targetPath(value: string, where: Where | undefined, tilde: boolean): st
  * The project the ask command at words[index] targets: the entry point's --project value, or the
  * root variable a tool script gets from the assignments before it (`VAR=<dir> tool`, `env VAR=<dir>
  * tool`; the last one of each name counts). Bash expands `~` in an assignment, not in `--project=~`.
+ * Without --project the entry point takes the git top level of the directory it runs in (v0.14.0
+ * S8): that directory after a literal `cd` or `env -C`, null when it is not known, absent when it is
+ * the session's own directory.
  */
 function targetOf(words: string[], index: number, where: Where | undefined): Target {
   if (ENTRY_POINTS.has(basename(words[index]))) {
     const { project, joined } = entryPointOptions(words, index);
-    if (project === undefined) return {};
-    return { project: targetPath(project, where, !joined) };
+    if (project !== undefined) return { project: targetPath(project, where, !joined) };
+    if (!where) return {};
+    if (where.unsure || where.dir === null) return { project: null };
+    return where.dir === posix.normalize(where.context.cwd) ? {} : { project: where.dir };
   }
   const values = new Map<string, string>();
   for (const word of words.slice(0, index)) {
@@ -662,8 +677,27 @@ function unwrap(words: string[], index: number): number | null | undefined {
   return skipOptions(words, i + 1, DOCKER_VALUE_OPTIONS) + 1; // the service or container
 }
 
+/**
+ * The directory the command after a wrapper's options (words[index + 1] to words[next - 1]) runs in:
+ * the literal `env -C`/`--chdir` or `sudo -D`/`--chdir` value resolved from where, null when not
+ * literal, undefined when the wrapper does not change it.
+ */
+function wrapperDirectory(words: string[], index: number, next: number, where: Where): string | null | undefined {
+  const option = CHANGE_DIRECTORY_OPTIONS[basename(words[index])];
+  if (!option) return undefined;
+  let value: string | undefined;
+  for (let k = index + 1; k < next; k++) {
+    const word = words[k];
+    if (word === option.short || word === option.long) value = words[++k] ?? "";
+    else if (word.startsWith(`${option.long}=`)) value = word.slice(option.long.length + 1);
+    else if (word.startsWith(option.short) && !word.startsWith("--")) value = word.slice(option.short.length);
+  }
+  return value === undefined ? undefined : literalPath(value, where);
+}
+
 /** What one simple command runs: at most one finding, or the findings of a command it runs (eval, sh -c). */
-function classifySegment(words: string[], where?: Where): Finding[] {
+function classifySegment(words: string[], start?: Where): Finding[] {
+  let where = start;
   let i = 0;
   for (;;) {
     while (i < words.length && (ASSIGNMENT.test(words[i]) || KEYWORDS.has(words[i]))) i++;
@@ -683,6 +717,8 @@ function classifySegment(words: string[], where?: Where): Finding[] {
     const next = unwrap(words, i);
     if (next === null) return [];
     if (next !== undefined) {
+      const moved = where ? wrapperDirectory(words, i, next, where) : undefined;
+      if (where && moved !== undefined) where = { ...where, dir: moved };
       i = next;
       continue;
     }
@@ -746,29 +782,42 @@ export function classifyBash(
   return { program: programs[0] ?? null, programs, asks };
 }
 
+/** The index of the command words[] runs, after its assignments and reserved words. */
+function commandIndex(words: string[]): number {
+  let i = 0;
+  while (i < words.length && (ASSIGNMENT.test(words[i]) || KEYWORDS.has(words[i]))) i++;
+  return i;
+}
+
 /** Every finding of a command in the order bash would reach it: substitutions first, then the segments. */
 function findingsIn(command: string, start: Where | undefined): Finding[] {
   const findings: Finding[] = [];
   const { text, data } = heredocs(command);
   const { outer, inner } = substitutions(text);
   for (const body of data) inner.push(...substitutions(body, false).inner);
-  for (const body of inner) findings.push(...findingsIn(body, start));
+  const lines = segments(outer);
+  // A substitution runs where its segment runs; on a line that changes directory that is not known here.
+  const moves = lines.some((words) => {
+    const word = words[commandIndex(words)] ?? "";
+    return CHANGE_DIRECTORY.has(word) || word === "popd";
+  });
+  const substituted = start && moves ? { ...start, unsure: true } : start;
+  for (const body of inner) findings.push(...findingsIn(body, substituted));
   let where = start;
   let carried: string | undefined;
-  for (const words of segments(outer)) {
+  for (const words of lines) {
     // A bare `>` ending the previous segment writes to this one's first word (`>|`).
     const target = carried;
     carried = /^\d*>>?$/.test(words[words.length - 1]) ? "" : undefined;
     const own = target === undefined ? words : words.slice(1);
     // A literal `cd`/`pushd` moves the later segments; `popd` makes the directory unknown.
-    let i = 0;
-    while (i < words.length && (ASSIGNMENT.test(words[i]) || KEYWORDS.has(words[i]))) i++;
+    const i = commandIndex(words);
     if (where && CHANGE_DIRECTORY.has(words[i] ?? "")) {
-      where = { context: where.context, dir: changedDirectory(words.slice(i + 1), where) };
+      where = { context: where.context, dir: changedDirectory(words.slice(i + 1), where), unsure: where.unsure };
       continue;
     }
     if (where && words[i] === "popd") {
-      where = { context: where.context, dir: null };
+      where = { context: where.context, dir: null, unsure: where.unsure };
       continue;
     }
     findings.push(...classifySegment(words, where), ...settingWrites(own, where, target === undefined ? undefined : words[0]));

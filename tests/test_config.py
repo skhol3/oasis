@@ -53,10 +53,13 @@ class ConfigCliTests(unittest.TestCase):
         self.root = Path(self.scratch.name) / 'a project'
         self.root.mkdir()
         self.workspace = self.root / 'oasis-workspace.toml'
+        # No machine file: XDG_CONFIG_HOME names a scratch directory that does not exist, so these
+        # checks prove the behaviour without one (never the real ~/.config).
+        self.env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'XDG_CONFIG_HOME': str(Path(self.scratch.name) / 'xdg')}
 
     def run_reader(self):
         return subprocess.run([sys.executable, '-B', str(READER), str(self.root)],
-                              capture_output=True, text=True, env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+                              capture_output=True, text=True, env=self.env)
 
     def test_missing_workspace_has_no_output_and_fails(self):
         result = self.run_reader()
@@ -78,7 +81,7 @@ class ConfigCliTests(unittest.TestCase):
         # An unreadable profile is refused the same way; the odoo19 alias names itself in the fix.
         profile.write_text('[tooling\n')
         result = subprocess.run([sys.executable, '-B', str(READER), str(self.root)], capture_output=True, text=True,
-                                env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'OASIS_ENTRYPOINT': '/x/odoo19'})
+                                env={**self.env, 'OASIS_ENTRYPOINT': '/x/odoo19'})
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', refusal(profile, 'odoo19')))
 
     def test_release_check_needs_the_file_and_the_series(self):
@@ -86,6 +89,7 @@ class ConfigCliTests(unittest.TestCase):
         release = self.root / 'release.py'
         release.write_text('version_info = (19, 0, 0, "final", 0)\n')
         usage = ('ERROR: Usage: config.py <absolute-project-root>\n'
+                 '       config.py --origins <absolute-project-root>\n'
                  '       config.py --release <release.py> <series>\n')
         for args, expected in ((('--release', str(release), '19.0'), (0, '', '')),
                                (('--release', str(release), '18.0'), (2, '', '')),
@@ -96,7 +100,7 @@ class ConfigCliTests(unittest.TestCase):
                                ((), (2, '', usage))):
             with self.subTest(args=args):
                 result = subprocess.run([sys.executable, '-B', str(READER), *args], capture_output=True, text=True,
-                                        env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+                                        env=self.env)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), expected)
 
     def test_wrong_version_rejected_without_emitting_assignments(self):

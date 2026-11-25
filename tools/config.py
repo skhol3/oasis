@@ -3,7 +3,9 @@
 
 The caller must supply the project (checkout) root; this module never discovers it from its
 own (global installation) location. A checkout reads the nearest `oasis-workspace.toml` at or
-above it, with its own optional `oasis-checkout.toml`. A checkout that still has the legacy
+above it, with its own optional `oasis-checkout.toml`, over the optional machine file
+(`$XDG_CONFIG_HOME/oasis/config.toml`, else `~/.config/oasis/config.toml`), whose per-series
+source paths are defaults the workspace overrides. A checkout that still has the legacy
 profile `.odoo19-agent.toml` is refused: only tools/migrate.py reads that file, to convert it.
 Path declarations do not grant access consent.
 """
@@ -197,10 +199,11 @@ def find_workspace(root: Path) -> Path | None:
     return None
 
 
-def trusted(path: Path) -> Path:
+def trusted(path: Path, kind: str = 'workspace file') -> Path:
     """path, refused unless it and its directory are owned by the current user or root and are
     not group- or other-writable: a file found above the checkout must not be one someone else
-    could write. A symlinked file is checked at its target too."""
+    could write. A symlinked file is checked at its target too. kind names the file in the
+    refusal (the machine file says `machine file`)."""
     targets = [path.resolve(), path.resolve().parent]
     if path.parent.resolve() not in targets:
         targets.append(path.parent.resolve())
@@ -208,14 +211,78 @@ def trusted(path: Path) -> Path:
         try:
             info = target.stat()
         except OSError as exc:
-            raise InvalidConfig(f'Refusing untrusted workspace file {path}: cannot inspect {target}.') from exc
+            raise InvalidConfig(f'Refusing untrusted {kind} {path}: cannot inspect {target}.') from exc
         if info.st_uid not in (os.getuid(), 0):
-            raise InvalidConfig(f'Refusing untrusted workspace file {path}: '
+            raise InvalidConfig(f'Refusing untrusted {kind} {path}: '
                                 f'{target} is not owned by the current user or root.')
         if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-            raise InvalidConfig(f'Refusing untrusted workspace file {path}: '
+            raise InvalidConfig(f'Refusing untrusted {kind} {path}: '
                                 f'{target} is writable by group or others.')
     return path
+
+
+# The machine file's [series."<x.y>"] keys: the Odoo source of the series (the defaults of
+# [tooling].community and [tooling].enterprise) and where new environments go by default (read by
+# oasis setup; it never chooses a checkout's environment).
+MACHINE_KEYS = ('community', 'enterprise', 'environments')
+
+
+def machine_file() -> Path | None:
+    """Where the optional machine file is: $XDG_CONFIG_HOME/oasis/config.toml when that variable is
+    an absolute path (the XDG rule ignores a relative one), else ~/.config/oasis/config.toml; None
+    when there is no home directory to look in."""
+    configured = os.environ.get('XDG_CONFIG_HOME', '')
+    if os.path.isabs(configured):
+        return Path(configured) / 'oasis' / 'config.toml'
+    try:
+        return Path.home() / '.config' / 'oasis' / 'config.toml'
+    except RuntimeError:
+        return None
+
+
+def machine_series(series: str) -> tuple[Path | None, dict[str, str]]:
+    """The machine file read (None without one) and its [series."<series>"] values as absolute paths.
+
+    Trusted like a workspace file; the whole file is checked, every series. A relative path
+    resolves from the machine file's directory.
+    """
+    path = machine_file()
+    if path is None or not os.path.lexists(path):
+        return None, {}
+    document = read_toml(trusted(path, 'machine file'))
+    for key in document:
+        if key != 'series':
+            raise InvalidConfig(f'Unknown key {key} in {path}; the machine file holds only '
+                                '[series."<version>"] tables.')
+    tables = document.get('series', {})
+    if not isinstance(tables, dict):
+        raise InvalidConfig(f'Invalid [series] in {path}.')
+    for name, table in tables.items():
+        if name not in versions().CAPABILITIES:
+            raise InvalidConfig(f'Unknown series {shown(name)} in {path}; '
+                                f'supported: {", ".join(versions().supported())}.')
+        if not isinstance(table, dict):
+            raise InvalidConfig(f'Invalid [series.{shown(name)}] in {path}.')
+        for key, value in table.items():
+            if key not in MACHINE_KEYS:
+                raise InvalidConfig(f'Unknown key series.{shown(name)}.{key} in {path}; '
+                                    'use community, enterprise or environments.')
+            if not isinstance(value, str) or not value or '\x00' in value or '\n' in value:
+                raise InvalidConfig(f'Invalid machine path series.{shown(name)}.{key} in {path}.')
+    return path, {key: str((path.parent / value).resolve()) for key, value in tables.get(series, {}).items()}
+
+
+def missing_source(series: str, machine: Path | None, workspace: Path) -> str:
+    """The refusal of a workspace without [tooling].community when the machine file (machine,
+    None when absent) gives none for the series: the machine file is the default place for it."""
+    table = f'[series.{json.dumps(series)}]'
+    if machine is None:
+        location = machine_file()
+        return (f'No Odoo source for {series}: create the machine file '
+                f'{location if location is not None else "~/.config/oasis/config.toml"} with community under '
+                f'{table}, or set [tooling].community in {workspace}.')
+    return (f'No Odoo source for {series}: set community under {table} in the machine file {machine}, '
+            f'or [tooling].community in {workspace}.')
 
 
 def shown(value) -> str:
@@ -326,6 +393,18 @@ def configuration(root: Path) -> tuple[dict, Path, Path]:
 def workspace_configuration(root: Path) -> tuple[dict, Path, Path, str]:
     """configuration() plus the selected environment name; a legacy profile in root is refused
     first, also next to a workspace file."""
+    document, base, workspace, name, _origins, _refusal = layered_configuration(root)
+    return document, base, workspace, name
+
+
+def layered_configuration(root: Path) -> tuple[dict, Path, Path, str, dict[str, str], str]:
+    """workspace_configuration() plus where its layered values came from (see origins) and the
+    refusal resolve() gives when neither the workspace nor the machine file sets the community
+    source (missing_source).
+
+    The machine file's series values fill only the source keys the workspace does not set;
+    `enterprise = false` in the workspace means no Enterprise, whatever the machine file says.
+    """
     profile = root / PROFILE_NAME
     if profile.is_file():
         raise InvalidConfig(legacy_profile_refusal(profile, program_name()))
@@ -337,20 +416,50 @@ def workspace_configuration(root: Path) -> tuple[dict, Path, Path, str]:
     selected = overrides.pop('environment', None)
     document, name = workspace_document(workspace, selected)
     document['tooling'].update(overrides)
-    return document, workspace.parent, workspace, name
+    tooling = document['tooling']
+    machine, defaults = machine_series(tooling['version'])
+    origins = {'MACHINE_FILE': str(machine) if machine is not None else '',
+               'MACHINE_ENVIRONMENTS_DIR': defaults.get('environments', '')}
+    for key, variable in (('community', 'ODOO_SOURCE'), ('enterprise', 'ENTERPRISE_SOURCE')):
+        if key not in tooling and key in defaults:
+            tooling[key] = defaults[key]
+            origins[f'{variable}_FROM'] = 'machine'
+        else:
+            origins[f'{variable}_FROM'] = 'workspace' if tooling.get(key) not in (None, False) else ''
+    origins['PROJECT_ENVIRONMENT_FROM'] = 'checkout' if selected is not None else 'workspace'
+    origins['CHECKOUT_SLUG_FROM'] = 'checkout' if 'checkout_slug' in overrides else ''
+    refusal = missing_source(tooling['version'], machine, workspace)
+    return document, workspace.parent, workspace, name, origins, refusal
 
 
 def load(root: Path) -> dict[str, str]:
     """Validated assignments for root (see configuration)."""
-    document, base, workspace, name = workspace_configuration(root)
-    return assignments(document, root, base, workspace, name)
+    document, base, workspace, name, _origins, refusal = layered_configuration(root)
+    return assignments(document, root, base, workspace, name, missing_source=refusal)
 
 
-def assignments(document: dict, root: Path, base: Path, workspace: Path | None, name: str) -> dict[str, str]:
+def origins(root: Path) -> dict[str, str]:
+    """Where root's layered values came from, once its whole configuration is valid (as load):
+    MACHINE_FILE (the machine file read, empty without one), MACHINE_ENVIRONMENTS_DIR (its
+    environments default for the series, empty when absent), then ODOO_SOURCE_FROM and
+    ENTERPRISE_SOURCE_FROM (`machine` or `workspace`; empty without Enterprise),
+    PROJECT_ENVIRONMENT_FROM (`checkout` when oasis-checkout.toml selects the named environment,
+    else `workspace`) and CHECKOUT_SLUG_FROM (`checkout`, `derived` from a linked worktree's
+    directory name, empty without a slug)."""
+    document, base, workspace, name, found, refusal = layered_configuration(root)
+    values = assignments(document, root, base, workspace, name, missing_source=refusal)
+    if values['CHECKOUT_SLUG'] and not found['CHECKOUT_SLUG_FROM']:
+        found['CHECKOUT_SLUG_FROM'] = 'derived'
+    return found
+
+
+def assignments(document: dict, root: Path, base: Path, workspace: Path | None, name: str, *,
+                missing_source: str = '') -> dict[str, str]:
     """The assignments of a configuration document whose [tooling] carries version and
     python_version. workspace None (WORKSPACE_ROOT empty) is only tools/migrate.py's reading of
-    a legacy profile, to compare a checkout before and after converting it."""
-    output = resolve(document, root, base)
+    a legacy profile, to compare a checkout before and after converting it. missing_source: see
+    resolve."""
+    output = resolve(document, root, base, missing_source=missing_source)
     # Appended last, so the previous assignments stay unchanged.
     output['WORKSPACE_ROOT'] = str(workspace.parent) if workspace is not None else ''
     # Appended after it: the Odoo series and the options that differ between series, which
@@ -391,11 +500,13 @@ def optional_path(tooling: dict, key: str, base: Path) -> str:
     return str((base / value).resolve())
 
 
-def resolve(document: dict, root: Path, base: Path) -> dict[str, str]:
+def resolve(document: dict, root: Path, base: Path, *, missing_source: str = '') -> dict[str, str]:
     """Validated assignments for the checkout root.
 
     Paths resolve from base (the workspace directory), except addons_paths, which always
     resolve from the checkout root. workspace_document has checked the version and Python.
+    missing_source, when given, is the error of an absent community (the machine file gives
+    none either); a declared but invalid one stays `Invalid tooling path: community.`
     """
     try:
         tooling = document['tooling']
@@ -436,8 +547,11 @@ def resolve(document: dict, root: Path, base: Path) -> dict[str, str]:
         output['TEST_DATABASE'] = database
     for key, variable in PATHS.items():
         value = tooling.get(key)
-        if key == 'enterprise' and value is None:
+        # Absent, or false (no Enterprise even when the machine file gives one): not emitted.
+        if key == 'enterprise' and (value is None or value is False):
             continue
+        if key == 'community' and key not in tooling and missing_source:
+            raise InvalidConfig(missing_source)
         if not isinstance(value, str) or not value or '\x00' in value or '\n' in value:
             raise InvalidConfig(f'Invalid tooling path: {key}.')
         output[variable] = str((base / value).resolve())
@@ -515,12 +629,16 @@ def main() -> int:
     # --release <release.py> <series>: whether that Odoo source declares the series.
     if len(sys.argv) == 4 and sys.argv[1] == '--release':
         return 0 if release_is(Path(sys.argv[2]), sys.argv[3]) else 2
-    if len(sys.argv) != 2 or not Path(sys.argv[1]).is_absolute():
+    # --origins <root>: where the layered values came from (see origins), for doctor.
+    arguments = sys.argv[2:] if len(sys.argv) > 1 and sys.argv[1] == '--origins' else sys.argv[1:]
+    if len(arguments) != 1 or not Path(arguments[0]).is_absolute():
         print('ERROR: Usage: config.py <absolute-project-root>\n'
+              '       config.py --origins <absolute-project-root>\n'
               '       config.py --release <release.py> <series>', file=sys.stderr)
         return 2
+    reader = origins if len(arguments) != len(sys.argv) - 1 else load
     try:
-        values = load(Path(sys.argv[1]).resolve())
+        values = reader(Path(arguments[0]).resolve())
     except InvalidConfig as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 2

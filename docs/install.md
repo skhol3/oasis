@@ -33,6 +33,32 @@ python3 -B -m unittest discover -s tests
 
 The installer copies the committed HEAD only (uncommitted edits are never installed), drops repository-only files (`AGENTS.md`, `.gitignore`, `install.sh`), records the installed version (from `package.json`) and commit in `.oasis-install.json`, and moves the previous install to `${XDG_STATE_HOME:-~/.local/state}/oasis/backups/`, outside any skill discovery directory. `OASIS_STATE_DIR` overrides that state directory. Run it again to update.
 
+## Running the CLI
+
+`--project` is optional. Without it the project is the git top level of the current directory
+(the current directory itself outside git), so these two run the same command:
+
+```bash
+~/.agents/skills/odoo19/oasis --project /absolute/project check-environment --quick
+cd /absolute/project/addons && ~/.agents/skills/odoo19/oasis check-environment --quick
+```
+
+A directory with no `oasis-workspace.toml` at or above its checkout gets the same refusal as
+`--project` to it. `--project` keeps working as before, and the `odoo19` alias behaves the same.
+
+## Where the Odoo source is declared
+
+Declare the Odoo source of each series once per machine, in `~/.config/oasis/config.toml`
+(`$XDG_CONFIG_HOME/oasis/config.toml` when that is set); every project of that series then uses
+it, and a project's workspace file sets a source only to override it. See
+[Machine file](workspace-file.md#machine-file).
+
+```toml
+[series."19.0"]
+community = '/srv/odoo/19.0/source/odoo'
+enterprise = '/srv/odoo/19.0/source/enterprise'
+```
+
 ## Installing the package
 
 From a release tag, so sessions load a fixed copy that work in a local checkout cannot change:

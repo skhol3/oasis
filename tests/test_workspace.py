@@ -63,7 +63,10 @@ class WorkspaceTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.scratch, ignore_errors=True)
         self.env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
         self.env.update({'GIT_CEILING_DIRECTORIES': str(self.scratch), 'GIT_CONFIG_GLOBAL': os.devnull,
-                         'GIT_CONFIG_NOSYSTEM': '1', 'PYTHONDONTWRITEBYTECODE': '1'})
+                         'GIT_CONFIG_NOSYSTEM': '1', 'PYTHONDONTWRITEBYTECODE': '1',
+                         # No machine file (never the real ~/.config): these checks prove the
+                         # behaviour without one.
+                         'XDG_CONFIG_HOME': str(self.scratch / 'xdg')})
         self.project = self.scratch / 'acme'
         self.workspace = self.project / 'oasis-workspace.toml'
         self.main = self.project / 'codigo' / 'acme'
@@ -571,6 +574,49 @@ class WorkspaceTests(unittest.TestCase):
     def invoke(self, project, *args):
         return subprocess.run([sys.executable, '-B', str(CLI), '--project', str(project), *args],
                               capture_output=True, text=True, env=self.env, cwd=self.scratch)
+
+    def invoke_in(self, cwd, *args, program='odoo19'):
+        """The entry point without --project, run from cwd (v0.14.0 S8)."""
+        return subprocess.run([sys.executable, '-B', str(ROOT / program), *args],
+                              capture_output=True, text=True, env=self.env, cwd=cwd)
+
+    def test_entry_point_without_project_uses_the_git_top_level_of_the_current_directory(self):
+        main = self.layout()
+        shutil.copytree(MODEL_INFO / 'source', self.project / 'source')
+        linked = self.linked()
+        for checkout in (main, linked):
+            shutil.copytree(MODEL_INFO / 'project' / 'addons', checkout / 'addons')
+        for checkout in (main, linked):
+            explicit = self.invoke(checkout, 'model-info', 'coffee.order')
+            self.assertEqual((explicit.returncode, explicit.stderr), (0, ''))
+            for cwd in (checkout, checkout / 'addons' / 'coffee_shop'):
+                for program in ('oasis', 'odoo19'):
+                    with self.subTest(cwd=str(cwd), program=program):
+                        result = self.invoke_in(cwd, 'model-info', 'coffee.order', program=program)
+                        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                         (explicit.returncode, explicit.stdout, explicit.stderr))
+
+    def test_entry_point_without_project_refuses_an_unconfigured_checkout_like_an_explicit_one(self):
+        main = self.layout()
+        self.workspace.unlink()
+        (main / 'sub').mkdir()
+        explicit = self.invoke(main, 'model-info', 'coffee.order')
+        result = self.invoke_in(main / 'sub', 'model-info', 'coffee.order')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            2, '', f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above {main}.\n'))
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (explicit.returncode, explicit.stdout, explicit.stderr))
+
+    def test_entry_point_without_project_stops_when_git_fails_in_a_repository(self):
+        # A checkout whose git cannot answer is not taken for a project outside git.
+        broken = self.scratch / 'broken'
+        (broken / 'sub').mkdir(parents=True)
+        (broken / '.git').write_text(f'gitdir: {self.scratch / "missing"}\n')
+        (broken / 'oasis-workspace.toml').write_text(WORKSPACE)
+        result = self.invoke_in(broken / 'sub', 'model-info', 'coffee.order')
+        self.assertEqual((result.returncode, result.stdout), (2, ''))
+        self.assertRegex(result.stderr, r'\AERROR: Cannot determine the project root of '
+                         + re.escape(str(broken / 'sub')) + r': git failed \(.+\); pass --project\.\n\Z')
 
     def test_entry_point_runs_a_command_in_a_linked_worktree(self):
         self.layout()
