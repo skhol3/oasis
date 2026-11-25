@@ -3,6 +3,7 @@
 Every repository lives in a fresh system temp directory; git runs with explicit -c identity
 flags and never reads or writes the user's global configuration.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import os
 from pathlib import Path
 import shlex

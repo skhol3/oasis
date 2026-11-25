@@ -1,4 +1,5 @@
 """The Odoo capability table (tools/odoo_versions.py) and the version-neutral tool sources."""
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from pathlib import Path
 import importlib.util
 import re
@@ -17,7 +18,7 @@ class CapabilityTableTests(unittest.TestCase):
     def test_only_odoo_19_is_supported_with_its_capabilities(self):
         self.assertEqual(odoo_versions.CAPABILITIES, {'19.0': {
             'python': ('3.10', '3.14'), 'python_default': '3.12', 'postgres_min': 13,
-            'second_port_option': '--gevent-port',
+            'postgres_default': 17, 'second_port_option': '--gevent-port',
             'demo_off_args': ['--without-demo'], 'test_tags_implies_stop': True, 'test_class_filter': True,
             'dev_option': '--dev', 'dev_features': ['access', 'qweb', 'reload', 'replica', 'xml'],
             'dev_all': ['access', 'qweb', 'reload', 'xml'], 'dev_reload_packages': ['inotify', 'watchdog']}})
@@ -25,7 +26,7 @@ class CapabilityTableTests(unittest.TestCase):
 
     def test_capability_reads_one_key(self):
         for key, value in (('python', ('3.10', '3.14')), ('python_default', '3.12'), ('postgres_min', 13),
-                           ('second_port_option', '--gevent-port'), ('demo_off_args', ['--without-demo']),
+                           ('postgres_default', 17), ('second_port_option', '--gevent-port'), ('demo_off_args', ['--without-demo']),
                            ('test_tags_implies_stop', True), ('dev_option', '--dev'),
                            ('dev_features', ['access', 'qweb', 'reload', 'replica', 'xml']),
                            ('dev_all', ['access', 'qweb', 'reload', 'xml']),
@@ -61,6 +62,14 @@ class CapabilityTableTests(unittest.TestCase):
             with self.subTest(version=version):
                 self.assertTrue(odoo_versions.python_supported(
                     version, odoo_versions.capability(version, 'python_default')))
+
+    def test_default_postgres_is_supported_by_its_series(self):
+        # The PostgreSQL of the compose file oasis setup writes (v0.14.0 L13): never below the minimum.
+        for version in odoo_versions.supported():
+            with self.subTest(version=version):
+                default = odoo_versions.capability(version, 'postgres_default')
+                self.assertIs(type(default), int)
+                self.assertGreaterEqual(default, odoo_versions.capability(version, 'postgres_min'))
 
     def test_unknown_version_is_a_clear_error(self):
         for version, shown in (('12.0', '"12.0"'), ('15.0', '"15.0"'), ('19', '"19"'), (19.0, '19.0'),
@@ -120,7 +129,7 @@ class VersionNeutralToolsTests(unittest.TestCase):
             return subprocess.run([sys.executable, '-I', '-B', str(TOOLS / 'odoo_versions.py'), *args],
                                   text=True, capture_output=True)
         for key, expected in (('test_class_filter', 'true\n'), ('second_port_option', '--gevent-port\n'),
-                              ('demo_off_args', '--without-demo\n'), ('postgres_min', '13\n'),
+                              ('demo_off_args', '--without-demo\n'), ('postgres_min', '13\n'), ('postgres_default', '17\n'),
                               ('dev_option', '--dev\n'), ('dev_features', 'access qweb reload replica xml\n'),
                               ('dev_all', 'access qweb reload xml\n'), ('dev_reload_packages', 'inotify watchdog\n')):
             with self.subTest(key=key):

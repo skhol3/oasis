@@ -11,6 +11,7 @@ a ceiling at the scratch directory, so nothing reads or writes a real project):
 The odoo.conf carries an admin_passwd marker that must never be printed; the environment
 file is named neutrally (runtime-env) and is never opened.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import hashlib
 import importlib.util
 import os
@@ -156,6 +157,7 @@ class MigrateTests(unittest.TestCase):
         (source / 'odoo/release.py').write_text('version_info = (19, 0, 0, "final", 0)\n')
         python = self.project / 'environments/corpus/bin/python'
         python.parent.mkdir(parents=True)
+        (python.parent.parent / 'pyvenv.cfg').write_text('home = /usr/bin\n')  # an environment (S5)
         python.write_text(PYTHON)
         python.chmod(0o755)
         requirements = self.config / 'requirements'

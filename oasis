@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Explicit-project entry point for the installed oasis tool bundle.
+"""Entry point for the installed oasis tool bundle.
 
-`oasis` is the entry point; `odoo19` is a compatibility alias that runs this same file, so every
-command, option, exit code and output is identical. Help and usage name the invoked program.
+The project is `--project <dir>`, else the git top level of the current directory (the current
+directory itself outside git). `oasis` is the entry point; `odoo19` is a compatibility alias that
+runs this same file, so every command, option, exit code and output is identical. Help and usage
+name the invoked program.
 """
 import argparse
 import importlib.util
@@ -13,8 +15,8 @@ import sys
 COMMANDS = (
     'audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
     'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases',
-    'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'restart', 'start',
-    'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info',
+    'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'restart', 'setup',
+    'start', 'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info',
     'worktree-init', 'xmlid-info',
 )
 PROGRAMS = ('oasis', 'odoo19')
@@ -27,6 +29,9 @@ INVOKED = Path(globals().get('ALIAS_PATH') or __file__)
 # Commands that run in a checkout that still has the legacy profile: migrate converts it, doctor
 # reports it as one FAIL. Every other command is refused before it runs.
 LEGACY_COMMANDS = ('migrate', 'doctor')
+# Commands that run in a checkout without a workspace file: setup creates it. Every other command
+# is refused there (missing configuration).
+UNCONFIGURED_COMMANDS = ('doctor', 'setup')
 
 
 def configuration_reader(tools: Path):
@@ -46,34 +51,68 @@ def program_name() -> str:
     return INVOKED.name if INVOKED.name in PROGRAMS else 'oasis'
 
 
+def current_project(config) -> tuple[Path | None, str]:
+    """The project without --project: the git top level of the current directory, or the current
+    directory outside git (no `.git` at or above it). When git fails inside a repository the
+    project is not guessed: (None, the error). config is tools/config.py (its git reading), or
+    None when it is missing (the current directory; the missing configuration follows)."""
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:
+        return None, 'Cannot read the current directory; pass --project.'
+    if config is None:
+        return cwd, ''
+    try:
+        _kind, top, _main = config.git_checkout(cwd)
+    except config.GitFailed as exc:
+        if config.dot_git(cwd) is None:
+            return cwd, ''
+        return None, f'Cannot determine the project root of {cwd}: git failed ({exc}); pass --project.'
+    return top, ''
+
+
 def main() -> int:
     prog = program_name()
     parser = argparse.ArgumentParser(
         prog=prog,
-        description='Run an installed oasis tool for an explicitly selected project.',
+        description=('Run an installed oasis tool for a project: --project, else the checkout of the '
+                     'current directory.'),
         epilog=('Commands: ' + ', '.join(COMMANDS) + '\n'
-                f'Example: {prog} --project /absolute/project check-environment --quick'),
+                'New checkout: the setup command prints the plan of its configuration; setup --apply '
+                'creates it\n'
+                f'Example: {prog} --project /absolute/project check-environment --quick\n'
+                f'Example: cd /absolute/project && {prog} check-environment --quick'),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('--project', metavar='/absolute/project',
-                        help='absolute path to an existing checkout at or below an oasis-workspace.toml')
+                        help=('absolute path to an existing checkout at or below an oasis-workspace.toml '
+                              '(a linked worktree may read its main checkout\'s); '
+                              'without it, the git top level of the current directory (the current '
+                              'directory outside git)'))
     parser.add_argument('command', nargs='?', help='public command to run')
     parser.add_argument('arguments', nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.command not in COMMANDS:
         print(f'ERROR: Unsupported oasis command: {args.command}', file=sys.stderr)
         return 2
-    if not args.project or not Path(args.project).is_absolute() or not Path(args.project).is_dir():
+    tools = Path(__file__).resolve().parent / 'tools'
+    if args.project is not None and (not args.project or not Path(args.project).is_absolute()
+                                     or not Path(args.project).is_dir()):
         print('ERROR: --project requires an absolute existing project directory.', file=sys.stderr)
         return 2
-    root = Path(args.project).resolve()
-    tools = Path(__file__).resolve().parent / 'tools'
     config = configuration_reader(tools)
+    if args.project is not None:
+        root = Path(args.project).resolve()
+    else:
+        root, error = current_project(config)
+        if root is None:
+            print(f'ERROR: {error}', file=sys.stderr)
+            return 2
     if config is not None and (root / config.PROFILE_NAME).is_file():
         if args.command not in LEGACY_COMMANDS:
             print(f'ERROR: {config.legacy_profile_refusal(root / config.PROFILE_NAME, prog)}', file=sys.stderr)
             return 2
-    elif config is None or config.find_workspace(root) is None:
+    elif args.command not in UNCONFIGURED_COMMANDS and (config is None or config.workspace_file(root) is None):
         message = (config.missing_configuration(root) if config is not None
                    else f'Missing tooling configuration: no oasis-workspace.toml at or above {root}.')
         print(f'ERROR: {message}', file=sys.stderr)

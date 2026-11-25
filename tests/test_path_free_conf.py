@@ -7,6 +7,7 @@ Community addons, for the main checkout and a linked worktree alike. Test runs g
 second (gevent) port besides their free HTTP port. The fake harness of test_lifecycle records
 every Odoo argv; nothing outside the scratch fixture is touched.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from pathlib import Path
 import json
 import os

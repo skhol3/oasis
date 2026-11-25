@@ -31,7 +31,7 @@ to Gentle Shell.
 python3 -B -m unittest discover -s tests
 ./install.sh
 
-# Gentle Shell package: <tag> is a release from the changelog, for example v0.13.0
+# Gentle Shell package: <tag> is a release from the changelog, for example v0.14.0
 gentle-shell install git:github.com/skhol3/oasis@<tag>
 ```
 
@@ -43,19 +43,30 @@ Releases are listed in the [changelog](CHANGELOG.md).
 
 ## Five-minute start
 
-1. Describe the project in one `oasis-workspace.toml` for every checkout, step by step in
-   [Setting up a new workspace](docs/new-workspace.md) ([workspace file](docs/workspace-file.md)).
-2. Check that oasis can work there, then that the environment matches its locks:
+1. In a clone of the project, read the plan of `oasis setup`, then apply it yourself. It infers
+   the series and the source, asks only what it cannot infer, keeps what exists and creates the
+   rest: the workspace file, a path-free `odoo.conf`, a PostgreSQL compose file, the locks and the
+   environment ([Setting up a new workspace](docs/new-workspace.md)):
 
    ```bash
-   ~/.agents/skills/odoo19/oasis --project /absolute/project doctor
-   ~/.agents/skills/odoo19/oasis --project /absolute/project check-environment --quick
+   cd /absolute/checkout
+   ~/.agents/skills/odoo19/oasis setup            # the plan; nothing changes
+   ~/.agents/skills/odoo19/oasis setup --apply    # creates only what is missing
+   ```
+
+2. Fill in the database account the apply step names (`ODOO_DB_USER` and `ODOO_DB_PASSWORD` in
+   the environment file, the same values in `odoo.conf`), start the database service, and run
+   `doctor` until `doctor_failures=0` (each `FAIL` says how to fix it):
+
+   ```bash
+   docker compose --env-file .oasis/config/.env -f .oasis/config/compose.yml up -d --wait
+   ~/.agents/skills/odoo19/oasis doctor
    ```
 
 3. Run a module's tests on a disposable database, with a compact summary:
 
    ```bash
-   ~/.agents/skills/odoo19/oasis --project /absolute/project test-module --compact your_module
+   ~/.agents/skills/odoo19/oasis test-module --compact your_module
    ```
 
 4. With the package, run `/oasis` for the checkout's status and `alt+o` for the action menu; in
@@ -94,8 +105,9 @@ of a checkout and runs them by hand. [Docs →](docs/action-menu.md)
 
 ### Environment and workspace file
 
-`doctor` and `check-environment` check the environment; one
-[`oasis-workspace.toml`](docs/workspace-file.md) configures every checkout.
+[`oasis setup`](docs/setup.md) configures a clone, `doctor` and `check-environment` check the
+environment; one [`oasis-workspace.toml`](docs/workspace-file.md) configures every checkout, and
+the machine file gives the Odoo source of each series.
 [Docs →](docs/checking-environment.md)
 
 Contract change in v0.12.0: the legacy per-checkout profile `.odoo19-agent.toml` is no longer
@@ -113,7 +125,8 @@ command that still reads it, converts the profiles of every checkout into one wo
 | [Gentle Shell layer](docs/gentle-shell-layer.md) | The agent tools, prompt context, `/oasis` and aliases |
 | [Bash guard](docs/bash-guard.md) | Which agent bash commands run, wait for the user's confirmation or are blocked; `agent_destructive` |
 | [Subagents](docs/subagents.md) | The overlay that gives Gentle Shell subagents the `oasis_*` tools |
-| [Setting up a new workspace](docs/new-workspace.md) | From an empty folder to `doctor`, a database and a test run; example tree and paths |
+| [Setting up a new workspace](docs/new-workspace.md) | From a clone to `doctor` and a database with `oasis setup`; where each value lives, an example tree, the steps by hand |
+| [Setting up a checkout with oasis setup](docs/setup.md) | `oasis setup`: the plan, then `--apply` creates only what is missing |
 | [New project setup](docs/project-setup.md) | Workspace file, entry point and optional project wrappers |
 | [Checking the environment](docs/checking-environment.md) | `doctor`, `check-environment` and `lock.sha256` |
 | [Workspace file](docs/workspace-file.md) | One `oasis-workspace.toml` for every checkout |

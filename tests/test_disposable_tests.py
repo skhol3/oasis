@@ -5,6 +5,7 @@ XDG_RUNTIME_DIR per test. The fake docker below also records `createdb` and
 `dropdb --if-exists` of single databases and answers the managed-database listing from
 `<FAKE_LOG>.databases`, so creation, drops and gc can be checked from the outside.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from pathlib import Path
 import hashlib
 import json

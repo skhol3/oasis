@@ -26,6 +26,8 @@ interface Setup {
   roots?: (dir: string) => string | null;
   /** AGENT_DESTRUCTIVE per project root; a root not listed gets `setting`. */
   settings?: Record<string, string | undefined>;
+  /** The environment the machine file is found from (XDG_CONFIG_HOME); default: none set. */
+  environment?: Record<string, string | undefined>;
 }
 
 function harness(options: Setup = {}) {
@@ -44,6 +46,7 @@ function harness(options: Setup = {}) {
     },
     appendEntry: (entry) => entries.push(entry),
     realpath: options.realpath ?? ((path) => path),
+    environment: options.environment ?? {},
   };
   const signal = new AbortController().signal;
   const ctx: GateContext = {
@@ -302,6 +305,63 @@ test("a target whose setting cannot be read, outside a project or not literal co
     { reason: string }).reason, /in the configuration of \/work\/other;/);
 });
 
+// v0.14.0 S8: without --project the entry point runs in the git top level of its directory. The
+// gate judges it against the session's project, and after a literal cd (or env -C) against the
+// stricter of the session's and that directory's project; nothing is loosened.
+test("an entry point without --project still asks, judged against the session's project", async () => {
+  const command = "oasis drop-database shop_dev_old";
+  const asked = harness({ answers: ["shop_dev_old"] });
+  assert.equal(await asked.gate(command), undefined);
+  assert.match(asked.prompts[0].title, /Type shop_dev_old to allow drop-database shop_dev_old\./);
+  assert.deepEqual(asked.entries, [{ label: "Agent command approved", command, note: "typed shop_dev_old", output: "" }]);
+  assert.deepEqual(asked.settingsRead, [ROOT]);
+  const headless = harness({ hasUI: false });
+  assert.equal((await headless.gate(command))?.block, true);
+  assert.deepEqual(headless.entries.map((entry) => entry.note), ["no dialog"]);
+  const denied = harness({ setting: "deny" });
+  assert.match((await denied.gate("odoo19 stop --database") as { reason: string }).reason,
+    /^stop --database is denied to agents by \[tooling\]\.agent_destructive = "deny" in this project's configuration;/);
+  // A literal cd inside the session's own project reads the session's setting once.
+  const inside = harness({ roots, settings: { [ROOT]: "ask" }, hasUI: false });
+  assert.equal((await inside.gate("cd /work/shop && oasis gc --apply --trash"))?.block, true);
+  assert.deepEqual(inside.settingsRead, [ROOT]);
+});
+
+test("without --project the stricter of the session's and the directory's project decides", async () => {
+  const drop = "cd /work/other && oasis drop-database other_dev_old";
+  // allow here, deny there: denied, naming that project.
+  const there = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "deny" } });
+  assert.deepEqual(await there.gate(drop), {
+    block: true,
+    reason: "drop-database other_dev_old is denied to agents by [tooling].agent_destructive = \"deny\" in the " +
+      "configuration of /work/other; nothing ran. Ask the user to run it.",
+  });
+  assert.deepEqual(there.settingsRead, [ROOT, OTHER]);
+  // deny here wins over allow there.
+  const here = harness({ roots, settings: { [ROOT]: "deny", [OTHER]: "allow" } });
+  assert.match((await here.gate(drop) as { reason: string }).reason, /in this project's configuration; nothing ran/);
+  // allow here, ask there: the dialog, so refused without a UI.
+  const ask = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "ask" }, hasUI: false });
+  assert.equal((await ask.gate(drop))?.block, true);
+  assert.deepEqual(ask.entries.map((entry) => entry.note), ["no dialog"]);
+  // A directory the text does not tell, or one outside any project, counts as ask.
+  for (const command of ["cd $DIR && oasis stop --database", "pushd /work/other; popd; oasis stop --database",
+    "cd /tmp/elsewhere && oasis stop --database", "cd /work/other && echo $(oasis stop --database)"]) {
+    const unknown = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "allow" }, hasUI: false });
+    assert.equal((await unknown.gate(command))?.block, true, command);
+    assert.deepEqual(unknown.entries.map((entry) => entry.note), ["no dialog"], command);
+  }
+  // env -C and sudo -D change the directory too.
+  for (const command of ["env -C /work/other oasis stop --database", "sudo -D /work/other oasis stop --database"]) {
+    const wrapped = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "deny" } });
+    assert.match((await wrapped.gate(command) as { reason: string }).reason, /in the configuration of \/work\/other;/, command);
+  }
+  // allow in both runs without a dialog, as with --project.
+  const both = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "allow" }, hasUI: false });
+  assert.equal(await both.gate(drop), undefined);
+  assert.deepEqual(both.entries, [{ label: "Agent command approved", command: drop, note: "agent_destructive = allow", output: "" }]);
+});
+
 // The extension's tool_call handler is toolCallRouter: Pi's event and context in, the gates' result out.
 function piContext(options: { hasUI?: boolean; answers?: (string | undefined)[] } = {}) {
   const prompts: { title: string; options: unknown }[] = [];
@@ -514,4 +574,190 @@ test("bash writes to a setting file go through the same dialog, in the order bas
   const read = harness();
   assert.equal(await read.gate(`cat ${WORKSPACE}; grep agent_destructive ../oasis-workspace.toml`), undefined);
   assert.deepEqual(read.prompts, []);
+});
+
+// v0.14.0 S4: a linked worktree outside the workspace directory is governed by the workspace file
+// its main checkout reads, found through git. That file is a setting file of the worktree's
+// sessions like one above them, and the stricter-of-two rule reads it through tools/config.py.
+// Real git and the real config.py in scratch directories; never the user's configuration.
+const GIT_ENV = {
+  ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_"))),
+  GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "oasis tests", GIT_AUTHOR_EMAIL: "tests@example.invalid",
+  GIT_COMMITTER_NAME: "oasis tests", GIT_COMMITTER_EMAIL: "tests@example.invalid",
+};
+
+async function worktreeOutside(agentDestructive: string) {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdtempSync, mkdirSync, readFileSync: read, realpathSync, symlinkSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const { projectRootResolver } = await import("../lib/project.ts");
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "oasis-gate-")));
+  const env = { ...GIT_ENV, GIT_CEILING_DIRECTORIES: realpathSync(tmpdir()), XDG_CONFIG_HOME: join(base, "xdg") };
+  const git = (cwd: string, ...args: string[]) => execFileSync("git",
+    ["-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", "-C", cwd, ...args], { env, encoding: "utf8" }).trim();
+  const project = join(base, "project");
+  const main = join(project, "acme");
+  mkdirSync(main, { recursive: true });
+  const fixture = read(new URL("../../tests/fixture-workspace.toml", import.meta.url), "utf8").replaceAll("'../../", "'");
+  const workspace = join(project, "oasis-workspace.toml");
+  writeFileSync(workspace, `${fixture}agent_destructive = '${agentDestructive}'\n`);
+  writeFileSync(join(main, "README.md"), "fixture\n");
+  git(main, "init", "-q");
+  git(main, "add", "README.md");
+  git(main, "commit", "-q", "-m", "init");
+  const linked = join(base, "elsewhere", "acme-feat");
+  git(main, "worktree", "add", "-q", "-b", "feat", linked);
+  const cwd = join(linked, "addons");
+  mkdirSync(cwd);
+  symlinkSync(workspace, join(base, "link.toml"));
+  const reader = fileURLToPath(new URL("../../tools/config.py", import.meta.url));
+  const configOf = async (root: string) => {
+    try {
+      const output = execFileSync("python3", ["-B", reader, root], { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      return { config: Object.fromEntries(output.split("\n").filter((line) => /^[A-Z_]+=/.test(line))
+        .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)])) };
+    } catch (error) {
+      return { error: String(error) };
+    }
+  };
+  const gitTop = async (start: string) => {
+    try {
+      return git(start, "rev-parse", "--show-toplevel");
+    } catch {
+      return null;
+    }
+  };
+  const entries: MenuEntry[] = [];
+  const prompts: string[] = [];
+  const answers: (string | undefined)[] = [];
+  const effects: GateEffects = {
+    projectRoot: projectRootResolver(gitTop),
+    home: "/home/u",
+    exists: () => false,
+    agentDestructive: settingReader(configOf),
+    appendEntry: (entry) => entries.push(entry),
+    realpath: realpathSync,
+    environment: {},
+  };
+  const context = (hasUI: boolean, at = cwd): GateContext => ({
+    cwd: at, hasUI, ui: { input: async (title) => {
+      prompts.push(title);
+      return answers.shift();
+    } },
+  });
+  return {
+    base, project, main, linked, cwd, workspace, entries, prompts, answers,
+    gate: (command: string, hasUI = true, at?: string) => agentGate(effects)(command, context(hasUI, at)),
+    file: (tool: string, path: string, hasUI = true) => agentFileGate(effects)(tool, path, context(hasUI)),
+    cleanup: async () => (await import("node:fs")).rmSync(base, { recursive: true, force: true }),
+  };
+}
+
+test("in a worktree outside the workspace, the main checkout's workspace file found through git always asks", async () => {
+  // allow never covers it, as for a workspace file above the session.
+  const run = await worktreeOutside("allow");
+  try {
+    const writes: [string, string][] = [
+      ["write", run.workspace],
+      ["edit", "../../../project/oasis-workspace.toml"],
+      ["edit", `${run.base}/link.toml`],
+    ];
+    for (const [tool, path] of writes) {
+      run.answers.push("yes");
+      assert.equal(await run.file(tool, path), undefined, path);
+      assert.equal(run.prompts.at(-1),
+        `oasis: the agent wants to call\n\n${tool} ${path}\n\n` +
+          `Type yes to allow editing ${run.workspace} ${NOTE}. ` +
+          `Esc, another answer or no answer within ${SECONDS} s refuses.`, path);
+    }
+    for (const command of [`echo "agent_destructive = 'allow'" >> ${run.workspace}`,
+      `sed -i s/allow/deny/ ../../../project/oasis-workspace.toml`, `cp new.toml ${run.workspace}`]) {
+      run.answers.push("yes");
+      assert.equal(await run.gate(command), undefined, command);
+      assert.match(run.prompts.at(-1)!, new RegExp(`Type yes to allow editing ${run.workspace} \\(it holds`), command);
+    }
+    assert.equal(run.prompts.length, writes.length + 3);
+    assert.deepEqual(run.entries.map((entry) => entry.note), Array(writes.length + 3).fill("typed yes"));
+    // Refused without a dialog, and other files of the main checkout stay allowed.
+    assert.equal((await run.file("edit", run.workspace, false))?.block, true);
+    assert.equal(run.entries.at(-1)?.note, "no dialog");
+    const before = run.prompts.length;
+    assert.equal(await run.file("write", `${run.main}/README.md`), undefined);
+    assert.equal(await run.gate(`echo x >> ${run.project}/notes.toml`), undefined);
+    assert.equal(run.prompts.length, before);
+  } finally {
+    await run.cleanup();
+  }
+});
+
+test("the stricter-of-two rule reads the main checkout's workspace file for a worktree outside it", async () => {
+  const run = await worktreeOutside("deny");
+  try {
+    // The session's own project: the worktree, whose setting is the main checkout's file.
+    assert.deepEqual(await run.gate("oasis stop --database"), {
+      block: true,
+      reason: "stop --database is denied to agents by [tooling].agent_destructive = \"deny\" in this project's " +
+        "configuration; nothing ran. Ask the user to run it.",
+    });
+    // A target in that worktree from a session elsewhere (not an Odoo project: ask) is denied by it.
+    const outside = `${run.base}/plain`;
+    (await import("node:fs")).mkdirSync(outside);
+    for (const command of [`cd ${run.linked} && oasis gc --apply --trash`,
+      `oasis --project ${run.linked} drop-database cc_dev_feat_x`]) {
+      const result = await run.gate(command, true, outside) as { reason: string };
+      assert.match(result.reason, new RegExp(`= "deny" in the configuration of ${run.linked}; nothing ran`), command);
+    }
+    assert.deepEqual(run.prompts, []);
+  } finally {
+    await run.cleanup();
+  }
+});
+
+// The machine file holds the Odoo source of each series (v0.14.0 S2, S10): the agent's changes to it
+// ask too, wherever the session runs, whatever agent_destructive says.
+const MACHINE_NOTE = "(the machine file: it holds the Odoo source paths)";
+
+test("the agent's edits of the machine file always ask, at $XDG_CONFIG_HOME or ~/.config", async () => {
+  const cases: [Record<string, string | undefined>, string, string][] = [
+    [{}, "write", "/home/u/.config/oasis/config.toml"],
+    [{}, "edit", "~/.config/oasis/config.toml"],
+    [{ XDG_CONFIG_HOME: "/xdg" }, "write", "/xdg/oasis/config.toml"],
+    // ~/.config stays covered when XDG_CONFIG_HOME names another directory, and a relative one is ignored.
+    [{ XDG_CONFIG_HOME: "/xdg" }, "edit", "/home/u/.config/oasis/config.toml"],
+    [{ XDG_CONFIG_HOME: "rel" }, "edit", "/home/u/.config/oasis/config.toml"],
+  ];
+  for (const [environment, tool, path] of cases) {
+    const run = harness({ environment, setting: "allow", answers: ["yes"] });
+    assert.equal(await run.file(tool, path), undefined, path);
+    const file = path.replace(/^~/, "/home/u");
+    assert.deepEqual(run.prompts.map((prompt) => prompt.title), [
+      `oasis: the agent wants to call\n\n${tool} ${path}\n\n` +
+        `Type yes to allow editing ${file} ${MACHINE_NOTE}. Esc, another answer or no answer within ${SECONDS} s refuses.`,
+    ], path);
+    assert.deepEqual(run.entries.map((entry) => entry.note), ["typed yes"], path);
+  }
+  // Bash writes, a target the text does not tell (by its oasis/config.toml tail), a link, no dialog, deny.
+  for (const command of ["echo x > ~/.config/oasis/config.toml", "tee -a /xdg/oasis/config.toml < x",
+    "cp other.toml \"$XDG_CONFIG_HOME\"/oasis/config.toml", "sed -i s/a/b/ /tmp/machine-link"]) {
+    const run = harness({
+      environment: { XDG_CONFIG_HOME: "/xdg" }, hasUI: false,
+      realpath: (path) => (path === "/tmp/machine-link" ? "/xdg/oasis/config.toml" : path),
+    });
+    assert.equal((await run.gate(command))?.block, true, command);
+    assert.deepEqual(run.entries.map((entry) => entry.note), ["no dialog"], command);
+  }
+  const denied = harness({ setting: "deny" });
+  assert.match((await denied.file("edit", "/home/u/.config/oasis/config.toml") as { reason: string }).reason,
+    /^editing \/home\/u\/\.config\/oasis\/config\.toml is denied to agents/);
+  // Other config.toml files are not the machine file; reading it is not a change.
+  const run = harness({ environment: { XDG_CONFIG_HOME: "/xdg" } });
+  for (const path of ["/home/u/.config/other/config.toml", "/xdg/config.toml", "/work/shop/config.toml",
+    "/home/u/.config/oasis/config.toml.bak"]) {
+    assert.equal(await run.file("write", path), undefined, path);
+  }
+  assert.equal(await run.gate("cat ~/.config/oasis/config.toml; cp /xdg/oasis/config.toml /tmp/copy.toml"), undefined);
+  assert.deepEqual([run.prompts, run.entries], [[], []]);
 });

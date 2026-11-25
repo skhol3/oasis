@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative as relativePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   findProjectRoot, findWorkspaceFile, legacyProfile, notProject, projectContext, projectRootResolver,
 } from "../lib/project.ts";
@@ -338,5 +340,107 @@ test("projectContext tells the agent which oasis commands ask the user, and stay
     const text = projectContext("/work/acme/codigo/acme", "/work/acme/oasis-workspace.toml", tools, "19.0");
     assert.ok(text.split("\n").includes(line), text);
     assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
+  }
+});
+
+// v0.14.0 S4: a linked worktree with no workspace file at or above it reads the one its main checkout
+// reads, found through git (tools/config.py asks `git rev-parse --git-common-dir`; this lib reads the
+// worktree's `.git` file and its git directory's `commondir`, as git does). Real git in scratch
+// directories, never the user's configuration.
+const GIT_ENV = {
+  ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_"))),
+  GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "oasis tests", GIT_AUTHOR_EMAIL: "tests@example.invalid",
+  GIT_COMMITTER_NAME: "oasis tests", GIT_COMMITTER_EMAIL: "tests@example.invalid",
+};
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", ["-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", "-C", cwd, ...args], {
+    env: { ...GIT_ENV, GIT_CEILING_DIRECTORIES: realpathSync(tmpdir()) }, encoding: "utf8",
+  }).trim();
+}
+
+function gitTop(start: string): string | null {
+  try {
+    return git(start, "rev-parse", "--show-toplevel");
+  } catch {
+    return null;
+  }
+}
+
+/** <scratch>/project/oasis-workspace.toml over the main checkout <scratch>/project/acme, and two
+ * linked worktrees outside the workspace directory: <scratch>/elsewhere/acme-feat, and
+ * <scratch>/elsewhere/rel (gitfile with relative paths). */
+function worktreeLayout(): { base: string; project: string; main: string; linked: string } {
+  const base = scratch();
+  const project = join(base, "project");
+  const main = join(project, "acme");
+  mkdirSync(main, { recursive: true });
+  const fixture = readFileSync(new URL("../../tests/fixture-workspace.toml", import.meta.url), "utf8");
+  writeFileSync(join(project, "oasis-workspace.toml"), fixture.replaceAll("'../../", "'"));
+  writeFileSync(join(main, "README.md"), "fixture\n");
+  git(main, "init", "-q");
+  git(main, "add", "README.md");
+  git(main, "commit", "-q", "-m", "init");
+  const linked = join(base, "elsewhere", "acme-feat");
+  git(main, "worktree", "add", "-q", "-b", "feat", linked);
+  return { base, project, main, linked };
+}
+
+test("a linked worktree outside the workspace directory finds the main checkout's workspace file", () => {
+  const { base, project, main, linked } = worktreeLayout();
+  try {
+    const workspace = join(project, "oasis-workspace.toml");
+    const nested = join(linked, "addons", "coffee");
+    mkdirSync(nested, { recursive: true });
+    for (const start of [linked, nested]) {
+      assert.equal(findWorkspaceFile(start), workspace, start);
+      for (const top of [gitTop, () => null, undefined]) assert.equal(findProjectRoot(start, top), linked, start);
+    }
+    // The main checkout and its own directories are unchanged.
+    assert.equal(findWorkspaceFile(main), workspace);
+    assert.equal(findProjectRoot(join(main), gitTop), main);
+    // The upward search comes first: a workspace file above the worktree wins.
+    const nearer = join(base, "elsewhere", "oasis-workspace.toml");
+    writeFileSync(nearer, "workspace_version = 1\n");
+    assert.equal(findWorkspaceFile(nested), nearer);
+    assert.equal(findProjectRoot(nested, gitTop), linked);
+    rmSync(nearer);
+    // Without a workspace file for the main checkout either, the worktree is not a project.
+    rmSync(workspace);
+    assert.equal(findWorkspaceFile(nested), null);
+    assert.equal(findProjectRoot(nested, gitTop), null);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("project detection and tools/config.py give one root and workspace for a worktree outside it", () => {
+  const { base, project, linked } = worktreeLayout();
+  const config = scratch();
+  try {
+    // A gitfile and commondir with relative paths (git worktree add --relative-paths) read the same.
+    const relative = join(base, "elsewhere", "rel");
+    git(join(project, "acme"), "worktree", "add", "-q", "-b", "rel", relative);
+    const gitdir = readFileSync(join(relative, ".git"), "utf8").trim().replace(/^gitdir: /, "");
+    writeFileSync(join(relative, ".git"), `gitdir: ${relativePath(relative, gitdir)}\n`);
+    for (const checkout of [linked, relative]) {
+      const start = join(checkout, "sub");
+      mkdirSync(start, { recursive: true });
+      const root = findProjectRoot(start, gitTop);
+      assert.equal(root, checkout);
+      const output = execFileSync("python3", ["-B", fileURLToPath(new URL("../../tools/config.py", import.meta.url)), root!], {
+        env: { ...GIT_ENV, GIT_CEILING_DIRECTORIES: base, XDG_CONFIG_HOME: config }, encoding: "utf8",
+      });
+      const values = Object.fromEntries(output.split("\n").filter((line) => /^[A-Z_]+=/.test(line))
+        .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]));
+      assert.equal(values.PROJECT_ROOT, root);
+      assert.equal(values.WORKSPACE_ROOT, dirname(findWorkspaceFile(start)!));
+      assert.equal(values.WORKSPACE_ROOT, project);
+      assert.equal(values.CHECKOUT_KIND, "linked");
+    }
+  } finally {
+    rmSync(config, { recursive: true, force: true });
+    rmSync(base, { recursive: true, force: true });
   }
 });

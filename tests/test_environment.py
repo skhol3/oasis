@@ -1,9 +1,47 @@
 """Public staged diagnostics/preview checks; all commands and inputs are fixture-local."""
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from pathlib import Path
+import hashlib
+import shutil
 import subprocess
 import sys
 import unittest
 import test_lifecycle as lifecycle
+
+FILES = ('runtime.in', 'runtime.txt', 'dev.in', 'dev.txt')
+COMPILED = 'locks_compiled=runtime.txt,dev.txt,lock.sha256\n'
+# Put in front of a fake uv: `uv pip compile ... <input>.in -o <output>` records its argv and
+# working directory, writes the output there (and echoes it, like uv), or fails for the input
+# named by FAKE_COMPILE_FAIL.
+COMPILING_UV = '''if [ "$1 $2" = "pip compile" ]; then
+  printf 'uv %s (in %s)\\n' "$*" "$PWD" >> "$FAKE_LOG"
+  prev= input= output=
+  for arg; do
+    if [ "$prev" = -o ]; then output=$arg; fi
+    case "$arg" in *.in) input=$arg ;; esac
+    prev=$arg
+  done
+  if [ -n "${FAKE_MUTATIONS:-}" ]; then echo "compile $input" >> "$FAKE_MUTATIONS"; fi
+  if [ "$input" = "${FAKE_COMPILE_FAIL:-}" ]; then
+    echo "error: No solution found when resolving $input" >&2
+    exit 1
+  fi
+  printf '# fake lock of %s\\n' "$input" > "$output"
+  printf '# fake lock of %s\\n' "$input"
+  exit 0
+fi
+'''
+
+
+def fingerprint(requirements):
+    """lock.sha256 as `sha256sum runtime.in runtime.txt dev.in dev.txt` writes it there."""
+    return ''.join(f'{hashlib.sha256((requirements / name).read_bytes()).hexdigest()}  {name}\n'
+                   for name in FILES)
+
+
+def contents(requirements):
+    """The bytes of every file of the requirements directory."""
+    return {path.name: path.read_bytes() for path in sorted(requirements.iterdir())}
 
 
 class EnvironmentTests(unittest.TestCase):
@@ -36,6 +74,30 @@ class EnvironmentTests(unittest.TestCase):
                 'echo "version_mismatches=0"; exit 0 ;; esac\n'
                 'if [ "$2" = "--version" ]; then'))
         return requirements
+
+    def lockable(self, fingerprint_locks=True):
+        """The prepared requirements with inputs of their own, the real sha256sum and a fake uv
+        that compiles (COMPILING_UV); with fingerprint_locks, a lock.sha256 that matches them.
+        Call it after missing_environment, which replaces the fake uv."""
+        requirements = self.root / 'dev/requirements'
+        (self.bindir / 'sha256sum').unlink()
+        (requirements / 'runtime.in').write_text('# the Odoo requirements\n')
+        (requirements / 'dev.in').write_text('# the development tools\n')
+        uv = self.bindir / 'uv'
+        uv.write_text(uv.read_text().replace('#!/bin/sh\n', '#!/bin/sh\n' + COMPILING_UV, 1))
+        if fingerprint_locks:
+            (requirements / 'lock.sha256').write_text(fingerprint(requirements))
+        return requirements
+
+    def running_database(self):
+        docker = self.bindir / 'docker'
+        docker.write_text(docker.read_text().replace('exit 0\n',
+            'case "$*" in *"ps --status running --services"*) echo db ;; '
+            '*"exec psql"*"SELECT 1"*) echo 1 ;; esac\nexit 0\n'))
+
+    def compile_events(self, requirements, python='3.12'):
+        return [f'uv pip compile --python-version {python} runtime.in -o runtime.txt (in {requirements})',
+                f'uv pip compile --python-version {python} dev.in -o dev.txt (in {requirements})']
 
     def test_invalid_option_usage_names_project_wrapper(self):
         self.prepare()
@@ -106,6 +168,7 @@ exit 97
 '''.replace('PYTHON_VERSION', python))
         self.python.unlink()
         self.python.parent.rmdir()
+        (environment / 'pyvenv.cfg').unlink()
         environment.rmdir()
         self.env.update(FAKE_ENV=str(environment), FAKE_PYTHON=str(self.python),
                         FAKE_TEMPLATE=str(template), FAKE_SYNCED=str(self.root / 'synced'),
@@ -118,6 +181,7 @@ case "$1 $2" in
   'venv --python')
     echo venv >> "$FAKE_MUTATIONS"
     mkdir -p "${FAKE_PYTHON%/*}"
+    echo 'home = /usr/bin' > "$FAKE_ENV/pyvenv.cfg"
     cp "$FAKE_TEMPLATE" "$FAKE_PYTHON"
     chmod +x "$FAKE_PYTHON" ;;
   'pip sync')
@@ -131,10 +195,11 @@ esac
             '*"exec psql"*"SELECT 1"*) echo 1 ;; esac\nexit 0\n'))
         return environment
 
-    def expected_apply_output(self, environment, python='3.12'):
+    def expected_apply_output(self, environment, python='3.12', locks=None):
         files = ('runtime.in', 'runtime.txt', 'dev.in', 'dev.txt', 'lock.sha256')
         return (f'mode=apply\nproject=a project\nenvironment={environment}\n'
                 'lockfile=dev/requirements/dev.txt\nmutation=isolated_project_virtualenv\n'
+                + (f'locks={locks}\n{COMPILED}' if locks else '')
                 + ''.join(f'PASS file:dev/requirements/{name}\n' for name in files)
                 + f'PASS python_version={python}\nPASS virtualenv={environment}\n'
                 'PASS uv=0.1\nPASS odoo_version=19.0\nPASS dependency_locks=current\n'
@@ -298,34 +363,182 @@ esac
                          (2, '', 'Odoo source must declare release 19.0.\n'))
         self.unchanged()
 
-    def test_missing_lock_and_stale_fingerprint_block_preview_and_apply(self):
+    def preview_output(self, environment, locks, state='ready', python='3.12'):
+        action = 'sync_lock' if state == 'ready' else f'create_python_{python}_and_sync_lock'
+        return (f'mode=preview\nproject=a project\nenvironment={environment}\n'
+                f'lockfile=dev/requirements/dev.txt\nmutation=none\nlocks={locks}\n'
+                f'environment_state={state}\nplanned_action=compile_locks_then_{action}\n')
+
+    def test_missing_lock_and_stale_fingerprint_plan_the_compile_step(self):
         requirements = self.prepare()
         (requirements / 'dev.txt').unlink()
-        for mode in ('--preview', '--apply'):
-            result = self.invoke('bootstrap', mode)
-            self.assertEqual((result.returncode, result.stdout, result.stderr),
-                             (2, '', 'Missing required local path: ' + str(requirements / 'dev.txt') + '\n'))
-            self.unchanged()
-        (requirements / 'dev.txt').touch()
-        self.env['FAKE_LOCK_STATUS'] = '1'
-        result = self.invoke('bootstrap', '--apply')
+        result = self.invoke('bootstrap', '--preview')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', 'Refusing bootstrap because dependency inputs or locks do not match lock.sha256.\n'
-                          'Regenerate the locks and fingerprint before preview or apply.\n'))
+                         (0, self.preview_output(self.python.parent.parent, 'missing'), ''))
+        self.unchanged()
+        self.assertFalse((requirements / 'dev.txt').exists())
+        (requirements / 'dev.txt').touch()
+        # lock.sha256 reports a mismatch and cannot even tell what runtime.in and dev.in were.
+        self.env['FAKE_LOCK_STATUS'] = '1'
+        result = self.invoke('bootstrap')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.preview_output(self.python.parent.parent, 'stale'), ''))
         self.unchanged()
 
     def test_missing_fingerprint_is_not_bypassed_by_a_fake_successful_hasher(self):
         requirements = self.prepare()
         (requirements / 'lock.sha256').unlink()
-        result = self.invoke('bootstrap', '--apply')
+        result = self.invoke('bootstrap', '--preview')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', 'Refusing bootstrap because dependency inputs or locks do not match lock.sha256.\n'
-                          'Regenerate the locks and fingerprint before preview or apply.\n'))
+                         (0, self.preview_output(self.python.parent.parent, 'missing'), ''))
         self.unchanged()
         result = self.invoke('check-environment')
         self.assertEqual(result.returncode, 1)
         self.assertIn('FAIL missing_file:dev/requirements/lock.sha256\n', result.stderr)
         self.assertIn('FAIL dependency_locks=stale_or_modified\n', result.stderr)
+
+    def test_apply_compiles_missing_locks_with_the_declared_python_before_the_environment(self):
+        self.prepare(runtime=False)
+        self.as_workspace(python='3.13')
+        environment = self.missing_environment('3.13')
+        requirements = self.lockable(fingerprint_locks=False)
+        for name in ('runtime.txt', 'dev.txt', 'lock.sha256'):
+            (requirements / name).unlink()
+        inputs = {name: (requirements / name).read_bytes() for name in ('runtime.in', 'dev.in')}
+        result = self.invoke('bootstrap', '--apply')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.expected_apply_output(environment, '3.13', locks='missing'), ''))
+        self.assertEqual((self.root / 'mutations.log').read_text(),
+                         'compile runtime.in\ncompile dev.in\nvenv\nsync\n')
+        events = self.commands.read_text().splitlines()
+        self.assertEqual(events[:5], [
+            *self.compile_events(requirements, '3.13'),
+            f'uv venv --python 3.13 {environment}', 'python version',
+            f'uv pip freeze --python {self.python}'])
+        self.assertEqual((requirements / 'runtime.txt').read_text(), '# fake lock of runtime.in\n')
+        self.assertEqual((requirements / 'dev.txt').read_text(), '# fake lock of dev.in\n')
+        self.assertEqual((requirements / 'lock.sha256').read_text(), fingerprint(requirements))
+        self.assertEqual({name: (requirements / name).read_bytes() for name in inputs}, inputs)
+
+    def test_apply_recompiles_stale_locks_then_syncs_the_existing_environment(self):
+        self.prepare()
+        requirements = self.lockable()
+        self.running_database()
+        (requirements / 'dev.in').write_text('# the development tools, one more\n')
+        result = self.invoke('bootstrap', '--apply')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.expected_apply_output(self.python.parent.parent, locks='stale'), ''))
+        events = self.commands.read_text().splitlines()
+        self.assertEqual(events[:4], [
+            *self.compile_events(requirements),
+            f'uv pip freeze --python {self.python}',
+            f'uv pip sync --python {self.python} {requirements / "dev.txt"}'])
+        self.assertNotIn('uv venv ', self.commands.read_text())
+        self.assertEqual((requirements / 'dev.in').read_text(), '# the development tools, one more\n')
+        self.assertEqual((requirements / 'lock.sha256').read_text(), fingerprint(requirements))
+
+    def test_preview_of_missing_locks_and_environment_names_both_steps_and_changes_nothing(self):
+        self.prepare()
+        environment = self.missing_environment()
+        requirements = self.lockable(fingerprint_locks=False)
+        for name in ('runtime.txt', 'dev.txt', 'lock.sha256'):
+            (requirements / name).unlink()
+        before = contents(requirements)
+        result = self.invoke('bootstrap', '--preview')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.preview_output(environment, 'missing', 'missing'), ''))
+        self.unchanged()
+        self.assertEqual(contents(requirements), before)
+        self.assertFalse(environment.exists())
+
+    def test_preview_of_stale_locks_names_the_compile_step_and_changes_nothing(self):
+        self.prepare()
+        requirements = self.lockable()
+        (requirements / 'runtime.in').write_text('# the Odoo requirements, changed\n')
+        before = contents(requirements)
+        result = self.invoke('bootstrap')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.preview_output(self.python.parent.parent, 'stale'), ''))
+        # No uv at all: not even the dry-run sync of a lock that is about to change.
+        self.unchanged()
+        self.assertEqual(contents(requirements), before)
+
+    def test_current_locks_are_left_byte_identical_by_preview_and_apply(self):
+        self.prepare()
+        requirements = self.lockable()
+        self.running_database()
+        before = contents(requirements)
+        preview = self.invoke('bootstrap', '--preview')
+        self.assertEqual((preview.returncode, preview.stdout, preview.stderr),
+                         (0, f'mode=preview\nproject=a project\nenvironment={self.python.parent.parent}\n'
+                             'lockfile=dev/requirements/dev.txt\nmutation=none\nenvironment_state=ready\n', ''))
+        self.assertEqual(self.commands.read_text(), f'uv pip sync --dry-run --python {self.python} '
+                                                    f'{requirements / "dev.txt"}\n')
+        self.commands.unlink()
+        result = self.invoke('bootstrap', '--apply')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.expected_apply_output(self.python.parent.parent), ''))
+        self.assertNotIn('pip compile', self.commands.read_text())
+        self.assertEqual(contents(requirements), before)
+
+    def test_a_failed_compile_stops_before_the_fingerprint_and_the_environment(self):
+        self.prepare()
+        environment = self.missing_environment()
+        requirements = self.lockable()
+        (requirements / 'dev.in').write_text('# the development tools, unsolvable\n')
+        lock = (requirements / 'lock.sha256').read_bytes()
+        self.env['FAKE_COMPILE_FAIL'] = 'dev.in'
+        result = self.invoke('bootstrap', '--apply')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            2, f'mode=apply\nproject=a project\nenvironment={environment}\n'
+               'lockfile=dev/requirements/dev.txt\nmutation=isolated_project_virtualenv\nlocks=stale\n',
+            'error: No solution found when resolving dev.in\n'
+            'uv pip compile of dev.in failed (exit 1); lock.sha256 was left as it was.\n'
+            f'Fix {requirements / "dev.in"} or its access to the package index, '
+            'then run oasis bootstrap --apply again.\n'))
+        self.assertEqual((self.root / 'mutations.log').read_text(), 'compile runtime.in\ncompile dev.in\n')
+        self.assertEqual((requirements / 'lock.sha256').read_bytes(), lock)
+        self.assertEqual((requirements / 'dev.in').read_text(), '# the development tools, unsolvable\n')
+        self.assertFalse(environment.exists())
+
+    def test_a_lock_edited_by_hand_under_current_inputs_is_refused(self):
+        self.prepare()
+        requirements = self.lockable()
+        (requirements / 'dev.txt').write_text('pylint==3.0.0\n')
+        before = contents(requirements)
+        for mode in ('--preview', '--apply'):
+            result = self.invoke('bootstrap', mode)
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (
+                2, '', 'Refusing bootstrap because dependency inputs or locks do not match lock.sha256.\n'
+                       'runtime.in and dev.in match it, so a lock was changed by hand: move that lock away '
+                       'for bootstrap to compile it again, or fingerprint it again in '
+                       f'{requirements} with sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256.\n'))
+            self.unchanged()
+            self.assertEqual(contents(requirements), before)
+
+    def test_a_missing_input_stops_before_compiling(self):
+        self.prepare()
+        requirements = self.lockable(fingerprint_locks=False)
+        (requirements / 'dev.txt').unlink()
+        (requirements / 'dev.in').unlink()
+        for mode in ('--preview', '--apply'):
+            result = self.invoke('bootstrap', mode)
+            self.assertEqual((result.returncode, result.stdout, result.stderr),
+                             (2, '', f'Missing required local path: {requirements / "dev.in"}\n'))
+            self.unchanged()
+
+    @unittest.skipIf(shutil.which('uv', path='/usr/bin:/bin'), 'uv is installed in /usr/bin or /bin')
+    def test_missing_uv_says_how_to_get_it(self):
+        requirements = self.prepare()
+        (requirements / 'dev.txt').unlink()
+        (self.bindir / 'uv').unlink()
+        self.env['PATH'] = f'{self.bindir}:/usr/bin:/bin'
+        result = self.invoke('bootstrap', '--apply')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            2, '', 'uv is required to bootstrap this environment.\n'
+                   'Install uv (https://docs.astral.sh/uv/), then run oasis bootstrap again.\n'))
+        self.unchanged()
+        self.assertFalse((requirements / 'dev.txt').exists())
 
     def expected_quick_output(self, python='3.12'):
         files = ('runtime.in', 'runtime.txt', 'dev.in', 'dev.txt', 'lock.sha256')

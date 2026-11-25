@@ -542,6 +542,101 @@ test("classifyBash names the project an ask command targets, as the entry point 
   }
 });
 
+test("without --project an entry point targets the directory it runs in: the session's, a literal cd, else unknown", () => {
+  // v0.14.0 S8: the entry point then takes the git top level of its current directory. Absent: the
+  // session's own directory; null: a directory the text does not tell.
+  const OTHER = "/work/other";
+  const cases: [string, object[]][] = [
+    ["oasis drop-database cc_dev_x", [DROP("cc_dev_x")]],
+    ["odoo19 stop --database", [STOP]],
+    ["cd /work/shop && oasis gc --apply --trash", [PURGE]],
+    ["cd /work/other && oasis drop-database cc_dev_x", [AT(DROP("cc_dev_x"), OTHER)]],
+    ["cd ../other; odoo19 stop --database", [AT(STOP, OTHER)]],
+    ["pushd /work/other && oasis gc --apply --trash", [AT(PURGE, OTHER)]],
+    ["cd addons && oasis stop --database", [AT(STOP, "/work/shop/addons")]],
+    ["cd && oasis stop --database", [AT(STOP, "/home/u")]],
+    ["cd $DIR && oasis stop --database", [AT(STOP, null)]],
+    ["cd - && oasis stop --database", [AT(STOP, null)]],
+    ["pushd /work/other; popd; oasis stop --database", [AT(STOP, null)]],
+    // Wrappers that change the directory of the command they run.
+    ["env -C /work/other oasis stop --database", [AT(STOP, OTHER)]],
+    ["env --chdir=/work/other oasis stop --database", [AT(STOP, OTHER)]],
+    ["env --chdir /work/other A=1 oasis stop --database", [AT(STOP, OTHER)]],
+    ["sudo -D /work/other oasis stop --database", [AT(STOP, OTHER)]],
+    ["sudo --chdir=/work/other odoo19 stop --database", [AT(STOP, OTHER)]],
+    ["env -C $D oasis stop --database", [AT(STOP, null)]],
+    // A shell command starts where the line is; a substitution on a line that changes directory is unknown.
+    ["cd /work/other && bash -c 'oasis stop --database'", [AT(STOP, OTHER)]],
+    ["bash -c 'cd /work/other && oasis stop --database'", [AT(STOP, OTHER)]],
+    ["cd /work/other && echo $(oasis stop --database)", [AT(STOP, null)]],
+    ["echo $(oasis stop --database)", [STOP]],
+    // --project still names the target, wherever the line runs.
+    ["cd /work/other && oasis --project /work/shop stop --database", [AT(STOP, "/work/shop")]],
+    ["env -C /work/shop oasis --project /work/other stop --database", [AT(STOP, OTHER)]],
+    // A tool script reads its root variable, not the directory: unchanged.
+    ["cd /work/other && ~/.agents/skills/odoo19/tools/stop --database", [STOP]],
+  ];
+  for (const [command, asks] of cases) {
+    assert.deepEqual(classifyBash(command, at("/work/shop")), { program: null, programs: [], asks }, command);
+  }
+});
+
+test("a directory change the guard cannot follow makes the target of an entry point without --project unknown", () => {
+  // L7 R1-guard-cd-variants: never the session's project after a change the text does not tell.
+  const OTHER = "/work/other";
+  const unknown: string[] = [
+    "builtin cd /work/other && oasis stop --database",
+    "command cd /work/other && oasis stop --database",
+    "command -p cd /work/other; odoo19 stop --database",
+    // L10 R3-001: `--` ends the runner's options; the forms with it change the directory too.
+    "command -- cd /work/other && oasis stop --database",
+    "builtin -- cd /work/other && oasis stop --database",
+    "command -p -- cd /work/other; oasis stop --database",
+    "time -p cd /work/other && oasis stop --database",
+    "time -p -- cd /work/other && oasis stop --database",
+    "command -- popd; oasis stop --database",
+    // Only command's own options look a program up: a later -v is cd's argument (a directory).
+    "command cd -- -v && oasis stop --database",
+    "command -- cd -- -V; oasis stop --database",
+    "builtin pushd /work/other && oasis stop --database",
+    "command popd; oasis stop --database",
+    "time cd /work/other && oasis stop --database",
+    "eval cd /work/other && oasis stop --database",
+    "eval \"cd /work/other\"; oasis stop --database",
+    "eval \"$GO\" && oasis stop --database",
+    "source ./go.sh && oasis stop --database",
+    ". ./go.sh; oasis stop --database",
+    "$CD /work/other && oasis stop --database",
+    "\"$(echo cd)\" /work/other && oasis stop --database",
+    "c? /work/other && oasis stop --database",
+    "if builtin cd /work/other; then oasis stop --database; fi",
+    "A=1 builtin cd /work/other && oasis stop --database",
+    // A substitution on a line with such a change does not know where it runs either.
+    "builtin cd /work/other && echo $(oasis stop --database)",
+  ];
+  for (const command of unknown) {
+    assert.deepEqual(classifyBash(command, at("/work/shop")), { program: null, programs: [], asks: [AT(STOP, null)] }, command);
+  }
+  // Unchanged: what the guard follows, what only looks a program up, and --project.
+  const kept: [string, object[]][] = [
+    ["command -v oasis && oasis stop --database", [STOP]],
+    ["command -pv cd && oasis stop --database", [STOP]],
+    ["command -p -V cd; oasis stop --database", [STOP]],
+    ["[ -d addons ] && oasis stop --database", [STOP]],
+    ["[[ -d addons ]] && oasis stop --database", [STOP]],
+    ["echo cd /work/other && oasis stop --database", [STOP]],
+    ["eval \"cd /work/other && oasis stop --database\"", [AT(STOP, OTHER)]],
+    ["builtin cd /work/other && oasis --project /work/shop stop --database", [AT(STOP, "/work/shop")]],
+    ["eval cd /x; oasis --project /work/other stop --database", [AT(STOP, OTHER)]],
+    ["cd /work/other && oasis drop-database cc_dev_x", [AT(DROP("cc_dev_x"), OTHER)]],
+  ];
+  for (const [command, asks] of kept) {
+    assert.deepEqual(classifyBash(command, at("/work/shop")), { program: null, programs: [], asks }, command);
+  }
+  // The deny tier is unchanged by an unknown directory.
+  assert.deepEqual(classifyBash("builtin cd /p && oasis migrate --apply", at("/work/shop")).programs, ["migrate"]);
+});
+
 test("the entry point's --project abbreviations do not hide its command from either tier", () => {
   for (const [command, programs] of [
     ["oasis --proj /p migrate --apply", ["migrate"]],
@@ -727,4 +822,71 @@ test("classifyBash finds bash writes to the setting files: redirection, tee, sed
   }
   // Without the extension's check nothing is a setting file.
   assert.deepEqual(classifyBash("echo x > /work/shop/oasis-workspace.toml", at("/work/shop")).asks, []);
+});
+
+// v0.14.0 S1, L12: agents may read the plan of `oasis setup`; `setup --apply` writes configuration.
+test("allows setup's plan through the entry points and blocks setup --apply", () => {
+  const allowed = [
+    "oasis setup",
+    "oasis setup --plan",
+    "odoo19 --project /p setup --community /src/odoo --no-enterprise",
+    "~/.agents/skills/odoo19/oasis --project=/p setup --series 19.0 --workspace /w --name acme 2>&1 | tail -40",
+    "cd /p && oasis setup --enterprise /src/enterprise",
+    "oasis setup --help",
+    "python3 setup.py install",
+    "python setup.py --apply",
+    "./setup --apply",
+  ];
+  for (const command of allowed) assert.equal(blockedProgram(command), null, command);
+  const blocked = [
+    "oasis setup --apply",
+    "oasis setup --apply --help",
+    "odoo19 --project /p setup --community /src/odoo --apply",
+    "~/.agents/skills/odoo19/oasis setup --no-enterprise --apply",
+    "python3 -B /opt/oasis/oasis --project /p setup --apply",
+    "bash -c 'oasis setup --apply'",
+    "echo $(oasis setup --apply)",
+    "oasis setup --plan; oasis setup --apply",
+    "oasis setup --apply=yes",
+    "oasis setup --appl",
+    "oasis setup $ARGS",
+    "oasis setup --community $SRC",
+    "oasis setup `echo --apply`",
+    "~/.agents/skills/odoo19/tools/setup --apply",
+    "python3 -I -B ~/.agents/skills/odoo19/tools/setup.py --apply",
+  ];
+  for (const command of blocked) assert.equal(blockedProgram(command), "setup", command);
+});
+
+// review-a49f7b2c1a1549a3 R3-001: the shortest abbreviation of --apply is blocked; a bare `--` is not
+// --apply, and setup refuses it as a usage error (exit 2, nothing changed; tests/test_setup.py), so it
+// stays allowed like any other literal word.
+test("setup --a is blocked and a bare -- is allowed", () => {
+  for (const command of ["oasis setup --a", "odoo19 --project /p setup --a", "oasis setup -- --apply"]) {
+    assert.equal(blockedProgram(command), "setup", command);
+  }
+  for (const command of ["oasis setup --", "oasis --project /p setup -- "]) {
+    assert.equal(blockedProgram(command), null, command);
+  }
+});
+
+test("setup's tool scripts count only in an oasis tree", () => {
+  const context = {
+    cwd: "/src/oasis", home: "/home/u",
+    exists: (path: string) => path === "/src/oasis/oasis" || path === "/src/oasis/tools/actions.py",
+  };
+  assert.equal(blockedProgram("tools/setup --apply", context), "setup");
+  assert.equal(blockedProgram("python3 tools/setup.py --apply", context), "setup");
+  assert.equal(blockedProgram("tools/setup", context), null);
+  assert.equal(blockedProgram("python3 /work/app/tools/setup.py --apply", context), null);
+});
+
+test("setup is user-run everywhere and its block reason sends the user to a terminal", () => {
+  assert.equal(blockedEverywhere("setup"), true);
+  assert.equal(
+    blockReason("setup", "/work/coffee"),
+    "setup --apply writes the project's and the machine's configuration and creates the environment; ask the " +
+      "user to run `oasis setup --apply` in a terminal. To read the plan without changing anything, run it " +
+      "without --apply.",
+  );
 });

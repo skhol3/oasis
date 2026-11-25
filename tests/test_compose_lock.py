@@ -4,6 +4,7 @@ Two synthetic checkouts share one compose file. The fake docker's `compose up` t
 fails like Docker's container name conflict when another `up` is in progress, so overlapping
 calls are visible. The lock lives in the private runtime root of each test (XDG_RUNTIME_DIR).
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from pathlib import Path
 import fcntl
 import hashlib

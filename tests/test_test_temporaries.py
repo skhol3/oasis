@@ -1,4 +1,5 @@
 """Public test invocations isolate short-lived scratch and retain browser evidence."""
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from pathlib import Path
 import os
 import shutil

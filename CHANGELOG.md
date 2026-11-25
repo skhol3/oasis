@@ -9,6 +9,111 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-25
+
+### Added
+
+- `oasis doctor` prints `  fix: <command or action>` after every FAIL line (for example `oasis
+  setup --apply`, `oasis bootstrap --apply`, `fill ODOO_DB_PASSWORD in <env file>`); existing lines
+  and `doctor_failures` are unchanged.
+- `oasis doctor` shows where the layered values came from (`odoo_source_from=`,
+  `enterprise_source_from=`, `project_environment_from=`, `checkout_slug_from=`, with
+  `machine:<file>`, `workspace:<file>`, `checkout:<file>` or `derived`), and fails
+  `env_file=empty <names>` when `ODOO_DB_USER` or `ODOO_DB_PASSWORD` is empty (names only, never
+  values) or `env_file=unreadable`.
+- Series guard: a checkout whose module manifests declare a series-style version
+  (`<series>.x.y.z`) of another series than `odoo_version` is refused by every command (exit 2,
+  naming the module, both series and the fix); `doctor` reports it as `FAIL module_series=...`.
+  Manifests without such a version are ignored.
+- `postgres_default` in `tools/odoo_versions.py` (17 on 19.0); `oasis setup` writes that image.
+- `oasis setup` configures a checkout in one command (docs/setup.md). Without `--apply` it prints
+  the plan and changes nothing (`--plan` asks for it explicitly); `--apply` creates only what is
+  missing and keeps every existing file: the machine file's `[series."<x.y>"]` entry with the
+  Odoo source (never edited once it exists), `oasis-workspace.toml` without source keys, a
+  path-free `odoo.conf`, a compose file with PostgreSQL on a free port, the environment file with
+  the variable names only (empty, 0600, never printed), `runtime.in` and `dev.in`, the locks and
+  the uv environment, then prints the next steps. It infers the series from the module manifests
+  and the source from the machine file, asks only on a terminal, and every answer has a flag
+  (`--series`, `--community`, `--enterprise`/`--no-enterprise`, `--workspace`, `--name`). Without
+  a workspace file, the workspace is the checkout itself (`oasis-workspace.toml` and `.oasis/`,
+  listed in `.git/info/exclude`, never `.gitignore`); an existing workspace file is adopted. It
+  rolls back if the result does not load. It runs without a workspace file, like `doctor`, which then reports `FAIL configuration=...`
+  with `fix: oasis setup --apply`.
+- Gentle Shell: agents may run `oasis setup` (the plan); the bash guard blocks `setup --apply` and
+  any `setup` whose arguments it cannot read literally, like `migrate --apply`.
+- A linked worktree with no `oasis-workspace.toml` at or above it reads the workspace file its
+  main checkout reads, found through git (`git rev-parse --git-common-dir`), so worktrees can live
+  anywhere; the slug still comes from the worktree's directory name, the upward search still
+  comes first, and the file is trusted like any other. Gentle Shell's project detection resolves
+  the same root and workspace.
+- `worktree-init --path <dir>` creates the worktree at any absolute path (default unchanged:
+  `<main>-<feature>` next to the main checkout); it refuses a path inside the Odoo source or
+  another checkout, an existing directory that is not empty, and a folder below another
+  workspace file.
+- Optional machine file `$XDG_CONFIG_HOME/oasis/config.toml` (else `~/.config/oasis/config.toml`),
+  the default place for each series' Odoo source: `[series."19.0"]` with `community`,
+  `enterprise` and `environments`. A workspace's `[tooling].community` or `[tooling].enterprise`
+  overrides it, and `enterprise = false` turns a machine Enterprise off. Checked like the
+  workspace file (owner and mode, invalid TOML, unknown keys); without it everything works as
+  before.
+- `tools/config.py --origins <checkout>` prints where the layered values came from
+  (`MACHINE_FILE`, `MACHINE_ENVIRONMENTS_DIR`, `ODOO_SOURCE_FROM`, `ENTERPRISE_SOURCE_FROM`,
+  `PROJECT_ENVIRONMENT_FROM`, `CHECKOUT_SLUG_FROM`).
+- `--project` is optional for `oasis` and `odoo19`: without it, the project is the git top level
+  of the current directory (the current directory outside git).
+- `bootstrap --apply` compiles the dependency locks when they are missing or stale against
+  `runtime.in` and `dev.in` (`uv pip compile --python-version <declared Python>`, then
+  `lock.sha256` as `sha256sum` writes it), then creates or syncs the environment as before.
+  `bootstrap --preview` names the step (`locks=missing|stale`,
+  `planned_action=compile_locks_then_...`) and changes nothing. Current locks stay
+  byte-identical; the `.in` files are never written.
+
+### Changed
+
+- Documentation: docs/new-workspace.md starts from a clone with `oasis setup` (plan, `--apply`,
+  fill the account, start the database, `doctor`, `init-dev-database`), explains the machine,
+  workspace and checkout files, worktrees through git and the environment rule, and keeps the
+  series-folder tree as one possible layout plus the steps by hand; the README five-minute start
+  uses setup; docs/workspace-file.md describes the series guard fast path.
+- `oasis setup` gives a new `odoo.conf` or compose file the port of the one it keeps, reports
+  kept files whose ports disagree, and refuses `--no-enterprise` only when the machine entry has
+  Enterprise.
+- `bootstrap --apply` compiles the locks through `tools/locks.py compile`, the code `oasis setup
+  --apply` uses; its output and messages are unchanged.
+- The Python environment may be any directory that is an environment (has `pyvenv.cfg`) or does
+  not exist yet; it no longer has to be inside the checkout or under a directory named
+  `*environments`. It still may not be or contain the checkout or the Odoo source. `Unsafe tooling
+  environment target.` now names the directory and the reason.
+- An existing environment directory without `pyvenv.cfg` (an empty `mkdir`, a conda environment)
+  is now refused, where the old rule accepted it under an `*environments` parent; `bootstrap` or
+  `uv venv` creates the environment.
+- `worktree-init` no longer requires the new folder to be below the workspace directory. It
+  refuses an `oasis-workspace.toml` the main checkout tracks in git: each worktree would check out
+  and read its own copy; untrack it or keep the workspace file above the checkouts.
+- Bash guard: after `builtin cd`, `command cd`, `time cd` (also with `--` or `time -p`), `eval`,
+  `source`/`.` or a non-literal command word, an entry point run without `--project` targets an
+  unknown directory (ask). Only `command`'s own `-v`/`-V` count as a lookup, not a later `-v`.
+- Bash guard: the agent's changes to the workspace file a linked worktree reads through git, and
+  to the machine file (`$XDG_CONFIG_HOME/oasis/config.toml`, `~/.config/oasis/config.toml`), go
+  through the same always-ask dialog as a workspace file above the session, whatever
+  `agent_destructive` says.
+- A workspace without `[tooling].community` whose machine file gives no source for its series
+  stops with `No Odoo source for <series>: create the machine file <path> with community under
+  [series."<series>"], or set [tooling].community in <workspace>.` instead of `Invalid tooling
+  path: community.`
+- `bootstrap` no longer refuses a stale `lock.sha256` with `Regenerate the locks and fingerprint
+  before preview or apply.`; it compiles instead. A lock changed by hand while the inputs still
+  match is still refused (exit 2), now with how to fix it. Without uv, `bootstrap` says how to
+  install it.
+- The Gentle Shell bash guard judges an entry point run without `--project` against the
+  directory it runs in (the session's, a literal `cd`/`pushd`, `env -C`, `sudo -D`); an unknown
+  directory counts as ask. `sudo --chdir <dir>` is parsed as taking a value.
+
+### Fixed
+
+- A configuration file that is not valid UTF-8 gives `Invalid TOML in <file>.` instead of a
+  traceback.
+
 ## [0.13.0] - 2026-11-24
 
 ### Added
@@ -944,7 +1049,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/skhol3/oasis/releases/tag/v0.14.0
 [0.13.0]: https://github.com/skhol3/oasis/releases/tag/v0.13.0
 [0.12.0]: https://github.com/skhol3/oasis/releases/tag/v0.12.0
 [0.11.0]: https://github.com/skhol3/oasis/releases/tag/v0.11.0

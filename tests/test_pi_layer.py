@@ -1,4 +1,5 @@
 """The Gentle Shell (Pi) layer: package manifest and its node:test suite."""
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import json
 from pathlib import Path
 import re

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Create a linked git worktree next to the main checkout, below the same workspace file.
+"""Create a linked git worktree next to the main checkout, or at --path, for the same workspace file.
 
 User-run only (the Gentle Shell bash guard blocks agents). The new worktree reads the
-workspace file the main checkout reads, so only `git worktree add` runs: nothing is copied or
-linked. Nothing is deleted.
+workspace file the main checkout reads (above it, or through git: tools/config.py
+workspace_file), so only `git worktree add` runs: nothing is copied or linked. Nothing is deleted.
 """
 import importlib.util
 import os
@@ -12,7 +12,7 @@ import re
 import subprocess
 import sys
 
-USAGE = 'Usage: worktree-init <feature> <branch> [--dry-run] [--resume]'
+USAGE = 'Usage: worktree-init <feature> <branch> [--path <dir>] [--dry-run] [--resume]'
 HELP = f"""{USAGE}
 
 Create a linked git worktree named <main folder>-<feature> next to the main checkout and
@@ -20,9 +20,15 @@ prepare it for oasis. <feature> becomes the checkout slug (lowercase, other char
 <branch> is checked out when it exists locally, tracked when only origin/<branch> exists, and
 otherwise created from the main checkout's HEAD.
 
-The oasis-workspace.toml the main checkout reads must be in a directory above the new folder;
-the new worktree then reads it too, so only `git worktree add` runs: nothing is copied or
-linked.
+--path <dir> creates it at that absolute path instead; the folder name must still give the
+slug (<feature>, or <main folder>-<feature>). It may not be inside the Odoo source or another
+checkout, nor an existing directory that is not empty.
+
+The new worktree reads the oasis-workspace.toml the main checkout reads: one above the new
+folder, else the main checkout's through git. Only `git worktree add` runs: nothing is copied
+or linked. A folder below another workspace file is refused, and so is a workspace file the
+main checkout tracks in git: each worktree would read its own committed copy. Untrack it or
+keep the workspace file above the checkouts.
 
 --dry-run prints the same plan and changes nothing. --resume accepts an existing folder that
 is a worktree of this repository on <branch>.
@@ -58,12 +64,34 @@ def load_config():
 
 
 def parse_arguments(arguments):
+    """(feature, branch, dry_run, resume, path) with path None without --path, or None on a usage
+    error. --path takes the next argument, or its value after `=`, once."""
     flags = ('--dry-run', '--resume')
-    positional = [argument for argument in arguments if argument not in flags]
-    if (len(positional) != 2 or any(arguments.count(flag) > 1 for flag in flags)
+    rest = []
+    path = None
+    paths = 0
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == '--path' or argument.startswith('--path='):
+            paths += 1
+            if argument == '--path':
+                index += 1
+                if index >= len(arguments):
+                    return None
+                path = arguments[index]
+            else:
+                path = argument[len('--path='):]
+            if not path or path.startswith('-'):
+                return None
+        else:
+            rest.append(argument)
+        index += 1
+    positional = [argument for argument in rest if argument not in flags]
+    if (len(positional) != 2 or paths > 1 or any(rest.count(flag) > 1 for flag in flags)
             or any(argument.startswith('-') for argument in positional)):
         return None
-    return positional[0], positional[1], '--dry-run' in arguments, '--resume' in arguments
+    return positional[0], positional[1], '--dry-run' in rest, '--resume' in rest, path
 
 
 def resolve_commit(main, ref):
@@ -104,12 +132,28 @@ def registered_branch(main, folder):
     return None
 
 
-def workspace_dir(config, main, new):
-    """The directory of the workspace file the main checkout reads, which must be above new.
+def tracked(main, path):
+    """Whether git tracks path in the main checkout (a path outside it is never tracked there).
+    A git failure here is a refusal: the check decides whether worktrees share the file."""
+    if not path.is_relative_to(main):
+        return False
+    relative = path.relative_to(main).as_posix()
+    result = git(main, 'ls-files', '-z', '--', relative)
+    if result.returncode != 0:
+        message = result.stderr.strip().splitlines()
+        raise Refused(f'Cannot ask git whether {path} is tracked: '
+                      + (message[-1] if message else f'exit {result.returncode}') + '.')
+    return relative in result.stdout.split('\0')
 
-    The new worktree needs nothing but `git worktree add`, provided it finds the same
-    workspace file, so that file must be in a directory above the new folder, trusted and
-    readable TOML (config.InvalidConfig otherwise, as every command reports it).
+
+def workspace_dir(config, main, new):
+    """The directory of the workspace file the main checkout reads, which new will read too.
+
+    The new worktree needs nothing but `git worktree add`, provided it reads the same workspace
+    file: the nearest one at or above new must be that file, or there must be none (the new
+    linked worktree then reads it through git, config.workspace_file). The main checkout must not
+    track it in git: the new worktree would check out its own copy and read that one. It must be
+    trusted and readable TOML (config.InvalidConfig otherwise, as every command reports it).
     """
     try:
         workspace = config.find_workspace(main)
@@ -119,11 +163,53 @@ def workspace_dir(config, main, new):
     if workspace is None:
         raise Refused(f'The main checkout {main} has no {config.WORKSPACE_NAME} at or above it; '
                       'prepare the worktree by hand.')
-    if not new.is_relative_to(workspace.parent):
-        raise Refused(f'The new worktree {new} would not be under the workspace {workspace.parent}; '
-                      'prepare the worktree by hand.')
+    if tracked(main, workspace):
+        raise Refused(f'{workspace} is tracked by git in the main checkout {main}: each worktree would '
+                      'read its own committed copy, not this file. Untrack it (git rm --cached '
+                      f'{workspace.relative_to(main).as_posix()}) or keep the workspace file above the checkouts.')
+    try:
+        nearest = config.find_workspace(new)
+    except OSError as exc:
+        raise Refused(f'Cannot search {new} and above for {config.WORKSPACE_NAME}: '
+                      f'{exc.strerror or exc}.') from exc
+    if nearest is not None and nearest != workspace:
+        raise Refused(f"The new worktree {new} would read {nearest}, not the main checkout's {workspace}; "
+                      'choose another --path.')
     config.read_toml(config.trusted(workspace))
     return workspace.parent
+
+
+def chosen_path(value):
+    """The --path folder: absolute, normalized, its parent resolved (the folder itself is not, so a
+    link there stays a link); None when value is relative."""
+    if not os.path.isabs(value):
+        return None
+    folder = Path(os.path.normpath(value))
+    return folder.parent.resolve() / folder.name
+
+
+def path_refusal(config, values, new):
+    """Why the --path folder new cannot hold the worktree, or ''."""
+    for key in ('ODOO_SOURCE', 'ENTERPRISE_SOURCE'):
+        source = values.get(key)
+        if source and new.is_relative_to(source):
+            return f'The new worktree {new} would be inside the Odoo source {source}.'
+    entry = config.dot_git(new.parent)
+    if entry is not None:
+        return f'The new worktree {new} would be inside the checkout {entry.parent}.'
+    return ''
+
+
+def used_folder(new):
+    """Whether new exists and is not an empty directory (a link counts as used)."""
+    if not os.path.lexists(new):
+        return False
+    if new.is_symlink() or not new.is_dir():
+        return True
+    try:
+        return any(new.iterdir())
+    except OSError:
+        return True
 
 
 def main():
@@ -134,7 +220,7 @@ def main():
     parsed = parse_arguments(arguments)
     if parsed is None:
         return fail(USAGE)
-    feature_input, branch, dry_run, resume = parsed
+    feature_input, branch, dry_run, resume, path = parsed
     config = load_config()
     root = config.selected_root()
     if root is None:
@@ -153,16 +239,28 @@ def main():
     if not config.SLUG.fullmatch(feature):
         return fail('Invalid feature name: it must give 1-20 characters of a-z, 0-9 and _ '
                     'starting with a letter or digit.')
-    new = main_root.parent / f'{main_root.name}-{feature.replace("_", "-")}'
+    if path is None:
+        new = main_root.parent / f'{main_root.name}-{feature.replace("_", "-")}'
+    else:
+        new = chosen_path(path)
+        if new is None:
+            return fail('--path requires an absolute path.')
     try:
         derived = config.derived_slug(new, main_root)
     except config.InvalidConfig:
         derived = ''
     if derived != feature:
         return fail(f'Folder {new.name} would not give the checkout slug {feature}.')
+    if path is not None:
+        refusal = path_refusal(config, values, new)
+        if refusal:
+            return fail(refusal)
     resumed = False
-    if os.path.lexists(new):
+    # An empty directory at --path is not in the way: git worktree add fills it.
+    if os.path.lexists(new) and (path is None or resume or used_folder(new)):
         if not resume:
+            if path is not None:
+                return fail(f'Worktree folder already exists and is not empty: {new}')
             return fail(f'Worktree folder already exists: {new}')
         current = registered_branch(main_root, new)
         if current is None:

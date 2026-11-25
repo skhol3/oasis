@@ -1,4 +1,5 @@
 """Public global CLI checks with isolated fake tools and project roots."""
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import json
 import os
 from pathlib import Path
@@ -14,8 +15,8 @@ CLI = ROOT / 'oasis'
 PROGRAMS = ('oasis', 'odoo19')
 PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
           'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases',
-          'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'restart', 'start', 'status',
-          'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info', 'worktree-init',
+          'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'restart', 'setup', 'start',
+          'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info', 'worktree-init',
           'xmlid-info')
 
 
@@ -49,15 +50,20 @@ class GlobalCliTests(unittest.TestCase):
         for name in PUBLIC:
             (tools / name).write_text(self.fake)
 
-    def invoke(self, *args, input='', program='oasis'):
-        env = {**os.environ, 'FAKE_LOG': str(self.log), 'PYTHONDONTWRITEBYTECODE': '1',
+    def invoke(self, *args, input='', program='oasis', cwd=None):
+        # git stops below the scratch directory (never this repository), and the machine file is
+        # looked for in a scratch directory that does not exist (never the real ~/.config).
+        env = {**{key: value for key, value in os.environ.items() if not key.startswith('GIT_')},
+               'FAKE_LOG': str(self.log), 'PYTHONDONTWRITEBYTECODE': '1',
+               'GIT_CEILING_DIRECTORIES': str(self.temp.parent), 'GIT_CONFIG_GLOBAL': os.devnull,
+               'GIT_CONFIG_NOSYSTEM': '1', 'XDG_CONFIG_HOME': str(self.temp / 'xdg'),
                'ODOO19_PROJECT_ROOT': str(self.temp / 'wrong'),
                'ODOO19_TOOLS_DIR': str(self.temp / 'wrong'),
                'OASIS_PROJECT_ROOT': str(self.temp / 'wrong'),
                'OASIS_ENTRYPOINT': str(self.temp / 'wrong'),
                'OASIS_TOOLS_DIR': str(self.temp / 'wrong')}
         return subprocess.run([sys.executable, '-B', str(self.bundle / program), *args],
-                              input=input, text=True, capture_output=True, cwd=self.temp, env=env)
+                              input=input, text=True, capture_output=True, cwd=cwd or self.temp, env=env)
 
     def assert_no_calls(self, result, stderr):
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', stderr))
@@ -97,15 +103,16 @@ class GlobalCliTests(unittest.TestCase):
                         self.invoke('status', program=program)]
                 observed[program] = (
                     help_text.stdout.replace(f'usage: {program} ', 'usage: PROG ', 1)
-                    .replace(f'Example: {program} ', 'Example: PROG '),
+                    .replace(f'Example: {program} ', 'Example: PROG ').replace(f'&& {program} ', '&& PROG '),
                     usage.stderr.replace(program, 'PROG'),
                     [(run.returncode, run.stdout, run.stderr) for run in runs],
                     json.loads(self.log.read_text()))
         self.assertEqual(observed['oasis'], observed['odoo19'])
+        # Without --project the current directory (here outside git, with no workspace file) is the project.
         self.assertEqual(observed['oasis'][2], [
             (17, 'delegated\n', 'delegated error\n'),
             (2, '', 'ERROR: Unsupported oasis command: unknown\n'),
-            (2, '', 'ERROR: --project requires an absolute existing project directory.\n')])
+            (2, '', f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above {self.temp}.\n')])
 
     def test_dispatch_preserves_argv_stdin_exit_and_explicit_root(self):
         result = self.invoke('--project', str(self.project), 'odoo-shell', '--', '--project',
@@ -154,7 +161,7 @@ class GlobalCliTests(unittest.TestCase):
     def test_rejects_bad_project_and_missing_profile_before_dispatch(self):
         absent = self.temp / 'absent'
         for args, error in (
-                (('status',), 'ERROR: --project requires an absolute existing project directory.\n'),
+                (('--project', '', 'status'), 'ERROR: --project requires an absolute existing project directory.\n'),
                 (('--project', 'relative', 'status'), 'ERROR: --project requires an absolute existing project directory.\n'),
                 (('--project', str(absent), 'status'), 'ERROR: --project requires an absolute existing project directory.\n')):
             self.assert_no_calls(self.invoke(*args), error)
@@ -183,6 +190,38 @@ class GlobalCliTests(unittest.TestCase):
                     'argv': ['--plan'], 'root': str(self.project), 'stdin': '', 'tool': command})
                 self.log.unlink()
 
+    def test_setup_runs_without_a_workspace_file_and_every_other_command_still_needs_one(self):
+        # v0.14.0 S1: setup creates the workspace file, so it is the one command that runs before it.
+        (self.project / 'oasis-workspace.toml').unlink()
+        plain = self.temp / 'plain'
+        plain.mkdir()
+        for program in PROGRAMS:
+            for args, cwd in ((('--project', str(self.project), 'setup', '--plan'), self.temp),
+                              (('setup', '--plan'), plain)):
+                with self.subTest(program=program, args=args):
+                    self.log.unlink(missing_ok=True)
+                    result = self.invoke(*args, program=program, cwd=cwd)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                     (17, 'delegated\n', 'delegated error\n'))
+                    root = self.project if '--project' in args else plain
+                    self.assertEqual(json.loads(self.log.read_text()),
+                                     {'argv': ['--plan'], 'root': str(root), 'stdin': '', 'tool': 'setup'})
+            # doctor runs too, so its FAIL can say `fix: oasis setup --apply`.
+            self.log.unlink(missing_ok=True)
+            result = self.invoke('--project', str(self.project), 'doctor', program=program, cwd=self.temp)
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (17, 'delegated\n', 'delegated error\n'))
+            self.assertEqual(json.loads(self.log.read_text())['tool'], 'doctor')
+            self.log.unlink(missing_ok=True)
+            self.assert_no_calls(self.invoke('--project', str(self.project), 'status', program=program),
+                                 f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above '
+                                 f'{self.project}.\n')
+        # A legacy profile is still refused before setup: migrate converts it.
+        profile = self.project / '.odoo19-agent.toml'
+        profile.write_text('[tooling]\n')
+        self.assert_no_calls(self.invoke('--project', str(self.project), 'setup'), (
+            f'ERROR: {profile} is the old profile format, no longer read: run oasis migrate --plan to '
+            'see its conversion to oasis-workspace.toml, then oasis migrate --apply.\n'))
+
     def test_checkout_below_a_workspace_file_dispatches(self):
         (self.project / 'oasis-workspace.toml').unlink()
         checkout = self.project / 'codigo' / 'shop'
@@ -198,6 +237,59 @@ class GlobalCliTests(unittest.TestCase):
         (self.project / 'codigo' / '.odoo19-agent.toml').write_text('[tooling]\n')
         result = self.invoke('--project', str(checkout), 'status')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (17, 'delegated\n', 'delegated error\n'))
+
+    def test_without_project_the_current_directory_outside_git_is_the_project(self):
+        # v0.14.0 S8: the same dispatch as --project <current directory>, through either entry point.
+        below = self.project / 'addons'
+        below.mkdir()
+        for program in PROGRAMS:
+            for cwd in (self.project, below):
+                with self.subTest(program=program, cwd=str(cwd)):
+                    self.log.unlink(missing_ok=True)
+                    implicit = self.invoke('status', '--quick', program=program, cwd=cwd, input='x\n')
+                    implicit_call = json.loads(self.log.read_text())
+                    self.log.unlink()
+                    explicit = self.invoke('--project', str(cwd), 'status', '--quick', program=program, cwd=cwd,
+                                           input='x\n')
+                    self.assertEqual((implicit.returncode, implicit.stdout, implicit.stderr),
+                                     (17, 'delegated\n', 'delegated error\n'))
+                    self.assertEqual((implicit.returncode, implicit.stdout, implicit.stderr),
+                                     (explicit.returncode, explicit.stdout, explicit.stderr))
+                    self.assertEqual(implicit_call, json.loads(self.log.read_text()))
+                    self.assertEqual(implicit_call, {'argv': ['--quick'], 'root': str(cwd), 'stdin': 'x\n',
+                                                     'tool': 'status'})
+
+    def test_without_project_an_unconfigured_directory_is_refused_like_an_explicit_one(self):
+        plain = self.temp / 'plain'
+        plain.mkdir()
+        for program in PROGRAMS:
+            with self.subTest(program=program):
+                implicit = self.invoke('status', program=program, cwd=plain)
+                explicit = self.invoke('--project', str(plain), 'status', program=program, cwd=plain)
+                self.assert_no_calls(implicit, f'ERROR: Missing tooling configuration: no oasis-workspace.toml '
+                                               f'at or above {plain}.\n')
+                self.assertEqual((implicit.returncode, implicit.stdout, implicit.stderr),
+                                 (explicit.returncode, explicit.stdout, explicit.stderr))
+        # A legacy profile in the current directory: the same refusal, and migrate still runs.
+        profile = plain / '.odoo19-agent.toml'
+        profile.write_text('[tooling]\n')
+        self.assert_no_calls(self.invoke('status', cwd=plain), (
+            f'ERROR: {profile} is the old profile format, no longer read: run oasis migrate --plan to '
+            'see its conversion to oasis-workspace.toml, then oasis migrate --apply.\n'))
+        result = self.invoke('migrate', '--plan', cwd=plain)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (17, 'delegated\n', 'delegated error\n'))
+        self.assertEqual(json.loads(self.log.read_text())['root'], str(plain))
+
+    def test_help_says_where_the_project_comes_from_without_project(self):
+        for program in PROGRAMS:
+            with self.subTest(program=program):
+                result = self.invoke('--help', program=program)
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                text = ' '.join(result.stdout.split())
+                self.assertIn('without it, the git top level of the current directory '
+                              '(the current directory outside git)', text)
+                self.assertIn(f'Example: cd /absolute/project && {program} check-environment --quick', result.stdout)
+        self.assertFalse(self.log.exists())
 
     def test_rejects_unknown_internal_and_pathlike_before_dispatch(self):
         for name in ('unknown', 'config.py', 'common.sh', 'audit_dependencies.py',

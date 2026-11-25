@@ -3,6 +3,7 @@
 Every project is a synthetic fixture with the fake docker/python harness of test_lifecycle;
 a `[tooling].checkout_slug` stands in for a linked worktree's derived slug.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import re
 import subprocess
 import unittest

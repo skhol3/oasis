@@ -4,6 +4,7 @@ ODOO19_* names still read.
 The lifecycle fixture (fake docker/python, private runtime directory) and the public tools,
 run directly with the variables the entry point or a project wrapper sets.
 """
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 from pathlib import Path
 import json
 import os

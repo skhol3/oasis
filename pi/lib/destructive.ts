@@ -7,7 +7,7 @@
 import { posix } from "node:path";
 import { type AskAction, blockedEverywhere, blockReason, classifyBash } from "./bash-guard.ts";
 import { type MenuEntry, plainLine } from "./menu.ts";
-import { PROFILE_NAME, WORKSPACE_NAME } from "./project.ts";
+import { findWorkspaceFile, machineFile, PROFILE_NAME, WORKSPACE_NAME } from "./project.ts";
 
 /** The custom session entry type of a decision: shown to the user, never sent to the model. */
 export const DECISION_ENTRY = "oasis-agent-decision";
@@ -22,7 +22,13 @@ const REFUSED = "Agent command refused";
 // The files that hold [tooling].agent_destructive: a workspace file in the session's directory or
 // above it, where tools/config.py finds it (an oasis-checkout.toml refuses the key), and a legacy
 // profile there, which config.py no longer reads but oasis migrate converts into the workspace file.
+// Also the workspace file a linked worktree reads through git (findWorkspaceFile), and the machine
+// file, which holds the Odoo source paths (see settingFiles).
 const SETTING_NAMES = new Set([WORKSPACE_NAME, PROFILE_NAME]);
+// How a write to the machine file is spelled when the text does not tell its directory.
+const MACHINE_TAIL = "oasis/config.toml";
+const NOTE = " (it holds [tooling].agent_destructive)";
+const MACHINE_NOTE = " (the machine file: it holds the Odoo source paths)";
 
 export interface GateUi {
   /** ctx.ui.input: undefined when cancelled, timed out or aborted. */
@@ -51,6 +57,10 @@ export interface GateEffects {
   appendEntry(entry: MenuEntry): void;
   /** realpathSync: the real path of an existing path; throws when it does not exist. Default: none. */
   realpath?(path: string): string;
+  /** The workspace file a session in cwd reads (project.ts findWorkspaceFile, the default). */
+  workspaceFile?(cwd: string): string | null;
+  /** The environment the machine file is found from (XDG_CONFIG_HOME). Default: process.env. */
+  environment?: Record<string, string | undefined>;
   timeoutMs?: number;
 }
 
@@ -126,14 +136,9 @@ async function strictestMode(
   return { mode, from };
 }
 
-/**
- * The setting file a write reaches from a session in cwd (GuardContext.settingFile): a path named
- * oasis-workspace.toml or .odoo19-agent.toml in cwd or above it, as written or as its real path
- * (a link, or a linked directory, reaches the file it names; above the real cwd too). A path the
- * text does not tell counts by its name.
- */
-function settingFiles(effects: GateEffects, cwd: string): (path: string | null, word: string) => string | null {
-  const real = (path: string): string => {
+/** A path's real path through effects.realpath (its directory's when it does not exist), else itself. */
+function realOf(effects: GateEffects): (path: string) => string {
+  return (path) => {
     if (!effects.realpath) return path;
     try {
       return effects.realpath(path);
@@ -145,6 +150,28 @@ function settingFiles(effects: GateEffects, cwd: string): (path: string | null, 
       }
     }
   };
+}
+
+/** The machine files a write may reach: where tools/config.py reads it, and ~/.config's in any case. */
+function machineFiles(effects: GateEffects): Set<string> {
+  const real = realOf(effects);
+  const files = [machineFile(effects.environment ?? process.env, effects.home), machineFile({}, effects.home)];
+  return new Set(files.flatMap((file) => [posix.normalize(file), real(file)]));
+}
+
+/**
+ * The setting file a write reaches from a session in cwd (GuardContext.settingFile): a path named
+ * oasis-workspace.toml or .odoo19-agent.toml in cwd or above it, the workspace file the session's
+ * checkout reads when it is elsewhere (a linked worktree outside the workspace directory reads its
+ * main checkout's, found through git), or the machine file (machineFiles); as written or as its real
+ * path (a link, or a linked directory, reaches the file it names; above the real cwd too). A path
+ * the text does not tell counts by its name (`.../oasis/config.toml` for the machine file).
+ */
+function settingFiles(effects: GateEffects, cwd: string): (path: string | null, word: string) => string | null {
+  const real = realOf(effects);
+  const exact = machineFiles(effects);
+  const governed = (effects.workspaceFile ?? findWorkspaceFile)(cwd);
+  if (governed) for (const file of [posix.normalize(governed), real(governed)]) exact.add(file);
   const governing = new Set<string>();
   for (const start of [posix.normalize(cwd), real(cwd)]) {
     for (let dir = start; ; dir = posix.dirname(dir)) {
@@ -153,8 +180,12 @@ function settingFiles(effects: GateEffects, cwd: string): (path: string | null, 
     }
   }
   return (path, word) => {
-    if (path === null) return SETTING_NAMES.has(posix.basename(word)) ? word : null;
+    if (path === null) {
+      return SETTING_NAMES.has(posix.basename(word)) || word === MACHINE_TAIL || word.endsWith(`/${MACHINE_TAIL}`)
+        ? word : null;
+    }
     for (const candidate of [path, real(path)]) {
+      if (exact.has(candidate)) return candidate;
       if (SETTING_NAMES.has(posix.basename(candidate)) && governing.has(posix.dirname(candidate))) return candidate;
     }
     return null;
@@ -213,9 +244,12 @@ function asker(effects: GateEffects) {
           `run); ${nothing}. Ask the user to ${user} or to confirm it from an interactive session.`);
     }
     const typed: string[] = [];
+    const machine = machineFiles(effects);
     for (const action of asks) {
       const answer = expected(action);
-      const why = action.command === "edit" ? " (it holds [tooling].agent_destructive)" : "";
+      const why = action.command !== "edit" ? ""
+        : machine.has(action.file) || (!action.file.startsWith("/") && action.file.endsWith(MACHINE_TAIL)) ? MACHINE_NOTE
+          : NOTE;
       const title = `oasis: the agent wants to ${intro}\n\n${text}\n\n` +
         `Type ${answer} to allow ${label(action)}${why}. Esc, another answer or no answer within ${seconds} s refuses.`;
       const reply = await ctx.ui.input(title, undefined, { timeout, signal: ctx.signal });
