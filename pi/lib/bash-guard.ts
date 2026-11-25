@@ -12,6 +12,11 @@ const WORKTREE_INIT_SCRIPTS = new Set([WORKTREE_INIT, "worktree_init.py"]);
 // User-run only: it rewrites the project's configuration files (legacy profiles, odoo.conf, lock.sha256).
 export const MIGRATE = "migrate";
 const MIGRATE_SCRIPTS = new Set([MIGRATE, "migrate.py"]);
+// User-run only with --apply: it writes the project's and the machine's configuration and creates the
+// environment (v0.14.0 S1). Its plan (no --apply) changes nothing, so agents may run it. Its scripts
+// are recognized like the menu's (see oasisScript): `setup` and `setup.py` are common names.
+export const SETUP = "setup";
+const SETUP_SCRIPTS = new Set([SETUP, "setup.py"]);
 // User-run only: the interactive action menu (its catalog included) is for the user, in a terminal
 // or the Gentle Shell panel; agents run the commands it lists directly.
 export const MENU = "menu";
@@ -55,7 +60,7 @@ interface Where {
   dir: string | null;
   unsure?: boolean;
 }
-// The entry point and its alias: worktree-init, migrate and menu are blocked through either.
+// The entry point and its alias: worktree-init, migrate, setup --apply and menu are blocked through either.
 const ENTRY_POINTS = new Set(["oasis", "odoo19"]);
 const SHELLS = new Set(["bash", "sh", "zsh", "dash"]);
 // Programs that run what they read from a heredoc; its body is then classified as commands.
@@ -445,11 +450,23 @@ function onlyPlan(args: string[]): boolean {
   return plan;
 }
 
+/**
+ * Whether the arguments only ask setup for its plan: no `--apply` (nor `--apply=<value>` or an
+ * abbreviation of it, which setup refuses anyway), and every word literal, so none can expand to
+ * --apply. Redirections to a file descriptor aside.
+ */
+function setupPlanOnly(args: string[]): boolean {
+  return args.filter((word) => !REDIRECTION.test(word)).every((word) =>
+    word !== "_" && !NOT_LITERAL.test(word) && !word.startsWith("--apply=") &&
+    !(word.length >= 3 && "--apply".startsWith(word)));
+}
+
 /** A user-run tool when words[index] runs it: its tool script, or an entry point with that command.
  * migrate's scripts count only inside a `tools` directory, and menu's only when they are an oasis
  * tree's (see menuScript), since the names are common. Asking only
  * for its help (`--help` or `-h` as the single argument) runs nothing and is not blocked, and
- * neither is migrate's explicit plan (see onlyPlan). */
+ * neither is migrate's explicit plan (see onlyPlan) nor setup's plan (see setupPlanOnly). setup's
+ * scripts count like the menu's: an oasis tree's, or the installed bundle's spelling. */
 function userRunTool(words: string[], index: number, where?: Where): string | null {
   const word = words[index];
   const name = basename(word);
@@ -459,9 +476,11 @@ function userRunTool(words: string[], index: number, where?: Where): string | nu
   if (WORKTREE_INIT_SCRIPTS.has(name)) tool = WORKTREE_INIT;
   else if (MIGRATE_SCRIPTS.has(name) && /(^|\/)tools\/[^/]+$/.test(word)) tool = MIGRATE;
   else if (menuScript(word, where)) tool = MENU;
+  else if (oasisScript(word, SETUP_SCRIPTS, where)) tool = SETUP;
   else if (ENTRY_POINTS.has(name)) {
     if (args.includes(WORKTREE_INIT)) tool = WORKTREE_INIT;
     else if (entryPointCommand(words, index) === MIGRATE) tool = MIGRATE;
+    else if (entryPointCommand(words, index) === SETUP) tool = SETUP;
     else if (entryPointCommand(words, index) === MENU) tool = MENU;
     // The entry point's own `--project <dir>` (or a prefix of it, see projectOption) and the command
     // name are not the tool's arguments.
@@ -469,6 +488,7 @@ function userRunTool(words: string[], index: number, where?: Where): string | nu
     toolArgs = args.filter((arg, k) => arg !== tool && (project < 0 || (k !== project && k !== project + 1)));
   }
   if (!tool || onlyHelp(toolArgs) || (tool === MIGRATE && onlyPlan(toolArgs))) return null;
+  if (tool === SETUP && setupPlanOnly(toolArgs)) return null;
   return tool;
 }
 
@@ -748,7 +768,7 @@ function classifySegment(words: string[], start?: Where): Finding[] {
  * projects, where they would bypass the database guards.
  */
 export function blockedEverywhere(program: string): boolean {
-  return program === WORKTREE_INIT || program === MIGRATE || program === MENU;
+  return program === WORKTREE_INIT || program === MIGRATE || program === MENU || program === SETUP;
 }
 
 /**
@@ -867,6 +887,13 @@ export function blockReason(program: string, root: string): string {
     return (
       "migrate rewrites the project's configuration files; ask the user to run /oasis migrate in Gentle Shell " +
       "or the command in a terminal. To read the plan without changing anything, run it with only --plan."
+    );
+  }
+  if (program === SETUP) {
+    return (
+      "setup --apply writes the project's and the machine's configuration and creates the environment; ask the " +
+      "user to run `oasis setup --apply` in a terminal. To read the plan without changing anything, run it " +
+      "without --apply."
     );
   }
   if (program === MENU) {

@@ -823,3 +823,58 @@ test("classifyBash finds bash writes to the setting files: redirection, tee, sed
   // Without the extension's check nothing is a setting file.
   assert.deepEqual(classifyBash("echo x > /work/shop/oasis-workspace.toml", at("/work/shop")).asks, []);
 });
+
+// v0.14.0 S1, L12: agents may read the plan of `oasis setup`; `setup --apply` writes configuration.
+test("allows setup's plan through the entry points and blocks setup --apply", () => {
+  const allowed = [
+    "oasis setup",
+    "oasis setup --plan",
+    "odoo19 --project /p setup --community /src/odoo --no-enterprise",
+    "~/.agents/skills/odoo19/oasis --project=/p setup --series 19.0 --workspace /w --name acme 2>&1 | tail -40",
+    "cd /p && oasis setup --enterprise /src/enterprise",
+    "oasis setup --help",
+    "python3 setup.py install",
+    "python setup.py --apply",
+    "./setup --apply",
+  ];
+  for (const command of allowed) assert.equal(blockedProgram(command), null, command);
+  const blocked = [
+    "oasis setup --apply",
+    "oasis setup --apply --help",
+    "odoo19 --project /p setup --community /src/odoo --apply",
+    "~/.agents/skills/odoo19/oasis setup --no-enterprise --apply",
+    "python3 -B /opt/oasis/oasis --project /p setup --apply",
+    "bash -c 'oasis setup --apply'",
+    "echo $(oasis setup --apply)",
+    "oasis setup --plan; oasis setup --apply",
+    "oasis setup --apply=yes",
+    "oasis setup --appl",
+    "oasis setup $ARGS",
+    "oasis setup --community $SRC",
+    "oasis setup `echo --apply`",
+    "~/.agents/skills/odoo19/tools/setup --apply",
+    "python3 -I -B ~/.agents/skills/odoo19/tools/setup.py --apply",
+  ];
+  for (const command of blocked) assert.equal(blockedProgram(command), "setup", command);
+});
+
+test("setup's tool scripts count only in an oasis tree", () => {
+  const context = {
+    cwd: "/src/oasis", home: "/home/u",
+    exists: (path: string) => path === "/src/oasis/oasis" || path === "/src/oasis/tools/actions.py",
+  };
+  assert.equal(blockedProgram("tools/setup --apply", context), "setup");
+  assert.equal(blockedProgram("python3 tools/setup.py --apply", context), "setup");
+  assert.equal(blockedProgram("tools/setup", context), null);
+  assert.equal(blockedProgram("python3 /work/app/tools/setup.py --apply", context), null);
+});
+
+test("setup is user-run everywhere and its block reason sends the user to a terminal", () => {
+  assert.equal(blockedEverywhere("setup"), true);
+  assert.equal(
+    blockReason("setup", "/work/coffee"),
+    "setup --apply writes the project's and the machine's configuration and creates the environment; ask the " +
+      "user to run `oasis setup --apply` in a terminal. To read the plan without changing anything, run it " +
+      "without --apply.",
+  );
+});
