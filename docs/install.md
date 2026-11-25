@@ -43,15 +43,18 @@ The installer copies the committed HEAD only (uncommitted edits are never instal
 cd /absolute/project/addons && ~/.agents/skills/odoo19/oasis check-environment --quick
 ```
 
-A directory with no `oasis-workspace.toml` at or above its checkout gets the same refusal as
-`--project` to it. `--project` keeps working as before, and the `odoo19` alias behaves the same.
+A directory with no `oasis-workspace.toml` at or above its checkout (or, for a linked worktree,
+through git) gets the same refusal as `--project` to it, except for `doctor` and `setup`, which
+run without a workspace file: [`setup`](setup.md) creates one, and `doctor` reports
+`FAIL configuration=Missing tooling configuration: ...` with `fix: oasis setup --apply`.
+`--project` keeps working as before, and the `odoo19` alias behaves the same.
 
 ## Where the Odoo source is declared
 
 Declare the Odoo source of each series once per machine, in `~/.config/oasis/config.toml`
 (`$XDG_CONFIG_HOME/oasis/config.toml` when that is set); every project of that series then uses
-it, and a project's workspace file sets a source only to override it. See
-[Machine file](workspace-file.md#machine-file).
+it, and a project's workspace file sets a source only to override it. `oasis setup` writes it the
+first time it sets up a project of that series. See [Machine file](workspace-file.md#machine-file).
 
 ```toml
 [series."19.0"]

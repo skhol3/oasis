@@ -24,7 +24,7 @@ flowchart TD
 
 - [Checkout identity](#checkout-identity): kind and slug.
 - [Databases per checkout](#databases-per-checkout): the namespace each checkout may use.
-- [Preparing a linked worktree](#preparing-a-linked-worktree): the workspace layout and `worktree-init`.
+- [Preparing a linked worktree](#preparing-a-linked-worktree): where the workspace file can be and `worktree-init`.
 - [Servers and ports per checkout](servers-and-ports.md): one server per checkout.
 
 ## Checkout identity
@@ -69,7 +69,10 @@ Database names are at most 63 bytes (PostgreSQL's identifier limit, counted in U
 
 ### Workspace layout
 
-Keep the checkouts in one folder below the workspace file and the files they share next to it, so every checkout reads the same configuration (see [Workspace file](workspace-file.md)). A linked worktree may also live anywhere else: with no workspace file at or above it, it reads the one its main checkout reads, found through git, with its slug from its own directory name.
+Every checkout reads one workspace file (see [Workspace file](workspace-file.md)); no folder layout is required. A checkout reads the nearest `oasis-workspace.toml` at or above it, and a linked worktree with none above it reads the one its main checkout reads, found through git, with its slug from its own directory name. Two layouts that work:
+
+- The default of [`oasis setup`](setup.md): the file in the main checkout, untracked (listed in `.git/info/exclude`), with the shared files under `<main checkout>/.oasis/`. Worktrees anywhere read it through git.
+- One folder above the checkouts (`oasis setup --workspace <project>`), with the shared files next to the file:
 
 ```text
 <project>/oasis-workspace.toml             the workspace file

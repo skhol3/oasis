@@ -234,7 +234,9 @@ class SetupTests(unittest.TestCase):
                  f'db_user and db_password in {config / "odoo.conf"}\n'
                  f'  2. docker compose --env-file {config / ".env"} -f {config / "compose.yml"} up -d --wait\n'
                  f'  3. oasis --project {self.checkout} doctor\n'
-                 f'  4. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n')
+                 f'  4. add a [development] table with administrator_login to {workspace} '
+                 '(docs/dev-database.md)\n'
+                 f'  5. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, self.plan(port) + steps, ''))
         # S10: the source goes to the machine file (0600), not to the workspace file.
         self.assertEqual(self.machine.read_text(), MACHINE_HEADER + f"[series.\"19.0\"]\ncommunity = '{self.source}'\n")

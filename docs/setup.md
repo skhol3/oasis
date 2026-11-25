@@ -2,7 +2,8 @@
 
 `oasis setup` configures a checkout for oasis in one command: clone the repository, read the plan,
 apply it, then run `doctor`. It infers what it can, asks only what it cannot, keeps everything that
-already exists and creates only the missing pieces. The manual steps it replaces are in
+already exists and creates only the missing pieces. The whole flow, from a clone to a development
+database, where each value lives and what setup does for you by hand are in
 [Setting up a new workspace](new-workspace.md).
 
 ```bash
@@ -117,7 +118,7 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
 - `--workspace <dir>` puts the workspace file in `<dir>` instead, an absolute existing directory at
   or above the checkout (`Refusing --workspace <dir>: it is not at or above the checkout <checkout>.`),
   with `config/`, `data/`, `logs/` and `venv/` directly under it, as in the
-  [example tree](new-workspace.md#the-example-tree). The directory must be yours and not writable by
+  [example tree](new-workspace.md#the-example-tree), one possible layout. The directory must be yours and not writable by
   group or others ([Trust](workspace-file.md#trust)).
 - With a workspace file at or above the checkout (or found through git), that file is adopted: its
   paths decide where everything goes and only the missing pieces are created. The options that
@@ -136,7 +137,8 @@ next steps:
   1. fill in ODOO_DB_USER and ODOO_DB_PASSWORD in <env file>, and the same values as db_user and db_password in <odoo.conf>
   2. docker compose --env-file <env file> -f <compose file> up -d --wait
   3. oasis --project <checkout> doctor
-  4. oasis --project <checkout> init-dev-database <module> <name>_dev_manual
+  4. add a [development] table with administrator_login to <workspace file> (docs/dev-database.md)
+  5. oasis --project <checkout> init-dev-database <module> <name>_dev_manual
 ```
 
 The first step appears only for the files setup created, and `bootstrap --apply` is added when it

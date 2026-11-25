@@ -68,6 +68,11 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- Documentation: docs/new-workspace.md starts from a clone with `oasis setup` (plan, `--apply`,
+  fill the account, start the database, `doctor`, `init-dev-database`), explains the machine,
+  workspace and checkout files, worktrees through git and the environment rule, and keeps the
+  series-folder tree as one possible layout plus the steps by hand; the README five-minute start
+  uses setup; docs/workspace-file.md describes the series guard fast path.
 - `oasis setup` gives a new `odoo.conf` or compose file the port of the one it keeps, reports
   kept files whose ports disagree, and refuses `--no-enterprise` only when the machine entry has
   Enterprise.

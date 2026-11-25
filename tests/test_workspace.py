@@ -651,6 +651,20 @@ class WorkspaceTests(unittest.TestCase):
         self.assertIsNotNone(match, first_line)
         return match.group(1)
 
+    def guide_configuration(self, series):
+        """The guide's example tree under series: its machine file, written to this test's scratch
+        XDG_CONFIG_HOME, and its workspace file's text, with the guide's /home/you/odoo/19.0 as series.
+        The workspace file names no source: the machine file gives it (v0.14.0 S10)."""
+        def placed(text):
+            return text.replace('/home/you/odoo/19.0', str(series))
+        machine = self.scratch / 'xdg' / 'oasis' / 'config.toml'
+        machine.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        machine.write_text(placed(self.guide_block('# ~/.config/oasis/config.toml')))
+        machine.chmod(0o600)
+        workspace = placed(self.guide_block('# projects/acme/oasis-workspace.toml'))
+        self.assertNotRegex(workspace, r'(?m)^(community|enterprise) = ')
+        return workspace
+
     def test_guide_follows_the_declared_python_and_checks_the_locks_with_full(self):
         guide = (ROOT / 'docs' / 'new-workspace.md').read_text(encoding='utf-8')
         # The commands take the environment's declared Python, never a fixed one.
@@ -674,7 +688,7 @@ class WorkspaceTests(unittest.TestCase):
         self.project = series / 'projects' / 'acme'
         self.workspace = self.project / 'oasis-workspace.toml'
         self.main = self.project / 'codigo' / 'acme'
-        workspace = self.guide_block('# projects/acme/oasis-workspace.toml')
+        workspace = self.guide_configuration(series)
         main = self.layout(workspace)
         linked = self.linked('acme-shop-feature', 'shop-feature')
         for checkout, slug in ((main, ''), (linked, 'shop_feature')):
@@ -713,7 +727,7 @@ class WorkspaceTests(unittest.TestCase):
         self.project = series / 'projects' / 'acme'
         self.workspace = self.project / 'oasis-workspace.toml'
         self.main = self.project / 'codigo' / 'acme'
-        workspace = self.guide_block('# projects/acme/oasis-workspace.toml')
+        workspace = self.guide_configuration(series)
         main = self.layout(workspace)
         (series / 'source' / 'odoo').mkdir(parents=True)
         (series / 'environments' / 'acme').mkdir(parents=True)
