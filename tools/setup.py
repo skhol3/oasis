@@ -121,7 +121,9 @@ odoo_version, else its module manifests, the modules of --exception <module> lef
 [series."<x.y>"] section to that file (a workspace_version 1 file becomes 2, that line only) and
 creates that series' missing files: by default in <config folder>/<x.y>/, or in a folder that already
 holds its odoo.conf or compose file (<config folder>/odoo-<major>/, ...; --config-dir <dir> names one),
-which is adopted. --exception (repeatable) writes series_exceptions.
+which is adopted. --exception (repeatable) writes series_exceptions. A kept odoo.conf or compose file on a
+port another series of the workspace uses is refused; a failed verification, compile or uv venv then
+undoes every change, the workspace file's included.
 '''
 
 
@@ -618,12 +620,19 @@ def series_section(document, workspace, series, exceptions, sources, environment
     name += series.split('.')[0]
     environment = old.get('environment')
     if environment is None and isinstance(view.get('environments'), dict):
-        environment = view['environments'].get('default', {}).get('path') if isinstance(
-            view['environments'].get('default'), dict) else None
+        named = view['environments'].get('default')
+        environment = named.get('path') if isinstance(named, dict) else None
         varying = config.placed(environment, series) != config.placed(environment, default)
+        # A default named environment whose Python the series does not support: the series gets its own
+        # path (the machine file's environments, else that path with {series} replaced) and, without a named
+        # environment, its python_default.
+        unsupported = (varying and isinstance(environment, str) and environment
+                       and not config.versions().python_supported(series, named.get('python')))
+        if unsupported and not environments:
+            section['environment'] = config.placed(environment, series)
     else:
-        varying = varies('environment')
-    if not varying and environments:
+        varying, unsupported = varies('environment'), False
+    if (not varying or unsupported) and environments:
         section['environment'] = f'{environments}/{name}'
     elif not varying and isinstance(environment, str) and environment:
         section['environment'] = (Path(environment).parent / f'{Path(environment).name}-{series}').as_posix()
@@ -741,10 +750,11 @@ def configured_port(conf: Path) -> int | None:
         return None
 
 
-def series_ports(document: dict, workspace: Path) -> set[int]:
-    """The ports the series a workspace configures already use (their odoo.conf and compose files), which
-    a new series' compose file must not publish."""
-    taken = set()
+def series_ports(document: dict, workspace: Path) -> dict[int, tuple[str, Path]]:
+    """The ports the series a workspace configures already use (their odoo.conf and compose files), each
+    with the first series and file that uses it: a new series' compose file must not publish one, nor
+    its kept files use one."""
+    taken = {}
     configured = (config.declared_series(document, workspace) if document['workspace_version'] == 2
                   else [document['odoo_version']])
     for series in configured:
@@ -752,9 +762,10 @@ def series_ports(document: dict, workspace: Path) -> set[int]:
         for key, read in (('config', configured_port), ('compose', published_port)):
             value = tooling.get(key)
             if isinstance(value, str) and value and '\x00' not in value and (workspace.parent / value).is_file():
-                port = read(workspace.parent / value)
+                path = (workspace.parent / value).resolve()
+                port = read(path)
                 if port is not None:
-                    taken.add(port)
+                    taken.setdefault(port, (series, path))
     return taken
 
 
@@ -802,9 +813,10 @@ def series_plan(root, kind, options, questions, workspace, machine, target, line
     except config.InvalidConfig as exc:
         raise Refused(str(exc)) from exc
     guarded(values)
+    # A failed compile or uv venv undoes the edit of the shared workspace file too (undo_after).
     plan = {'root': root, 'workspace': workspace, 'values': values, 'lines': lines,
             'actions': [*machine_actions, ('extend', workspace, raw, new)], 'after': [], 'created': set(),
-            'new': False, 'taken': series_ports(document, workspace)}
+            'new': False, 'taken': series_ports(document, workspace), 'undo_after': True}
     gaps(plan, base, set())
     return plan
 
@@ -851,8 +863,19 @@ def gaps(plan: dict, directory: Path, planned: set):
     if compose.exists():
         compose_port = published_port(compose)
     port, unread = None, False
-    # A new series' compose file never publishes a port another series of the workspace uses.
-    taken = plan.get('taken', set())
+    # A new series' compose file never publishes a port another series of the workspace uses, and its kept
+    # files never use one: that is refused (setup never edits a kept file; doctor fails a shared port).
+    taken = plan.get('taken', {})
+    for path, kept, verb in ((conf, conf_port if conf.exists() else None, 'connects to'),
+                             (compose, compose_port if compose.exists() else None, 'publishes')):
+        if kept in taken:
+            other, used = taken[kept]
+            fix = (f'set db_port in {conf} to a port no other series uses'
+                   + (f' and publish the same port to 5432 in {compose}' if compose.exists() else '')
+                   if path == conf else f'publish a port no other series uses to 5432 in {compose}')
+            raise Refused(f'Port {kept} of Odoo {values["ODOO_VERSION"]} ({path} {verb} it) is already used by Odoo '
+                          f'{other} ({used}); two series of a workspace cannot share a PostgreSQL port: {fix}, then '
+                          f'run {config.program_name()} setup again.')
     if conf.exists() and not compose.exists():
         port = conf_port if conf_port is not None else free_port(taken)
     elif compose.exists() and not conf.exists():
@@ -944,6 +967,18 @@ class Changes:
                 raise OSError(0, f'{path} changed since the plan')
             migrate.write_in_place(path, data, lambda: self.undo.append(('restore', path, original)))
 
+    def keep(self, path: Path):
+        """Before a command setup runs (uv) may write path: rollback gives it back its bytes and mode, or
+        removes it when it did not exist."""
+        if os.path.lexists(path):
+            self.undo.append(('rewrite', path, path.read_bytes(), path.stat().st_mode & 0o7777))
+        else:
+            self.undo.append(('discard', path))
+
+    def made(self, directories: list[Path]):
+        """Directories created outside apply (outermost first): rollback removes them when empty."""
+        self.undo += [('rmdir', directory) for directory in directories]
+
     def rollback(self) -> list[str]:
         failed = []
         for step in reversed(self.undo):
@@ -952,6 +987,18 @@ class Changes:
                     os.rmdir(step[1])
                 elif step[0] == 'remove':
                     os.unlink(step[1])
+                elif step[0] == 'discard':
+                    if os.path.lexists(step[1]):
+                        os.unlink(step[1])
+                elif step[0] == 'rewrite':
+                    if os.path.lexists(step[1]):
+                        migrate.write_in_place(step[1], step[2])
+                        os.chmod(step[1], step[3])
+                    else:
+                        descriptor = os.open(step[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, step[3])
+                        with os.fdopen(descriptor, 'wb') as stream:
+                            os.fchmod(stream.fileno(), step[3])
+                            stream.write(step[2])
                 else:
                     migrate.write_in_place(step[1], step[2])
             except OSError as exc:
@@ -960,11 +1007,11 @@ class Changes:
         return failed
 
 
-def undone(message: str, failed: list[str]) -> int:
+def undone(message: str, failed: list[str], then: str = '') -> int:
     if failed:
         print(f'ERROR: {message}; these changes could not be undone:', file=sys.stderr)
     else:
-        print(f'ERROR: {message}; every change was undone.', file=sys.stderr)
+        print(f'ERROR: {message}; every change was undone' + (f': {then}' if then else '.'), file=sys.stderr)
     for line in failed:
         print(f'  {line}', file=sys.stderr)
     return 1
@@ -986,32 +1033,18 @@ def apply_plan(plan: dict) -> int:
         raise
     print(f'verified: {root} loads its configuration from {plan["workspace"]}', flush=True)
     rerun = f'{program} setup --apply'
-    for step in plan['after']:
-        if step[0] == 'compile':
-            if locks.compile_locks(step[1], step[2], rerun):
-                return 2
-            print(f'compiled {step[1]}/runtime.txt, dev.txt and lock.sha256', flush=True)
-            continue
-        _kind, environment, python, lock = step
-        environment.parent.mkdir(parents=True, exist_ok=True)
-        for command in (['uv', 'venv', '--python', python, str(environment)],
-                        ['uv', 'pip', 'sync', '--python', str(environment / 'bin/python'), str(lock)]):
-            try:
-                status = subprocess.run(command).returncode
-            except OSError:
-                status = 127
-            if status == 0:
-                continue
-            if command[1] == 'pip':
-                # The environment exists now: a second setup run keeps it unsynced, bootstrap syncs it.
-                print(f'ERROR: uv pip sync failed (exit {status}); the files above and the environment '
-                      f'{environment} are kept: fix it, then run {program} --project {root} bootstrap --apply '
-                      'to sync it.', file=sys.stderr)
-            else:
-                print(f'ERROR: uv venv failed (exit {status}); the files above are kept: fix it, then run '
-                      f'{rerun} again.', file=sys.stderr)
-            return 2
-        print(f'created the environment {environment}', flush=True)
+    # A series section (series_plan): a failed compile or uv venv undoes every change, the locks and the
+    # directories made for the environment included, so the shared workspace file never keeps a section
+    # whose series is not set up. Otherwise the files are kept and a second run continues.
+    undo_after = plan.get('undo_after', False)
+    try:
+        failed = after_steps(plan, changes, rerun, undo_after)
+    except BaseException:
+        if undo_after:
+            changes.rollback()
+        raise
+    if failed:
+        return failed
     values, created = plan['values'], plan['created']
     env_file, conf = values['ENV_FILE'], values['ODOO_CONFIG']
     steps = []
@@ -1040,6 +1073,54 @@ def apply_plan(plan: dict) -> int:
     print('next steps:')
     for number, step in enumerate(steps, 1):
         print(f'  {number}. {step}')
+    return 0
+
+
+def after_steps(plan: dict, changes: Changes, rerun: str, undo_after: bool) -> int:
+    """Compile the locks and create the environment of the plan: 0, or 2 after a failed step (with
+    undo_after, a failed compile or uv venv rolls back every change first)."""
+    program, root = config.program_name(), plan['root']
+    for step in plan['after']:
+        if step[0] == 'compile':
+            if undo_after:
+                for name in (*locks.LOCKS, locks.FINGERPRINT):
+                    changes.keep(step[1] / name)
+            if locks.compile_locks(step[1], step[2], rerun):
+                if undo_after:
+                    undone('uv pip compile failed', changes.rollback())
+                return 2
+            print(f'compiled {step[1]}/runtime.txt, dev.txt and lock.sha256', flush=True)
+            continue
+        _kind, environment, python, lock = step
+        absent = not os.path.lexists(environment)
+        missing = [directory for directory in environment.parents if not os.path.lexists(directory)]
+        environment.parent.mkdir(parents=True, exist_ok=True)
+        if undo_after:
+            changes.made(list(reversed(missing)))
+        for command in (['uv', 'venv', '--python', python, str(environment)],
+                        ['uv', 'pip', 'sync', '--python', str(environment / 'bin/python'), str(lock)]):
+            try:
+                status = subprocess.run(command).returncode
+            except OSError:
+                status = 127
+            if status == 0:
+                continue
+            if command[1] == 'venv' and undo_after:
+                # What uv venv left of an environment that did not exist: removed when empty, else reported.
+                if absent and os.path.lexists(environment):
+                    changes.made([environment])
+                undone(f'uv venv failed (exit {status})', changes.rollback(),
+                       f'fix it, then run {rerun} again.')
+            elif command[1] == 'pip':
+                # The environment exists now: a second setup run keeps it unsynced, bootstrap syncs it.
+                print(f'ERROR: uv pip sync failed (exit {status}); the files above and the environment '
+                      f'{environment} are kept: fix it, then run {program} --project {root} bootstrap --apply '
+                      'to sync it.', file=sys.stderr)
+            else:
+                print(f'ERROR: uv venv failed (exit {status}); the files above are kept: fix it, then run '
+                      f'{rerun} again.', file=sys.stderr)
+            return 2
+        print(f'created the environment {environment}', flush=True)
     return 0
 
 

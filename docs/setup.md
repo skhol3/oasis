@@ -45,9 +45,12 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
   change was undone.`
 - A failed `uv pip compile`, `uv venv` or `uv pip sync` stops with exit 2 and keeps the files
   already written. After a failed compile or `uv venv`, fix the cause and run `oasis setup --apply`
-  again, which keeps them and continues. After a failed `uv pip sync` the environment exists, and a
-  second setup run would keep it without syncing it, so the error names the command that completes
-  it: `ERROR: uv pip sync failed (exit <n>); the files above and the environment <environment> are
+  again, which keeps them and continues. When setup adds a section to an existing workspace file
+  ([Another Odoo series](#another-odoo-series)), a failed compile or `uv venv` undoes every change
+  instead (`ERROR: uv pip compile failed; every change was undone.`, `ERROR: uv venv failed (exit <n>);
+  every change was undone: fix it, then run oasis setup --apply again.`). After a failed `uv pip sync`
+  the environment exists, and a second setup run would keep it without syncing it, so the error names
+  the command that completes it: `ERROR: uv pip sync failed (exit <n>); the files above and the environment <environment> are
   kept: fix it, then run oasis --project <checkout> bootstrap --apply to sync it.`
 - When nothing is missing it prints the `kept` lines and `nothing to set up: run oasis --project
   <checkout> doctor` (exit 0). Refusals exit 2 with `ERROR: <reason>` and change nothing.
@@ -177,6 +180,24 @@ that series' files, next to the other series and without touching them:
   that no other series of the workspace uses, its own compose project (`oasis-<name><major>-...`), the
   requirement inputs of its source, and the locks and environment with its `python_default` (3.10 on
   15.0).
+- A kept `odoo.conf` or compose file of the series that uses a port another series of the workspace
+  uses (its `odoo.conf`'s `db_port`, 5432 without one, or the port its compose file publishes) is
+  refused before anything is written, since setup never edits a kept file and `doctor` fails two
+  series on one port: `Port 5432 of Odoo 15.0 (<odoo.conf> connects to it) is already used by Odoo
+  19.0 (<its odoo.conf>); two series of a workspace cannot share a PostgreSQL port: set db_port in
+  <odoo.conf> to a port no other series uses, then run oasis setup again.` (with a kept compose file,
+  `... and publish the same port to 5432 in <compose file>`; with only a compose file, `(<compose file>
+  publishes it) ... publish a port no other series uses to 5432 in <compose file>`).
+- Named `[environments]`: a `default` path with `{series}` gives the series its own environment with
+  that environment's `python`, and the section sets no `environment`; a path without `{series}` gives
+  the section `environment = '<path>-<x.y>'` with the series' `python_default`. When the series does
+  not support the `default` environment's `python` (`3.13` on 15.0), the section sets the path with
+  `{series}` replaced (or `<environments>/<name><major>` with the machine file's `environments`), so the
+  series uses its `python_default`.
+- The workspace file and the machine file are edited first. A failed verification, `uv pip compile`
+  or `uv venv` gives them back their bytes (their modes are kept), restores the locks the compile
+  rewrote and removes every file and directory setup created; a failed `uv pip sync` keeps
+  everything, as for any checkout.
 
 After `--apply` the next run in that checkout finds the section and only prints `kept` lines; the
 checkouts of the other series read the file as before. Agents may run the plan; `setup --apply` stays

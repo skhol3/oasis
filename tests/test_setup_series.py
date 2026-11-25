@@ -464,6 +464,168 @@ class SeriesSetupTests(unittest.TestCase):
                                     f'{flag[0]}: {self.checkout19} is already configured by {self.workspace}; setup '
                                     'only fills what is missing.', before)
 
+    # -- ports another series uses --------------------------------------------------------------
+
+    def test_a_kept_port_that_another_series_uses_is_refused(self):
+        # The adopted folder's odoo.conf, compose file or both use the 19.0 series' port: setup never
+        # plans a compose file publishing it, nor a section whose series would share it.
+        self.workspace.write_text(V1)
+        folder = self.project / 'config/odoo-15'
+        conf, compose, used = folder / 'odoo.conf', folder / 'compose.yml', self.project / 'config/odoo.conf'
+        fixes = {
+            'conf': (conf, 'connects to', f'set db_port in {conf} to a port no other series uses'),
+            'compose': (compose, 'publishes', f'publish a port no other series uses to 5432 in {compose}'),
+            'both': (conf, 'connects to', f'set db_port in {conf} to a port no other series uses and publish the '
+                                         f'same port to 5432 in {compose}')}
+        for kept, (path, verb, fix) in fixes.items():
+            with self.subTest(kept=kept):
+                shutil.rmtree(folder, ignore_errors=True)
+                self.series_files(folder, self.port19, 'corpus-cafe-15')
+                if kept == 'conf':
+                    compose.unlink()
+                elif kept == 'compose':
+                    conf.unlink()
+                before = self.tree()
+                self.assert_refused(
+                    self.setup_cmd(*(('--apply',) if kept == 'both' else ()), '--community', str(self.source15),
+                                   '--no-enterprise', '--exception', 'report_xlsx'),
+                    f'Port {self.port19} of Odoo 15.0 ({path} {verb} it) is already used by Odoo 19.0 ({used}); two '
+                    f'series of a workspace cannot share a PostgreSQL port: {fix}, then run oasis setup again.',
+                    before)
+        # An odoo.conf without db_port connects to 5432: taken when the 19.0 series uses it.
+        shutil.rmtree(folder)
+        self.series_files(self.project / 'config', 5432, 'oasis-cc-19')
+        folder.mkdir()
+        conf.write_text('[options]\ndb_host = 127.0.0.1\n')
+        before = self.tree()
+        self.assert_refused(
+            self.setup_cmd('--community', str(self.source15), '--no-enterprise', '--exception', 'report_xlsx'),
+            f'Port 5432 of Odoo 15.0 ({conf} connects to it) is already used by Odoo 19.0 ({used}); two series of a '
+            f'workspace cannot share a PostgreSQL port: set db_port in {conf} to a port no other series uses, then '
+            'run oasis setup again.', before)
+
+    # -- named environments ---------------------------------------------------------------------
+
+    def named(self, text, path, python):
+        return (text.replace(re.search(r"environment = '[^']*'\n", text).group(0), '')
+                + f"\n[environments.default]\npath = '{path}'\npython = '{python}'\n")
+
+    def apply_named(self, text):
+        """Apply the 15.0 setup to a workspace with named environments; the section written, and the 15.0 and
+        19.0 checkouts' values before and after."""
+        self.workspace.write_text(text)
+        before19 = self.reader(self.checkout19)
+        self.assertEqual((before19.returncode, before19.stderr), (0, ''))
+        result = self.setup_cmd('--apply', '--community', str(self.source15), '--no-enterprise',
+                                '--exception', 'report_xlsx')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        section = self.workspace.read_text()[len(text):]
+        values, after19 = self.reader(self.checkout), self.reader(self.checkout19)
+        self.assertEqual((values.returncode, values.stderr, after19.returncode, after19.stderr), (0, '', 0, ''))
+        tail = '' if 'workspace_version = 2' in text else "WORKSPACE_VERSION=2\nSERIES_EXCEPTIONS=''\n"
+        self.assertEqual(after19.stdout, before19.stdout + tail)
+        return result.stdout, section, values.stdout
+
+    def test_named_environments_whose_path_uses_series_give_the_series_its_own_environment(self):
+        stdout, section, values = self.apply_named(self.named(V2, 'environments/cc-{series}', '3.12'))
+        environment = self.project / 'environments/cc-15.0'
+        self.assertNotIn('environment', section.split('[series."15.0"]')[1])
+        self.assertIn(f'create the environment {environment} with Python 3.12 (uv venv)', stdout)
+        for line in (f'PROJECT_ENVIRONMENT={environment}', 'ENVIRONMENT_NAME=default', 'PYTHON_VERSION=3.12',
+                     'DEV_PREFIX=cc15_dev_'):
+            self.assertIn(line + '\n', values)
+
+    def test_named_environments_of_a_version_1_file_give_the_series_an_environment_next_to_the_default(self):
+        stdout, section, values = self.apply_named(self.named(V1, 'environments/cc', '3.12'))
+        environment = self.project / 'environments/cc-15.0'
+        self.assertIn("[series.\"15.0\"]\nenvironment = 'environments/cc-15.0'\n", section)
+        self.assertIn(f'create the environment {environment} with Python {PYTHON_15} (uv venv)', stdout)
+        for line in (f'PROJECT_ENVIRONMENT={environment}', "ENVIRONMENT_NAME=''", f'PYTHON_VERSION={PYTHON_15}'):
+            self.assertIn(line + '\n', values)
+
+    def test_a_named_environment_whose_python_the_series_does_not_support_gives_the_series_its_own(self):
+        # 3.13 is a 19.0 Python but not a 15.0 one: the section sets the 15.0 path, with the 15.0 default.
+        stdout, section, values = self.apply_named(self.named(V2, 'environments/cc-{series}', '3.13'))
+        environment = self.project / 'environments/cc-15.0'
+        self.assertIn("[series.\"15.0\"]\nenvironment = 'environments/cc-15.0'\n", section)
+        self.assertIn(f'create the environment {environment} with Python {PYTHON_15} (uv venv)', stdout)
+        for line in (f'PROJECT_ENVIRONMENT={environment}', "ENVIRONMENT_NAME=''", f'PYTHON_VERSION={PYTHON_15}'):
+            self.assertIn(line + '\n', values)
+
+    def test_an_unsupported_named_python_with_machine_environments_places_the_series_environment_there(self):
+        self.workspace.write_text(self.named(V2, 'environments/cc-{series}', '3.13'))
+        self.write_machine(f"[series.\"19.0\"]\ncommunity = '{self.source19}'\n"
+                           f"[series.\"15.0\"]\ncommunity = '{self.source15}'\nenvironments = '/srv/envs15'\n")
+        result = self.setup_cmd('--exception', 'report_xlsx')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertIn("  [series.\"15.0\"]\n  environment = '/srv/envs15/cc15'\n", result.stdout)
+        self.assertIn(f'create the environment /srv/envs15/cc15 with Python {PYTHON_15} (uv venv)', result.stdout)
+
+    # -- a failure after the workspace edit -----------------------------------------------------
+
+    def assert_undone(self, result, stderr, before):
+        self.assertEqual((result.returncode, result.stderr), (2, stderr), result.stdout)
+        self.assertIn(f'add [series."15.0"] to {self.workspace}:\n', result.stdout)
+        self.assertNotIn('next steps', result.stdout)
+        # The workspace and machine files' bytes and modes, and nothing created is left.
+        self.assertEqual(self.tree(), before)
+
+    def test_a_failed_verification_after_the_workspace_edit_undoes_every_change(self):
+        # The 19.0 logs directory holds the 15.0 environment's path: creating the 15.0 logs creates it, which
+        # the plan cannot see and the verification refuses.
+        self.workspace.write_text(V1.replace("logs = 'logs'", "logs = 'environments/cc-15.0/logs'"))
+        self.workspace.chmod(0o640)
+        environment = self.project / 'environments/cc-15.0'
+        before = self.tree()
+        result = self.setup_cmd('--apply', '--community', str(self.source15), '--no-enterprise',
+                                '--exception', 'report_xlsx')
+        self.assertEqual((result.returncode, result.stderr), (1, (
+            f'ERROR: Verification failed (Unsafe tooling environment target: {environment} exists and is not a '
+            'Python environment (no pyvenv.cfg).); every change was undone.\n')), result.stdout)
+        self.assertIn(f'add [series."15.0"] to {self.machine}:\n', result.stdout)
+        self.assertNotIn('verified:', result.stdout)
+        self.assertEqual(self.tree(), before)
+        self.assertEqual(self.workspace.stat().st_mode & 0o777, 0o640)
+        self.assertFalse(self.log.exists())
+
+    def test_a_failed_compile_after_the_workspace_edit_undoes_every_change(self):
+        self.workspace.write_text(V1)
+        self.workspace.chmod(0o640)
+        requirements = self.project / 'config/15.0/requirements'
+        before = self.tree()
+        self.env['FAKE_COMPILE_FAIL'] = '1'
+        result = self.setup_cmd('--apply', '--community', str(self.source15), '--no-enterprise',
+                                '--exception', 'report_xlsx')
+        self.assert_undone(result, (
+            'error: No solution found\nuv pip compile of runtime.in failed (exit 1); lock.sha256 was left as it was.\n'
+            f'Fix {requirements / "runtime.in"} or its access to the package index, then run oasis setup --apply '
+            'again.\nERROR: uv pip compile failed; every change was undone.\n'), before)
+        self.assertIn(f'verified: {self.checkout} loads its configuration from {self.workspace}\n', result.stdout)
+        # Run again without the failure: the same plan applies.
+        del self.env['FAKE_COMPILE_FAIL']
+        again = self.setup_cmd('--apply', '--community', str(self.source15), '--no-enterprise',
+                               '--exception', 'report_xlsx')
+        self.assertEqual((again.returncode, again.stderr), (0, ''), again.stdout)
+        self.assertEqual(self.workspace.read_text(),
+                         V1.replace('workspace_version = 1', 'workspace_version = 2') + '\n' + SECTION)
+
+    def test_a_failed_uv_venv_after_the_workspace_edit_undoes_every_change_and_restores_the_locks(self):
+        # An adopted folder with stale locks: the compile rewrites them before uv venv fails.
+        self.workspace.write_text(V1)
+        folder = self.project / 'config/odoo-15'
+        self.series_files(folder, 5415, 'corpus-cafe-15', requirements=True)
+        (folder / 'requirements/runtime.in').write_text('# runtime.in, changed\n')
+        (folder / 'requirements/runtime.txt').chmod(0o600)
+        before = self.tree()
+        self.env['FAKE_VENV_FAIL'] = '1'
+        result = self.setup_cmd('--apply', '--community', str(self.source15), '--no-enterprise',
+                                '--exception', 'report_xlsx')
+        self.assert_undone(result, (
+            'error: no interpreter\nERROR: uv venv failed (exit 3); every change was undone: fix it, then run oasis '
+            'setup --apply again.\n'), before)
+        self.assertIn(f'compiled {folder / "requirements"}/runtime.txt, dev.txt and lock.sha256\n', result.stdout)
+        self.assertFalse((self.project / 'environments').exists())
+
     # -- files setup cannot extend safely -------------------------------------------------------
 
     def test_a_workspace_file_that_cannot_be_extended_safely_is_refused(self):
