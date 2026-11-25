@@ -671,10 +671,17 @@ def apply_plan(plan: dict) -> int:
                 status = subprocess.run(command).returncode
             except OSError:
                 status = 127
-            if status != 0:
-                print(f'ERROR: {" ".join(command[:3 if command[1] == "pip" else 2])} failed (exit {status}); the '
-                      f'files above are kept: fix it, then run {rerun} again.', file=sys.stderr)
-                return 2
+            if status == 0:
+                continue
+            if command[1] == 'pip':
+                # The environment exists now: a second setup run keeps it unsynced, bootstrap syncs it.
+                print(f'ERROR: uv pip sync failed (exit {status}); the files above and the environment '
+                      f'{environment} are kept: fix it, then run {program} --project {root} bootstrap --apply '
+                      'to sync it.', file=sys.stderr)
+            else:
+                print(f'ERROR: uv venv failed (exit {status}); the files above are kept: fix it, then run '
+                      f'{rerun} again.', file=sys.stderr)
+            return 2
         print(f'created the environment {environment}', flush=True)
     values, created = plan['values'], plan['created']
     env_file, conf = values['ENV_FILE'], values['ODOO_CONFIG']

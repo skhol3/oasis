@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'oasis'
@@ -141,6 +142,73 @@ class SeriesGuardTests(unittest.TestCase):
         setup = self.oasis('setup')
         self.assertEqual((setup.returncode, setup.stdout, setup.stderr),
                          (2, '', f'ERROR: {self.refusal("old_sale", "15.0", "15.0.1.0.0")}\n'))
+
+    def guard_config(self):
+        spec = importlib.util.spec_from_file_location('oasis_series_guard_config', READER)
+        config = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(config)
+        return config
+
+    def test_a_manifest_of_the_configured_series_is_not_parsed(self):
+        """The fast path: the version string is read with a narrow pattern, and only a series-style
+        version of another series (or a manifest the pattern cannot tell) is parsed with literal_eval."""
+        config = self.guard_config()
+        parsed = []
+        real = config.ast.literal_eval
+
+        def literal_eval(text):
+            parsed.append(text)
+            return real(text)
+        self.module('addons', 'plain', '1.0')
+        (self.root / 'addons/double_quoted/__manifest__.py').parent.mkdir()
+        (self.root / 'addons/double_quoted/__manifest__.py').write_text(
+            '# -*- coding: utf-8 -*-\n{\n    "name": "Double",\n    "version" : "19.0.2.0.0",\n    "data": [],\n}\n')
+        with unittest.mock.patch.object(config.ast, 'literal_eval', literal_eval):
+            values = config.load(self.root)
+            self.assertEqual(parsed, [])
+            self.assertEqual(config.manifest_series(self.root / 'addons/shop_sale/__manifest__.py', '19.0'),
+                             ('19.0', '19.0.1.0.0'))
+            self.assertEqual(parsed, [])
+            # Another series is confirmed by literal_eval, and refused as before.
+            old = self.module('addons', 'old_sale', '15.0.1.0.0')
+            with self.assertRaises(config.InvalidConfig) as refused:
+                config.load(self.root)
+            self.assertEqual(str(refused.exception), self.refusal('old_sale', '15.0', '15.0.1.0.0'))
+            self.assertEqual(parsed, [old.read_text()])
+            old.unlink()
+            # A pattern that cannot tell (the key twice, here once in a comment; a value that is not one
+            # plain string) falls back to literal_eval, which decides as before.
+            for name, text, refused_version in (
+                    ('commented', "{\n    # 'version': '19.0.1.0.0',\n    'version': '15.0.1.0.0',\n}\n", '15.0.1.0.0'),
+                    ('prefixed', "{'version': u'15.0.1.0.0'}\n", '15.0.1.0.0'),
+                    ('nested', "{'name': 'x', 'other': {'version': '15.0.1.0.0'}}\n", None)):
+                with self.subTest(name=name):
+                    parsed.clear()
+                    path = self.root / 'addons' / name / '__manifest__.py'
+                    path.parent.mkdir()
+                    path.write_text(text)
+                    if refused_version is None:
+                        self.assertEqual(config.load(self.root)['ODOO_VERSION'], '19.0')
+                    else:
+                        with self.assertRaises(config.InvalidConfig) as refused:
+                            config.load(self.root)
+                        self.assertEqual(str(refused.exception), self.refusal(name, '15.0', refused_version))
+                    self.assertEqual(parsed, [text])
+                    path.unlink()
+                    path.parent.rmdir()
+        self.assertEqual(values['ODOO_VERSION'], '19.0')
+
+    def test_a_manifest_with_an_unrelated_syntax_error_and_the_right_series_loads(self):
+        broken = self.root / 'addons/half_written/__manifest__.py'
+        broken.parent.mkdir()
+        broken.write_text("{\n    'name': 'Half written',\n    'version': '19.0.1.0.0',\n    'depends': ['base'\n")
+        result = self.reader()
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertIn('ODOO_VERSION=19.0\n', result.stdout)
+        # With another series it cannot be confirmed, so it is ignored as before (not refused).
+        broken.write_text(broken.read_text().replace('19.0.1.0.0', '15.0.1.0.0'))
+        result = self.reader()
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
 
     def test_a_supported_series_is_told_to_use_its_own_workspace_file(self):
         spec = importlib.util.spec_from_file_location('oasis_series_guard_config', READER)

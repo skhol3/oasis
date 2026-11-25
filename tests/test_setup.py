@@ -631,16 +631,27 @@ class SetupTests(unittest.TestCase):
         self.assertEqual([line.split(' (in ')[0] for line in self.log.read_text().splitlines()], [
             f'uv venv --python 3.12 {environment}',
             f'uv pip sync --python {environment}/bin/python {requirements}/dev.txt'])
-        # A failed sync stops the same way, after the environment was created.
+        # A failed sync stops after the environment was created: a second setup run would keep that
+        # environment unsynced, so the error names bootstrap --apply, which syncs it.
         (self.checkout / 'oasis-workspace.toml').unlink()
         shutil.rmtree(self.checkout / '.oasis')
         self.env['FAKE_SYNC_FAIL'] = '1'
         failed = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
         self.assertEqual((failed.returncode, failed.stderr), (2, (
-            'error: no index\nERROR: uv pip sync failed (exit 4); the files above are kept: fix it, then run '
-            'oasis setup --apply again.\n')))
+            'error: no index\nERROR: uv pip sync failed (exit 4); the files above and the environment '
+            f'{environment} are kept: fix it, then run oasis --project {self.checkout} bootstrap --apply to '
+            'sync it.\n')))
+        self.assertNotIn('setup --apply', failed.stderr)
+        self.assertNotIn('next steps', failed.stdout)
         self.assertTrue((environment / 'pyvenv.cfg').is_file())
         self.assertTrue((self.checkout / 'oasis-workspace.toml').is_file())
+        # Indeed a second setup run keeps the environment without syncing it.
+        del self.env['FAKE_SYNC_FAIL']
+        self.log.unlink()
+        again = self.setup_cmd('--apply')
+        self.assertEqual((again.returncode, again.stderr), (0, ''))
+        self.assertIn(f'kept the environment {environment}\n', again.stdout)
+        self.assertFalse(self.log.exists())
 
     def test_an_edited_lock_is_kept_and_leaves_the_environment_uncreated(self):
         project = self.existing_workspace()

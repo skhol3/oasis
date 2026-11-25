@@ -31,7 +31,7 @@ INVOKED = Path(globals().get('ALIAS_PATH') or __file__)
 LEGACY_COMMANDS = ('migrate', 'doctor')
 # Commands that run in a checkout without a workspace file: setup creates it. Every other command
 # is refused there (missing configuration).
-UNCONFIGURED_COMMANDS = ('setup',)
+UNCONFIGURED_COMMANDS = ('doctor', 'setup')
 
 
 def configuration_reader(tools: Path):

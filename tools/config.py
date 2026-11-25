@@ -468,18 +468,35 @@ SERIES_VERSION = re.compile(r'([1-9][0-9]*)\.(0|[1-9][0-9]*)\.[0-9]+\.[0-9]+\.[0
 # A series that is not in tools/odoo_versions.py still counts when it looks like an Odoo release:
 # <major>.0 with a major from 8 (the first series whose modules carry series-style versions) to 99.
 PLAUSIBLE_MAJORS = range(8, 100)
+# The `version` key of a manifest, anywhere (VERSION_KEY), and as one plain string literal followed by
+# the end of its entry (VERSION_ENTRY): what manifest_series reads before it parses a manifest.
+VERSION_KEY = re.compile(r'''["']version["']\s*:''')
+VERSION_ENTRY = re.compile(r'''["']version["']\s*:\s*(["'])([^"'\\\n]*)\1\s*[,}]''')
 
 
-def manifest_series(manifest: Path) -> tuple[str, str] | None:
+def manifest_series(manifest: Path, expected: str | None = None) -> tuple[str, str] | None:
     """(series, version) of a module manifest whose `version` is series-style for a known or
     plausible series, else None (also when it cannot be read or is not a literal dict). Read with
-    ast.literal_eval, never imported; a file without any series-style number is not parsed."""
+    ast.literal_eval, never imported; a file without any series-style number is not parsed.
+
+    The version string is read with a narrow pattern first, when the manifest has the `version` key
+    once, as one plain string: a version that is not series-style is None and one of the expected
+    series (when given) is returned, both unparsed. Only another series, or a manifest the pattern
+    cannot tell, is parsed, so a manifest with an unrelated syntax error of the right series is
+    still read as that series, and the refusal of another series stays the literal dict's."""
     try:
         text = manifest.read_text(encoding='utf-8')
     except (OSError, UnicodeError):
         return None
     if not SERIES_VERSION.search(text):
         return None
+    entry = VERSION_ENTRY.search(text) if len(VERSION_KEY.findall(text)) == 1 else None
+    if entry is not None:
+        found = SERIES_VERSION.fullmatch(entry.group(2))
+        if found is None:
+            return None
+        if f'{found.group(1)}.{found.group(2)}' == expected:
+            return expected, entry.group(2)
     try:
         data = ast.literal_eval(text)
     except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
@@ -504,7 +521,7 @@ def series_mismatch(values: dict[str, str]) -> dict | None:
         for manifest in sorted(Path(addons).glob('*/__manifest__.py')):
             if manifest.parent.name.startswith('.'):
                 continue
-            declared = manifest_series(manifest)
+            declared = manifest_series(manifest, expected)
             if declared is not None and declared[0] != expected:
                 return {'module': manifest.parent.name, 'manifest': str(manifest), 'series': declared[0],
                         'version': declared[1]}

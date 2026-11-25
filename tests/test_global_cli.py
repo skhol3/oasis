@@ -206,6 +206,11 @@ class GlobalCliTests(unittest.TestCase):
                     root = self.project if '--project' in args else plain
                     self.assertEqual(json.loads(self.log.read_text()),
                                      {'argv': ['--plan'], 'root': str(root), 'stdin': '', 'tool': 'setup'})
+            # doctor runs too, so its FAIL can say `fix: oasis setup --apply`.
+            self.log.unlink(missing_ok=True)
+            result = self.invoke('--project', str(self.project), 'doctor', program=program, cwd=self.temp)
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (17, 'delegated\n', 'delegated error\n'))
+            self.assertEqual(json.loads(self.log.read_text())['tool'], 'doctor')
             self.log.unlink(missing_ok=True)
             self.assert_no_calls(self.invoke('--project', str(self.project), 'status', program=program),
                                  f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above '

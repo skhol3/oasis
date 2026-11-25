@@ -41,9 +41,11 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
   every file it wrote is removed again and it exits 1 with `ERROR: Verification failed (...); every
   change was undone.`
 - A failed `uv pip compile`, `uv venv` or `uv pip sync` stops with exit 2 and keeps the files
-  already written: fix the cause and run `oasis setup --apply` again, which keeps them and continues.
-  After a failed `uv pip sync` the environment exists, so a second run keeps it without syncing it: run
-  `oasis bootstrap --apply` to sync it.
+  already written. After a failed compile or `uv venv`, fix the cause and run `oasis setup --apply`
+  again, which keeps them and continues. After a failed `uv pip sync` the environment exists, and a
+  second setup run would keep it without syncing it, so the error names the command that completes
+  it: `ERROR: uv pip sync failed (exit <n>); the files above and the environment <environment> are
+  kept: fix it, then run oasis --project <checkout> bootstrap --apply to sync it.`
 - When nothing is missing it prints the `kept` lines and `nothing to set up: run oasis --project
   <checkout> doctor` (exit 0). Refusals exit 2 with `ERROR: <reason>` and change nothing.
 - Agents may run the plan; the Gentle Shell [bash guard](bash-guard.md) blocks `setup --apply` (and

@@ -35,8 +35,8 @@ names) may still change in a minor release; every such change is listed here und
   (`--series`, `--community`, `--enterprise`/`--no-enterprise`, `--workspace`, `--name`). Without
   a workspace file, the workspace is the checkout itself (`oasis-workspace.toml` and `.oasis/`,
   listed in `.git/info/exclude`, never `.gitignore`); an existing workspace file is adopted. It
-  rolls back if the result does not load. It is the one command that runs without a workspace
-  file.
+  rolls back if the result does not load. It runs without a workspace file, like `doctor`, which then reports `FAIL configuration=...`
+  with `fix: oasis setup --apply`.
 - Gentle Shell: agents may run `oasis setup` (the plan); the bash guard blocks `setup --apply` and
   any `setup` whose arguments it cannot read literally, like `migrate --apply`.
 - A linked worktree with no `oasis-workspace.toml` at or above it reads the workspace file its

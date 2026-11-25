@@ -276,6 +276,75 @@ class DoctorTests(unittest.TestCase):
         (self.root / 'dev/.env').unlink()
         self.assert_report(self.expected('FAIL env_file=missing\n  fix: oasis setup --apply'))
 
+    # -- the fix line of each FAIL, exactly (docs/checking-environment.md, the fix table) ------
+
+    def configuration_report(self, message, fix):
+        return (f'FAIL configuration={message}\n  fix: {fix}\n'
+                'PASS git=2.47.1\nPASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
+                'doctor_failures=1\n')
+
+    def test_no_workspace_file_is_fixed_by_setup(self):
+        self.workspace.unlink()
+        message = f'Missing tooling configuration: no oasis-workspace.toml at or above {self.root}.'
+        # The entry point lets doctor run in an unconfigured checkout, so its FAIL names setup.
+        result = self.doctor()
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (1, self.configuration_report(message, 'oasis setup --apply'), ''))
+        self.commands.unlink()
+        # The doctor tool itself, run with the selected root as the entry point would pass it.
+        env = dict(self.env, OASIS_PROJECT_ROOT=str(self.root), OASIS_ENTRYPOINT=str(CLI))
+        result = subprocess.run(['/bin/bash', str(ROOT / 'tools/doctor')], text=True, capture_output=True,
+                                cwd=self.root, env=env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (1, self.configuration_report(message, 'oasis setup --apply'), ''))
+        self.assertEqual(self.commands.read_text(), 'docker compose version\n')
+
+    def test_no_odoo_source_is_fixed_by_setup(self):
+        # No [tooling].community and no machine file (XDG_CONFIG_HOME is empty scratch).
+        self.workspace.write_text(self.workspace.read_text().replace("community = '../../source/odoo'\n", ''))
+        machine = Path(self.env['XDG_CONFIG_HOME']) / 'oasis/config.toml'
+        self.assertFalse(machine.exists())
+        self.assert_report(self.configuration_report(
+            f'No Odoo source for 19.0: create the machine file {machine} with community under '
+            f'[series."19.0"], or set [tooling].community in {self.workspace}.', 'oasis setup --apply'))
+        # The same refusal from a machine file without the series: setup adds it.
+        self.commands.unlink(missing_ok=True)
+        machine = self.machine_file('# no series yet\n')
+        self.assert_report(self.configuration_report(
+            f'No Odoo source for 19.0: set community under [series."19.0"] in the machine file {machine}, '
+            f'or [tooling].community in {self.workspace}.', 'oasis setup --apply'))
+
+    @unittest.skipIf(os.getuid() == 0, 'root reads any file')
+    def test_unreadable_compose_file_fails(self):
+        compose = self.root / 'dev/compose.yml'
+        compose.chmod(0)
+        self.addCleanup(compose.chmod, 0o644)
+        self.assert_report(self.expected(f'FAIL compose=unreadable\n  fix: make {compose} readable by you'))
+
+    def test_unavailable_environment_python_fails(self):
+        self.python.write_text('#!/bin/sh\nexit 1\n')
+        self.assert_report(self.expected('FAIL python=unavailable\n'
+                                         f'  fix: move {self.python.parent.parent} away, then oasis bootstrap --apply'))
+
+    def test_missing_odoo_release_fails(self):
+        (self.source / 'odoo/release.py').unlink()
+        self.assert_report(self.expected('FAIL odoo_release=missing\n'
+                                         f'  fix: set [tooling].community in {self.workspace} to an Odoo 19.0 source'))
+
+    def test_unwritable_logs_and_data_directories_fail_naming_the_path_to_fix(self):
+        # The default logs directory dev/logs/odoo19 does not exist; its nearest existing parent is
+        # a file, so that file is named.
+        blocker = self.root / 'dev/logs'
+        blocker.write_text('')
+        self.assert_report(self.expected(f'FAIL logs_dir=not_writable\n  fix: make {blocker} a directory you can write'))
+        blocker.unlink()
+        self.commands.unlink(missing_ok=True)
+        self.workspace_mode()
+        data = self.root.parents[1] / 'data'
+        data.write_text('')
+        self.assert_report(self.expected(extra=(f'FAIL data_dir=not_writable\n'
+                                                f'  fix: make {data} a directory you can write',)))
+
     def test_non_numeric_http_port_fails_without_a_traceback(self):
         for value in ('abc', '70000'):
             with self.subTest(value=value):
