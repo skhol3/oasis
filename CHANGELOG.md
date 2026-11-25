@@ -11,6 +11,19 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Added
 
+- `oasis doctor` prints `  fix: <command or action>` after every FAIL line (for example `oasis
+  setup --apply`, `oasis bootstrap --apply`, `fill ODOO_DB_PASSWORD in <env file>`); existing lines
+  and `doctor_failures` are unchanged.
+- `oasis doctor` shows where the layered values came from (`odoo_source_from=`,
+  `enterprise_source_from=`, `project_environment_from=`, `checkout_slug_from=`, with
+  `machine:<file>`, `workspace:<file>`, `checkout:<file>` or `derived`), and fails
+  `env_file=empty <names>` when `ODOO_DB_USER` or `ODOO_DB_PASSWORD` is empty (names only, never
+  values) or `env_file=unreadable`.
+- Series guard: a checkout whose module manifests declare a series-style version
+  (`<series>.x.y.z`) of another series than `odoo_version` is refused by every command (exit 2,
+  naming the module, both series and the fix); `doctor` reports it as `FAIL module_series=...`.
+  Manifests without such a version are ignored.
+- `postgres_default` in `tools/odoo_versions.py` (17 on 19.0); `oasis setup` writes that image.
 - `oasis setup` configures a checkout in one command (docs/setup.md). Without `--apply` it prints
   the plan and changes nothing (`--plan` asks for it explicitly); `--apply` creates only what is
   missing and keeps every existing file: the machine file's `[series."<x.y>"]` entry with the
@@ -55,6 +68,9 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- `oasis setup` gives a new `odoo.conf` or compose file the port of the one it keeps, reports
+  kept files whose ports disagree, and refuses `--no-enterprise` only when the machine entry has
+  Enterprise.
 - `bootstrap --apply` compiles the locks through `tools/locks.py compile`, the code `oasis setup
   --apply` uses; its output and messages are unchanged.
 - The Python environment may be any directory that is an environment (has `pyvenv.cfg`) or does

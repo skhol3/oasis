@@ -47,22 +47,50 @@ Without uv on PATH, `bootstrap` stops with exit 2: `uv is required to bootstrap 
 
 ## The doctor report
 
-`doctor` prints one `PASS|WARN|FAIL <check>[=<value>]` line per check, then `doctor_failures=<n>`, and exits 1 when `n > 0` (a `WARN` does not count), else 0. A check that needs another one is left out when that one failed.
+`doctor` prints one `PASS|WARN|FAIL <check>[=<value>]` line per check, then `doctor_failures=<n>`, and exits 1 when `n > 0` (a `WARN` does not count), else 0. A check that needs another one is left out when that one failed. Each `FAIL` line is followed by one indented line with the command or action that fixes it (only `FAIL` lines count):
+
+```text
+FAIL env_file=empty ODOO_DB_USER,ODOO_DB_PASSWORD
+  fix: fill ODOO_DB_USER and ODOO_DB_PASSWORD in /work/shop/.oasis/config/.env
+FAIL python=missing
+  fix: oasis bootstrap --apply
+```
+
+| Failure | `fix:` |
+| --- | --- |
+| `configuration`: the legacy profile | `oasis migrate --plan, then oasis migrate --apply` |
+| `configuration`: no workspace file, or no Odoo source; `odoo_conf=missing`, `compose=missing`, `env_file=missing` | `oasis setup --apply` |
+| `configuration`: any other error | `correct the setting the error names, then run oasis doctor again` |
+| `git` | `install git 2.31 or newer on PATH` |
+| `docker`, `docker_compose` | `install Docker with its compose plugin on PATH`; `install the Docker Compose plugin: docker compose version must succeed` |
+| `python=missing` | `oasis bootstrap --apply` |
+| `python=unavailable`, `python=<found> expected=<version>` | `move <environment> away, then oasis bootstrap --apply` |
+| `odoo_release` | `set community under [series."<x.y>"] in <machine file> to an Odoo <x.y> source`, or `set [tooling].community in <workspace file> ...`: the file the source came from |
+| `module_series` | `run oasis in a checkout of an Odoo <x.y> branch, or set the version of <module> to <x.y>.x.y.z ...` (see [Workspace file](workspace-file.md#discovery-precedence-and-versions)) |
+| `odoo_conf`, `compose`, `env_file` unreadable | `make <file> readable by you` |
+| `odoo_conf=invalid`; `compose=missing_top_level_name` | `correct the syntax of <odoo.conf>`; `add a top-level name: to <compose file>` |
+| `env_file=empty <names>` | `fill <names> in <env file>` |
+| `logs_dir`, `data_dir` | `make <directory> a directory you can write` (the directory, or its nearest existing parent) |
+| `http_port=invalid` | `set http_port in <odoo.conf> to a port number` |
+
+The entry point's name is the one that ran doctor (`odoo19` through the alias).
 
 | Check | Passes when | Otherwise |
 | --- | --- | --- |
 | `configuration` | the workspace file loads; the value is `workspace` | `FAIL configuration=<error>` (a checkout that still has the file of earlier versions gives the refusal that names `oasis migrate`, see [Migrating](migrating.md)); the checks after `proc` are left out |
 | `odoo_version` | always, when the configuration loads (only supported series load) | |
 | `agent_destructive` | always, when the configuration loads: the value of `[tooling].agent_destructive` (`ask`, `deny` or `allow`; `ask` when absent), see [Bash guard](bash-guard.md#the-setting) | an invalid value fails `configuration` |
+| `odoo_source_from`, `enterprise_source_from`, `project_environment_from`, `checkout_slug_from` | always, when the configuration loads, one line per layered value that is set: where it came from (`tools/config.py --origins`, see [Workspace file](workspace-file.md#what-the-tools-read-from-it)), as `machine:<machine file>`, `workspace:<workspace file>`, `checkout:<checkout>/oasis-checkout.toml` or `derived` (a linked worktree's slug from its directory name). No Enterprise, no slug: no line | |
 | `git` | `git --version` reports 2.31 or newer | `FAIL git=missing`, `FAIL git=<version> minimum=2.31` |
 | `docker`, `docker_compose` | `docker` is on PATH and `docker compose version` succeeds | `FAIL docker=missing` (no `docker_compose` line), `FAIL docker_compose=unavailable` |
 | `flock` | `flock` is on PATH | `WARN flock=missing`: the database service starts without the cross-checkout lock |
 | `proc` | `/proc` is mounted | `WARN proc=missing`: server records cannot tell a live server |
 | `python` | the environment's Python exists and reports the expected version (3.12, or the named environment's) | `FAIL python=missing`, `FAIL python=<found> expected=<version>` |
 | `odoo_release` | `odoo/release.py` of the Odoo source declares `odoo_version` | `FAIL odoo_release=<found> expected=<version>` |
+| `module_series` | no line when no module of the `addons_paths` declares another series than `odoo_version` (manifests without a series-style version are ignored) | `FAIL module_series=<found> module=<module> expected=<version>`; every other command refuses such a checkout (see [Workspace file](workspace-file.md#discovery-precedence-and-versions)) |
 | `odoo_conf` | odoo.conf exists and parses | `FAIL odoo_conf=missing\|unreadable\|invalid`; in a workspace checkout, `WARN odoo_conf=addons_path,data_dir` (the options it still holds that oasis passes on the command line) |
 | `compose` | the compose file declares a top-level `name:` | `FAIL compose=missing`, `FAIL compose=missing_top_level_name` |
-| `env_file` | the env file exists (never opened) | `FAIL env_file=missing` |
+| `env_file` | the env file exists, can be read, and does not assign an empty value to `ODOO_DB_USER` or `ODOO_DB_PASSWORD`, the database account `oasis setup` leaves empty for you (`NAME=`, `NAME=""`, `NAME=''`, also after `export` or before a ` # comment`; the last assignment counts). A file that does not assign them (another account's names) passes. Only the names are printed, never a value or a line | `FAIL env_file=missing`, `FAIL env_file=unreadable`, `FAIL env_file=empty <names>` |
 | `logs_dir`, `data_dir` | the directory, or its nearest existing parent, is writable; `data_dir` only with `[tooling].data_dir` | `FAIL logs_dir=not_writable` |
 | `http_port` | the port `start` would use is free, or is this checkout's running server (`server=this_checkout`) | `WARN http_port=<port> in_use` |
 

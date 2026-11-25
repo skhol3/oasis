@@ -9,6 +9,10 @@ Keys:
 - python_default: the Python of a workspace that sets [tooling].environment instead of named
   [environments] (a named environment declares its own); within the range above.
 - postgres_min: lowest supported PostgreSQL major version.
+- postgres_default: the PostgreSQL major version of the compose file `oasis setup` writes (the image
+  postgres:<version>); at or above postgres_min. 19.0: 17, a release with years of upstream support
+  left, while 13 (the minimum) reached its end of life in November 2025. A choice within the
+  supported range, not a value read from the 19.0 source (v0.14.0 L13).
 - second_port_option: the option of the second (gevent/longpolling) server port.
 - demo_off_args: the options that install without demo data. 19.0 loads no demo data unless
   --with-demo is given, but keeps the explicit off option the tools always passed: whether an
@@ -40,6 +44,7 @@ CAPABILITIES = {
         'python': ('3.10', '3.14'),
         'python_default': '3.12',
         'postgres_min': 13,
+        'postgres_default': 17,
         'second_port_option': '--gevent-port',
         'demo_off_args': ['--without-demo'],
         'test_tags_implies_stop': True,

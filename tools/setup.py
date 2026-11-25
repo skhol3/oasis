@@ -15,7 +15,6 @@ machine file, never to a new workspace file. The locks are compiled with tools/l
 bootstrap does, then the environment is created with uv and synced. The environment file gets only
 the variable names, with empty values: it is never read or printed.
 """
-import ast
 import hashlib
 import importlib.util
 import json
@@ -33,9 +32,14 @@ FLAG_OPTIONS = ('--apply', '--plan', '--no-enterprise')
 SOURCE_OPTIONS = ('--community', '--enterprise', '--no-enterprise')
 NAME = re.compile(r'[a-z][a-z0-9_]{1,19}')
 NAME_RULE = '2 to 20 lowercase letters, digits or underscores, starting with a letter'
-# An Odoo module version: <series>.<x>.<y>.<z> (<series>.1.0.0).
-MODULE_VERSION = re.compile(r'(\d+\.\d+)\.\d+\.\d+\.\d+')
 PORTS = range(5432, 5532)
+# The port an odoo.conf without db_port connects to: PostgreSQL's default.
+POSTGRES_PORT = 5432
+# A compose short-syntax entry that publishes the container's PostgreSQL port: `- '127.0.0.1:6001:5432'`,
+# `- "6001:5432"`, `- 6001:5432/tcp`, with an optional host address and trailing comment. Anything else
+# (the long syntax, ranges, variables) is not read; no YAML parser is used.
+PUBLISHED_PORT = re.compile(r'''\s*-\s*(["']?)(?:(?:[0-9]{1,3}(?:\.[0-9]{1,3}){3}|localhost|\[[0-9A-Fa-f:]*\]):)?'''
+                            r'''([0-9]{1,5}):5432(?:/tcp)?\1\s*(?:#.*)?''')
 LAYOUT = '.oasis'
 EXCLUDES = ('/oasis-workspace.toml', f'/{LAYOUT}/')
 DIRECTORY_MODE = 0o700
@@ -161,18 +165,14 @@ class Questions:
 
 def modules(root: Path) -> list[tuple[str, str | None]]:
     """(addon root relative to root, declared series or None) of every module manifest directly in
-    root or one directory below it; hidden directories are skipped."""
+    root or one directory below it; hidden directories are skipped. The series is read as the series
+    guard reads it (config.manifest_series: a series-style version of a known or plausible series)."""
     found = []
     for manifest in sorted([*root.glob('*/__manifest__.py'), *root.glob('*/*/__manifest__.py')]):
         if any(part.startswith('.') for part in manifest.relative_to(root).parts):
             continue
-        try:
-            data = ast.literal_eval(manifest.read_text(encoding='utf-8'))
-        except (OSError, UnicodeError, ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
-            data = None
-        version = data.get('version') if isinstance(data, dict) else None
-        match = MODULE_VERSION.fullmatch(version) if isinstance(version, str) else None
-        found.append((manifest.parent.parent.relative_to(root).as_posix(), match.group(1) if match else None))
+        declared = config.manifest_series(manifest)
+        found.append((manifest.parent.parent.relative_to(root).as_posix(), declared[0] if declared else None))
     return found
 
 
@@ -262,8 +262,12 @@ def choose_sources(root, series, options, machine, questions):
             raise Refused(f'The machine file {path} has {table} without community; setup never edits an '
                           'existing entry: add community there yourself.')
         for key, flag in (('community', '--community'), ('enterprise', '--enterprise'), ('enterprise', '--no-enterprise')):
-            if flag in options and (flag == '--no-enterprise' or key not in values
-                                    or str(Path(options[flag]).resolve()) != values[key]):
+            # Only a flag that disagrees with the entry is refused: --no-enterprise against an entry with
+            # Enterprise, a path against an entry without that key or with another path.
+            if flag not in options:
+                continue
+            if (key in values if flag == '--no-enterprise'
+                    else key not in values or str(Path(options[flag]).resolve()) != values[key]):
                 state = f'already sets {key} for {series}' if key in values else f'has {table} without {key}'
                 raise Refused(f'The machine file {path} {state}; setup never edits an existing entry: drop {flag}, '
                               'or change the machine file yourself.')
@@ -416,6 +420,11 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
         if reason:
             raise Refused(f'Refusing to write {workspace}: {reason}.')
         series, series_origin = choose_series(root, options, machine[2], questions)
+        roots = sorted({addon_root for addon_root, _series in modules(root)} or {'.'},
+                       key=lambda item: (item != '.', item))
+        # The series guard of the configuration about to be written, before any question (S11).
+        guarded({'ODOO_VERSION': series, 'PROJECT_ROOT': str(root), 'WORKSPACE_ROOT': str(directory),
+                 'ADDON_ROOTS': '\n'.join(str((root / item).resolve()) for item in roots)})
         community, enterprise, origin, machine_lines, machine_actions, environments = choose_sources(
             root, series, options, machine, questions)
         if '--name' in options:
@@ -431,8 +440,6 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                   f'enterprise: {enterprise or "none"} ({origin[1]})', f'workspace: {directory} (new)', *machine_lines]
         actions += machine_actions
         layout = f'{LAYOUT}/' if directory == root else ''
-        roots = sorted({addon_root for addon_root, _series in modules(root)} or {'.'},
-                       key=lambda item: (item != '.', item))
         tooling = {'environment': f'{environments}/{name}' if environments else f'{layout}venv',
                    'config': f'{layout}config/odoo.conf', 'env_file': f'{layout}config/.env',
                    'compose': f'{layout}config/compose.yml', 'requirements': f'{layout}config/requirements',
@@ -463,10 +470,30 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                                     original + (b'\n' if original and not original.endswith(b'\n') else b'') + addition))
                 else:
                     actions += [*directories(exclude.parent, planned), ('create', exclude, addition, 0o644)]
+    guarded(values)
     plan = {'root': root, 'workspace': workspace, 'values': values, 'lines': lines, 'actions': actions,
             'after': [], 'created': set(), 'new': new}
     gaps(plan, directory, planned)
     return plan
+
+
+def guarded(values: dict):
+    """Refuse a configuration whose modules declare another Odoo series (config.series_mismatch, S11)."""
+    mismatch = config.series_mismatch(values)
+    if mismatch is not None:
+        raise Refused(config.series_refusal(mismatch, values))
+
+
+def published_port(compose: Path) -> int | None:
+    """The one host port the compose file publishes to 5432 (PUBLISHED_PORT), or None: none, several
+    different ones, or an unreadable file."""
+    try:
+        lines = compose.read_text(encoding='utf-8').splitlines()
+    except (OSError, UnicodeError):
+        return None
+    ports = {int(match.group(2)) for line in lines if (match := PUBLISHED_PORT.fullmatch(line))}
+    ports = {port for port in ports if 1 <= port <= 65535}
+    return ports.pop() if len(ports) == 1 else None
 
 
 def gaps(plan: dict, directory: Path, planned: set):
@@ -483,26 +510,43 @@ def gaps(plan: dict, directory: Path, planned: set):
         plan['created'].add(key)
 
     conf, compose, env_file = (Path(values[key]) for key in ('ODOO_CONFIG', 'COMPOSE_FILE', 'ENV_FILE'))
-    port = None
+    # One port for both files: a new one takes the port of the one that is kept (odoo.conf's db_port,
+    # PostgreSQL's default without one; the port the compose file publishes to 5432); two kept files
+    # that disagree are reported; only without either is a free port chosen.
+    conf_port = compose_port = None
     if conf.exists():
         reader = sibling('odoo_addons_path')
         try:
-            # Only db_port is read: the compose file then publishes the port odoo.conf connects to.
-            port = int(reader.read_option(conf, 'db_port') or '')
+            # Only db_port is read, never the rest of odoo.conf.
+            conf_port = int(reader.read_option(conf, 'db_port') or POSTGRES_PORT)
         except (ValueError, reader.ConfError):
-            port = None
-    if port is None and not (conf.exists() and compose.exists()):
+            conf_port = None
+    if compose.exists():
+        compose_port = published_port(compose)
+    port, unread = None, False
+    if conf.exists() and not compose.exists():
+        port = conf_port if conf_port is not None else free_port()
+    elif compose.exists() and not conf.exists():
+        port, unread = (compose_port, False) if compose_port is not None else (free_port(), True)
+    elif not conf.exists():
         port = free_port()
     series = values['ODOO_VERSION']
-    postgres = config.versions().capability(series, 'postgres_min')
+    postgres = config.versions().capability(series, 'postgres_default')
     name = values['DEV_PREFIX'][:-len('_dev_')].lower().replace('_', '-')
     compose_name = f'oasis-{name}-{hashlib.sha256(str(directory).encode()).hexdigest()[:6]}'
     service = values['DB_SERVICE']
     create(conf, CONF.format(env_file=env_file, port=port), 0o600,
            f'create {conf} (mode 0600): path-free; db_port {port}; db_user and db_password empty', 'conf')
+    if unread:
+        lines.append(f'check {conf}: no port published to 5432 found in {compose}; set db_port {port} to the port '
+                     'it publishes')
     create(compose, COMPOSE.format(name=compose_name, service=service, postgres=postgres, port=port), 0o644,
            f'create {compose}: PostgreSQL {postgres} (postgres:{postgres}) as service {service} on '
            f'127.0.0.1:{port}, compose project {compose_name}', 'compose')
+    if 'conf' not in plan['created'] and 'compose' not in plan['created'] and None not in (conf_port, compose_port) \
+            and conf_port != compose_port:
+        lines.append(f'mismatch: {conf} connects to port {conf_port} but {compose} publishes {compose_port}: make '
+                     'them the same')
     create(env_file, ENV_FILE, 0o600, f'create {env_file} (mode 0600): ODOO_DB_USER and ODOO_DB_PASSWORD, empty',
            'env')
     requirements = Path(values['REQUIREMENTS_DIR'])

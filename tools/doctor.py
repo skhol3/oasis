@@ -2,11 +2,15 @@
 """Check the environment contract of a checkout up front, read-only (`oasis doctor`).
 
 One `PASS|WARN|FAIL <check>[=<value>]` line per check on stdout, then `doctor_failures=<n>`;
-exit 1 when n > 0, else 0 (a WARN does not count). Doctor never starts a service, never
-connects to a database and never prints file contents: files are tested for existence, parsed
-for the one fact a check needs, or not opened at all (env_file). The only external programs it
-runs are `git --version`, `docker compose version` and the environment's Python (its version);
-tools are found on PATH, like `command -v`, never through a tool manager.
+exit 1 when n > 0, else 0 (a WARN does not count). Every FAIL line is followed by
+`  fix: <command or action>`, what fixes it (v0.14.0 S1). After the configuration lines, one
+`PASS <value>_from=<origin>` line per layered value says where it came from (`machine:<file>`,
+`workspace:<file>`, `checkout:<file>` or `derived`; S2). Doctor never starts a service, never
+connects to a database and never prints file contents: files are tested for existence or parsed
+for the one fact a check needs (the env file: which of the database account's variables are
+empty, never their values; module manifests: their series-style version, S11). The only external
+programs it runs are `git --version`, `docker compose version` and the environment's Python (its
+version); tools are found on PATH, like `command -v`, never through a tool manager.
 
 A check that needs another one is left out when that one failed: every configuration check
 when the configuration does not load, `docker_compose` without docker, `http_port` when the
@@ -31,6 +35,10 @@ DEFAULT_HTTP_PORT = 8069
 LINKED_PORT_RANGE = 50
 TOP_LEVEL_NAME = re.compile(r'''^(?:name|"name"|'name')\s*:(.*)$''')
 EMPTY_VALUES = ('', '""', "''", '~', 'null')
+# The variables of the database account `oasis setup` writes, empty, to the env file (S7): a FAIL when
+# one is assigned an empty value. An env file that does not assign them (other names) is not judged.
+ACCOUNT_VARIABLES = ('ODOO_DB_USER', 'ODOO_DB_PASSWORD')
+ENV_ASSIGNMENT = re.compile(r'\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)')
 
 
 def sibling(name: str):
@@ -47,8 +55,6 @@ class Report:
 
     def line(self, level: str, check: str, value: str = ''):
         print(f'{level} {check}' + (f'={value}' if value else ''))
-        if level == 'FAIL':
-            self.failures += 1
         return level != 'FAIL'
 
     def check(self, check: str, value: str = ''):
@@ -57,8 +63,12 @@ class Report:
     def warn(self, check: str, value: str = ''):
         return self.line('WARN', check, value)
 
-    def fail(self, check: str, value: str = ''):
-        return self.line('FAIL', check, value)
+    def fail(self, check: str, value: str, fix: str):
+        """A FAIL line, then the command or action that fixes it."""
+        self.failures += 1
+        self.line('FAIL', check, value)
+        print(f'  fix: {fix}')
+        return False
 
 
 def probe(argv: list[str]) -> str | None:
@@ -77,39 +87,43 @@ def version_numbers(text: str) -> tuple[int, ...] | None:
 
 
 def check_git(report: Report):
-    if shutil.which('git') is None:
-        return report.fail('git', 'missing')
-    found = version_numbers(probe(['git', '--version']) or '')
     minimum = '.'.join(map(str, GIT_MINIMUM))
+    fix = f'install git {minimum} or newer on PATH'
+    if shutil.which('git') is None:
+        return report.fail('git', 'missing', fix)
+    found = version_numbers(probe(['git', '--version']) or '')
     if found is None:
-        return report.fail('git', f'unknown minimum={minimum}')
+        return report.fail('git', f'unknown minimum={minimum}', fix)
     shown = '.'.join(map(str, found))
     if found[:2] < GIT_MINIMUM:
-        return report.fail('git', f'{shown} minimum={minimum}')
+        return report.fail('git', f'{shown} minimum={minimum}', fix)
     return report.check('git', shown)
 
 
 def check_docker(report: Report):
     if shutil.which('docker') is None:
-        return report.fail('docker', 'missing')
+        return report.fail('docker', 'missing', 'install Docker with its compose plugin on PATH')
     report.check('docker')
     output = probe(['docker', 'compose', 'version'])
     if output is None:
-        return report.fail('docker_compose', 'unavailable')
+        return report.fail('docker_compose', 'unavailable',
+                           'install the Docker Compose plugin: docker compose version must succeed')
     found = version_numbers(output)
     return report.check('docker_compose', '.'.join(map(str, found)) if found else '')
 
 
-def check_python(report: Report, values: dict, versions):
+def check_python(report: Report, values: dict, versions, program: str):
     python, expected = values['PYTHON'], values['PYTHON_VERSION']
     if not os.path.lexists(python):
-        return report.fail('python', 'missing')
+        return report.fail('python', 'missing', f'{program} bootstrap --apply')
+    # bootstrap refuses an existing environment with another Python: it must be moved away first.
+    recreate = f'move {values["PROJECT_ENVIRONMENT"]} away, then {program} bootstrap --apply'
     output = probe([python, '-c', PYTHON_PROBE])
     found = (output or '').strip()
     if not found:
-        return report.fail('python', 'unavailable')
+        return report.fail('python', 'unavailable', recreate)
     if found != expected or not versions.python_supported(values['ODOO_VERSION'], found):
-        return report.fail('python', f'{found} expected={expected}')
+        return report.fail('python', f'{found} expected={expected}', recreate)
     return report.check('python', found)
 
 
@@ -129,55 +143,96 @@ def declared_release(path: Path) -> str | None:
     return None
 
 
-def check_release(report: Report, values: dict):
+def check_release(report: Report, values: dict, source_fix: str):
+    """source_fix: where to point the community source at the right series (its origin's file)."""
     path = Path(values['ODOO_SOURCE']) / 'odoo' / 'release.py'
     expected = values['ODOO_VERSION']
     if not path.is_file():
-        return report.fail('odoo_release', 'missing')
+        return report.fail('odoo_release', 'missing', source_fix)
     found = declared_release(path)
     if found != expected:
-        return report.fail('odoo_release', f'{found or "unknown"} expected={expected}')
+        return report.fail('odoo_release', f'{found or "unknown"} expected={expected}', source_fix)
     return report.check('odoo_release', found)
 
 
-def check_conf(report: Report, values: dict, conf_reader):
+def check_module_series(report: Report, values: dict, config):
+    """One FAIL when a module of the addons paths declares another Odoo series (S11); no line otherwise."""
+    mismatch = config.series_mismatch(values)
+    if mismatch is None:
+        return True
+    expected = values['ODOO_VERSION']
+    return report.fail('module_series', f'{mismatch["series"]} module={mismatch["module"]} expected={expected}',
+                       config.series_fix(mismatch, expected))
+
+
+def check_conf(report: Report, values: dict, conf_reader, program: str):
     """odoo.conf exists and parses, and holds no location options (oasis passes them)."""
     conf = values['ODOO_CONFIG']
     if not os.path.exists(conf):
-        return report.fail('odoo_conf', 'missing')
+        return report.fail('odoo_conf', 'missing', f'{program} setup --apply')
     try:
         present = [option for option in LOCATION_OPTIONS if conf_reader.read_option(conf, option) is not None]
     except conf_reader.ConfError as exc:
-        return report.fail('odoo_conf', 'unreadable' if isinstance(exc.__cause__, OSError) else 'invalid')
+        if isinstance(exc.__cause__, OSError):
+            return report.fail('odoo_conf', 'unreadable', f'make {conf} readable by you')
+        return report.fail('odoo_conf', 'invalid', f'correct the syntax of {conf}')
     if present:
         return report.warn('odoo_conf', ','.join(present))
     return report.check('odoo_conf')
 
 
-def check_compose(report: Report, values: dict):
+def check_compose(report: Report, values: dict, program: str):
     """The compose file declares a top-level `name:`, so every checkout shares one project name."""
     path = Path(values['COMPOSE_FILE'])
     if not path.exists():
-        return report.fail('compose', 'missing')
+        return report.fail('compose', 'missing', f'{program} setup --apply')
     try:
         lines = path.read_text(encoding='utf-8').splitlines()
     except (OSError, UnicodeError):
-        return report.fail('compose', 'unreadable')
+        return report.fail('compose', 'unreadable', f'make {path} readable by you')
     for line in lines:
         match = TOP_LEVEL_NAME.match(line)
         if match and re.sub(r'\s+#.*$', '', match.group(1)).strip() not in EMPTY_VALUES:
             return report.check('compose')
-    return report.fail('compose', 'missing_top_level_name')
+    return report.fail('compose', 'missing_top_level_name', f'add a top-level name: to {path}')
+
+
+def empty_value(raw: str) -> bool:
+    """Whether an env file value is empty: nothing, `""` or `''`, before an optional ` # comment`."""
+    return re.sub(r'\s+#.*$', '', raw).strip() in ('', '""', "''")
+
+
+def check_env_file(report: Report, values: dict, program: str):
+    """The env file exists, can be read, and assigns no empty value to ACCOUNT_VARIABLES (S7). Only
+    the variable names are ever printed, never a value or a line of the file."""
+    path = values['ENV_FILE']
+    if not os.path.exists(path):
+        return report.fail('env_file', 'missing', f'{program} setup --apply')
+    try:
+        text = Path(path).read_bytes().decode('utf-8', errors='replace')
+    except OSError:
+        return report.fail('env_file', 'unreadable', f'make {path} readable by you')
+    empty = {}
+    for line in text.splitlines():
+        match = ENV_ASSIGNMENT.fullmatch(line)
+        if match and match.group(1) in ACCOUNT_VARIABLES:
+            # The last assignment wins, as docker compose reads the file.
+            empty[match.group(1)] = empty_value(match.group(2))
+    names = [name for name in ACCOUNT_VARIABLES if empty.get(name)]
+    if names:
+        return report.fail('env_file', 'empty ' + ','.join(names), f'fill {" and ".join(names)} in {path}')
+    return report.check('env_file')
 
 
 def check_writable(report: Report, check: str, directory: Path):
     """The directory, or its nearest existing parent when it does not exist yet, is writable."""
+    candidate = directory
     for candidate in (directory, *directory.parents):
         if os.path.lexists(candidate):
             if candidate.is_dir() and os.access(candidate, os.W_OK | os.X_OK):
                 return report.check(check)
             break
-    return report.fail(check, 'not_writable')
+    return report.fail(check, 'not_writable', f'make {candidate} a directory you can write')
 
 
 def own_server_port(state, root: str) -> int | None:
@@ -211,7 +266,7 @@ def check_port(report: Report, values: dict, conf_reader, state):
         interface = conf_reader.option_value(conf, 'http_interface')
         configured = int(conf_reader.option_value(conf, 'http_port') or DEFAULT_HTTP_PORT)
     except conf_reader.ConfError:
-        return report.fail('http_port', 'invalid')
+        return report.fail('http_port', 'invalid', f'set http_port in {conf} to a port number')
     own = own_server_port(state, values['PROJECT_ROOT'])
     linked = values.get('CHECKOUT_KIND') == 'linked'
     if own is not None and (linked or own == configured):
@@ -236,12 +291,58 @@ def usage() -> str:
 
 HELP = '''
 Checks the environment contract of this checkout, read-only: the configuration (the workspace
-file; a legacy profile is one FAIL naming oasis migrate) and its agent_destructive setting, git 2.31 or newer, docker and `docker compose version`, flock, /proc, the
-environment's Python, the Odoo source release, odoo.conf, the compose file's top-level name,
-the env file (existence only), the logs and data directories, and the HTTP port.
-Prints PASS|WARN|FAIL <check>[=<value>] per check and doctor_failures=<n>; exit 1 when n > 0.
-Never starts services, connects to a database or prints file contents.
+file; a legacy profile is one FAIL naming oasis migrate), its agent_destructive setting and where
+its layered values came from (machine, workspace or checkout file, or derived), git 2.31 or newer,
+docker and `docker compose version`, flock, /proc, the environment's Python, the Odoo source
+release, the series of the module manifests, odoo.conf, the compose file's top-level name, the env
+file (exists, and the database account's variables are not empty), the logs and data directories,
+and the HTTP port.
+Prints PASS|WARN|FAIL <check>[=<value>] per check, `  fix: <command or action>` after each FAIL,
+and doctor_failures=<n>; exit 1 when n > 0.
+Never starts services, connects to a database or prints file contents or values.
 '''
+
+
+def configuration_fix(config, root: Path, message: str) -> str:
+    """What fixes a configuration that does not load: migrate for a legacy profile, setup for a
+    missing workspace file or source, else the setting the error names."""
+    program = config.program_name()
+    if (root / config.PROFILE_NAME).is_file():
+        return f'{program} migrate --plan, then {program} migrate --apply'
+    if config.workspace_file(root) is None:
+        return f'{program} setup --apply'
+    try:
+        refusal = config.layered_configuration(root)[5]
+    except ValueError:
+        refusal = None
+    if refusal is not None and message == ' '.join(refusal.split()):
+        return f'{program} setup --apply'
+    return f'correct the setting the error names, then run {program} doctor again'
+
+
+def show_origins(report: Report, config, root: Path, values: dict) -> dict:
+    """One PASS line per layered value with its origin (config.py --origins, S2); the origins."""
+    try:
+        found = config.origins(root)
+    except ValueError:
+        return {}
+    places = {'machine': f'machine:{found["MACHINE_FILE"]}',
+              'workspace': f'workspace:{Path(values["WORKSPACE_ROOT"]) / config.WORKSPACE_NAME}',
+              'checkout': f'checkout:{root / config.CHECKOUT_NAME}', 'derived': 'derived'}
+    for key in ('ODOO_SOURCE_FROM', 'ENTERPRISE_SOURCE_FROM', 'PROJECT_ENVIRONMENT_FROM', 'CHECKOUT_SLUG_FROM'):
+        if found.get(key):
+            report.check(key.lower(), places[found[key]])
+    return found
+
+
+def source_fix(values: dict, found: dict, config) -> str:
+    """Where to set the community source of the series: the file it came from."""
+    series = values['ODOO_VERSION']
+    if found.get('ODOO_SOURCE_FROM') == 'machine':
+        return (f'set community under [series."{series}"] in {found["MACHINE_FILE"]} to an Odoo {series} '
+                'source')
+    return (f'set [tooling].community in {Path(values["WORKSPACE_ROOT"]) / config.WORKSPACE_NAME} to an Odoo '
+            f'{series} source')
 
 
 def main(arguments: list[str]) -> int:
@@ -257,15 +358,20 @@ def main(arguments: list[str]) -> int:
         print(f'ERROR: {config.PROJECT_ROOT_REQUIRED}', file=sys.stderr)
         return 2
     report = Report()
+    program = config.program_name()
+    found = {}
     try:
-        values = config.load(root)
+        # The series guard is a check of its own here (module_series), not a configuration failure.
+        values = config.load(root, series_guard=False)
     except ValueError as exc:
         values = None
-        report.fail('configuration', ' '.join(str(exc).split()))
+        message = ' '.join(str(exc).split())
+        report.fail('configuration', message, configuration_fix(config, root, message))
     else:
         report.check('configuration', 'workspace')
         report.check('odoo_version', values['ODOO_VERSION'])
         report.check('agent_destructive', values['AGENT_DESTRUCTIVE'])
+        found = show_origins(report, config, root, values)
     check_git(report)
     check_docker(report)
     if shutil.which('flock') is None:
@@ -278,14 +384,12 @@ def main(arguments: list[str]) -> int:
         report.warn('proc', 'missing')
     if values is not None:
         conf_reader = sibling('odoo_addons_path')
-        check_python(report, values, config.versions())
-        check_release(report, values)
-        conf_ok = check_conf(report, values, conf_reader)
-        check_compose(report, values)
-        if os.path.exists(values['ENV_FILE']):
-            report.check('env_file')
-        else:
-            report.fail('env_file', 'missing')
+        check_python(report, values, config.versions(), program)
+        check_release(report, values, source_fix(values, found, config))
+        check_module_series(report, values, config)
+        conf_ok = check_conf(report, values, conf_reader, program)
+        check_compose(report, values, program)
+        check_env_file(report, values, program)
         logs = Path(values['LOGS_DIR']) if values['LOGS_DIR'] else root / 'dev' / 'logs' / 'odoo19'
         check_writable(report, 'logs_dir', logs)
         if values['DATA_DIR']:

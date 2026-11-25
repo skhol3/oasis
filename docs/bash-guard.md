@@ -9,8 +9,8 @@ first (ask), or only the user can run it (deny).
 flowchart TD
     A["Agent bash command"] --> B{"Text bash would run?"}
     B -->|"no: single-quoted text, a comment,<br/>a heredoc body no command reads"| OK["Runs"]
-    B -->|yes| C{"worktree-init, migrate or menu<br/>through oasis, odoo19 or their scripts?"}
-    C -->|yes| D{"Only --help or -h,<br/>or migrate --plan?"}
+    B -->|yes| C{"worktree-init, migrate, setup or menu<br/>through oasis, odoo19 or their scripts?"}
+    C -->|yes| D{"Only --help or -h, migrate --plan,<br/>or setup without --apply, every argument literal?"}
     D -->|yes| ASK
     D -->|no| X["Blocked in every session:<br/>only the user runs it"]
     C -->|no| E{"Session inside an Odoo project<br/>and odoo-bin, dropdb or psql?"}
@@ -31,7 +31,7 @@ flowchart TD
 |------|----------|--------------|
 | Allow | Every other `oasis`/`odoo19` command: `test-module`, `verify-module`, `install-module`, `update-module`, `create-database`, `start`, `restart`, `stop` and `stop --force` (this checkout's server), `status`, `gc`, `gc --apply`, `gc --trash` (the list), `trash`, `trash restore`, ...; any command's `--help` or `-h` alone | Runs |
 | Ask | `drop-database <name>`, `stop --database`, `gc --apply --trash`; changes to the files that hold the setting and to the machine file (see [The setting files](#the-setting-files)) | Runs after the user confirms it in a dialog (see [The dialog](#the-dialog)), unless `[tooling].agent_destructive` says `deny` or `allow` |
-| Deny | `worktree-init`, `migrate` (except `--plan`), `menu` in every session; direct `odoo-bin`, `dropdb` and `psql` in Odoo projects | Blocked; only the user runs it |
+| Deny | `worktree-init`, `migrate` (except `--plan`), `setup --apply` (and a `setup` whose arguments are not literal), `menu` in every session; direct `odoo-bin`, `dropdb` and `psql` in Odoo projects | Blocked; only the user runs it |
 
 The ask commands are recognized through `oasis` and `odoo19` (also as `python3 -B <path>/oasis`,
 behind `sudo`, `env`, `timeout` and the other wrappers, inside `bash -c`, `eval` or `$(...)`) and
@@ -49,7 +49,7 @@ git top level of the directory it runs in, and the guard judges it against that 
 A command line is judged on every command it holds, not only the first denied one: `psql -l;
 oasis --project /p migrate --apply` is blocked outside an Odoo project too, because `migrate` is
 user-run in every session. In an Odoo project the reason names the first denied program, as
-before; outside one, the first user-run tool (`worktree-init`, `migrate`, `menu`). A line whose
+before; outside one, the first user-run tool (`worktree-init`, `migrate`, `setup`, `menu`). A line whose
 only denied programs are `odoo-bin`, `dropdb` or `psql` still runs outside Odoo projects.
 
 ## The dialog
@@ -176,6 +176,11 @@ A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in O
 In every session it also blocks the agent from running `worktree-init` (through `oasis` or `odoo19`, `tools/worktree-init` or `worktree_init.py`, `--dry-run` included) `migrate` (through `oasis` or `odoo19`, or `tools/migrate` and `tools/migrate.py`, the dry run included) and `menu` (through `oasis` or `odoo19`, or its scripts `tools/menu` and `tools/actions.py` when they are oasis's, `--catalog` included; see [Action menu](action-menu.md) for how a script is recognized), which only the user runs; asking only for their help (`--help` or `-h` as the single argument) is allowed, and so is the migration plan: `migrate --plan`, optionally with `--workspace <literal absolute path>` and nothing else.
 
 `--plan` can never apply, because the tool refuses it together with `--apply`.
+
+`setup` (through `oasis` or `odoo19`, or its scripts `tools/setup` and `tools/setup.py`, recognized like the menu's: an oasis tree's, or the installed bundle's spelling, since `setup` and `setup.py` are common names) writes the project's and the machine's configuration with `--apply`, so the agent may only read its plan:
+
+- Allowed: `setup` with no `--apply` and every argument literal (`oasis setup`, `oasis setup --plan`, `oasis --project /p setup --community /src/odoo --no-enterprise`), redirections to a file descriptor aside. A bare `--` is allowed too: setup refuses it as a usage error (exit 2) and changes nothing.
+- Blocked: `--apply`, `--apply=<value>` and every abbreviation of it from `--a` (which setup refuses anyway, as it never takes abbreviations), and any argument that is not literal (`oasis setup $ARGS`, `` oasis setup `echo --apply` ``, a glob), since it could expand to `--apply`. The reason asks the agent to have the user run `oasis setup --apply` in a terminal.
 
 ## What it does not catch
 

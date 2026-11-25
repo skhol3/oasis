@@ -28,7 +28,8 @@ RELEASE = "version_info = (19, 0, 0, 'final', 0, '')\n"
 MANIFEST = "{'name': 'Shop Sale', 'version': '19.0.1.0.0', 'depends': ['sale']}\n"
 MARKER = 'setup-must-not-print-this'
 # A fake uv: records `uv <args> (in <cwd>)`, writes the lock `pip compile ... -o <lock>` names, and
-# makes `venv --python <v> <target>` an environment (pyvenv.cfg and bin/python).
+# makes `venv --python <v> <target>` an environment (pyvenv.cfg and bin/python). FAKE_COMPILE_FAIL,
+# FAKE_VENV_FAIL (exit 3) and FAKE_SYNC_FAIL (exit 4) make that step fail.
 UV = '''#!/bin/sh
 printf 'uv %s (in %s)\\n' "$*" "$PWD" >> "$FAKE_LOG"
 case "$1 $2" in
@@ -41,10 +42,13 @@ case "$1 $2" in
     if [ -n "${FAKE_COMPILE_FAIL:-}" ]; then echo 'error: No solution found' >&2; exit 1; fi
     printf '# fake lock\\n' > "$output" ;;
   'venv --python')
+    if [ -n "${FAKE_VENV_FAIL:-}" ]; then echo 'error: no interpreter' >&2; exit 3; fi
     mkdir -p "$4/bin"
     echo 'home = /usr/bin' > "$4/pyvenv.cfg"
     printf '#!/bin/sh\\necho 3.12\\n' > "$4/bin/python"
     chmod +x "$4/bin/python" ;;
+  'pip sync')
+    if [ -n "${FAKE_SYNC_FAIL:-}" ]; then echo 'error: no index' >&2; exit 4; fi ;;
 esac
 exit 0
 '''
@@ -160,7 +164,7 @@ class SetupTests(unittest.TestCase):
                          '(this clone only; .gitignore unchanged)')
         lines += [
             f'create {config / "odoo.conf"} (mode 0600): path-free; db_port {port}; db_user and db_password empty',
-            f'create {config / "compose.yml"}: PostgreSQL 13 (postgres:13) as service db on 127.0.0.1:{port}, '
+            f'create {config / "compose.yml"}: PostgreSQL 17 (postgres:17) as service db on 127.0.0.1:{port}, '
             f'compose project {self.compose_name(directory)}',
             f'create {config / ".env"} (mode 0600): ODOO_DB_USER and ODOO_DB_PASSWORD, empty',
             f'create {config / "requirements/runtime.in"}: -r {self.source}/requirements.txt',
@@ -203,7 +207,7 @@ class SetupTests(unittest.TestCase):
         usage = (f'Usage: {CLI} setup [--series <x.y>] [--community <dir>] [--enterprise <dir> | --no-enterprise] '
                  '[--workspace <dir>] [--name <name>] [--apply | --plan]\n')
         for args in (('--apply', '--plan'), ('--plan', '--apply'), ('--enterprise', '/x', '--no-enterprise'),
-                     ('--app',), ('--community',), ('--apply', '--apply'), ('extra',)):
+                     ('--app',), ('--community',), ('--apply', '--apply'), ('extra',), ('--',), ('--a',)):
             with self.subTest(args=args):
                 result = self.setup_cmd(*args)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', usage))
@@ -247,7 +251,7 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn('data_dir', conf.split('[options]')[1])
         self.assertEqual((config / 'odoo.conf').stat().st_mode & 0o777, 0o600)
         compose = (config / 'compose.yml').read_text()
-        for line in (f'name: {self.compose_name()}\n', '    image: postgres:13\n',
+        for line in (f'name: {self.compose_name()}\n', '    image: postgres:17\n',
                      f"      - '127.0.0.1:{port}:5432'\n", '      POSTGRES_USER: ${ODOO_DB_USER}\n',
                      '      ODOO_DB_PASSWORD: ${ODOO_DB_PASSWORD}\n', '      POSTGRES_DB: postgres\n'):
             self.assertIn(line, compose)
@@ -495,6 +499,198 @@ class SetupTests(unittest.TestCase):
         self.assert_refused(self.setup_cmd('--name', '9x', '--community', str(self.source), '--no-enterprise'),
                             'Invalid --name 9x: use 2 to 20 lowercase letters, digits or underscores, starting '
                             'with a letter.', before)
+
+
+    # -- review follow-ups (review-f6708244dde86835) and the series guard (S11) ----------------
+
+    def existing_workspace(self, community=True):
+        """A workspace file in work/ (above the checkout) with config/ paths and envs/shop."""
+        project = self.scratch / 'work'
+        (project / 'config').mkdir(exist_ok=True)
+        source = f"community = '{self.source}'\n" if community else ''
+        (project / 'oasis-workspace.toml').write_text(
+            f"workspace_version = 1\nodoo_version = '19.0'\n\n[tooling]\n{source}"
+            "environment = 'envs/shop'\nconfig = 'config/odoo.conf'\nenv_file = 'config/.env'\n"
+            "compose = 'config/compose.yml'\nrequirements = 'config/requirements'\naddons_paths = ['.']\n"
+            "db_service = 'db'\ndev_prefix = 'shop_dev_'\ntest_prefix = 'shop_test_'\n")
+        return project
+
+    def test_a_new_odoo_conf_takes_the_port_the_kept_compose_file_publishes(self):
+        project = self.existing_workspace()
+        compose = project / 'config/compose.yml'
+        conf = project / 'config/odoo.conf'
+        for published in ("      - '127.0.0.1:6001:5432'", '      - "6001:5432"', '      - 6001:5432/tcp  # db'):
+            with self.subTest(published=published):
+                compose.write_text(f'name: mine\nservices:\n  db:\n    ports:\n{published}\n')
+                result = self.setup_cmd()
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                self.assertIn(f'kept {compose}\n', result.stdout)
+                self.assertIn(f'create {conf} (mode 0600): path-free; db_port 6001; db_user and db_password '
+                              'empty\n', result.stdout)
+        # No port published to 5432 that the narrow pattern reads: a free port, and the plan says so.
+        compose.write_text('name: mine\nservices:\n  db:\n    ports:\n      - target: 5432\n        published: 6001\n')
+        result = self.setup_cmd()
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        port = self.port_of(result.stdout)
+        self.assertIn(f'check {conf}: no port published to 5432 found in {compose}; set db_port {port} to the '
+                      'port it publishes\n', result.stdout)
+
+    def test_a_new_compose_file_publishes_the_port_the_kept_odoo_conf_connects_to(self):
+        project = self.existing_workspace()
+        conf = project / 'config/odoo.conf'
+        compose = project / 'config/compose.yml'
+        for options, port in (('db_port = 6002\n', 6002), ('db_host = 127.0.0.1\n', 5432)):
+            with self.subTest(options=options):
+                conf.write_text(f'[options]\n{options}admin_passwd = {MARKER}\n')
+                result = self.setup_cmd()
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                self.assertIn(f'kept {conf}\n', result.stdout)
+                self.assertIn(f'create {compose}: PostgreSQL 17 (postgres:17) as service db on 127.0.0.1:{port}, ',
+                              result.stdout)
+                self.assertNotIn(MARKER, result.stdout)
+
+    def test_a_kept_odoo_conf_and_compose_file_that_disagree_are_reported(self):
+        project = self.existing_workspace()
+        conf = project / 'config/odoo.conf'
+        compose = project / 'config/compose.yml'
+        compose.write_text("name: mine\nservices:\n  db:\n    ports:\n      - '127.0.0.1:6001:5432'\n")
+        for options, port in (('db_port = 6543\n', 6543), ('', 5432)):
+            with self.subTest(options=options):
+                conf.write_text(f'[options]\n{options}')
+                before = self.tree()
+                result = self.setup_cmd()
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                self.assertIn(f'kept {conf}\nkept {compose}\nmismatch: {conf} connects to port {port} but {compose} '
+                              'publishes 6001: make them the same\n', result.stdout)
+                self.assertEqual(self.tree(), before)
+        conf.write_text('[options]\ndb_port = 6001\n')
+        self.assertNotIn('mismatch', self.setup_cmd().stdout)
+
+    def test_source_flags_that_agree_with_the_machine_entry_are_accepted(self):
+        self.write_machine(f"[series.\"19.0\"]\ncommunity = '{self.source}'\n")
+        before = self.tree()
+        for args in (('--no-enterprise',), ('--community', str(self.source)),
+                     ('--community', str(self.source), '--no-enterprise')):
+            with self.subTest(args=args):
+                result = self.setup_cmd(*args)
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                self.assertIn('enterprise: none (from the machine file)\n', result.stdout)
+                self.assertEqual(self.tree(), before)
+        enterprise = self.scratch / 'sources' / 'enterprise'
+        enterprise.mkdir()
+        self.machine.write_text(f"[series.\"19.0\"]\ncommunity = '{self.source}'\nenterprise = '{enterprise}'\n")
+        before = self.tree()
+        self.assert_refused(self.setup_cmd('--no-enterprise'),
+                            f'The machine file {self.machine} already sets enterprise for 19.0; setup never edits '
+                            'an existing entry: drop --no-enterprise, or change the machine file yourself.', before)
+        accepted = self.setup_cmd('--enterprise', str(enterprise))
+        self.assertEqual((accepted.returncode, accepted.stderr), (0, ''))
+        self.assertIn(f'enterprise: {enterprise} (from the machine file)\n', accepted.stdout)
+
+    def test_a_failed_verification_undoes_every_change(self):
+        self.write_machine('# my machine\n')
+        exclude = self.checkout / '.git/info/exclude'
+        exclude.write_text('# mine\n')
+        # The plan of a new workspace does not read oasis-checkout.toml; the verification does.
+        (self.checkout / 'oasis-checkout.toml').write_text('[tooling]\nunknown = 1\n')
+        before = self.tree()
+        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        self.assertEqual((result.returncode, result.stderr), (1, (
+            'ERROR: Verification failed (oasis-checkout.toml may only set [tooling].checkout_slug and '
+            '[tooling].environment: tooling.unknown); every change was undone.\n')))
+        self.assertIn(f'add [series."19.0"] to {self.machine}:\n', result.stdout)
+        self.assertIn(f'create {self.checkout / "oasis-workspace.toml"} (mode 0600):\n', result.stdout)
+        self.assertNotIn('verified:', result.stdout)
+        self.assertEqual(self.tree(), before)
+        self.assertEqual(self.machine.read_text(), '# my machine\n')
+        self.assertEqual(exclude.read_text(), '# mine\n')
+        self.assertFalse((self.checkout / '.oasis').exists())
+        self.assertFalse(self.log.exists())
+
+    def test_a_failed_uv_venv_or_sync_keeps_the_written_files(self):
+        environment = self.checkout / '.oasis/venv'
+        requirements = self.checkout / '.oasis/config/requirements'
+        self.env['FAKE_VENV_FAIL'] = '1'
+        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        self.assertEqual((result.returncode, result.stderr), (2, (
+            'error: no interpreter\nERROR: uv venv failed (exit 3); the files above are kept: fix it, then run '
+            'oasis setup --apply again.\n')))
+        self.assertIn(f'compiled {requirements}/runtime.txt, dev.txt and lock.sha256\n', result.stdout)
+        self.assertNotIn('next steps', result.stdout)
+        for path in ('oasis-workspace.toml', '.oasis/config/odoo.conf', '.oasis/config/.env',
+                     '.oasis/config/compose.yml', '.oasis/config/requirements/lock.sha256'):
+            self.assertTrue((self.checkout / path).is_file(), path)
+        self.assertFalse(environment.exists())
+        # Run again: everything written is kept and the environment is created.
+        del self.env['FAKE_VENV_FAIL']
+        self.log.unlink()
+        again = self.setup_cmd('--apply')
+        self.assertEqual((again.returncode, again.stderr), (0, ''))
+        self.assertIn(f'kept the locks in {requirements}: current\n', again.stdout)
+        self.assertIn(f'created the environment {environment}\n', again.stdout)
+        self.assertEqual([line.split(' (in ')[0] for line in self.log.read_text().splitlines()], [
+            f'uv venv --python 3.12 {environment}',
+            f'uv pip sync --python {environment}/bin/python {requirements}/dev.txt'])
+        # A failed sync stops the same way, after the environment was created.
+        (self.checkout / 'oasis-workspace.toml').unlink()
+        shutil.rmtree(self.checkout / '.oasis')
+        self.env['FAKE_SYNC_FAIL'] = '1'
+        failed = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        self.assertEqual((failed.returncode, failed.stderr), (2, (
+            'error: no index\nERROR: uv pip sync failed (exit 4); the files above are kept: fix it, then run '
+            'oasis setup --apply again.\n')))
+        self.assertTrue((environment / 'pyvenv.cfg').is_file())
+        self.assertTrue((self.checkout / 'oasis-workspace.toml').is_file())
+
+    def test_an_edited_lock_is_kept_and_leaves_the_environment_uncreated(self):
+        project = self.existing_workspace()
+        requirements = project / 'config/requirements'
+        requirements.mkdir()
+        for name in ('runtime.in', 'runtime.txt', 'dev.in', 'dev.txt'):
+            (requirements / name).write_text(f'# {name}\n')
+        (requirements / 'lock.sha256').write_text(''.join(
+            f'{hashlib.sha256((requirements / name).read_bytes()).hexdigest()}  {name}\n'
+            for name in ('runtime.in', 'runtime.txt', 'dev.in', 'dev.txt')))
+        (requirements / 'dev.txt').write_text('pylint==3.0.0\n')
+        for name, text in (('odoo.conf', '[options]\ndb_port = 6543\n'), ('.env', 'ODOO_DB_USER=\n'),
+                           ('compose.yml', "name: mine\nservices:\n  db:\n    ports:\n      - '6543:5432'\n")):
+            (project / 'config' / name).write_text(text)
+        before = self.tree()
+        result = self.setup_cmd('--apply')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout, '\n'.join([
+            f'checkout: {self.checkout} (main)', f'workspace: {project / "oasis-workspace.toml"} (existing)',
+            f'kept {project / "config/odoo.conf"}', f'kept {project / "config/compose.yml"}',
+            f'kept {project / "config/.env"}', f'kept {requirements / "runtime.in"}', f'kept {requirements / "dev.in"}',
+            f'kept the locks in {requirements}: a lock was changed by hand; move it away or fingerprint it again '
+            '(see oasis bootstrap)',
+            f'not created: the environment {project / "envs/shop"}, until the locks match lock.sha256',
+            f'nothing to set up: run oasis --project {self.checkout} doctor']) + '\n')
+        self.assertEqual(self.tree(), before)
+        self.assertFalse(self.log.exists())
+
+    def test_modules_of_another_series_than_the_configured_one_are_refused(self):
+        # S11: an existing configuration (the checkout's modules are 19.0, one is 15.0).
+        project = self.existing_workspace()
+        self.module('old_sale', "{'name': 'Old', 'version': '15.0.1.0.0'}\n")
+        before = self.tree()
+        message = (f'The module old_sale declares Odoo 15.0 (version 15.0.1.0.0 in '
+                   f'{self.checkout / "old_sale/__manifest__.py"}), but {self.checkout} is configured for Odoo 19.0 '
+                   f'by {project / "oasis-workspace.toml"}: run oasis in a checkout of an Odoo 19.0 branch, or set the '
+                   'version of old_sale to 19.0.x.y.z if it is an Odoo 19.0 module; oasis does not support Odoo 15.0 '
+                   '(supported: 19.0).')
+        self.assert_refused(self.setup_cmd(), message, before)
+        # A new configuration whose --series disagrees with a module: refused before anything is written.
+        (project / 'oasis-workspace.toml').unlink()
+        before = self.tree()
+        self.assert_refused(self.setup_cmd('--series', '19.0', '--community', str(self.source), '--no-enterprise'),
+                            message.replace(f'by {project / "oasis-workspace.toml"}',
+                                            f'by {self.checkout / "oasis-workspace.toml"}'), before)
+        # Setup detects the series itself: a version that is not series-style does not count.
+        (self.checkout / 'old_sale/__manifest__.py').write_text("{'name': 'Old', 'version': '1.2.3.4.5'}\n")
+        result = self.setup_cmd('--community', str(self.source), '--no-enterprise')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertIn('series: 19.0 (from the module manifests)\n', result.stdout)
 
 
 if __name__ == '__main__':

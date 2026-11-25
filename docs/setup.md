@@ -42,6 +42,8 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
   change was undone.`
 - A failed `uv pip compile`, `uv venv` or `uv pip sync` stops with exit 2 and keeps the files
   already written: fix the cause and run `oasis setup --apply` again, which keeps them and continues.
+  After a failed `uv pip sync` the environment exists, so a second run keeps it without syncing it: run
+  `oasis bootstrap --apply` to sync it.
 - When nothing is missing it prints the `kept` lines and `nothing to set up: run oasis --project
   <checkout> doctor` (exit 0). Refusals exit 2 with `ERROR: <reason>` and change nothing.
 - Agents may run the plan; the Gentle Shell [bash guard](bash-guard.md) blocks `setup --apply` (and
@@ -56,6 +58,11 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
 - The series: `--series`, else the version prefix of the module manifests directly in the checkout
   or one directory below it (`19.0.1.0.0` gives `19.0`), else the single series of the machine
   file, else a question. Manifests of several series, or of one oasis does not support, are refused.
+  Versions are read as the series guard reads them: only `<series>.x.y.z` of a supported series or one
+  that looks like an Odoo release (`<major>.0`, major 8 to 99) counts, so `1.0` or `1.2.3.4.5` says
+  nothing. A configuration whose modules declare another series than its own, an existing one or one
+  `--series` asks for, is refused before anything is written (a new one before any question; see
+  [Workspace file](workspace-file.md#discovery-precedence-and-versions)).
 - The Odoo source: the machine file's entry for the series, else `--community <dir>` (an absolute
   directory whose `odoo/release.py` declares the series) and `--enterprise <dir>` or
   `--no-enterprise`, else a question. A source found near the checkout is only offered
@@ -75,12 +82,29 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
 | [Machine file](workspace-file.md#machine-file) entry `[series."<x.y>"]` | `community` and, with Enterprise, `enterprise`. A new file is created with mode 0600; an existing file without the entry gets it appended. An existing entry is used and never edited: a flag that disagrees with it, or an entry without `community`, is refused. |
 | `oasis-workspace.toml` | `workspace_version`, `odoo_version`, and `[tooling]` with the environment, `config`, `env_file`, `compose`, `requirements`, `addons_paths` (the directories that hold the modules, `'.'` by default), `db_service = 'db'`, the prefixes, `logs` and `data_dir`; never a source key. Mode 0600. |
 | `odoo.conf` | Path-free (no `addons_path`, no `data_dir`; see [Path-free odoo.conf](path-free-odoo-conf.md)): `db_host = 127.0.0.1`, the `db_port` of the compose file, `db_user` and `db_password` empty. Mode 0600. |
-| Compose file | `name: oasis-<name>-<6 hex of the workspace directory>` and the PostgreSQL service (`postgres:<postgres_min>` of the series in `tools/odoo_versions.py`) with the variables oasis uses, published on the first free port from 5432 on `127.0.0.1` (the `db_port` of an existing `odoo.conf` when there is one). |
+| Compose file | `name: oasis-<name>-<6 hex of the workspace directory>` and the PostgreSQL service (`postgres:<postgres_default>` of the series in `tools/odoo_versions.py`: `postgres:17` on 19.0) with the variables oasis uses, published on `127.0.0.1` on the [port](#one-port-for-odooconf-and-the-compose-file) `odoo.conf` connects to. |
 | Environment file | `ODOO_DB_USER=` and `ODOO_DB_PASSWORD=`, names only, empty values; mode 0600. Never read or printed. |
 | `runtime.in`, `dev.in` | `-r <community>/requirements.txt`; `-c runtime.txt` and `-r runtime.in`, to which you add your development tools. |
 | Locks | `runtime.txt`, `dev.txt` and `lock.sha256`, compiled with the series' Python by the same code as `bootstrap --apply` when they are missing or stale; current locks are kept, and a lock changed by hand is kept and leaves the environment uncreated. |
 | Environment | `uv venv --python <python>` and `uv pip sync` of `dev.txt`. An existing environment is kept and not synced (run `bootstrap --apply` for that). |
 | `logs`, `data_dir` | The directories (mode 0700). |
+
+### One port for odoo.conf and the compose file
+
+`odoo.conf`'s `db_port` and the port the compose file publishes to PostgreSQL's 5432 must be the same:
+
+- Both missing: the first free port from 5432 on `127.0.0.1`.
+- Only `odoo.conf` exists: the new compose file publishes its `db_port` (5432, PostgreSQL's default, when it
+  has none).
+- Only the compose file exists: the new `odoo.conf` gets the port it publishes to 5432, read from a
+  short-syntax entry such as `- '127.0.0.1:6001:5432'`, `- "6001:5432"` or `- 6001:5432/tcp` (no YAML
+  parser: the long syntax, ranges and variables are not read). When no single such port is found, it gets
+  a free port and the plan says `check <odoo.conf>: no port published to 5432 found in <compose file>; set
+  db_port <port> to the port it publishes`.
+- Both exist: both are kept; when they disagree the plan says `mismatch: <odoo.conf> connects to port <a>
+  but <compose file> publishes <b>: make them the same`.
+
+### Where the files go
 
 - Without a workspace file, the workspace is the checkout itself: `oasis-workspace.toml` at its root
   and `config/`, `data/`, `logs/` and the environment `venv/` under `<checkout>/.oasis/`. Both are

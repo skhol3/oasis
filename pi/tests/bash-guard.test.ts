@@ -858,6 +858,18 @@ test("allows setup's plan through the entry points and blocks setup --apply", ()
   for (const command of blocked) assert.equal(blockedProgram(command), "setup", command);
 });
 
+// review-a49f7b2c1a1549a3 R3-001: the shortest abbreviation of --apply is blocked; a bare `--` is not
+// --apply, and setup refuses it as a usage error (exit 2, nothing changed; tests/test_setup.py), so it
+// stays allowed like any other literal word.
+test("setup --a is blocked and a bare -- is allowed", () => {
+  for (const command of ["oasis setup --a", "odoo19 --project /p setup --a", "oasis setup -- --apply"]) {
+    assert.equal(blockedProgram(command), "setup", command);
+  }
+  for (const command of ["oasis setup --", "oasis --project /p setup -- "]) {
+    assert.equal(blockedProgram(command), null, command);
+  }
+});
+
 test("setup's tool scripts count only in an oasis tree", () => {
   const context = {
     cwd: "/src/oasis", home: "/home/u",
