@@ -9,6 +9,8 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-25
+
 ### Added
 
 - `oasis doctor` prints `  fix: <command or action>` after every FAIL line (for example `oasis
@@ -106,6 +108,11 @@ names) may still change in a minor release; every such change is listed here und
 - The Gentle Shell bash guard judges an entry point run without `--project` against the
   directory it runs in (the session's, a literal `cd`/`pushd`, `env -C`, `sudo -D`); an unknown
   directory counts as ask. `sudo --chdir <dir>` is parsed as taking a value.
+
+### Fixed
+
+- A configuration file that is not valid UTF-8 gives `Invalid TOML in <file>.` instead of a
+  traceback.
 
 ## [0.13.0] - 2026-11-24
 
@@ -1042,7 +1049,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/skhol3/oasis/releases/tag/v0.14.0
 [0.13.0]: https://github.com/skhol3/oasis/releases/tag/v0.13.0
 [0.12.0]: https://github.com/skhol3/oasis/releases/tag/v0.12.0
 [0.11.0]: https://github.com/skhol3/oasis/releases/tag/v0.11.0

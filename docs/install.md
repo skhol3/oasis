@@ -19,7 +19,7 @@ the other does.
 ## Released versions
 
 Releases follow Semantic Versioning and are tagged `vX.Y.Z`; the [changelog](../CHANGELOG.md)
-lists them. Below, `<tag>` is one of those tags, for example `v0.13.0`.
+lists them. Below, `<tag>` is one of those tags, for example `v0.14.0`.
 
 ## Installing the skills and the CLI with install.sh
 

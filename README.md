@@ -31,7 +31,7 @@ to Gentle Shell.
 python3 -B -m unittest discover -s tests
 ./install.sh
 
-# Gentle Shell package: <tag> is a release from the changelog, for example v0.13.0
+# Gentle Shell package: <tag> is a release from the changelog, for example v0.14.0
 gentle-shell install git:github.com/skhol3/oasis@<tag>
 ```
 
