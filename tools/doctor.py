@@ -173,7 +173,8 @@ def check_module_series(report: Report, values: dict, config):
 
 
 def series_facts(config, document: dict, workspace: Path, series: str, published_port) -> dict:
-    """What ISOLATION compares for one series of the workspace (None when it cannot be read)."""
+    """What ISOLATION compares for one series of the workspace (None when it cannot be read: a missing or
+    unreadable compose file leaves its project and port unknown, and the isolation check skips them)."""
     tooling = config.series_tooling(document, workspace, series)
 
     def path(key):
@@ -184,12 +185,17 @@ def series_facts(config, document: dict, workspace: Path, series: str, published
         value = tooling.get(key)
         return value if isinstance(value, str) else None
     compose = path('compose')
-    try:
-        project = compose_project(compose) if compose is not None else None
-    except (OSError, UnicodeError):
-        project = None
-    return {'compose': compose, 'config': path('config'), 'compose_project': project,
-            'db_port': published_port(compose) if compose is not None else None,
+    project = port = None
+    if compose is not None:
+        try:
+            project = compose_project(compose)
+        except (OSError, UnicodeError):
+            pass
+        try:
+            port = published_port(compose)
+        except (OSError, UnicodeError):
+            pass
+    return {'compose': compose, 'config': path('config'), 'compose_project': project, 'db_port': port,
             'dev_prefix': text('dev_prefix'), 'test_prefix': text('test_prefix'), 'env_file': path('env_file')}
 
 

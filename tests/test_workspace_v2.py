@@ -505,6 +505,52 @@ class DoctorVersion2Tests(unittest.TestCase):
                       f'FAIL series_isolation=compose_project series=19.0,15.0\n{own}'
                       'PASS agent_destructive=ask\n', report)
 
+    def test_a_series_whose_compose_file_is_missing_or_unreadable_has_unknown_facts(self):
+        """Isolation skips what cannot be read; the checkout of that series gets its normal compose FAIL."""
+        compose = self.project / 'config/odoo-15/compose.yml'
+        compose.unlink()
+        shop19 = self.checkout('shop', checkout_file="odoo_version = '19.0'\n")
+        shop15 = self.checkout('shop15', ('cafe_sale', '15.0.1.0.0'))
+        own = f'FAIL compose=missing\n  fix: oasis setup --apply\n'
+        for state in ('missing', 'unreadable'):
+            with self.subTest(state=state):
+                if state == 'unreadable':
+                    compose.mkdir()  # exists, but cannot be read as a file
+                    own = f'FAIL compose=unreadable\n  fix: make {compose} readable by you\n'
+                code, report = self.doctor(shop19)
+                self.assertIn('PASS series=19.0 from=checkout\nPASS series_isolation=19.0,15.0\n'
+                              'PASS agent_destructive=ask\n', report)
+                self.assertIn('\nPASS compose\n', report)  # the 19.0 checkout's own compose file
+                self.assertTrue(report.endswith('\ndoctor_failures=%d\n' % report.count('\nFAIL ')), report)
+                code, report = self.doctor(shop15)
+                self.assertIn('PASS series=15.0 from=manifests\nPASS series_exceptions=report_xlsx\n'
+                              'PASS series_isolation=19.0,15.0\nPASS agent_destructive=ask\n', report)
+                self.assertIn(own, report)
+                self.assertIn('PASS env_file\n', report)  # doctor keeps going after the compose FAIL
+                self.assertEqual(code, 1)
+        # A shared value of the readable facts is still reported when the compose facts are unknown.
+        self.workspace.write_text(WORKSPACE.replace("dev_prefix = 'acme15_dev_'\ntest_prefix = 'acme15_test_'\n", ''))
+        code, report = self.doctor(shop19)
+        self.assertIn('PASS series=19.0 from=checkout\nFAIL series_isolation=prefixes series=19.0,15.0\n'
+                      f'  fix: set dev_prefix and test_prefix under [series."15.0"] in {self.workspace} to a pair '
+                      'of its own\nPASS agent_destructive=ask\n', report)
+
+    def test_isolation_reads_a_compose_port_it_cannot_read_as_unknown(self):
+        """series_facts keeps going when the port reader raises (it does not rely on its guard)."""
+        doctor = fresh_config('oasis_v2_doctor_config')
+        spec = importlib.util.spec_from_file_location('oasis_v2_doctor', ROOT / 'tools' / 'doctor.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        document = doctor.checked_workspace(self.workspace)
+        for error in (PermissionError(13, 'Permission denied'),
+                      UnicodeDecodeError('utf-8', b'\xff', 0, 1, 'invalid start byte')):
+            with self.subTest(error=type(error).__name__):
+                def raising(path, error=error):
+                    raise error
+                facts = module.series_facts(doctor, document, self.workspace, '15.0', raising)
+                self.assertEqual((facts['db_port'], facts['compose_project'], facts['dev_prefix']),
+                                 (None, 'acme15', 'acme15_dev_'))
+
     def test_doctor_names_setup_for_a_series_without_a_section(self):
         self.workspace.write_text(WITHOUT_15)
         shop = self.checkout('shop15', ('cafe_sale', '15.0.1.0.0'))

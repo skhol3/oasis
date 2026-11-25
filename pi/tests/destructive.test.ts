@@ -801,6 +801,84 @@ test("bash writes to a checkout's oasis-checkout.toml ask, in the session's chec
   assert.deepEqual([run.prompts, run.entries], [[], []]);
 });
 
+test("an oasis-checkout.toml reached through a linked directory asks only at a checkout root", async () => {
+  // /links/shop is a link to the checkout root, /links/below to a directory below it, /links/out to a
+  // directory outside any project; /links/held is a link to the root whose oasis-checkout.toml is itself
+  // a link to a file outside it (tools/config.py reads that file through the root).
+  const links: Record<string, string> = {
+    "/links/shop": ROOT, "/links/below": `${ROOT}/addons`, "/links/out": "/tmp/out", "/links/held": ROOT,
+    "/links/held/oasis-checkout.toml": "/tmp/held/oasis-checkout.toml",
+  };
+  const realpath = (path: string) => {
+    if (path in links) return links[path];
+    const dir = Object.keys(links).find((link) => path.startsWith(`${link}/`));
+    return dir ? links[dir] + path.slice(dir.length) : path;
+  };
+  // The root of a written path, as the resolver finds it: by its real path (projectRootResolver), or
+  // by the written path only (a resolver that does not follow links).
+  const resolving = (dir: string) => roots(realpath(dir));
+  const cases: [string, (dir: string) => string | null, string][] = [
+    // The real path's directory is the root (the written one has none).
+    ["/links/shop/oasis-checkout.toml", roots, "/links/shop/oasis-checkout.toml"],
+    // The written directory's root is its real path (the real file lies outside every project).
+    ["/links/held/oasis-checkout.toml", resolving, "/links/held/oasis-checkout.toml"],
+  ];
+  for (const [path, resolver, file] of cases) {
+    for (const tool of ["write", "edit"]) {
+      const run = harness({ roots: resolver, realpath, setting: "allow", answers: ["yes"] });
+      assert.equal(await run.file(tool, path), undefined, path);
+      assert.deepEqual(run.prompts.map((prompt) => prompt.title), [
+        `oasis: the agent wants to call\n\n${tool} ${path}\n\n` +
+          `Type yes to allow editing ${file} ${CHECKOUT_NOTE}. Esc, another answer or no answer within ${SECONDS} s refuses.`,
+      ], path);
+      assert.deepEqual(run.entries.map((entry) => entry.note), ["typed yes"], path);
+    }
+    const headless = harness({ roots: resolver, realpath, setting: "allow", hasUI: false });
+    assert.equal((await headless.gate(`echo "checkout_slug = 'x'" > ${path}`))?.block, true, path);
+    assert.deepEqual(headless.entries.map((entry) => entry.note), ["no dialog"], path);
+  }
+  // Below a checkout root or outside every project, through a link: never read, no dialog.
+  for (const resolver of [roots, resolving]) {
+    const run = harness({ roots: resolver, realpath, setting: "allow" });
+    for (const path of ["/links/below/oasis-checkout.toml", "/links/out/oasis-checkout.toml"]) {
+      assert.equal(await run.file("write", path), undefined, path);
+      assert.equal(await run.gate(`echo x > ${path}`), undefined, path);
+    }
+    assert.deepEqual([run.prompts, run.entries], [[], []]);
+  }
+});
+
+test("on disk, a linked directory reaches a checkout's oasis-checkout.toml only at its root", async () => {
+  const run = await worktreeOutside("allow");
+  try {
+    const { symlinkSync } = await import("node:fs");
+    for (const [link, target] of [["root-link", run.linked], ["below-link", run.cwd],
+      ["outside-link", `${run.base}/elsewhere`], ["main-link", run.main]]) {
+      symlinkSync(target, `${run.base}/${link}`);
+    }
+    for (const link of ["root-link", "main-link"]) {
+      const path = `${run.base}/${link}/oasis-checkout.toml`;
+      run.answers.push("yes");
+      assert.equal(await run.file("write", path), undefined, path);
+      assert.equal(run.prompts.at(-1),
+        `oasis: the agent wants to call\n\nwrite ${path}\n\n` +
+          `Type yes to allow editing ${path} ${CHECKOUT_NOTE}. Esc, another answer or no answer within ${SECONDS} s refuses.`,
+        path);
+      assert.equal((await run.gate(`echo x > ${path}`, false))?.block, true, path);
+      assert.equal(run.entries.at(-1)?.note, "no dialog");
+    }
+    const before = [run.prompts.length, run.entries.length];
+    for (const link of ["below-link", "outside-link"]) {
+      const path = `${run.base}/${link}/oasis-checkout.toml`;
+      assert.equal(await run.file("write", path), undefined, path);
+      assert.equal(await run.gate(`echo x > ${path}`, false), undefined, path);
+    }
+    assert.deepEqual([run.prompts.length, run.entries.length], before);
+  } finally {
+    await run.cleanup();
+  }
+});
+
 test("a linked worktree's oasis-checkout.toml, found through git, and the main checkout's always ask", async () => {
   const run = await worktreeOutside("allow");
   try {
