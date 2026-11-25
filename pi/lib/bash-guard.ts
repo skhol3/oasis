@@ -789,6 +789,36 @@ function commandIndex(words: string[]): number {
   return i;
 }
 
+// Commands that run cd, pushd or popd in the shell itself: they change its directory too.
+const BUILTIN_RUNNERS = new Set(["builtin", "command", "time"]);
+// Commands that run text or a file in the shell itself: it may change the directory.
+const SHELL_RUNNERS = new Set(["eval", "source", "."]);
+
+/** Whether a command word names no literal program: an expansion, a substitution or a glob. */
+function unknownCommand(word: string): boolean {
+  return /(^|\s)_(\s|$)/.test(word) || /[$`*?]/.test(word) || (word.includes("[") && word !== "[" && word !== "[[");
+}
+
+/**
+ * Whether the simple command at words[index] may change the shell's directory in a way the text
+ * does not tell, so later commands run in an unknown directory: `cd`, `pushd` or `popd` behind
+ * `builtin`, `command` (not `-v`/`-V`, which only look up) or `time`; `eval`, `source` and `.`,
+ * whatever they run; and a command word that is not literal (`$CD /x`), which may be `cd`.
+ */
+function untrackedChange(words: string[], index: number): boolean {
+  let i = index;
+  let behind = false;
+  while (i < words.length && BUILTIN_RUNNERS.has(words[i])) {
+    if (words[i] === "command" && words.slice(i + 1).some((word) => word === "-v" || word === "-V")) return false;
+    i = skipOptions(words, i + 1, new Set());
+    behind = true;
+  }
+  const word = words[i];
+  if (word === undefined) return false;
+  if (behind && (CHANGE_DIRECTORY.has(word) || word === "popd")) return true;
+  return SHELL_RUNNERS.has(word) || unknownCommand(word);
+}
+
 /** Every finding of a command in the order bash would reach it: substitutions first, then the segments. */
 function findingsIn(command: string, start: Where | undefined): Finding[] {
   const findings: Finding[] = [];
@@ -799,7 +829,7 @@ function findingsIn(command: string, start: Where | undefined): Finding[] {
   // A substitution runs where its segment runs; on a line that changes directory that is not known here.
   const moves = lines.some((words) => {
     const word = words[commandIndex(words)] ?? "";
-    return CHANGE_DIRECTORY.has(word) || word === "popd";
+    return CHANGE_DIRECTORY.has(word) || word === "popd" || untrackedChange(words, commandIndex(words));
   });
   const substituted = start && moves ? { ...start, unsure: true } : start;
   for (const body of inner) findings.push(...findingsIn(body, substituted));
@@ -821,6 +851,8 @@ function findingsIn(command: string, start: Where | undefined): Finding[] {
       continue;
     }
     findings.push(...classifySegment(words, where), ...settingWrites(own, where, target === undefined ? undefined : words[0]));
+    // After a change the text does not tell (`builtin cd`, `eval`, `source`, `$CD`), the directory is unknown.
+    if (where && untrackedChange(words, i)) where = { context: where.context, dir: null, unsure: where.unsure };
   }
   return findings;
 }

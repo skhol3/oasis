@@ -1,5 +1,5 @@
 // Odoo project detection. No Pi imports: tested directly with node:test.
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /** The legacy per-checkout profile: tools/config.py no longer reads it and refuses a checkout
@@ -29,13 +29,71 @@ function ancestors(start: string): string[] {
   }
 }
 
-/** Nearest `oasis-workspace.toml` at or above `start`, else null, as tools/config.py finds it. */
-export function findWorkspaceFile(start: string): string | null {
+/** Nearest `oasis-workspace.toml` at or above `start`, else null (tools/config.py find_workspace). */
+function nearestWorkspace(start: string): string | null {
   for (const directory of ancestors(start)) {
     const candidate = join(directory, WORKSPACE_NAME);
     if (existsSync(candidate)) return candidate;
   }
   return null;
+}
+
+/** A file's text, or null when it cannot be read. */
+function readText(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The linked git worktree holding `start`: its top level (the directory of the nearest `.git`, when
+ * that is a file) and its main checkout (the parent of the common git directory), read as git reads
+ * them: the `.git` file's `gitdir:` and that directory's `commondir`, each relative to where it is
+ * written. Null in a main checkout, a submodule (no `commondir`), outside git, or when a file
+ * cannot be read. tools/config.py asks git itself (`--git-common-dir`); both name the same main.
+ */
+export function linkedWorktree(start: string): { top: string; main: string } | null {
+  let entry: string | null = null;
+  for (const directory of ancestors(real(start))) {
+    if (existsSync(join(directory, ".git"))) {
+      entry = join(directory, ".git");
+      break;
+    }
+  }
+  if (entry === null) return null;
+  try {
+    if (!statSync(entry).isFile()) return null;
+  } catch {
+    return null;
+  }
+  const pointer = /^gitdir: (.+)$/m.exec(readText(entry) ?? "");
+  if (!pointer) return null;
+  const gitDir = resolve(dirname(entry), pointer[1].trim());
+  const common = readText(join(gitDir, "commondir"));
+  if (common === null || !common.trim()) return null;
+  return { top: dirname(entry), main: real(dirname(resolve(gitDir, common.trim()))) };
+}
+
+/**
+ * The workspace file a checkout at or below `start` reads, as tools/config.py workspace_file finds
+ * it: the nearest `oasis-workspace.toml` at or above `start`, else, in a linked worktree, the one its
+ * main checkout reads; else null.
+ */
+export function findWorkspaceFile(start: string): string | null {
+  const nearest = nearestWorkspace(start);
+  if (nearest) return nearest;
+  const linked = linkedWorktree(start);
+  return linked ? nearestWorkspace(linked.main) : null;
+}
+
+/** The machine file's path in the user's configuration directory, as tools/config.py machine_file
+ * finds it: `$XDG_CONFIG_HOME/oasis/config.toml` when that variable is an absolute path, else
+ * `<home>/.config/oasis/config.toml`. */
+export function machineFile(environment: Record<string, string | undefined>, home: string): string {
+  const configured = environment.XDG_CONFIG_HOME ?? "";
+  return join(isAbsolute(configured) ? configured : join(home, ".config"), "oasis", "config.toml");
 }
 
 /** The legacy profile in `root` itself (the one tools/config.py refuses), else null. */
@@ -65,15 +123,21 @@ function nearestHolding(name: string, start: string, last?: string): string | nu
  * directory git would report, the nearest one holding `.git` from `start` up to the workspace
  * directory, else `start` itself. A legacy profile never picks the root there: config.py checks
  * only `<root>/.odoo19-agent.toml`, so one in a directory between the workspace and the checkout
- * is crossed, with git or without. Without a workspace file: the nearest directory holding a
- * legacy profile, so config.py's refusal (run oasis migrate) shows there; else null.
+ * is crossed, with git or without. A linked worktree with no workspace file at or above it, whose
+ * main checkout reads one (findWorkspaceFile), is its own top level. Without a workspace file: the
+ * nearest directory holding a legacy profile, so config.py's refusal (run oasis migrate) shows
+ * there; else null.
  */
 export function findProjectRoot(start: string, gitTopLevel?: GitTopLevel): string | null {
   // Real paths, as tools/config.py resolves the checkout and git reports its top level: a
   // symlinked session directory still finds its workspace and resolves to the checkout root.
   const fallback = real(start);
-  const workspace = findWorkspaceFile(fallback);
-  if (!workspace) return nearestHolding(PROFILE_NAME, fallback);
+  const workspace = nearestWorkspace(fallback);
+  if (!workspace) {
+    const linked = linkedWorktree(fallback);
+    if (linked && nearestWorkspace(linked.main)) return linked.top;
+    return nearestHolding(PROFILE_NAME, fallback);
+  }
   const base = real(dirname(workspace));
   const top = gitTopLevel?.(fallback);
   const withoutGit = () => nearestHolding(".git", fallback, base) ?? fallback;

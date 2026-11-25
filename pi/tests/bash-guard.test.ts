@@ -581,6 +581,50 @@ test("without --project an entry point targets the directory it runs in: the ses
   }
 });
 
+test("a directory change the guard cannot follow makes the target of an entry point without --project unknown", () => {
+  // L7 R1-guard-cd-variants: never the session's project after a change the text does not tell.
+  const OTHER = "/work/other";
+  const unknown: string[] = [
+    "builtin cd /work/other && oasis stop --database",
+    "command cd /work/other && oasis stop --database",
+    "command -p cd /work/other; odoo19 stop --database",
+    "builtin pushd /work/other && oasis stop --database",
+    "command popd; oasis stop --database",
+    "time cd /work/other && oasis stop --database",
+    "eval cd /work/other && oasis stop --database",
+    "eval \"cd /work/other\"; oasis stop --database",
+    "eval \"$GO\" && oasis stop --database",
+    "source ./go.sh && oasis stop --database",
+    ". ./go.sh; oasis stop --database",
+    "$CD /work/other && oasis stop --database",
+    "\"$(echo cd)\" /work/other && oasis stop --database",
+    "c? /work/other && oasis stop --database",
+    "if builtin cd /work/other; then oasis stop --database; fi",
+    "A=1 builtin cd /work/other && oasis stop --database",
+    // A substitution on a line with such a change does not know where it runs either.
+    "builtin cd /work/other && echo $(oasis stop --database)",
+  ];
+  for (const command of unknown) {
+    assert.deepEqual(classifyBash(command, at("/work/shop")), { program: null, programs: [], asks: [AT(STOP, null)] }, command);
+  }
+  // Unchanged: what the guard follows, what only looks a program up, and --project.
+  const kept: [string, object[]][] = [
+    ["command -v oasis && oasis stop --database", [STOP]],
+    ["[ -d addons ] && oasis stop --database", [STOP]],
+    ["[[ -d addons ]] && oasis stop --database", [STOP]],
+    ["echo cd /work/other && oasis stop --database", [STOP]],
+    ["eval \"cd /work/other && oasis stop --database\"", [AT(STOP, OTHER)]],
+    ["builtin cd /work/other && oasis --project /work/shop stop --database", [AT(STOP, "/work/shop")]],
+    ["eval cd /x; oasis --project /work/other stop --database", [AT(STOP, OTHER)]],
+    ["cd /work/other && oasis drop-database cc_dev_x", [AT(DROP("cc_dev_x"), OTHER)]],
+  ];
+  for (const [command, asks] of kept) {
+    assert.deepEqual(classifyBash(command, at("/work/shop")), { program: null, programs: [], asks }, command);
+  }
+  // The deny tier is unchanged by an unknown directory.
+  assert.deepEqual(classifyBash("builtin cd /p && oasis migrate --apply", at("/work/shop")).programs, ["migrate"]);
+});
+
 test("the entry point's --project abbreviations do not hide its command from either tier", () => {
   for (const [command, programs] of [
     ["oasis --proj /p migrate --apply", ["migrate"]],

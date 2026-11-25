@@ -1,9 +1,9 @@
 # Bash guard
 
 The Gentle Shell layer checks every bash command the agent runs before it runs, and every call of
-Pi's `edit` and `write` tools on the files that hold `[tooling].agent_destructive`. Each command
-falls in one of three tiers: it runs (allow), the user confirms it first (ask), or only the user
-can run it (deny).
+Pi's `edit` and `write` tools on the files that hold `[tooling].agent_destructive` and on the
+machine file. Each command falls in one of three tiers: it runs (allow), the user confirms it
+first (ask), or only the user can run it (deny).
 
 ```mermaid
 flowchart TD
@@ -15,7 +15,7 @@ flowchart TD
     D -->|no| X["Blocked in every session:<br/>only the user runs it"]
     C -->|no| E{"Session inside an Odoo project<br/>and odoo-bin, dropdb or psql?"}
     E -->|yes| Y["Blocked: use the guarded<br/>oasis command instead"]
-    E -->|no| ASK{"drop-database, stop --database,<br/>gc --apply --trash, or a write to<br/>a file that holds agent_destructive?"}
+    E -->|no| ASK{"drop-database, stop --database,<br/>gc --apply --trash, or a write to<br/>a file that holds agent_destructive<br/>or the machine file?"}
     ASK -->|no| OK
     ASK -->|yes| S{"[tooling].agent_destructive: the stricter<br/>of the session's and the target project's"}
     S -->|allow| OK
@@ -30,7 +30,7 @@ flowchart TD
 | Tier | Commands | What happens |
 |------|----------|--------------|
 | Allow | Every other `oasis`/`odoo19` command: `test-module`, `verify-module`, `install-module`, `update-module`, `create-database`, `start`, `restart`, `stop` and `stop --force` (this checkout's server), `status`, `gc`, `gc --apply`, `gc --trash` (the list), `trash`, `trash restore`, ...; any command's `--help` or `-h` alone | Runs |
-| Ask | `drop-database <name>`, `stop --database`, `gc --apply --trash`; changes to the files that hold the setting (see [The setting files](#the-setting-files)) | Runs after the user confirms it in a dialog (see [The dialog](#the-dialog)), unless `[tooling].agent_destructive` says `deny` or `allow` |
+| Ask | `drop-database <name>`, `stop --database`, `gc --apply --trash`; changes to the files that hold the setting and to the machine file (see [The setting files](#the-setting-files)) | Runs after the user confirms it in a dialog (see [The dialog](#the-dialog)), unless `[tooling].agent_destructive` says `deny` or `allow` |
 | Deny | `worktree-init`, `migrate` (except `--plan`), `menu` in every session; direct `odoo-bin`, `dropdb` and `psql` in Odoo projects | Blocked; only the user runs it |
 
 The ask commands are recognized through `oasis` and `odoo19` (also as `python3 -B <path>/oasis`,
@@ -108,8 +108,13 @@ agent_destructive = 'ask'    # default: the dialog; 'deny' blocks them; 'allow' 
   with `--project <dir>`: `cd /work/other && oasis drop-database <name>` from an `allow` project
   is denied when `/work/other` says `deny`. A directory the text does not tell (`cd "$DIR"`, after
   `popd`, or a substitution such as `$(oasis stop --database)` on a line that changes directory)
-  and a directory outside any Odoo project count as `ask`. Nothing is loosened: a command that
-  asked before still asks.
+  and a directory outside any Odoo project count as `ask`. So does every command after a change
+  of directory the guard does not follow: `cd`, `pushd` or `popd` behind `builtin`, `command` or
+  `time` (`builtin cd /work/other && oasis stop --database`), `eval`, `source` or `.` (whatever
+  they run: `eval "$GO"`, `source ./env.sh`), and a command word that is not literal (`$CD
+  /work/other`, a glob or a substitution), which may be `cd`; the session's project is never
+  assumed after them. `command -v` only looks a program up and changes nothing. Nothing is
+  loosened: a command that asked before still asks.
 - `deny` turns the ask tier into deny; `allow` lets those commands run without a dialog (each run
   is still recorded). Neither changes the allow or deny tiers.
 - Only the user sets it: `oasis-checkout.toml` refuses the key, no tool or command argument
@@ -123,8 +128,17 @@ turn the setting to `allow` by itself: any file named `oasis-workspace.toml` in 
 directory or one of its parents (where `tools/config.py` looks for it; the real path of the
 session's directory counts as well), and any `.odoo19-agent.toml` there, the per-checkout file of
 earlier versions, which no command reads any more but `oasis migrate` converts into the workspace
-file, setting included (see [Migrating to the workspace file](migrating.md)). `oasis-checkout.toml`
+file, setting included (see [Migrating to the workspace file](migrating.md)). In a linked worktree
+with no workspace file at or above it, the workspace file its main checkout reads, found through
+git, is one of them too: it holds that worktree's setting (see
+[Workspace file](workspace-file.md#discovery-precedence-and-versions)). `oasis-checkout.toml`
 refuses the key and is not one of them.
+
+The [machine file](workspace-file.md#machine-file) is in the same tier, because it holds the Odoo
+source paths every project on the machine uses: `$XDG_CONFIG_HOME/oasis/config.toml` (when that
+variable is absolute) and `~/.config/oasis/config.toml` in any case, from any session directory.
+Its dialog says `(the machine file: it holds the Odoo source paths)`; a bash write whose target the
+text does not tell counts when it ends in `oasis/config.toml`.
 
 These edits always reach the dialog: `allow` does not cover them, so an agent cannot change its own
 permission without the user, and without a UI they are refused. `deny` blocks them.
@@ -134,7 +148,8 @@ permission without the user, and without a UI they are refused. `deny` blocks th
 - Bash writes to such a file: a redirection (`>`, `>>`, `2>`, `&>`, `>|`), `tee`, `sed -i` (or
   `--in-place`), and `mv` or `cp` onto it or into its directory (`cp new oasis-workspace.toml`,
   `cp -t <dir> oasis-workspace.toml`), also behind wrappers and inside `bash -c`. A target the text
-  does not tell (`> "$ROOT"/oasis-workspace.toml`) counts by its file name. Reading the file
+  does not tell (`> "$ROOT"/oasis-workspace.toml`, `> "$XDG_CONFIG_HOME"/oasis/config.toml`) counts
+  by its file name. Reading the file
   (`cat`, `grep`, `sed -n`, `cp` from it) is not a change.
 
 The dialog names the file:
