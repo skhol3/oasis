@@ -340,7 +340,9 @@ class AddonsPathHelperTests(unittest.TestCase):
 
     def test_option_mode_prints_only_the_requested_port_option(self):
         self.conf.write_text(f'[options]\nhttp_port = 8019\nadmin_passwd = {SECRET}\n')
-        for option, output in (('http_port', '8019\n'), ('gevent_port', ''), ('http_interface', '')):
+        self.conf.write_text(self.conf.read_text() + 'longpolling_port = 8016\n')
+        for option, output in (('http_port', '8019\n'), ('gevent_port', ''), ('http_interface', ''),
+                               ('longpolling_port', '8016\n')):
             with self.subTest(option=option):
                 result = subprocess.run([sys.executable, '-B', str(HELPER), '--option', option,
                                          str(self.conf)], capture_output=True, text=True)

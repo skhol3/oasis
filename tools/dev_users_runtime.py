@@ -7,7 +7,7 @@ import shlex
 import subprocess
 import sys
 
-from config import load
+from config import load, versions
 from odoo_addons_path import config_arguments
 
 
@@ -22,8 +22,12 @@ def main():
         declaration = payload['declaration']
         passwords = payload['passwords']
         with_demo = payload['with_demo']
-        # The demo-off options of the Odoo series come from config.py (tools/odoo_versions.py).
-        demo_flags = ['--with-demo'] if with_demo else shlex.split(values['ODOO_DEMO_OFF_ARGS'])
+        # The demo options and the users' groups field of the Odoo series (tools/odoo_versions.py):
+        # demo-off through config.py, demo-on (nothing in a series that loads demo data by default).
+        capability = versions().capability
+        demo_flags = (capability(values['ODOO_VERSION'], 'demo_on_args') if with_demo
+                      else shlex.split(values['ODOO_DEMO_OFF_ARGS']))
+        groups_field = capability(values['ODOO_VERSION'], 'user_groups_field')
         # The options of common.sh's odoo_config_arguments, from the same decision: -c, then
         # --addons-path (composed for a path-free odoo.conf, or a linked worktree's own root)
         # and --data-dir ([tooling].data_dir) when they apply.
@@ -72,7 +76,7 @@ def main():
                     raise ValueError('A configured XML ID is not a role.')
                 prepared.append({
                     'login': account['login'], 'name': account['name'],
-                    'password': password, 'group_ids': [(6, 0, [g.id for g in groups])],
+                    'password': password, groups_field: [(6, 0, [g.id for g in groups])],
                     'company_id': env.company.id,
                     'company_ids': [(6, 0, [env.company.id])],
                 })

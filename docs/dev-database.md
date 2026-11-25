@@ -1,6 +1,6 @@
 # Fresh development database with role accounts
 
-Use the global `init-dev-database` command for a **new, explicitly authorized development database**. By default it initializes Odoo without demo data, configures the administrator, installs one project module, and creates the project-declared role accounts. Pass `--with-demo` explicitly to use Odoo's native demo loader. `create-database` (empty PostgreSQL database), `install-module`, `update-module`, `start`, and test commands do not provision these users.
+Use the global `init-dev-database` command for a **new, explicitly authorized development database**. By default it initializes Odoo without demo data, configures the administrator, installs one project module, and creates the project-declared role accounts. Pass `--with-demo` explicitly to use Odoo's native demo loader. The Odoo options come from the series table (`tools/odoo_versions.py`): without demo data `--without-demo` on 19.0 and `--without-demo=all` on 15.0; with it `--with-demo` on 19.0 and nothing on 15.0, which loads demo data by default and has no `--with-demo` option. Role accounts get their groups through the series' `res.users` field (`group_ids` on 19.0, `groups_id` on 15.0). `create-database` (empty PostgreSQL database), `install-module`, `update-module`, `start`, and test commands do not provision these users.
 
 Declare non-secret accounts in the project's `oasis-workspace.toml`:
 

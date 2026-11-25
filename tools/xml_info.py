@@ -47,7 +47,8 @@ MODULE = re.compile(r'[A-Za-z0-9_]+')
 VIEW_TYPE = re.compile(r'[a-z_]+')
 XML_ID = re.compile(r'[A-Za-z0-9_]+\.[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*')
 SKIP_DIRS = {'tests', 'migrations', 'upgrades', 'static', 'i18n', 'node_modules', '__pycache__'}
-TYPE_ORDER = ('form', 'list', 'kanban', 'search')
+# Base views by type in this order, then the other types; tree is the root tag of a list view in 15.0.
+TYPE_ORDER = ('form', 'list', 'tree', 'kanban', 'search')
 VALUE_CHARS = 60
 FIELD_CAP = 12
 REFERENCE_CAP = 20

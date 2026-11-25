@@ -78,7 +78,7 @@ ENV_FILE = ('# Written by oasis setup: fill in both values, the PostgreSQL accou
             'Never commit this file.\nODOO_DB_USER=\nODOO_DB_PASSWORD=\n')
 DRY_RUN = 'dry run: nothing changed; run with --apply to set up\n'
 NOT_TTY_SERIES = ('ERROR: Cannot infer the Odoo series of {root}: no module manifest declares one and the '
-                  'machine file has no single series; pass --series <x.y> (supported: 19.0).\n')
+                  'machine file has no single series; pass --series <x.y> (supported: 19.0, 15.0).\n')
 
 
 @unittest.skipUnless(shutil.which('git'), 'git is required')
@@ -347,7 +347,7 @@ class SetupTests(unittest.TestCase):
         self.assertIn(f'kept {self.machine}: [series."19.0"] gives the Odoo source\n', machine.stdout)
         self.assertEqual(self.tree(), before)
         self.assert_refused(self.setup_cmd('--series', '18.0'),
-                            'Unsupported series 18.0; supported: 19.0.', before)
+                            'Unsupported series 18.0; supported: 19.0, 15.0.', before)
 
     def test_modules_of_another_series_or_of_several_are_refused(self):
         self.module('old_sale', "{'name': 'Old', 'version': '18.0.1.0.0'}\n")
@@ -359,7 +359,7 @@ class SetupTests(unittest.TestCase):
         before = self.tree()
         self.assert_refused(self.setup_cmd('--community', str(self.source), '--no-enterprise'),
                             f'The module manifests of {self.checkout} declare Odoo 18.0, which oasis does not '
-                            'support (supported: 19.0).', before)
+                            'support (supported: 19.0, 15.0).', before)
 
     def test_without_a_terminal_a_missing_answer_names_its_flag_and_a_found_path_is_only_suggested(self):
         before = self.tree()
@@ -735,15 +735,15 @@ class SetupTests(unittest.TestCase):
         message = (f'The module old_sale declares Odoo 15.0 (version 15.0.1.0.0 in '
                    f'{self.checkout / "old_sale/__manifest__.py"}), but {self.checkout} is configured for Odoo 19.0 '
                    f'by {project / "oasis-workspace.toml"}: run oasis in a checkout of an Odoo 19.0 branch, or set the '
-                   'version of old_sale to 19.0.x.y.z if it is an Odoo 19.0 module; oasis does not support Odoo 15.0 '
-                   '(supported: 19.0).')
+                   'version of old_sale to 19.0.x.y.z if it is an Odoo 19.0 module; for Odoo 15.0 here, run oasis '
+                   f'setup to add a [series."15.0"] section to {project / "oasis-workspace.toml"}.')
         self.assert_refused(self.setup_cmd(), message, before)
         # A new configuration whose --series disagrees with a module: refused before anything is written.
         (project / 'oasis-workspace.toml').unlink()
         before = self.tree()
         self.assert_refused(self.setup_cmd('--series', '19.0', '--community', str(self.source), '--no-enterprise'),
-                            message.replace(f'by {project / "oasis-workspace.toml"}',
-                                            f'by {self.checkout / "oasis-workspace.toml"}'), before)
+                            message.replace(str(project / 'oasis-workspace.toml'),
+                                            str(self.checkout / 'oasis-workspace.toml')), before)
         # Setup detects the series itself: a version that is not series-style does not count.
         (self.checkout / 'old_sale/__manifest__.py').write_text("{'name': 'Old', 'version': '1.2.3.4.5'}\n")
         result = self.setup_cmd('--community', str(self.source), '--no-enterprise')

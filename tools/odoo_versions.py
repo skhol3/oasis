@@ -1,33 +1,58 @@
 """What differs between Odoo series, in one table; the only place tools write such options.
 
-Only 19.0 is listed. Values for other series stay out of the table until they are verified
-(see odd/tasks/location-independence.md, L6). config.py emits the Odoo options of the
-configured series (ODOO_SECOND_PORT_OPTION, ODOO_DEMO_OFF_ARGS) for the shell tools.
+19.0 and 15.0 are listed, each read from its source; values for other series stay out of the
+table until they are verified (see odd/tasks/location-independence.md, L6). 19.0 comes first: the
+series a tool takes when it must pick one. config.py emits the Odoo options of the configured series
+(ODOO_SECOND_PORT_OPTION, ODOO_DEMO_OFF_ARGS) for the shell tools.
+
+15.0 (v0.15.0 S2) was read from the 15.0 source (commit 3a28e5b0): odoo/__init__.py:19-20
+(MIN_PY_VERSION, MAX_PY_VERSION; odoo/cli/server.py:69 refuses a newer Python), odoo/tools/config.py
+(--without-demo:111, --longpolling-port:136, --test-tags:165, --dev:287, --stop-after-init:293, `all`:529,
+test_enable from test_tags without stop_after_init:534), odoo/tools/debugger.py:8 (the debuggers),
+odoo/service/server.py:28-47 and 1340 (reload), odoo/tests/common.py:2842 (the class filter) and
+odoo/addons/base/models/res_users.py:367 (groups_id). PostgreSQL: the source enforces no minimum;
+12 is the documented one found (odd/tasks/v0.15.0.md L3), 14 the PostgreSQL of the user's 15.0
+compose file.
 
 Keys:
 - python: lowest and highest supported Python minor version, inclusive ("3.10", "3.14").
+  15.0: 3.7-3.12.
 - python_default: the Python of a workspace that sets [tooling].environment instead of named
-  [environments] (a named environment declares its own); within the range above.
+  [environments] (a named environment declares its own); within the range above. 15.0: 3.10.
 - postgres_min: lowest supported PostgreSQL major version.
 - postgres_default: the PostgreSQL major version of the compose file `oasis setup` writes (the image
   postgres:<version>); at or above postgres_min. 19.0: 17, a release with years of upstream support
   left, while 13 (the minimum) reached its end of life in November 2025. A choice within the
   supported range, not a value read from the 19.0 source (v0.14.0 L13).
 - second_port_option: the option of the second (gevent/longpolling) server port.
+- second_port_conf_option: the odoo.conf option of that port (a linked worktree's second port
+  starts after it): gevent_port on 19.0, longpolling_port on 15.0 (config.py:136, dest).
 - demo_off_args: the options that install without demo data. 19.0 loads no demo data unless
   --with-demo is given, but keeps the explicit off option the tools always passed: whether an
-  odoo.conf could turn demo data back on without it is unverified, so the guard stays.
-- test_tags_implies_stop: whether --test-tags implies --stop-after-init.
+  odoo.conf could turn demo data back on without it is unverified, so the guard stays. 15.0 loads
+  demo data unless told otherwise, and its --without-demo takes a value (config.py:111-113: an
+  optparse option without an action stores the next argument; its help says "comma-separated, use
+  all for all modules"): given alone it would take the next word of the command line, such as
+  --stop-after-init or --test-tags, as that value. Any value turns demo data off for every module
+  installed (config.py:522-523), so 15.0 passes --without-demo=all.
+- demo_on_args: the options that install with demo data (install-module --with-demo,
+  init-dev-database --with-demo). 15.0 has no --with-demo option and loads demo data by default:
+  nothing to pass.
+- test_tags_implies_stop: whether --test-tags implies --stop-after-init. The tests path
+  (test-module, and verify-module through it) passes --stop-after-init in every series, so a test
+  run ends in a series where it is false (15.0) too.
 - test_class_filter: whether --test-tags takes `/module:Class.method` (test-module --only).
 - dev_option: the option that turns on developer mode features (`<option>=<feature>,...`).
 - dev_features: every feature that option takes, in the order a selector offers them: the
   closed set a dev mode choice is built from (no free text). 19.0: odoo/tools/config.py:428-437
   of the 19.0 source (commit 8a2481dfc); it has no debugger features (pdb, ipdb, wdb, pudb,
-  werkzeug), which older series may have had (unverified: read their source when adding one).
-- dev_all: the features the word `all` turns on (19.0: ALL_DEV_MODE, config.py:29; not replica).
+  werkzeug). 15.0: the debuggers (debugger.py:8), qweb, reload, werkzeug and xml (config.py:287-289).
+- dev_all: the features the word `all` turns on (19.0: ALL_DEV_MODE, config.py:29; not replica.
+  15.0: config.py:529, in that order).
 - dev_reload_packages: the Python packages of which one must be importable for the `reload`
-  feature (19.0: odoo/service/server.py:1663-1675); without any, Odoo logs a warning and
-  disables reload. Empty for a series without `reload`.
+  feature (19.0: odoo/service/server.py:1663-1675; 15.0: server.py:28-47); without any, Odoo logs a
+  warning and disables reload. Empty for a series without `reload`.
+- user_groups_field: the res.users field of a user's groups (init-dev-database writes it).
 
 Shell tools read one value with `python3 -I -B odoo_versions.py <version> <key>`: a boolean
 prints true or false, a list its items quoted for the shell, anything else its text. An
@@ -46,13 +71,33 @@ CAPABILITIES = {
         'postgres_min': 13,
         'postgres_default': 17,
         'second_port_option': '--gevent-port',
+        'second_port_conf_option': 'gevent_port',
         'demo_off_args': ['--without-demo'],
+        'demo_on_args': ['--with-demo'],
         'test_tags_implies_stop': True,
         'test_class_filter': True,
         'dev_option': '--dev',
         'dev_features': ['access', 'qweb', 'reload', 'replica', 'xml'],
         'dev_all': ['access', 'qweb', 'reload', 'xml'],
         'dev_reload_packages': ['inotify', 'watchdog'],
+        'user_groups_field': 'group_ids',
+    },
+    '15.0': {
+        'python': ('3.7', '3.12'),
+        'python_default': '3.10',
+        'postgres_min': 12,
+        'postgres_default': 14,
+        'second_port_option': '--longpolling-port',
+        'second_port_conf_option': 'longpolling_port',
+        'demo_off_args': ['--without-demo=all'],
+        'demo_on_args': [],
+        'test_tags_implies_stop': False,
+        'test_class_filter': True,
+        'dev_option': '--dev',
+        'dev_features': ['ipdb', 'pdb', 'pudb', 'wdb', 'qweb', 'reload', 'werkzeug', 'xml'],
+        'dev_all': ['pdb', 'reload', 'qweb', 'werkzeug', 'xml'],
+        'dev_reload_packages': ['inotify', 'watchdog'],
+        'user_groups_field': 'groups_id',
     },
 }
 

@@ -2,7 +2,7 @@
 """Print an odoo.conf addons_path with the main checkout's root moved to another checkout.
 
 Usage: odoo_addons_path.py <odoo.conf> <main_root> <project_root>
-       odoo_addons_path.py --option <http_port|gevent_port|http_interface> <odoo.conf>
+       odoo_addons_path.py --option <http_port|gevent_port|longpolling_port|http_interface> <odoo.conf>
        odoo_addons_path.py --arguments <odoo.conf> <checkout_kind> <main_root> <project_root>
                            <odoo_source> <enterprise_source> <data_dir> <addon_root>...
 
@@ -17,7 +17,8 @@ With --arguments it prints, shell-quoted, the configuration options of every Odo
 (config_arguments): common.sh (odoo_config_arguments) evaluates them, and dev_users_runtime.py
 imports config_arguments for its in-process Odoo configuration, so both make one decision.
 
-With --option it reads only that one option (the ports and interface `start` needs) and prints
+With --option it reads only that one option (the ports and interface `start` needs; the second
+port's option is the series', odoo_versions.py second_port_conf_option) and prints
 its value, or nothing when it is absent; a port that is not 1-65535 exits 2 without the value.
 """
 import configparser
@@ -28,7 +29,7 @@ import sys
 
 USAGE = 'Usage: odoo_addons_path.py <odoo.conf> <main_root> <project_root>'
 # The only other options this reader may print.
-OPTIONS = ('http_port', 'gevent_port', 'http_interface')
+OPTIONS = ('http_port', 'gevent_port', 'longpolling_port', 'http_interface')
 
 
 class ConfError(Exception):

@@ -119,7 +119,8 @@ odoo_config_arguments() {
   eval "ODOO_CONFIG_ARGUMENTS=($output)"
 }
 
-# One option of the configured odoo.conf (http_port, gevent_port or http_interface), or nothing.
+# One option of the configured odoo.conf (http_port, gevent_port, longpolling_port or http_interface),
+# or nothing.
 odoo_conf_option() {
   python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/odoo_addons_path.py" --option "$1" "$ODOO_CONFIG"
 }

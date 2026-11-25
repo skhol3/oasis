@@ -322,7 +322,7 @@ class GlobalCliTests(unittest.TestCase):
         workspace = self.project / 'oasis-workspace.toml'
         for text, error in (
                 ('workspace_version = 1\nodoo_version = "18.0"\n[tooling]\n',
-                 f'ERROR: Unsupported odoo_version "18.0" in {workspace}; supported: 19.0.\n'),
+                 f'ERROR: Unsupported odoo_version "18.0" in {workspace}; supported: 19.0, 15.0.\n'),
                 ('workspace_version = 1\nodoo_version = "19.0"\n[tooling]\n'
                  'dev_prefix = "unsafe"\ntest_prefix = "unsafe"\n',
                  'ERROR: Unsafe tooling database prefixes.\n')):
