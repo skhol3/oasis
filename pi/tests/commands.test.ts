@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  type AutocompleteSource, commandNameCompletions, parseCommand, SUBCOMMAND_SUMMARY, subcommandAutocomplete, SUBCOMMANDS,
-  subcommandCompletions, USAGE, withSubcommandSuggestions,
+  type AutocompleteSource, commandNameCompletions, parseCommand, registerSubcommandAutocomplete, SUBCOMMAND_SUMMARY,
+  subcommandAutocomplete, SUBCOMMANDS, subcommandCompletions, USAGE, withSubcommandSuggestions,
 } from "../lib/commands.ts";
+import { readFileSync } from "node:fs";
 
 test("subcommandCompletions offers every /oasis subcommand for an empty prefix", () => {
   const items = subcommandCompletions("");
@@ -111,3 +112,25 @@ test("subcommandAutocomplete wraps the current provider and delegates everything
   assert.equal("triggerCharacters" in bare, false);
   assert.equal("shouldTriggerFileCompletion" in bare, false);
 });
+
+test("registerSubcommandAutocomplete adds the wrapping provider in the TUI only; the extension calls it per session",
+  async () => {
+    const signal = new AbortController().signal;
+    const current: AutocompleteSource = {
+      getSuggestions: async () => null,
+      applyCompletion: (lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol }),
+    };
+    for (const mode of ["tui", "rpc", "json", "print"]) {
+      const factories: ((current: AutocompleteSource) => AutocompleteSource)[] = [];
+      const registered = registerSubcommandAutocomplete({ mode, ui: { addAutocompleteProvider: (f) => factories.push(f) } });
+      assert.equal(registered, mode === "tui", mode);
+      assert.equal(factories.length, mode === "tui" ? 1 : 0, mode);
+      if (mode !== "tui") continue;
+      // The factory wraps the provider it is given (subcommandAutocomplete): /oa gets the subcommands.
+      const suggested = await factories[0](current).getSuggestions(["/oa"], 0, 3, { signal });
+      assert.deepEqual(suggested?.items.map((item) => item.value), OASIS_ITEMS);
+    }
+    const flat = readFileSync(new URL("../extensions/oasis.ts", import.meta.url), "utf8").split(/\s+/).join(" ");
+    assert.ok(flat.includes("pi.on(\"session_start\", async (_event, ctx) => { registerSubcommandAutocomplete(ctx); });"));
+    assert.equal(flat.includes("addAutocompleteProvider"), false);
+  });

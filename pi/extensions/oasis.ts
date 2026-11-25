@@ -8,7 +8,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
-  parseCommand, SUBCOMMAND_SUMMARY, subcommandAutocomplete, type SubcommandName, subcommandCompletions, USAGE,
+  parseCommand, registerSubcommandAutocomplete, SUBCOMMAND_SUMMARY, type SubcommandName, subcommandCompletions, USAGE,
 } from "../lib/commands.ts";
 import { withHeartbeat } from "../lib/heartbeat.ts";
 import { DECISION_ENTRY, type GateEffects, settingReader, toolCallRouter } from "../lib/destructive.ts";
@@ -353,10 +353,10 @@ export default function oasisLayer(pi: ExtensionAPI) {
 
   // Typing `/oa` or `/odoo` (no space yet) also suggests `/oasis <subcommand>` and `/odoo19
   // <subcommand>` (lib/commands.ts subcommandAutocomplete); everything else goes to the provider it
-  // wraps. Pi drops extension providers when it rebinds a session, so each session registers it once.
+  // wraps. Pi drops extension providers when it rebinds a session, so each session registers it once,
+  // in the TUI only (registerSubcommandAutocomplete).
   pi.on("session_start", async (_event, ctx) => {
-    if (ctx.mode !== "tui") return;
-    ctx.ui.addAutocompleteProvider((current) => subcommandAutocomplete(current));
+    registerSubcommandAutocomplete(ctx);
   });
 
   // The oasis_* tools are registered inactive; activate them only in sessions inside an Odoo

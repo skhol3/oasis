@@ -157,9 +157,10 @@ export function actionPanel(effects: PanelEffects): (ctx: PanelContext) => Promi
       ui.notify("oasis menu: not confirmed, nothing ran.", "info");
       return;
     }
-    // The native line of these answers, asked before the run (the form usually has it already).
+    // The native line of these answers, asked before the run (the form usually has it already). A
+    // lookup that rejects only leaves the entry without it: the run's entry and Repeat stay.
     const nativeArgv = native ? printCommandArgv(action.command, argv) : null;
-    const nativeLine = native && nativeArgv ? native.settled(nativeArgv) : Promise.resolve(null);
+    const nativeLine = native && nativeArgv ? native.settled(nativeArgv).catch(() => null) : Promise.resolve(null);
     setBusy(command);
     ui.notify(`oasis menu: running ${command}`, "info");
     ui.setStatus(`oasis: ${action.label}`);

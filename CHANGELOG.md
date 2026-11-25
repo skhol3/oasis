@@ -24,7 +24,8 @@ names) may still change in a minor release; every such change is listed here und
   `/odoo19 <subcommand>` with their descriptions; no new command names.
 - Gentle Shell panel: typing in a list of the start / restart form filters it (substring,
   case-insensitive; `filter: <text>` shown, backspace edits it, Esc clears it before cancelling);
-  `(none)` and `(type a name)` stay listed.
+  `(none)` and `(type a name)` stay listed; with no match nothing is highlighted, so Enter does
+  nothing until you move to one of them.
 - Gentle Shell panel: the start / restart form shows the native `odoo-bin` line (from
   `--print-command`), abbreviated (home as `~`, values over 40 characters shortened with `…`),
   falling back to the oasis command with a note while it loads or when it cannot be read; the

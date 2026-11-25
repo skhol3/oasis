@@ -615,9 +615,9 @@ test("RunForm filters a list by typed text, case-insensitively; (none) and (type
   assert.deepEqual(texts(form).slice(3, 6), ["filter: Co", "› cc_dev_coffee (default)", "  cc_test_COFFEE_old"]);
   form.type("zz");
   assert.deepEqual(texts(form).slice(3, -2), ["filter: Cozz", "  no match: backspace edits the filter",
-    "› (none)", "  (type a name)"]);
+    "  (none)", "  (type a name)"]);
   // Typing a name starts from the filter text.
-  form.move(1);
+  form.move(2);
   form.submit();
   assert.deepEqual(texts(form).slice(2, 4), ["Database (Enter for cc_dev_coffee, - for none)", "> Cozz"]);
   form.submit();
@@ -652,6 +652,27 @@ test("RunForm: esc clears a filter first, then cancels; a filter with no match i
   form.escape();
   form.escape();
   assert.deepEqual([form.finished, form.result], [true, undefined]);
+});
+
+test("RunForm: a filter without a real match highlights nothing; Enter answers only a kept row moved to (S2)", () => {
+  const form = new RunForm({ catalog, action: action("server.run"), header: "h", databases: ["cc_dev_tea"] });
+  form.type("zz");
+  assert.deepEqual(texts(form).slice(2, -2), ["Database (Enter for cc_dev_coffee, - for none)", "filter: zz",
+    "  no match: backspace edits the filter", "  (none)", "  (type a name)"]);
+  // Enter does not silently answer "no database".
+  form.submit();
+  assert.deepEqual([form.input?.id, form.answers, form.filter], ["database", {}, "zz"]);
+  assert.equal(texts(form).at(-1), `$ ${RUN} start --detach`);
+  // Moving highlights the kept rows, and Enter then accepts the one moved to.
+  form.move(1);
+  assert.deepEqual(texts(form).slice(5, -2), ["› (none)", "  (type a name)"]);
+  form.submit();
+  assert.deepEqual([texts(form)[2], form.answers], ["Database: (none)", { database: "" }]);
+  // Backspace back to a match highlights the first real option again.
+  const again = new RunForm({ catalog, action: action("server.run"), header: "h", databases: ["cc_dev_tea"] });
+  again.type("teaz");
+  again.backspace();
+  assert.deepEqual(texts(again).slice(3, 6), ["filter: tea", "› cc_dev_tea", "  (none)"]);
 });
 
 test("RunForm shows the native odoo-bin line abbreviated; the oasis line with a note while loading or failed (S4)",

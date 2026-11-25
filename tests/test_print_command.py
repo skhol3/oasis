@@ -124,6 +124,24 @@ class PrintCommandTests(menu.MenuFixture):
             '--db_pa', '***', '--smtp-password', '***', '--smtp-pass=***', '--db_port=5433'))
         self.assert_no_side_effects()
 
+    def test_password_masking_around_the_separator_and_without_a_value(self):
+        # Before `--` a password option takes the next word as its value, `--` included (as optparse
+        # reads it); after `--` the words are not Odoo options and are printed as given.
+        for args, shown in (
+                (('-w', 'Secret1', '--', '-w', 'Secret2'), ('-w', '***', '--', '-w', 'Secret2')),
+                (('--db_password', 'Secret1', '--', '--db_password=Secret2'),
+                 ('--db_password', '***', '--', '--db_password=Secret2')),
+                (('-w', '--', 'x'), ('-w', '***', 'x')),
+                # A password option without a value has nothing to hide: it reaches Odoo as given.
+                (('--workers=0', '-w'), ('--workers=0', '-w')),
+                (('--smtp-password',), ('--smtp-password',))):
+            with self.subTest(args=args):
+                result = self.run_in(self.root, 'start', '--print-command', *args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (0, self.line('-c', str(self.conf), f'--http-port={self.port}', *shown), ''))
+                self.assertNotIn('Secret1', result.stdout)
+        self.assert_no_side_effects()
+
     def test_start_prints_informational_and_batch_commands(self):
         result = self.run_in(self.root, 'start', '--print-command', '--help')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
@@ -245,6 +263,61 @@ class PrintCommandTests(menu.MenuFixture):
         result = self.run_in(self.root, 'restart', '--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertIn('--print-command', result.stdout)
+
+    def test_restart_print_help_with_other_options_prints_the_usage(self):
+        usage = f'Usage: {menu.ENTRY} restart [odoo options]\n'
+        for args in (('--help',), ('--help', '-d', 'cc_dev_coffee'), ('--workers=0', '-h'), ('-h', '--dev', 'xml')):
+            with self.subTest(args=args):
+                result = self.run_in(self.root, 'restart', '--print-command', *args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', usage))
+                self.assert_no_side_effects()
+        # PRESERVE: without --print-command, --help with other options is the same refusal.
+        result = self.run_in(self.root, 'restart', '--help', '-d', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', usage))
+
+    def test_restart_print_refuses_a_busy_port_that_is_not_the_servers(self):
+        self.env['FAKE_SERVE'] = '1'
+        pid = self.detach(self.root)
+        before, log = self.log(), self.server_log.read_bytes()
+        busy = self.port + 2
+        message = f'Port {busy} is in use by another process; pass another --http-port or stop that process.\n'
+        with socket.socket() as holder:
+            holder.bind(('127.0.0.1', busy))
+            holder.listen()
+            for args in (('--http-port', str(busy)), (f'--http-port={busy}',), ('-p', str(busy))):
+                with self.subTest(args=args):
+                    result = self.run_in(self.root, 'restart', '--print-command', *args)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', message))
+                    self.assertEqual(self.record(), f'pid={pid} port={self.port}\n')
+                    self.assertEqual(self.log(), before)
+                    self.assertEqual(self.server_log.read_bytes(), log)
+
+    def test_restart_print_is_quiet_when_the_recorded_server_vanishes_before_its_ports_are_read(self):
+        self.env['FAKE_SERVE'] = '1'
+        self.detach(self.root)
+        # A python3 on PATH that, after the first `runtime_state.py show`, kills the server it
+        # reported and waits until its /proc entry is gone: the race between the record read and
+        # the read of the server's command line, made certain.
+        gone = self.root / 'vanished'
+        shim = self.bindir / 'python3'
+        shim.write_text(f'''#!/bin/sh
+if [ "$4" = show ] && [ ! -e "{gone}" ]; then
+  out=$("{sys.executable}" "$@") || exit $?
+  printf '%s\\n' "$out"
+  pid=${{out#pid=}}; pid=${{pid%% *}}
+  if tr '\\0' '\\n' < "/proc/$pid/cmdline" | grep -qxF "{self.source / 'odoo-bin'}"; then kill -9 "$pid"; fi
+  i=0
+  while [ -e "/proc/$pid" ] && [ $i -lt 100 ]; do sleep 0.05; i=$((i + 1)); done
+  if [ ! -e "/proc/$pid" ]; then echo gone > "{gone}"; else echo alive > "{gone}"; fi
+  exit 0
+fi
+exec "{sys.executable}" "$@"
+''')
+        shim.chmod(0o755)
+        result = self.run_in(self.root, 'restart', '--print-command')
+        self.assertEqual(gone.read_text(), 'gone\n')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.line('-c', str(self.conf), f'--http-port={self.port}'), ''))
 
     # S5 PRESERVE: start's argv is unchanged.
 

@@ -128,7 +128,9 @@ export function abbreviateCommand(line: string, home: string | undefined): strin
 /**
  * Native lines read with `exec` once per argv, in the background: get() answers at once (loading
  * until the command ends), settled() waits for the line (null when it is not available), and
- * every result calls the onChange listeners so the form can draw it.
+ * every result calls the onChange listeners so the form can draw it. A listener that throws is
+ * ignored (the others are still called), and get()'s background read never leaves a rejection
+ * unhandled.
  */
 export function nativeCommands(exec: (argv: string[]) => Promise<CoreResult>): NativeSource & {
   settled(argv: string[]): Promise<string | null>;
@@ -150,7 +152,13 @@ export function nativeCommands(exec: (argv: string[]) => Promise<CoreResult>): N
     const read = running.then(parseNativeLine, (): NativeState => ({ state: "failed", reason: "could not run" }))
       .then((state) => {
         states.set(key, state);
-        for (const listener of listeners) listener();
+        for (const listener of listeners) {
+          try {
+            listener();
+          } catch {
+            // A listener's error (for example drawing a closed form) must not escape the read.
+          }
+        }
         return state;
       });
     pending.set(key, read);
@@ -158,7 +166,7 @@ export function nativeCommands(exec: (argv: string[]) => Promise<CoreResult>): N
   }
   return {
     get(argv) {
-      void start(argv);
+      start(argv).catch(() => undefined);
       return states.get(JSON.stringify(argv)) ?? { state: "loading" };
     },
     async settled(argv) {

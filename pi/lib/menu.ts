@@ -566,7 +566,7 @@ export class RunForm {
   readonly spec: FormSpec;
   readonly answers: Answers = {};
   step = 0;
-  /** The highlighted row of the shown (filtered) options. */
+  /** The highlighted row of the shown (filtered) options; -1 (none) while a filter matches no real option. */
   selected = 0;
   typing = false;
   buffer = "";
@@ -628,14 +628,17 @@ export class RunForm {
     return Math.max(0, index);
   }
 
-  /** After the filter changed: the first matching option (else the first one), from the top of the list. */
+  /**
+   * After the filter changed: the first matching option, from the top of the list. Without a real
+   * match no row is highlighted, so Enter answers nothing until the user moves to a kept row.
+   */
   private refilter(): void {
     this.listStart = 0;
     if (!this.filter) {
       this.selected = this.defaultIndex();
       return;
     }
-    this.selected = Math.max(0, this.shownOptions().findIndex((option) => !option.keep));
+    this.selected = this.shownOptions().findIndex((option) => !option.keep);
   }
 
   private enter(): void {

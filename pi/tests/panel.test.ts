@@ -438,6 +438,23 @@ test("Repeat runs the remembered answers after the same preview and confirmation
   assert.deepEqual(restart.entries.map((entry) => entry.command), [`${ENTRY} start --detach --http-port 8070`]);
 });
 
+test("a native line lookup that rejects keeps the run's entry and the Repeat memory (S4)", async () => {
+  const answers = { database: "", dev: "", port: "8070" };
+  const { open, context, events, entries, remembered } = harness({
+    pick: "server.run", repeat: answers, form: answers,
+    // A print result without stdout makes the lookup itself reject (parseNativeLine throws).
+    exec: async (argv) => (argv.includes("--print-command") ? { code: 0 } as CoreResult
+      : { code: 0, stdout: "pid=1\n", stderr: "" }),
+  });
+  await open(context());
+  assert.deepEqual(entries, [{
+    label: "Start / restart the server", command: `${ENTRY} start --detach --http-port 8070`, exit: 0, output: "pid=1",
+  }]);
+  assert.deepEqual(remembered, [`${ROOT}: server.run ${JSON.stringify(answers)}`]);
+  assert.deepEqual(events.filter((event) => event.startsWith("error:") || event.startsWith("warning:")), []);
+  assert.equal(events.at(-1), "status -");
+});
+
 test("start / restart still runs when its native line cannot be read; the entry then has none (S4)", async () => {
   for (const print of [
     async () => ({ code: 2, stdout: "", stderr: "start: unknown option --print-command\n" }),

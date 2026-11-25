@@ -95,3 +95,33 @@ test("nativeCommands fetches once per argv, reports loading, ready and failures,
   assert.equal(changes, 2);
   assert.deepEqual(calls, ["start", "boom", "start -d x"]);
 });
+
+test("nativeCommands: a listener that throws never escapes; the line is still read and other listeners hear it",
+  async () => {
+    const pending: ((result: CoreResult) => void)[] = [];
+    const native = nativeCommands(() => new Promise((resolve) => pending.push(resolve)));
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => {
+      rejections.push(reason);
+    };
+    process.on("unhandledRejection", onRejection);
+    try {
+      let heard = 0;
+      native.onChange(() => {
+        throw new Error("render after dispose");
+      });
+      native.onChange(() => {
+        heard += 1;
+      });
+      // Only get(), as the form calls it: nothing else waits for the read.
+      assert.deepEqual(native.get(["start"]), { state: "loading" });
+      pending[0]({ code: 0, stdout: "/env/python /odoo/odoo-bin\n", stderr: "" });
+      for (let turn = 0; turn < 10; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(rejections, []);
+      assert.equal(heard, 1);
+      assert.deepEqual(native.get(["start"]), { state: "ready", line: "/env/python /odoo/odoo-bin" });
+      assert.equal(await native.settled(["start"]), "/env/python /odoo/odoo-bin");
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+  });

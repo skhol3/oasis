@@ -139,10 +139,12 @@ choose_server_ports() {
 }
 
 # running_second_port <pid>: the second (gevent) port on the command line of a running server
-# ($ODOO_SECOND_PORT_OPTION=<port> or as a separate word, the last one), or nothing.
+# ($ODOO_SECOND_PORT_OPTION=<port> or as a separate word, the last one), or nothing, silently,
+# when that command line cannot be read (the server ended after its record was read).
 running_second_port() {
   local words=() index value=''
-  mapfile -d '' words < "/proc/$1/cmdline" 2>/dev/null || return 0
+  # stderr is redirected first, so a failing input redirection prints nothing.
+  mapfile -d '' words 2>/dev/null < "/proc/$1/cmdline" || return 0
   for (( index = 0; index < ${#words[@]}; index++ )); do
     case ${words[index]} in
       --) break ;;

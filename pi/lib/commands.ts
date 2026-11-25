@@ -161,3 +161,20 @@ export function subcommandAutocomplete(current: AutocompleteSource): Autocomplet
   }
   return provider;
 }
+
+/** What a session_start context offers to register the S3 provider (ctx.mode and ctx.ui). */
+export interface AutocompleteHost {
+  mode: string;
+  ui: { addAutocompleteProvider(factory: (current: AutocompleteSource) => AutocompleteSource): void };
+}
+
+/**
+ * Registers subcommandAutocomplete for a session, only in the interactive TUI: `ctx.mode === "tui"`
+ * is the check Pi documents for editor features (RPC, JSON and print sessions have no editor to
+ * complete in). Returns whether it registered.
+ */
+export function registerSubcommandAutocomplete(ctx: AutocompleteHost): boolean {
+  if (ctx.mode !== "tui") return false;
+  ctx.ui.addAutocompleteProvider((current) => subcommandAutocomplete(current));
+  return true;
+}
