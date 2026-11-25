@@ -4,7 +4,7 @@ A thin Pi package (`package.json`, `pi/`) layered over Gentle Shell. It changes 
 
 ## Installing the package
 
-Install it from a release tag (`<tag>`, for example `v0.12.1`; see the [changelog](../CHANGELOG.md)), so the sessions load a fixed copy that work in a local checkout cannot change, then `/reload` open sessions:
+Install it from a release tag (`<tag>`, for example `v0.13.0`; see the [changelog](../CHANGELOG.md)), so the sessions load a fixed copy that work in a local checkout cannot change, then `/reload` open sessions:
 
 ```bash
 gentle-shell install git:github.com/skhol3/oasis@<tag>

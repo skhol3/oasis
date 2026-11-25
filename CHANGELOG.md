@@ -9,6 +9,8 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-24
+
 ### Added
 
 - `start --print-command [odoo options]` and `restart --print-command [odoo options]` print the
@@ -942,7 +944,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/skhol3/oasis/releases/tag/v0.13.0
 [0.12.0]: https://github.com/skhol3/oasis/releases/tag/v0.12.0
 [0.11.0]: https://github.com/skhol3/oasis/releases/tag/v0.11.0
 [0.10.1]: https://github.com/skhol3/oasis/releases/tag/v0.10.1
