@@ -29,7 +29,8 @@ MANIFEST = "{'name': 'Shop Sale', 'version': '19.0.1.0.0', 'depends': ['sale']}\
 MARKER = 'setup-must-not-print-this'
 # A fake uv: records `uv <args> (in <cwd>)`, writes the lock `pip compile ... -o <lock>` names, and
 # makes `venv --python <v> <target>` an environment (pyvenv.cfg and bin/python). FAKE_COMPILE_FAIL,
-# FAKE_VENV_FAIL (exit 3) and FAKE_SYNC_FAIL (exit 4) make that step fail.
+# FAKE_VENV_FAIL (exit 3) and FAKE_SYNC_FAIL (exit 4) make that step fail; FAKE_SYNC_BREAK=<file> makes
+# `pip sync` overwrite that file with invalid TOML (a file broken after the verification).
 UV = '''#!/bin/sh
 printf 'uv %s (in %s)\\n' "$*" "$PWD" >> "$FAKE_LOG"
 case "$1 $2" in
@@ -48,6 +49,7 @@ case "$1 $2" in
     printf '#!/bin/sh\\necho 3.12\\n' > "$4/bin/python"
     chmod +x "$4/bin/python" ;;
   'pip sync')
+    if [ -n "${FAKE_SYNC_BREAK:-}" ]; then printf 'broken = [\n' > "$FAKE_SYNC_BREAK"; fi
     if [ -n "${FAKE_SYNC_FAIL:-}" ]; then echo 'error: no index' >&2; exit 4; fi ;;
 esac
 exit 0
@@ -681,6 +683,49 @@ class SetupTests(unittest.TestCase):
             f'nothing to set up: run oasis --project {self.checkout} doctor']) + '\n')
         self.assertEqual(self.tree(), before)
         self.assertFalse(self.log.exists())
+
+    def adopted_next_steps(self, project, add_development):
+        """The next steps setup --apply prints for existing_workspace() with every other piece created."""
+        config = project / 'config'
+        workspace = project / 'oasis-workspace.toml'
+        steps = [f'fill in ODOO_DB_USER and ODOO_DB_PASSWORD in {config / ".env"}, and the same values as db_user '
+                 f'and db_password in {config / "odoo.conf"}',
+                 f'docker compose --env-file {config / ".env"} -f {config / "compose.yml"} up -d --wait',
+                 f'oasis --project {self.checkout} doctor']
+        if add_development:
+            steps.append(f'add a [development] table with administrator_login to {workspace} (docs/dev-database.md)')
+        steps.append(f'oasis --project {self.checkout} init-dev-database <module> shop_dev_manual')
+        return 'next steps:\n' + ''.join(f'  {number}. {step}\n' for number, step in enumerate(steps, 1))
+
+    def test_a_workspace_with_a_development_table_gets_no_step_to_add_one(self):
+        project = self.existing_workspace()
+        workspace = project / 'oasis-workspace.toml'
+        workspace.write_text(workspace.read_text() + "\n[development]\nadministrator_login = 'local_admin'\n")
+        result = self.setup_cmd('--apply')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertIn(f'created the environment {project / "envs/shop"}\n', result.stdout)
+        self.assertTrue(result.stdout.endswith(self.adopted_next_steps(project, add_development=False)), result.stdout)
+        self.assertNotIn('add a [development] table', result.stdout)
+        # Without the table the step is there and init-dev-database comes after it.
+        shutil.rmtree(project / 'config')
+        shutil.rmtree(project / 'envs')
+        self.existing_workspace()
+        result = self.setup_cmd('--apply')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.endswith(self.adopted_next_steps(project, add_development=True)), result.stdout)
+
+    def test_a_workspace_file_unreadable_after_the_verification_gets_no_step_to_add_a_development_table(self):
+        # The file is read again for the next steps: when that read fails, doctor reports it; setup
+        # does not advise editing a file that may be broken.
+        project = self.existing_workspace()
+        workspace = project / 'oasis-workspace.toml'
+        self.env['FAKE_SYNC_BREAK'] = str(workspace)
+        result = self.setup_cmd('--apply')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(workspace.read_text(), 'broken = [\n')
+        self.assertIn(f'verified: {self.checkout} loads its configuration from {workspace}\n', result.stdout)
+        self.assertTrue(result.stdout.endswith(self.adopted_next_steps(project, add_development=False)), result.stdout)
+        self.assertNotIn('add a [development] table', result.stdout)
 
     def test_modules_of_another_series_than_the_configured_one_are_refused(self):
         # S11: an existing configuration (the checkout's modules are 19.0, one is 15.0).

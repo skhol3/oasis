@@ -697,13 +697,14 @@ def apply_plan(plan: dict) -> int:
         steps.append(f'{program} --project {root} bootstrap --apply')
     steps += [f'docker compose --env-file {env_file} -f {values["COMPOSE_FILE"]} up -d --wait',
               f'{program} --project {root} doctor']
-    # init-dev-database needs the role accounts of [development] (tools/dev_users.py).
+    # init-dev-database needs the role accounts of [development] (tools/dev_users.py). A workspace
+    # file that cannot be read now gets no edit advice: doctor reports the configuration.
     workspace_file = Path(values['WORKSPACE_ROOT']) / config.WORKSPACE_NAME
     try:
         development = isinstance(config.read_toml(workspace_file).get('development'), dict)
-    except Exception:
-        development = False
-    if not development:
+    except config.InvalidConfig:
+        development = None
+    if development is False:
         steps.append(f'add a [development] table with administrator_login to {workspace_file} '
                      '(docs/dev-database.md)')
     steps.append(f'{program} --project {root} init-dev-database <module> {values["DEV_PREFIX"]}manual')

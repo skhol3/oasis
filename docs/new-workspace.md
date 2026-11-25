@@ -325,6 +325,15 @@ steps write [the example tree](#the-example-tree); any other folders work the sa
    db_password = <the password of config/.env>
    ```
 
+   The environment file holds the same database account, one `NAME=value` per line; write your
+   own password in both files:
+
+   ```ini
+   # projects/acme/config/.env
+   ODOO_DB_USER=odoo
+   ODOO_DB_PASSWORD=<the same password as db_password in odoo.conf>
+   ```
+
    ```bash
    chmod 600 ~/odoo/19.0/projects/acme/config/.env ~/odoo/19.0/projects/acme/config/odoo.conf
    ```
