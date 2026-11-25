@@ -8,7 +8,8 @@ its own optional `oasis-checkout.toml`, over the optional machine file
 (`$XDG_CONFIG_HOME/oasis/config.toml`, else `~/.config/oasis/config.toml`), whose per-series
 source paths are defaults the workspace overrides. A checkout that still has the legacy
 profile `.odoo19-agent.toml` is refused: only tools/migrate.py reads that file, to convert it.
-Path declarations do not grant access consent.
+So is a checkout whose module manifests declare another Odoo series than its odoo_version (load,
+series_mismatch). Path declarations do not grant access consent.
 """
 import ast
 import functools
@@ -448,10 +449,86 @@ def layered_configuration(root: Path) -> tuple[dict, Path, Path, str, dict[str, 
     return document, workspace.parent, workspace, name, origins, refusal
 
 
-def load(root: Path) -> dict[str, str]:
-    """Validated assignments for root (see configuration)."""
+def load(root: Path, *, series_guard: bool = True) -> dict[str, str]:
+    """Validated assignments for root (see configuration), refused when a module of its addons paths
+    declares another Odoo series (series_mismatch; v0.14.0 S11). Only doctor reads them without the
+    guard (series_guard=False), to report it as one check."""
     document, base, workspace, name, _origins, refusal = layered_configuration(root)
-    return assignments(document, root, base, workspace, name, missing_source=refusal)
+    values = assignments(document, root, base, workspace, name, missing_source=refusal)
+    if series_guard:
+        mismatch = series_mismatch(values)
+        if mismatch is not None:
+            raise InvalidConfig(series_refusal(mismatch, values))
+    return values
+
+
+# A series-style module version: <major>.<minor>.<x>.<y>.<z> (<series>.1.0.0), no leading zeros in
+# the series. tools/setup.py reads the series of a new checkout with manifest_series too.
+SERIES_VERSION = re.compile(r'([1-9][0-9]*)\.(0|[1-9][0-9]*)\.[0-9]+\.[0-9]+\.[0-9]+')
+# A series that is not in tools/odoo_versions.py still counts when it looks like an Odoo release:
+# <major>.0 with a major from 8 (the first series whose modules carry series-style versions) to 99.
+PLAUSIBLE_MAJORS = range(8, 100)
+
+
+def manifest_series(manifest: Path) -> tuple[str, str] | None:
+    """(series, version) of a module manifest whose `version` is series-style for a known or
+    plausible series, else None (also when it cannot be read or is not a literal dict). Read with
+    ast.literal_eval, never imported; a file without any series-style number is not parsed."""
+    try:
+        text = manifest.read_text(encoding='utf-8')
+    except (OSError, UnicodeError):
+        return None
+    if not SERIES_VERSION.search(text):
+        return None
+    try:
+        data = ast.literal_eval(text)
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        return None
+    version = data.get('version') if isinstance(data, dict) else None
+    match = SERIES_VERSION.fullmatch(version) if isinstance(version, str) else None
+    if match is None:
+        return None
+    series = f'{match.group(1)}.{match.group(2)}'
+    if series not in versions().CAPABILITIES and not (match.group(2) == '0'
+                                                      and int(match.group(1)) in PLAUSIBLE_MAJORS):
+        return None
+    return series, version
+
+
+def series_mismatch(values: dict[str, str]) -> dict | None:
+    """The first module of the addons paths (in their order, then by directory name) whose manifest
+    declares another series than ODOO_VERSION: its module, manifest, series and version; None when
+    there is none. Only `<addons path>/<module>/__manifest__.py` is read, hidden directories skipped."""
+    expected = values['ODOO_VERSION']
+    for addons in values['ADDON_ROOTS'].splitlines():
+        for manifest in sorted(Path(addons).glob('*/__manifest__.py')):
+            if manifest.parent.name.startswith('.'):
+                continue
+            declared = manifest_series(manifest)
+            if declared is not None and declared[0] != expected:
+                return {'module': manifest.parent.name, 'manifest': str(manifest), 'series': declared[0],
+                        'version': declared[1]}
+    return None
+
+
+def series_fix(mismatch: dict, expected: str) -> str:
+    """How to fix a series mismatch (doctor's fix line and the end of series_refusal)."""
+    program, module, found = program_name(), mismatch['module'], mismatch['series']
+    fix = (f'run {program} in a checkout of an Odoo {expected} branch, or set the version of {module} to '
+           f'{expected}.x.y.z if it is an Odoo {expected} module')
+    if found in versions().CAPABILITIES:
+        return fix + (f'; for Odoo {found} here, give this checkout its own {WORKSPACE_NAME} with '
+                      f"odoo_version = '{found}'")
+    return fix + f'; {program} does not support Odoo {found} (supported: {", ".join(versions().supported())})'
+
+
+def series_refusal(mismatch: dict, values: dict[str, str]) -> str:
+    """The refusal of a checkout with a module of another series: the module, both series, the fix."""
+    expected = values['ODOO_VERSION']
+    workspace = Path(values['WORKSPACE_ROOT']) / WORKSPACE_NAME
+    return (f'The module {mismatch["module"]} declares Odoo {mismatch["series"]} (version {mismatch["version"]} '
+            f'in {mismatch["manifest"]}), but {values["PROJECT_ROOT"]} is configured for Odoo {expected} by '
+            f'{workspace}: {series_fix(mismatch, expected)}.')
 
 
 def origins(root: Path) -> dict[str, str]:

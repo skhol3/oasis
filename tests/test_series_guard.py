@@ -1,0 +1,164 @@
+"""The series guard (v0.14.0 S11): a checkout whose module manifests carry a series-style version
+(`<series>.x.y.z`) of another series than the configured odoo_version is refused by every command
+that loads the configuration (tools/config.py load), with exit 2 before anything runs.
+
+Every path lives in a fresh system temp directory; git is kept out with a ceiling and docker is a
+fake that records its calls, so nothing reads a real project or starts a service.
+"""
+import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
+import importlib.util
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+CLI = ROOT / 'oasis'
+READER = ROOT / 'tools' / 'config.py'
+WORKSPACE = '''workspace_version = 1
+odoo_version = '19.0'
+
+[tooling]
+community = '../source/odoo'
+environment = '../environment'
+config = 'dev/odoo.conf'
+env_file = 'dev/env'
+compose = 'dev/compose.yml'
+requirements = 'dev/requirements'
+addons_paths = ['addons', 'more']
+db_service = 'db'
+dev_prefix = 'shop_dev_'
+test_prefix = 'shop_test_'
+'''
+
+
+def manifest(version):
+    return f"{{'name': 'A module', 'version': {version!r}, 'depends': ['base']}}\n"
+
+
+class SeriesGuardTests(unittest.TestCase):
+    def setUp(self):
+        self.scratch = Path(tempfile.mkdtemp(prefix='oasis-series-')).resolve()
+        self.addCleanup(shutil.rmtree, self.scratch, ignore_errors=True)
+        source = self.scratch / 'source/odoo'
+        (source / 'odoo').mkdir(parents=True)
+        (source / 'odoo/release.py').write_text('version_info = (19, 0, 0, "final", 0)\n')
+        (source / 'odoo-bin').touch()
+        environment = self.scratch / 'environment'
+        (environment / 'bin').mkdir(parents=True)
+        (environment / 'pyvenv.cfg').write_text('home = /usr/bin\n')
+        self.root = self.scratch / 'shop'
+        (self.root / 'dev').mkdir(parents=True)
+        (self.root / 'oasis-workspace.toml').write_text(WORKSPACE)
+        (self.root / 'dev/odoo.conf').write_text('[options]\n')
+        self.module('addons', 'shop_sale', '19.0.1.0.0')
+        self.module('more', 'shop_extra', '1.0')
+        bindir = self.scratch / 'bin'
+        bindir.mkdir()
+        self.log = self.scratch / 'calls.log'
+        (bindir / 'docker').write_text('#!/bin/sh\nprintf "docker %s\\n" "$*" >> "$FAKE_LOG"\nexit 0\n')
+        (bindir / 'docker').chmod(0o755)
+        self.env = {key: value for key, value in os.environ.items() if not key.startswith(('GIT_', 'OASIS_', 'ODOO19_'))}
+        self.env.update({'PATH': f'{bindir}:{os.environ["PATH"]}', 'FAKE_LOG': str(self.log),
+                         'GIT_CEILING_DIRECTORIES': str(self.scratch), 'PYTHONDONTWRITEBYTECODE': '1',
+                         'XDG_RUNTIME_DIR': str(self.scratch)})
+
+    def module(self, addons, name, version):
+        path = self.root / addons / name / '__manifest__.py'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(manifest(version))
+        return path
+
+    def reader(self):
+        return subprocess.run([sys.executable, '-B', str(READER), str(self.root)], capture_output=True, text=True,
+                              env=self.env)
+
+    def oasis(self, *args):
+        return subprocess.run([sys.executable, '-B', str(CLI), '--project', str(self.root), *args],
+                              capture_output=True, text=True, env=self.env, stdin=subprocess.DEVNULL)
+
+    def refusal(self, module, found, version, addons='addons'):
+        return (f'The module {module} declares Odoo {found} (version {version} in '
+                f'{self.root / addons / module / "__manifest__.py"}), but {self.root} is configured for Odoo 19.0 by '
+                f'{self.root / "oasis-workspace.toml"}: run oasis in a checkout of an Odoo 19.0 branch, or set the '
+                f'version of {module} to 19.0.x.y.z if it is an Odoo 19.0 module; oasis does not support Odoo '
+                f'{found} (supported: 19.0).')
+
+    def test_a_module_of_another_series_is_refused_by_every_reader(self):
+        self.assertEqual(self.reader().returncode, 0, self.reader().stderr)
+        self.module('more', 'old_sale', '15.0.1.0.0')
+        message = f'ERROR: {self.refusal("old_sale", "15.0", "15.0.1.0.0", "more")}\n'
+        result = self.reader()
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', message))
+        # A shell tool (through common.sh) and a Python tool stop with the same refusal, before docker.
+        for args in (('start', '--print-command'), ('list-databases',), ('module-info', 'shop_sale')):
+            with self.subTest(args=args):
+                result = self.oasis(*args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', message))
+        self.assertFalse(self.log.exists())
+
+    def test_the_first_offending_module_is_named(self):
+        self.module('addons', 'b_old', '15.0.1.0.0')
+        self.module('addons', 'a_old', '16.0.2.0.1')
+        self.module('more', 'c_old', '14.0.1.0.0')
+        result = self.reader()
+        self.assertEqual((result.returncode, result.stderr),
+                         (2, f'ERROR: {self.refusal("a_old", "16.0", "16.0.2.0.1")}\n'))
+
+    def test_manifests_without_a_series_style_version_or_outside_the_addons_paths_are_ignored(self):
+        for version in ('1.0', '1.0.0', '19.0.1.0', '19.0.1.0.0', '1.2.3.4.5', '7.0.1.0.0', '15.1.1.0.0',
+                        '015.0.1.0.0', '15.0.1.0.0.0', 15.0, None):
+            self.module('addons', 'mixed', version)
+            with self.subTest(version=version):
+                result = self.reader()
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+        (self.root / 'addons/mixed/__manifest__.py').unlink()
+        # Not a module of an addons path: outside them, hidden, nested deeper, or not a literal manifest.
+        self.module('other', 'old_sale', '15.0.1.0.0')
+        self.module('addons/.old', 'old_sale', '15.0.1.0.0')
+        (self.root / 'addons/.hidden').mkdir()
+        (self.root / 'addons/.hidden/__manifest__.py').write_text(manifest('15.0.1.0.0'))
+        self.module('addons/shop_sale', 'nested', '15.0.1.0.0')
+        marker = self.scratch / 'executed'
+        (self.root / 'addons/code').mkdir()
+        (self.root / 'addons/code/__manifest__.py').write_text(
+            f"{{'version': __import__('pathlib').Path({str(marker)!r}).touch() or '15.0.1.0.0'}}\n")
+        (self.root / 'addons/broken').mkdir()
+        (self.root / 'addons/broken/__manifest__.py').write_bytes(b"{'version': '15.0.1.0.0'\xff\n")
+        result = self.reader()
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertFalse(marker.exists())
+
+    def test_doctor_and_setup_run_and_report_it(self):
+        self.module('addons', 'old_sale', '15.0.1.0.0')
+        doctor = self.oasis('doctor')
+        self.assertEqual((doctor.returncode, doctor.stderr), (1, ''))
+        self.assertIn('PASS configuration=workspace\n', doctor.stdout)
+        self.assertIn('FAIL module_series=15.0 module=old_sale expected=19.0\n  fix: run oasis in a checkout', doctor.stdout)
+        setup = self.oasis('setup')
+        self.assertEqual((setup.returncode, setup.stdout, setup.stderr),
+                         (2, '', f'ERROR: {self.refusal("old_sale", "15.0", "15.0.1.0.0")}\n'))
+
+    def test_a_supported_series_is_told_to_use_its_own_workspace_file(self):
+        spec = importlib.util.spec_from_file_location('oasis_series_guard_config', READER)
+        config = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(config)
+        self.module('addons', 'old_sale', '15.0.1.0.0')
+        values = config.load(self.root, series_guard=False)
+        table = config.versions().CAPABILITIES
+        table['15.0'] = table['19.0']
+        self.addCleanup(table.pop, '15.0')
+        mismatch = config.series_mismatch(values)
+        self.assertEqual((mismatch['module'], mismatch['series'], mismatch['version']),
+                         ('old_sale', '15.0', '15.0.1.0.0'))
+        self.assertEqual(config.series_fix(mismatch, '19.0'),
+                         'run oasis in a checkout of an Odoo 19.0 branch, or set the version of old_sale to 19.0.x.y.z '
+                         "if it is an Odoo 19.0 module; for Odoo 15.0 here, give this checkout its own "
+                         "oasis-workspace.toml with odoo_version = '15.0'")
+
+
+if __name__ == '__main__':
+    unittest.main()
