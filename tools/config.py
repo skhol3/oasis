@@ -159,6 +159,8 @@ def missing_configuration(root: Path) -> str:
 
 
 SLUG = re.compile(r'[a-z0-9][a-z0-9_]{0,19}')
+# What SLUG accepts, as the slug errors name it (v0.16.0 S4: the 20-character limit).
+SLUG_RULE = '1 to 20 lowercase letters, digits or underscores, starting with a letter or digit'
 GIT_TIMEOUT_SECONDS = 5
 
 
@@ -240,11 +242,18 @@ def derived_slug(top: Path, main: Path) -> str:
     if (main.name and name.startswith(main.name) and len(name) > len(main.name)
             and name[len(main.name)] in '-_.'):
         name = name[len(main.name):].lstrip('-_.')
-    slug = re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
+    slug = slug_of(name)
     if not SLUG.fullmatch(slug):
-        raise InvalidConfig('Cannot derive a checkout slug from the worktree directory name; '
-                            'set [tooling].checkout_slug.')
+        gives = f'{slug} ({len(slug)} characters)' if slug else 'nothing'
+        raise InvalidConfig(f'Cannot derive a checkout slug from the worktree directory name {top.name}: it gives '
+                            f'{gives}, and a slug is {SLUG_RULE}; set [tooling].checkout_slug in '
+                            f'{top / CHECKOUT_NAME}.')
     return slug
+
+
+def slug_of(name: str) -> str:
+    """The slug a worktree directory name gives (its main directory prefix already removed), valid or not."""
+    return re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
 
 
 def find_workspace(root: Path) -> Path | None:
@@ -930,7 +939,7 @@ def resolve(document: dict, root: Path, base: Path, *, missing_source: str = '')
     override = tooling.get('checkout_slug')
     if 'checkout_slug' in tooling and (not isinstance(override, str)
                                        or not SLUG.fullmatch(override)):
-        raise InvalidConfig('Invalid tooling checkout slug.')
+        raise InvalidConfig(f'Invalid [tooling].checkout_slug in {root / CHECKOUT_NAME}: use {SLUG_RULE}.')
     kind, top, main = checkout_identity(root, override)
     # A checkout file's slug wins for every kind; only a linked worktree derives one.
     output['CHECKOUT_KIND'] = kind

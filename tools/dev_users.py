@@ -17,13 +17,15 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shlex
 import subprocess
 import sys
 import tempfile
 import warnings
 
-from config import InvalidConfig, configuration, load, program_name
+from config import InvalidConfig, configuration, load, program_name, versions
 from dev_users_runtime import CREATED_THEN_FAILED
+from odoo_addons_path import ConfError, config_arguments
 
 INVALID = 'ERROR: Invalid development user configuration.'
 TERMINAL = 'ERROR: Password entry failed on the terminal; no database was created.'
@@ -62,6 +64,23 @@ def created(result) -> bool:
     CREATED_THEN_FAILED (4: created, then a later step failed). Any other exit is unknown (3 alone says nothing
     was created; 1 is an error the runner did not catch, an import error included)."""
     return result.returncode in (0, CREATED_THEN_FAILED)
+
+
+def runtime_values(values, with_demo):
+    """What dev_users_runtime.py needs from the configuration, decided here: it runs with the environment's
+    Python (3.7+), which cannot import config.py. The demo options and the users' groups field of the Odoo
+    series (tools/odoo_versions.py): demo-off through config.py, demo-on (nothing in a series that loads demo
+    data by default); and the options of common.sh's odoo_config_arguments, from the same decision: -c, then
+    --addons-path (composed for a path-free odoo.conf, or a linked worktree's own root) and --data-dir
+    ([tooling].data_dir) when they apply. Raises ConfError when the configuration cannot be read."""
+    capability = versions().capability
+    return {
+        'python': values['PYTHON'], 'odoo_bin': values['ODOO_BIN'], 'odoo_source': values['ODOO_SOURCE'],
+        'demo_flags': (capability(values['ODOO_VERSION'], 'demo_on_args') if with_demo
+                       else shlex.split(values['ODOO_DEMO_OFF_ARGS'])),
+        'groups_field': capability(values['ODOO_VERSION'], 'user_groups_field'),
+        'config_args': config_arguments(values),
+    }
 
 
 def declaration(root):
@@ -112,6 +131,13 @@ def main():
         print(f'ERROR: {target.parent} does not exist: run {program_name()} setup --apply; no '
               'database was created.', file=sys.stderr)
         return 2
+    with_demo = args[3] == 'true'
+    try:
+        runtime = runtime_values(values, with_demo)
+    except ConfError as error:
+        # The message names the path, never content (odoo_addons_path.py).
+        print(f'ERROR: {error}', file=sys.stderr)
+        return 2
     if validate_only:
         return 0
     passwords, generated = [], []
@@ -142,7 +168,7 @@ def main():
         print('ERROR: Local database service is unavailable; no initialization was attempted.',
               file=sys.stderr)
         return 1
-    payload = {'declaration': section, 'passwords': passwords, 'with_demo': args[3] == 'true'}
+    payload = {'declaration': section, 'passwords': passwords, 'with_demo': with_demo, 'runtime': runtime}
     runner = Path(__file__).with_name('dev_users_runtime.py')
     # Typed passwords exist only in process memory and the anonymous stdin pipe; generated ones also in the
     # 0600 logins file, staged before the database exists so that none is lost once it does.

@@ -375,6 +375,12 @@ class AuthenticationFixTests(unittest.TestCase):
                          self.unread('an entry other than - [<address>:]<port>:5432'))
         self.assertEqual(self.fix("    ports:  # published\n\n      # the database\n      - '${DB_PORT}:5432'\n"),
                          self.unread('an entry other than - [<address>:]<port>:5432'))
+        # A ports key with a YAML tag (compose's !override, !reset) or an anchor is still the ports key.
+        for key in ('ports: !override', 'ports: &db_ports', 'ports: &db_ports !override  # merged', "'ports': !reset"):
+            with self.subTest(key=key):
+                self.assertEqual(self.fix(f"    {key}\n      - '${{DB_PORT}}:5432'\n"),
+                                 self.unread('an entry other than - [<address>:]<port>:5432'))
+                self.assertEqual(self.fix(f"    {key}\n      - '127.0.0.1:6001:5432'\n"), local)
         # No entry names the container's port: nothing is published to 5432.
         self.assertEqual(self.fix('    environment:\n      POSTGRES_DB: postgres\n'),
                          other.format(conf=self.conf, compose=self.compose, service='no port published to 5432 found'))

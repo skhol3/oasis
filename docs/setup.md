@@ -688,5 +688,7 @@ syncs the adopted environment <dir> to them (it changes the packages installed t
 ## oasis setup and /oasis setup
 
 They are different commands. `oasis setup` (this page) is the command-line tool that configures a
-checkout. `/oasis setup` in Gentle Shell installs the subagent overlay (see
-[Subagents](subagents.md)) and writes nothing in the project.
+checkout. `/oasis setup` in Gentle Shell shows the workspace status (`oasis status --json`) and this
+plan (`oasis setup --plan --json`) for the session's checkout, never applies it, and installs the
+subagent overlay (see [The /oasis command](gentle-shell-layer.md#the-oasis-command) and
+[Subagents](subagents.md)); it writes nothing in the project.

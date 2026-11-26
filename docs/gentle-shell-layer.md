@@ -68,7 +68,7 @@ A bash guard blocks the agent from running some commands directly and asks the u
 ### The /oasis command
 
 - `/oasis`: a quick status with the configuration (or its error), addon modules, configured databases, git worktree, checkout identity and this checkout's server (`server: running on port <port> (pid <pid>)` or `server: stopped`, read from the runtime record). It never starts services or queries databases.
-- `/oasis setup` installs the subagent overlay, which is for Gentle Shell only (see [Subagents](subagents.md)).
+- `/oasis setup` shows the workspace status (the facts of `oasis status --json`: what is ready, what is missing with its detail, the next command) and the plan of `oasis setup` for the session's checkout (`oasis setup --plan --json`: the changes it would make and its open questions, with their flag and recommended answer); it never applies setup and ends with the command that does (`oasis --project <checkout> setup --apply`). It runs for the checkout of the working directory too when it has no workspace file yet. Its last line says what it did with the subagent overlay, which is for Gentle Shell only: `installed at <file>` or `updated at <file>` (start a new session or `/reload` afterwards), `already installed, nothing to do`, `not installed (<reason>)`, or, outside Gentle Shell, that nothing was written (see [Subagents](subagents.md)).
 - `/oasis doctor` shows the `oasis doctor` report (see [Checking the environment](checking-environment.md)); there is no agent tool for it.
 - `/oasis worktree <feature> <branch>` creates a linked worktree below the workspace file after confirmation (see [Preparing a linked worktree](checkouts-and-worktrees.md#preparing-a-linked-worktree)).
 - `/oasis migrate` shows the `oasis migrate` plan and applies it after confirmation (see [Migrating to the workspace file](migrating.md)).
@@ -79,7 +79,7 @@ A bash guard blocks the agent from running some commands directly and asks the u
 
 The `oasis_*` tools are active only in sessions started inside an Odoo project (a directory with `oasis-workspace.toml` at or above it), so other projects pay no tokens for them; `/oasis` is available everywhere.
 
-Aliases from before 0.4.0: `/odoo19` runs the same command as `/oasis` (same subcommands), and each `oasis_*` tool is also registered as an `odoo19_*` alias with the same parameters and implementation. The aliases are never activated by the layer, so they cost no tokens; an overlay or allowlist that still names them keeps working, and `/oasis setup` reports such an overlay as outdated.
+Aliases from before 0.4.0: `/odoo19` runs the same command as `/oasis` (same subcommands), and each `oasis_*` tool is also registered as an `odoo19_*` alias with the same parameters and implementation. The aliases are never activated by the layer, so they cost no tokens; an overlay or allowlist that still names them keeps working, and `/oasis setup` updates such an outdated overlay.
 
 Other agents keep using the core (`oasis` CLI and skills) unchanged.
 

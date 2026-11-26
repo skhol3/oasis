@@ -48,6 +48,11 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- `/oasis setup` (Gentle Shell) shows the workspace status (`oasis status --json`) and the `oasis setup`
+  plan of the checkout (changes and open questions; never applied), installs the subagent overlay without
+  asking and says what it did.
+- The checkout slug errors name the 20-character limit, the slug the directory name gives and the
+  oasis-checkout.toml to edit.
 - Without a terminal, `oasis setup` without `--apply` no longer exits 2 when it needs the series or the
   source: it prints the plan so far, `open question <id>: <message naming the flag>` and exits 0.
   `--apply` refuses as before (exit 2, same message).
@@ -102,6 +107,10 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Fixed
 
+- `init-dev-database` works with an Odoo 15 environment's Python (3.7 to 3.10): the part that runs in
+  Odoo no longer imports tomllib; oasis passes it the values it needs.
+- The database account check reads a compose `ports:` key with a YAML tag or anchor (`ports: !override`).
+- A failed relay of uv's output (broken pipe, Ctrl-C) while compiling the locks kills and waits for uv.
 - `oasis setup` no longer proposes an `external_dependencies` import name as a distribution name: a name
   it does not know (e.g. `cv2`) gets its `requirement:<name>` question with no recommended answer.
 - Requirement clauses with a wildcard (`!=3.6.*`) are compared; they were read as `3.6.` and never reported.

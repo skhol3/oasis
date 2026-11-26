@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 LOCKS = Path(__file__).resolve().parents[1] / 'tools/locks.py'
 FILES = ('runtime.in', 'runtime.txt', 'dev.in', 'dev.txt')
@@ -325,6 +326,33 @@ class LocksTests(unittest.TestCase):
         self.assertFalse(locks.current(self.requirements, self.root))
         (self.requirements / 'lock.sha256').write_text('')
         self.assertFalse(locks.current(self.requirements, self.root))
+
+    def test_a_failed_relay_kills_and_waits_for_the_child_before_raising(self):
+        spec = importlib.util.spec_from_file_location('oasis_locks_streamed_test', LOCKS)
+        locks = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(locks)
+        # A child that writes to stderr, then keeps running: the relay of its first line fails.
+        child = [sys.executable, '-c', 'import sys, time; sys.stderr.write("resolving\\n"); sys.stderr.flush(); '
+                                       'time.sleep(60)']
+        started = []
+        popen = subprocess.Popen
+
+        def record(*args, **kwargs):
+            started.append(popen(*args, **kwargs))
+            return started[-1]
+
+        for error in (BrokenPipeError, KeyboardInterrupt):
+            with self.subTest(error=error.__name__):
+                started.clear()
+                with mock.patch.object(locks.subprocess, 'Popen', record), \
+                        mock.patch.object(locks.sys, 'stderr', mock.Mock(write=mock.Mock(side_effect=error()))):
+                    with self.assertRaises(error):
+                        locks.streamed(child)
+                [process] = started
+                self.addCleanup(lambda p=process: p.poll() is None and (p.kill(), p.wait()))
+                # Waited for: its exit status is known without waiting again.
+                self.assertIsNotNone(process.returncode)
+                self.assertEqual(process.returncode, -9)
 
 
 if __name__ == '__main__':

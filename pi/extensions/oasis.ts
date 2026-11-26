@@ -153,9 +153,18 @@ export default function oasisLayer(pi: ExtensionAPI) {
     return status;
   }
 
-  // User-run only (no tool registers it); outside Gentle Shell it writes nothing (lib/setup.ts).
-  async function setup(ctx: { ui: SetupInput["ui"] }): Promise<void> {
-    await runSetup({ env: process.env, homedir: homedir(), template: OVERLAY_TEMPLATE, ui: ctx.ui });
+  // User-run only (no tool registers it): the workspace status and the `oasis setup` plan of the session's
+  // checkout (`--project <root>` under a workspace file, else the checkout of the working directory, as the CLI
+  // finds it), never applied; the subagent overlay is installed in Gentle Shell only (lib/setup.ts).
+  async function setup(ctx: { cwd: string; ui: SetupInput["ui"] }): Promise<void> {
+    const root = await projectRoot(ctx.cwd);
+    await runSetup({
+      env: process.env, homedir: homedir(), template: OVERLAY_TEMPLATE,
+      run: (args) => root ? run(root, args, undefined, DOCTOR_TIMEOUT_MS)
+        : pi.exec("python3", ["-B", OASIS, ...args], { cwd: ctx.cwd, timeout: DOCTOR_TIMEOUT_MS }),
+      show: (content) => pi.sendMessage({ customType: "oasis-setup", content, display: true }),
+      ui: ctx.ui,
+    });
   }
 
   type FlowUi = { notify: (message: string, level?: "info" | "warning" | "error") => void;

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import pty
 import select
+import shutil
 import signal
 import subprocess
 import sys
@@ -160,6 +161,11 @@ class DevelopmentUsersTests(unittest.TestCase):
             'if os.environ.get("FAKE_RUNNER_RAISE"): raise RuntimeError("runner crashed")\n'
             'if os.environ.get("FAKE_RUNNER_SLEEP"):\n'
             ' import time; Path(os.environ["FAKE_RUNNER_SLEEP"]).write_text(str(os.getppid())); time.sleep(30)\n'
+            # FAKE_RUNNER_PYTHON runs the runner with that interpreter (an Odoo 15 environment's 3.8 or 3.9),
+            # after the FAKE_RUNNER_PRELUDE script when one is given.
+            'if os.environ.get("FAKE_RUNNER_PYTHON"):\n'
+            ' r = os.environ["FAKE_RUNNER_PYTHON"]\n'
+            ' os.execv(r, [r, "-B", *filter(None, [os.environ.get("FAKE_RUNNER_PRELUDE")]), *sys.argv[2:]])\n'
             'os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n')
         self.python.chmod(0o755)
 
@@ -629,6 +635,87 @@ test_prefix = 'cc_test_'
         self.assertFalse(self.commands.exists())
         self.assertFalse(self.logins_file().exists())
         self.assertEqual(self.staged_files(), [])
+
+    # The runner runs with the environment's Python (3.7+ for Odoo 15), not the host's: it imports nothing that
+    # needs 3.11 (tomllib, through config.py).
+    PRELUDE = ('import os, runpy, sys\n'
+               "sys.modules['tomllib'] = None\n"
+               'sys.argv = sys.argv[1:]\n'
+               'sys.path[0] = os.path.dirname(sys.argv[0])\n'
+               "runpy.run_path(sys.argv[0], run_name='__main__')\n")
+
+    def assert_initialized_with(self, **variables):
+        result = subprocess.run(self.command('coffee', 'cc_dev_coffee'), input='', text=True,
+                                capture_output=True, env={**self.env, **variables}, timeout=30)
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout, 'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
+                                        f'Generated passwords: {self.logins_file()} (mode 0600): local_admin, '
+                                        'planner, manager\n')
+        state = json.loads(self.state.read_text())
+        self.assertEqual(set(state['users']), {'local_admin', 'planner', 'manager'})
+        self.assertEqual(state['users']['planner']['groups'], [1, 3])
+        conf = str(self.root / 'dev/odoo.conf')
+        self.assertEqual(json.loads(Path(str(self.state) + '.config').read_text()),
+                         ['-c', conf, '--no-http', '--without-demo', '--log-level=critical'])
+        self.assertEqual(state['installs'], [[str(self.source / 'odoo-bin'), '-c', conf, '-d', 'cc_dev_coffee',
+                                              '-i', 'coffee', '--without-demo', '--stop-after-init', '--no-http',
+                                              '--log-level=critical']])
+
+    def test_the_runner_works_without_tomllib(self):
+        prelude = self.root / 'no_tomllib.py'
+        prelude.write_text(self.PRELUDE)
+        self.assert_initialized_with(FAKE_RUNNER_PYTHON=sys.executable, FAKE_RUNNER_PRELUDE=str(prelude))
+
+    def test_the_runner_works_with_an_odoo_15_python(self):
+        uv = shutil.which('uv')
+        found = []
+        for version in ('3.8', '3.9'):
+            if uv:
+                result = subprocess.run([uv, 'python', 'find', '--no-project', version], capture_output=True,
+                                        text=True, cwd=self.root, timeout=60)
+                if result.returncode == 0 and result.stdout.strip():
+                    found.append((version, result.stdout.strip()))
+        if not found:
+            self.skipTest('no Python 3.8 or 3.9 found by uv python find')
+        for version, python in found:
+            with self.subTest(version=version):
+                self.state.unlink(missing_ok=True)
+                self.logins_file().unlink(missing_ok=True)
+                self.assert_initialized_with(FAKE_RUNNER_PYTHON=python)
+
+    def run_runner(self, declaration, payload_changes=None):
+        """tools/dev_users_runtime.py itself, on the fake Odoo pieces, with the payload dev_users.py sends."""
+        conf = str(self.root / 'dev/odoo.conf')
+        payload = {'declaration': declaration, 'passwords': ['admin-secret', 'planner-secret'], 'with_demo': False,
+                   'runtime': {'python': str(self.python), 'odoo_bin': str(self.source / 'odoo-bin'),
+                               'odoo_source': str(self.source), 'demo_flags': ['--without-demo'],
+                               'groups_field': 'group_ids', 'config_args': ['-c', conf]}}
+        payload.update(payload_changes or {})
+        return subprocess.run([sys.executable, '-B', str(ROOT / 'tools/dev_users_runtime.py'), str(self.root),
+                               'coffee', 'cc_dev_coffee'], input=json.dumps(payload), text=True,
+                              capture_output=True, env=self.env, timeout=30)
+
+    def test_the_runner_exits_4_once_the_database_exists_and_3_before(self):
+        account = {'login': 'planner', 'name': 'Local Planner', 'groups': ['example.group_planner']}
+        declaration = {'administrator_login': 'local_admin', 'users': [account]}
+        result = self.run_runner(declaration)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(set(json.loads(self.state.read_text())['users']), {'local_admin', 'planner'})
+        # Before the database exists: an existing one is refused, an unusable payload stops (3, never details).
+        before = self.state.read_bytes()
+        for changes in ({}, {'runtime': {}}, {'passwords': []}):
+            with self.subTest(before=changes):
+                result = self.run_runner(declaration, changes)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (3, '', ''))
+                self.assertEqual(self.state.read_bytes(), before)
+        # After: a missing role, an account the database already has.
+        for name, account in (('missing role', {**account, 'groups': ['example.missing']}),
+                              ('existing account', {**account, 'login': 'local_admin'})):
+            with self.subTest(after=name):
+                self.state.unlink()
+                result = self.run_runner({'administrator_login': 'local_admin', 'users': [account]})
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (4, '', ''))
+                self.assertEqual(set(json.loads(self.state.read_text())['users']), {'local_admin'})
 
     def test_missing_group_retains_new_database_without_partial_role_accounts(self):
         self.profile.write_text(self.profile.read_text().replace('example.group_manager', 'example.missing'))

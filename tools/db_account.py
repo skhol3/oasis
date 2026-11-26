@@ -59,7 +59,8 @@ PUBLISHED_PORT = re.compile(r'''\s*-\s*(["']?)(?:(?:[0-9]{1,3}(?:\.[0-9]{1,3}){3
 # a list entry (a variable, a range, no host port) or a key of the long syntax (`target: 5432`). The port it
 # publishes cannot be read from it. Lines under other keys (expose:, environment:) are not port entries.
 OTHER_PORT_ENTRY = re.compile(r'''\s*(?:-\s*(?:target\s*:\s*)?|target\s*:\s*)\S*5432(?![0-9]).*''')
-PORTS_KEY = re.compile(r'''(\s*)(?:ports|"ports"|'ports')\s*:\s*(?:#.*)?''')
+# The ports key, with YAML node properties when it has them: a tag (compose's !override, !reset) or an anchor.
+PORTS_KEY = re.compile(r'''(\s*)(?:ports|"ports"|'ports')\s*:(?:\s+(?:![^\s#]*|&[^\s#]+))*\s*(?:#.*)?''')
 UNREAD_ENTRY = 'an entry other than - [<address>:]<port>:5432'
 # The hosts that reach the port the compose service publishes on 127.0.0.1.
 LOCAL_HOSTS = ('127.0.0.1', 'localhost')

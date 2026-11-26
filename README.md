@@ -71,7 +71,8 @@ Releases are listed in the [changelog](CHANGELOG.md).
    ```
 
 4. With the package, run `/oasis` for the checkout's status and `alt+o` for the action menu; in
-   Gentle Shell, also run `/oasis setup` once for the subagent overlay.
+   Gentle Shell, `/oasis setup` shows the status and the `oasis setup` plan and installs the subagent
+   overlay.
 
 ## Features
 

@@ -154,21 +154,28 @@ def uv_environment(base=None):
 
 def streamed(command, **options):
     """(exit status, stderr) of command, its stderr passed on to ours as it comes (tee), decoded as text mode
-    decodes it (the locale's encoding, undecodable bytes replaced, line ends translated)."""
+    decodes it (the locale's encoding, undecodable bytes replaced, line ends translated). When the relay fails
+    (BrokenPipeError on our stderr, KeyboardInterrupt), the child is killed and waited for before the error
+    goes on: it never outlives the command."""
     process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, **options)
     decoder = io.IncrementalNewlineDecoder(codecs.getincrementaldecoder(locale.getpreferredencoding(False))(
         errors='replace'), translate=True)
     received = []
-    with process.stderr:
-        while True:
-            chunk = os.read(process.stderr.fileno(), 65536)
-            text = decoder.decode(chunk, final=not chunk)
-            if text:
-                received.append(text)
-                sys.stderr.write(text)
-                sys.stderr.flush()
-            if not chunk:
-                break
+    try:
+        with process.stderr:
+            while True:
+                chunk = os.read(process.stderr.fileno(), 65536)
+                text = decoder.decode(chunk, final=not chunk)
+                if text:
+                    received.append(text)
+                    sys.stderr.write(text)
+                    sys.stderr.flush()
+                if not chunk:
+                    break
+    except BaseException:
+        process.kill()
+        process.wait()
+        raise
     return process.wait(), ''.join(received)
 
 
