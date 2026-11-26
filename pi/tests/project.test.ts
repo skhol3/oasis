@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative as relativePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  findProjectRoot, findWorkspaceFile, legacyProfile, notProject, projectContext, projectRootResolver,
-  planConfirmation,
+  findProjectRoot, findWorkspaceFile, legacyProfile, migrateFlow, notProject, type PlanFlow, planConfirmation,
+  projectContext, projectRootResolver, worktreeFlow,
 } from "../lib/project.ts";
 
 function scratch(): string {
@@ -447,12 +447,106 @@ test("project detection and tools/config.py give one root and workspace for a wo
 });
 
 // v0.16.0 S1: /oasis worktree and /oasis migrate confirm with the exact name the dry run names.
+// The plans as tools/worktree_init.py and tools/migrate.py print them (tests/test_workspace.py and
+// tests/test_migrate.py pin those lines).
+const WORKTREE_PLAN = "worktree: /work/shop feat\nbranch: feature/x (new, from HEAD)\nslug: feat\nworkspace: /work\n" +
+  "dry run: nothing changed\n";
+const MIGRATE_PLAN = "workspace: /work\ncheckout: /work/shop (main)\nwrite /work/oasis-workspace.toml\n" +
+  "  workspace_version = 1\n  write /work/elsewhere/oasis-workspace.toml\nwrite /work/shop/oasis-checkout.toml\n" +
+  "dry run: nothing changed; run with --apply to migrate\n";
+
 test("planConfirmation reads the --confirm value from the plan of worktree-init and migrate", () => {
-  assert.equal(planConfirmation("worktree", "worktree: /work/shop-feat\nbranch: feat (existing)\nslug: feat\n" +
-    "workspace: /work\ndry run: nothing changed\n"), "/work/shop-feat");
-  assert.equal(planConfirmation("migrate", "workspace: /work\ncheckout: /work/shop (main)\nwrite /work/oasis-workspace.toml\n" +
-    "  [tooling]\nwrite /work/shop/oasis-checkout.toml\ndry run: nothing changed; run with --apply to migrate\n"),
-  "/work/oasis-workspace.toml");
+  assert.equal(planConfirmation("worktree", WORKTREE_PLAN), "/work/shop feat");
+  assert.equal(planConfirmation("migrate", MIGRATE_PLAN), "/work/oasis-workspace.toml");
+  // Only a line of the plan itself counts: indented file content and other kinds' lines do not.
+  assert.equal(planConfirmation("migrate", "workspace: /work\n  write /work/oasis-workspace.toml\n"), null);
+  assert.equal(planConfirmation("migrate", "write /work/shop/oasis-checkout.toml\n"), null);
+  assert.equal(planConfirmation("worktree", MIGRATE_PLAN), null);
+  assert.equal(planConfirmation("migrate", WORKTREE_PLAN), null);
   assert.equal(planConfirmation("worktree", "dry run: nothing changed\n"), null);
-  assert.equal(planConfirmation("migrate", "workspace: /work\n"), null);
+  assert.equal(planConfirmation("migrate", ""), null);
+});
+
+type Call = string[];
+function flow(outputs: { code: number; stdout?: string; stderr?: string }[], answer: boolean) {
+  const calls: Call[] = [];
+  const notices: [string, string | undefined][] = [];
+  const dialogs: [string, string][] = [];
+  const pending = [...outputs];
+  const value: PlanFlow = {
+    run: async (args) => {
+      calls.push(args);
+      const next = pending.shift();
+      if (!next) throw new Error(`unexpected run: ${args.join(" ")}`);
+      return { stdout: "", stderr: "", ...next };
+    },
+    ui: {
+      notify: (message, level) => { notices.push([message, level]); },
+      confirm: async (title, message) => { dialogs.push([title, message]); return answer; },
+    },
+  };
+  return { value, calls, notices, dialogs };
+}
+
+test("/oasis worktree shows the dry run, then runs worktree-init --confirm <the path the plan names> on yes", async () => {
+  const yes = flow([{ code: 0, stdout: WORKTREE_PLAN }, { code: 0, stdout: "created /work/shop feat\n" }], true);
+  await worktreeFlow(yes.value, "feat", "feature/x");
+  assert.deepEqual(yes.calls, [
+    ["worktree-init", "feat", "feature/x", "--dry-run"],
+    ["worktree-init", "feat", "feature/x", "--confirm", "/work/shop feat"],
+  ]);
+  assert.deepEqual(yes.dialogs, [["oasis worktree", "worktree: /work/shop feat\nbranch: feature/x (new, from HEAD)\n" +
+    "slug: feat\nworkspace: /work\n\nCreate this worktree?"]]);
+  assert.deepEqual(yes.notices, [["oasis worktree:\ncreated /work/shop feat", "info"]]);
+  // No: nothing else runs.
+  const no = flow([{ code: 0, stdout: WORKTREE_PLAN }], false);
+  await worktreeFlow(no.value, "feat", "feature/x");
+  assert.deepEqual(no.calls, [["worktree-init", "feat", "feature/x", "--dry-run"]]);
+  assert.deepEqual(no.notices, [["oasis worktree: nothing changed.", "info"]]);
+  // A refused plan is shown; nothing is asked.
+  const refused = flow([{ code: 2, stderr: "ERROR: Invalid feature name.\n" }], true);
+  await worktreeFlow(refused.value, "-x", "b");
+  assert.deepEqual(refused.dialogs, []);
+  assert.deepEqual(refused.notices, [["oasis worktree: ERROR: Invalid feature name.", "error"]]);
+  // A plan without its worktree line: run unconfirmed, so the CLI's own refusal names the command.
+  const unnamed = flow([{ code: 0, stdout: "dry run: nothing changed\n" }, { code: 2, stderr: "ERROR: Run: x\n" }], true);
+  await worktreeFlow(unnamed.value, "feat", "b");
+  assert.deepEqual(unnamed.calls[1], ["worktree-init", "feat", "b"]);
+  assert.deepEqual(unnamed.notices, [["oasis worktree:\nERROR: Run: x", "error"]]);
+});
+
+test("/oasis migrate shows the plan, then runs migrate --apply --confirm <the workspace file it writes> on yes", async () => {
+  const yes = flow([{ code: 0, stdout: MIGRATE_PLAN }, { code: 0, stdout: "verified: 1 checkouts\n" }], true);
+  await migrateFlow(yes.value);
+  assert.deepEqual(yes.calls, [["migrate"], ["migrate", "--apply", "--confirm", "/work/oasis-workspace.toml"]]);
+  assert.equal(yes.dialogs.length, 1);
+  assert.equal(yes.dialogs[0][0], "oasis migrate");
+  assert.ok(yes.dialogs[0][1].endsWith("write /work/shop/oasis-checkout.toml\n\nMigrate to this workspace file?"));
+  assert.ok(!yes.dialogs[0][1].includes("dry run: "));
+  assert.deepEqual(yes.notices, [["oasis migrate:\nverified: 1 checkouts", "info"]]);
+  const no = flow([{ code: 0, stdout: MIGRATE_PLAN }], false);
+  await migrateFlow(no.value);
+  assert.deepEqual(no.calls, [["migrate"]]);
+  assert.deepEqual(no.notices, [["oasis migrate: nothing changed.", "info"]]);
+  const done = flow([{ code: 0, stdout: "nothing to migrate: /work/shop has no .odoo19-agent.toml\n" }], true);
+  await migrateFlow(done.value);
+  assert.deepEqual(done.dialogs, []);
+  assert.deepEqual(done.notices, [["oasis migrate: nothing to migrate: /work/shop has no .odoo19-agent.toml", "info"]]);
+  const failing = flow([{ code: 0, stdout: MIGRATE_PLAN }, { code: 1, stderr: "ERROR: Verification failed\n" }], true);
+  await migrateFlow(failing.value);
+  assert.deepEqual(failing.notices, [["oasis migrate:\nERROR: Verification failed", "error"]]);
+  const thrown = flow([], true);
+  await migrateFlow(thrown.value);
+  assert.deepEqual(thrown.notices, [["oasis migrate failed: unexpected run: migrate", "error"]]);
+});
+
+test("the extension's /oasis worktree and /oasis migrate are these flows over the CLI in the project root", () => {
+  const flat = readFileSync(new URL("../extensions/oasis.ts", import.meta.url), "utf8").split(/\s+/).join(" ");
+  for (const part of [
+    "await worktreeFlow(planFlow(root, ctx.ui), feature, branch);",
+    "await migrateFlow(planFlow(root, ctx.ui));",
+    "run: (args) => run(root, args, undefined, TOOL_TIMEOUT_MS),",
+  ]) {
+    assert.ok(flat.includes(part), part);
+  }
 });

@@ -36,6 +36,7 @@ export const POLICY: readonly PolicyEntry[] = [
   {"operation": "audit-dependencies", "tier": "A", "kind": "oasis", "reason": "reads and reports; changes nothing", "example": "oasis --project /p audit-dependencies", "confirm": null},
   {"operation": "doctor", "tier": "A", "kind": "oasis", "reason": "reads and reports; changes nothing", "example": "oasis --project /p doctor", "confirm": null},
   {"operation": "check-environment", "tier": "A", "kind": "oasis", "reason": "reads and reports; changes nothing", "example": "oasis --project /p check-environment --quick", "confirm": null},
+  {"operation": "policy", "tier": "A", "kind": "oasis", "reason": "prints this policy table; changes nothing", "example": "oasis --project /p policy --json", "confirm": null},
   {"operation": "gc", "tier": "A", "kind": "oasis", "reason": "lists leftover disposable test databases; changes nothing", "example": "oasis --project /p gc", "confirm": null},
   {"operation": "gc --apply", "tier": "A", "kind": "oasis", "reason": "drops disposable test databases no live run holds; rebuildable", "example": "oasis --project /p gc --apply", "confirm": null},
   {"operation": "gc --trash", "tier": "A", "kind": "oasis", "reason": "lists the expired trash entries; changes nothing", "example": "oasis --project /p gc --trash", "confirm": null},

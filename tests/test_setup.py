@@ -211,6 +211,7 @@ class SetupTests(unittest.TestCase):
                  '[--environment <dir> | --python <x.y>] [--apply | --plan]\n')
         for args in (('--apply', '--plan'), ('--plan', '--apply'), ('--enterprise', '/x', '--no-enterprise'),
                      ('--app',), ('--community',), ('--apply', '--apply'), ('extra',), ('--',), ('--a',),
+                     ('--apply=x',), ('--apply=',), ('--appl',),
                      ('--exception',), ('--config-dir', '/x', '--config-dir', '/y')):
             with self.subTest(args=args):
                 result = self.setup_cmd(*args)

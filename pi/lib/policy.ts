@@ -15,9 +15,14 @@ for (const entry of POLICY.filter((row) => row.kind === "oasis")) {
   BY_COMMAND.set(command, [...(BY_COMMAND.get(command) ?? []), entry]);
 }
 
+/** The table's entry of an operation, or null for one it does not list. */
+export function findEntry(operation: string): PolicyEntry | null {
+  return BY_OPERATION.get(operation) ?? null;
+}
+
 /** The table's entry of an operation; throws for one it does not list (the guard drifted from it). */
 export function policyEntry(operation: string): PolicyEntry {
-  const entry = BY_OPERATION.get(operation);
+  const entry = findEntry(operation);
   if (!entry) throw new Error(`${operation} is not in the oasis policy table (tools/policy.py)`);
   return entry;
 }
@@ -36,18 +41,41 @@ function strictest(rows: PolicyEntry[]): PolicyEntry {
   return rows.reduce((found, row) => (STRICTNESS[row.tier] > STRICTNESS[found.tier] ? row : found));
 }
 
+/** The stricter of two entries; the first on a tie. */
+export function stricter(first: PolicyEntry, second: PolicyEntry): PolicyEntry {
+  return STRICTNESS[second.tier] > STRICTNESS[first.tier] ? second : first;
+}
+
+/**
+ * Whether an argument names an option word of a row: exactly, or (`loose`) in a form a parser might
+ * take for it: `--apply=<value>`, or an abbreviation of at least `--` and one letter (`--ap`).
+ */
+function names(arg: string, word: string, loose: boolean): boolean {
+  if (arg === word) return true;
+  return loose && (arg.startsWith(`${word}=`) || (arg.length >= 3 && arg.startsWith("--") && word.startsWith(arg)));
+}
+
+/** The row whose words after the command all appear in args, the most specific one, the stricter on a tie. */
+function matchingRow(rows: PolicyEntry[], args: string[], loose: boolean): PolicyEntry {
+  const words = (row: PolicyEntry) => row.operation.split(" ").slice(1);
+  const matching = rows.filter((row) => words(row).every((word) => args.some((arg) => names(arg, word, loose))));
+  if (matching.length === 0) return strictest(rows);
+  const most = Math.max(...matching.map((row) => words(row).length));
+  return strictest(matching.filter((row) => words(row).length === most));
+}
+
 /**
  * The operation an oasis command runs with these arguments, or null for a command the table does
  * not list: the row whose words after the command all appear in args, the most specific one (the
- * stricter on a tie, `migrate --plan --apply`). With an argument that is not literal (`literal`
- * false: it may expand to anything), or no matching row, the command's strictest row.
+ * stricter on a tie, `migrate --plan --apply`). The oasis tools refuse an abbreviated or `=` form of
+ * their flags, and the guard does not rely on it: such a form also counts as the word it may stand
+ * for, and the stricter of both readings applies, so `migrate --ap` asks like `migrate --apply` while
+ * `worktree-init f b --dry` does not run like `--dry-run`. With an argument that is not literal
+ * (`literal` false: it may expand to anything), or no matching row, the command's strictest row.
  */
 export function operationOf(command: string, args: string[], literal: boolean): PolicyEntry | null {
   const rows = BY_COMMAND.get(command);
   if (!rows) return null;
-  const words = (row: PolicyEntry) => row.operation.split(" ").slice(1);
-  const matching = literal ? rows.filter((row) => words(row).every((word) => args.includes(word))) : [];
-  if (matching.length === 0) return strictest(rows);
-  const most = Math.max(...matching.map((row) => words(row).length));
-  return strictest(matching.filter((row) => words(row).length === most));
+  if (!literal) return strictest(rows);
+  return stricter(matchingRow(rows, args, false), matchingRow(rows, args, true));
 }

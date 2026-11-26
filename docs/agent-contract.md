@@ -79,6 +79,7 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `audit-dependencies` | A | reads and reports; changes nothing |  |
 | `doctor` | A | reads and reports; changes nothing |  |
 | `check-environment` | A | reads and reports; changes nothing |  |
+| `policy` | A | prints this policy table; changes nothing |  |
 | `gc` | A | lists leftover disposable test databases; changes nothing |  |
 | `gc --apply` | A | drops disposable test databases no live run holds; rebuildable |  |
 | `gc --trash` | A | lists the expired trash entries; changes nothing |  |

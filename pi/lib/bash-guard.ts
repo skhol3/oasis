@@ -4,7 +4,7 @@
 // Only programs in command position count, so searching or printing their
 // names stays allowed. This is a guard rail for agents, not a sandbox.
 import { posix } from "node:path";
-import { COMMANDS, operationOf, PROGRAMS, policyEntry, tierOf } from "./policy.ts";
+import { COMMANDS, findEntry, operationOf, type PolicyEntry, PROGRAMS, stricter, tierOf } from "./policy.ts";
 
 // The tiers come from the core policy table (tools/policy.py, see lib/policy.ts): a Tier C program or
 // oasis command is denied, a Tier B one asks, a Tier A one runs.
@@ -389,15 +389,25 @@ function projectOption(word: string): boolean {
   return word.length >= 3 && "--project".startsWith(word);
 }
 
+/** Whether a word is the entry point's --help as argparse takes it: `-h`, or a prefix of `--help` from `--h`. */
+function helpOption(word: string): boolean {
+  return word === "-h" || (word.length >= 3 && "--help".startsWith(word));
+}
+
 /**
  * The entry point's options before its command: the index of the command (the first word after
- * them; --project and its prefixes take a value, `--project=<dir>` holds it) and the --project
- * value argparse keeps (the last one given), undefined without one.
+ * them; --project and its prefixes take a value, `--project=<dir>` holds it), the --project value
+ * argparse keeps (the last one given), undefined without one, and whether an option the entry point
+ * does not have came before the command (`unknown`: argparse refuses that line, and which word it
+ * would run is not known from the text).
  */
-function entryPointOptions(words: string[], index: number): { command: number; project?: string; joined: boolean } {
+function entryPointOptions(
+  words: string[], index: number,
+): { command: number; project?: string; joined: boolean; unknown: boolean } {
   let i = index + 1;
   let project: string | undefined;
   let joined = false;
+  let unknown = false;
   while (i < words.length && words[i].startsWith("-")) {
     const word = words[i];
     const equals = word.indexOf("=");
@@ -410,10 +420,24 @@ function entryPointOptions(words: string[], index: number): { command: number; p
       joined = false;
       i += 2;
     } else {
+      if (word !== "--" && !helpOption(word)) unknown = true;
       i += 1;
     }
   }
-  return { command: i, project, joined };
+  return { command: i, project, joined, unknown };
+}
+
+/**
+ * The strictest row of any oasis command word among an entry point's words (its options and
+ * arguments), or null without one: what a line runs when its command word is not known.
+ */
+function strictestPresent(words: string[]): PolicyEntry | null {
+  let found: PolicyEntry | null = null;
+  for (const word of words) {
+    const entry = COMMANDS.has(word) ? operationOf(word, [], false) : null;
+    if (entry) found = found ? stricter(found, entry) : entry;
+  }
+  return found;
 }
 
 /** Whether the arguments only ask for help: one help flag, redirections aside. */
@@ -512,22 +536,29 @@ type Finding = { program: string } | { ask: AskAction };
 function toolFinding(words: string[], index: number, where?: Where): Finding[] {
   let tool: string | null | undefined;
   let args: string[];
+  // The entry point's command word is not known from the text: an option it does not have before it,
+  // or a word that is not literal or not a command of the table. Then the strictest row of any
+  // command word on the line applies (`oasis --x y worktree-init f b` asks), none without one.
+  let undetermined = false;
   if (ENTRY_POINTS.has(basename(words[index]))) {
-    const command = entryPointOptions(words, index).command;
+    const { command, unknown } = entryPointOptions(words, index);
     tool = words[command];
     args = words.slice(command + 1);
+    undetermined = tool !== undefined && (unknown || NOT_LITERAL.test(tool) || tool === "_" || !COMMANDS.has(tool));
   } else {
     tool = scriptCommand(words[index], where);
     args = words.slice(index + 1);
   }
   const rest = args.filter((arg) => !REDIRECTION.test(arg));
-  if (!tool || onlyHelp(rest)) return [];
-  const entry = operationOf(tool, rest, literalArguments(rest));
+  if (!tool || (!undetermined && onlyHelp(rest))) return [];
+  const entry = undetermined
+    ? strictestPresent(words.slice(index + 1).filter((word) => !REDIRECTION.test(word)))
+    : operationOf(tool, rest, literalArguments(rest));
   if (entry === null || entry.tier === "A") return [];
   if (entry.tier === "C") return [{ program: entry.operation }];
   const target = targetOf(words, index, where);
   if (entry.operation === "drop-database") {
-    const database = rest[0];
+    const database = undetermined ? undefined : rest[0];
     return [{ ask: { command: entry.operation, database: database !== undefined && DATABASE_NAME.test(database) ? database : null, ...target } }];
   }
   return [{ ask: { command: entry.operation, ...target } }];
@@ -837,7 +868,9 @@ export function blockReason(program: string, root: string): string {
     );
   }
   if (!PROGRAMS.has(program)) {
-    return `${program} is Tier C in the oasis policy (only the user does it): ${policyEntry(program).reason}.`;
+    const entry = findEntry(program);
+    if (!entry) return `${program} is not in the oasis policy table (oasis policy --json); only the user runs it.`;
+    return `${program} is Tier C in the oasis policy (only the user does it): ${entry.reason}.`;
   }
   return (
     `Direct ${program} is blocked in this Odoo project: it bypasses the database prefix guards. ` +

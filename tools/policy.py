@@ -72,6 +72,7 @@ OPERATIONS = (
     ('doctor', 'A', 'oasis', 'reads and reports; changes nothing', 'oasis --project /p doctor'),
     ('check-environment', 'A', 'oasis', 'reads and reports; changes nothing',
      'oasis --project /p check-environment --quick'),
+    ('policy', 'A', 'oasis', 'prints this policy table; changes nothing', 'oasis --project /p policy --json'),
     ('gc', 'A', 'oasis', 'lists leftover disposable test databases; changes nothing', 'oasis --project /p gc'),
     ('gc --apply', 'A', 'oasis', 'drops disposable test databases no live run holds; rebuildable',
      'oasis --project /p gc --apply'),

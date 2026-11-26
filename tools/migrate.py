@@ -671,6 +671,14 @@ def apply_plan(plan: dict, config, reader) -> int:
     return 0
 
 
+def planned_workspace(root: Path) -> Path:
+    """The workspace file --apply writes for root without --workspace: the `write` line of its plan
+    (make_plan, read-only). Raises Refused, or config.InvalidConfig, when migrate refuses to plan.
+    tools/config.py names it in its refusal of a legacy profile."""
+    config, reader = sibling('config'), sibling('odoo_addons_path')
+    return make_plan(root.resolve(), None, config, reader, 'plan')['workspace']
+
+
 def undone(message: str, problems: list[str], failed: list[str]) -> int:
     try:
         report_undone(message, problems, failed)

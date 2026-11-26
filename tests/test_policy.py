@@ -1,6 +1,7 @@
 """The agent policy table (tools/policy.py, v0.16.0 S1) and what follows it: its JSON export, the
 Gentle Shell guard's generated module, the docs and the skills."""
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
+import ast
 import importlib.util
 import json
 import os
@@ -45,6 +46,17 @@ class PolicyTableTests(unittest.TestCase):
         self.assertEqual({row['operation'] for row in rows if row['confirm']},
                          {row['operation'] for row in rows if row['tier'] == 'B' and row['kind'] == 'oasis'}
                          - {'stop --database'})
+
+    def test_every_entry_point_command_has_a_row(self):
+        # The guard and the docs read the table: a command the entry point runs without a row would
+        # have no tier, so each one has at least its own row, and no row names another command.
+        tree = ast.parse((ROOT / 'oasis').read_text(encoding='utf-8'))
+        [commands] = [ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
+                      and [target.id for target in node.targets if isinstance(target, ast.Name)] == ['COMMANDS']]
+        rows = {row['operation'].split()[0] for row in policy.operations() if row['kind'] == 'oasis'}
+        self.assertEqual(sorted(set(commands) - rows), [], 'oasis COMMANDS without a policy row')
+        self.assertEqual(sorted(rows - set(commands)), [], 'policy rows for no oasis command')
+        self.assertEqual(tiers()['policy'], 'A')
 
     def test_json_export_is_the_table(self):
         result = subprocess.run([sys.executable, '-B', str(ROOT / 'tools/policy.py'), '--json'],

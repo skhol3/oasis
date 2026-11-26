@@ -3,6 +3,7 @@ import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oa
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'oasis'
 # Entry points sharing one dispatcher: `oasis`, and `odoo19` kept as an alias.
 PROGRAMS = ('oasis', 'odoo19')
+
+
+def legacy_refusal(profile, program='oasis'):
+    """The refusal of a checkout with a legacy profile, here where the fake bundle has no migrate.py to plan
+    it: its runnable --plan (tests/test_migrate.py covers the exact --apply --confirm <workspace file>)."""
+    plan = shlex.join([program, '--project', str(profile.parent), 'migrate', '--plan'])
+    return (f'ERROR: {profile} is the old profile format, no longer read: run {plan} to see its conversion to '
+            'oasis-workspace.toml or what stops it.\n')
 PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
           'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases',
           'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy', 'restart',
@@ -175,9 +184,8 @@ class GlobalCliTests(unittest.TestCase):
         profile.write_text('[tooling]\nversion = "19.0"\n')
         for program in PROGRAMS:
             with self.subTest(program=program):
-                self.assert_no_calls(self.invoke('--project', str(self.project), 'status', program=program), (
-                    f'ERROR: {profile} is the old profile format, no longer read: run {program} migrate --plan to '
-                    f'see its conversion to oasis-workspace.toml, then {program} migrate --apply --confirm <the workspace file the plan writes>.\n'))
+                self.assert_no_calls(self.invoke('--project', str(self.project), 'status', program=program),
+                                     legacy_refusal(profile, program))
         # Without the workspace file next to it, the same refusal (not the missing configuration).
         (self.project / 'oasis-workspace.toml').unlink()
         self.assertIn('is the old profile format', self.invoke('--project', str(self.project), 'list-databases').stderr)
@@ -219,9 +227,7 @@ class GlobalCliTests(unittest.TestCase):
         # A legacy profile is still refused before setup: migrate converts it.
         profile = self.project / '.odoo19-agent.toml'
         profile.write_text('[tooling]\n')
-        self.assert_no_calls(self.invoke('--project', str(self.project), 'setup'), (
-            f'ERROR: {profile} is the old profile format, no longer read: run oasis migrate --plan to '
-            'see its conversion to oasis-workspace.toml, then oasis migrate --apply --confirm <the workspace file the plan writes>.\n'))
+        self.assert_no_calls(self.invoke('--project', str(self.project), 'setup'), legacy_refusal(profile))
 
     def test_policy_runs_without_a_workspace_file_and_in_a_legacy_checkout(self):
         # v0.16.0 S1: the agent contract is readable before any configuration exists.
@@ -290,9 +296,7 @@ class GlobalCliTests(unittest.TestCase):
         # A legacy profile in the current directory: the same refusal, and migrate still runs.
         profile = plain / '.odoo19-agent.toml'
         profile.write_text('[tooling]\n')
-        self.assert_no_calls(self.invoke('status', cwd=plain), (
-            f'ERROR: {profile} is the old profile format, no longer read: run oasis migrate --plan to '
-            'see its conversion to oasis-workspace.toml, then oasis migrate --apply --confirm <the workspace file the plan writes>.\n'))
+        self.assert_no_calls(self.invoke('status', cwd=plain), legacy_refusal(profile))
         result = self.invoke('migrate', '--plan', cwd=plain)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (17, 'delegated\n', 'delegated error\n'))
         self.assertEqual(json.loads(self.log.read_text())['root'], str(plain))

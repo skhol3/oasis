@@ -53,6 +53,65 @@ test("blockReason names the program and redirects to the guarded commands", () =
   assert.ok(!reason.includes("odoo19"), reason);
 });
 
+test("blockReason of another Tier C operation names its reason; one the table does not list gets a generic refusal", () => {
+  assert.equal(blockReason("type a password", "/work/coffee"),
+    "type a password is Tier C in the oasis policy (only the user does it): only when the person wants their own; " +
+    "no oasis workflow needs one.");
+  assert.equal(blockReason("no-such-operation", "/work/coffee"),
+    "no-such-operation is not in the oasis policy table (oasis policy --json); only the user runs it.");
+});
+
+// v0.16.0 S1 review: the tools refuse an abbreviated or `=` form of their flags (usage error, exit 2), and
+// the guard still gives such a word the row it would name, so it never runs a Tier B command unasked.
+test("an abbreviation or `=` form of a Tier B option gets that option's row; one of a Tier A option never lowers it", () => {
+  const cases: [string, string][] = [
+    ["oasis --project /p migrate --ap", "migrate --apply"],
+    ["oasis --project /p migrate --appl", "migrate --apply"],
+    ["oasis --project /p migrate --apply=x", "migrate --apply"],
+    ["oasis --project /p migrate --plan --ap", "migrate --apply"],
+    ["python3 -I -B ~/.agents/skills/odoo19/tools/migrate.py --appl", "migrate --apply"],
+    ["oasis --project /p gc --apply --tr", "gc --apply --trash"],
+    ["oasis --project /p gc --ap --trash", "gc --apply --trash"],
+    ["oasis --project /p gc --apply=1 --trash=1", "gc --apply --trash"],
+    ["oasis --project /p stop --d", "stop --database"],
+    ["oasis --project /p stop --datab", "stop --database"],
+    ["oasis --project /p stop --database=x", "stop --database"],
+    ["oasis --project /p worktree-init feat feature/x --dry", "worktree-init"],
+    ["oasis --project /p worktree-init feat feature/x --dry-run=1", "worktree-init"],
+  ];
+  for (const [command, operation] of cases) {
+    assert.deepEqual(classifyBash(command).asks.map((ask) => ask.command), [operation], command);
+  }
+  for (const command of ["oasis --project /p setup --ap", "oasis --project /p setup --apply=x", "oasis --project /p gc --ap",
+    "oasis --project /p migrate --pl", "oasis --project /p stop"]) {
+    assert.deepEqual(classifyBash(command), { program: null, programs: [], asks: [] }, command);
+  }
+});
+
+test("an entry point whose command word cannot be determined gets the strictest row of any command word on it", () => {
+  const asks: [string, object[]][] = [
+    ["oasis --project /p --verbose x worktree-init feat feature/x", [{ command: "worktree-init", project: "/p" }]],
+    ["oasis --foo bar worktree-init feat feature/x", [{ command: "worktree-init" }]],
+    ["oasis $OPTS worktree-init feat feature/x", [{ command: "worktree-init" }]],
+    ["oasis --foo bar status migrate", [{ command: "migrate --apply" }]],
+    // Even a known command word after an option the entry point does not have: argparse refuses that line,
+    // and the guard does not guess which word it would run.
+    ["oasis --foo status worktree-init feat feature/x", [{ command: "worktree-init" }]],
+    ["odoo19 --foo bar drop-database cc_dev_x", [{ command: "drop-database", database: null }]],
+  ];
+  for (const [command, expected] of asks) {
+    assert.deepEqual(classifyBash(command), { program: null, programs: [], asks: expected }, command);
+  }
+  assert.deepEqual(classifyBash("oasis --foo bar menu"), { program: "menu", programs: ["menu"], asks: [] });
+  // No command word of the table on it: nothing it could run, as before.
+  for (const command of ["oasis --foo bar", "oasis --foo bar status", "oasis $CMD", "oasis --project /p -- status",
+    "oasis --proj=/p --he"]) {
+    assert.deepEqual(classifyBash(command), { program: null, programs: [], asks: [] }, command);
+  }
+  // The entry point's own options and `--` still determine the command word.
+  assert.deepEqual(classifyBash("oasis --p /p -- status worktree-init"), { program: null, programs: [], asks: [] });
+});
+
 test("blocks combined shell flags, control keywords, eval and launchers", () => {
   const blocked: [string, string][] = [
     ["bash -lc 'psql -l'", "psql"],

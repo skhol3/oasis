@@ -34,8 +34,14 @@ names) may still change in a minor release; every such change is listed here und
   oasis command whose arguments are not literal gets its strictest tier. `stop --database` stays Tier B
   (it ends the sessions of a running server on the shared database). The skills treat `gc --apply` as
   Tier A.
-- The legacy-profile refusal and `doctor`'s fix for it name the confirmation:
-  `... then oasis migrate --apply --confirm <the workspace file the plan writes>.`
+- The refusal of a legacy `.odoo19-agent.toml` and `doctor`'s fix name runnable commands:
+  `oasis --project <checkout> migrate --plan`, then the exact
+  `oasis --project <checkout> migrate --apply --confirm <workspace file>` (the file the plan writes),
+  or only the plan when migrate cannot plan.
+- Bash guard: an abbreviated or `=` form of a Tier B option (`migrate --ap`, `stop --datab`,
+  `gc --apply --tr`) asks like the full option; an entry point whose command word is not known from
+  the text gets the strictest row of any oasis command word on the line. `oasis policy` has its own
+  row (Tier A).
 - The Gentle Shell prompt context points to `oasis policy --json` for the Tier B commands.
 
 ### Fixed

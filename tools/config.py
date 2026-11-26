@@ -110,11 +110,47 @@ class MissingSeries(InvalidConfig):
     """A checkout of a series its workspace file has no section for: oasis setup adds it."""
 
 
+@functools.cache
+def migrate_target(checkout: Path) -> Path | None:
+    """The workspace file `oasis migrate --apply` would write for a checkout with the legacy profile
+    (the `write <dir>/oasis-workspace.toml` line of its plan): tools/migrate.py makes the plan without
+    --workspace, read-only (it lists the worktrees with git and reads their profiles and odoo.conf).
+    None when migrate refuses to plan (its --plan names why) or cannot run."""
+    try:
+        spec = importlib.util.spec_from_file_location('oasis_config_migrate', Path(__file__).with_name('migrate.py'))
+        migrate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migrate)
+        return migrate.planned_workspace(checkout)
+    except Exception:  # noqa: BLE001  any refusal or failure only drops the confirmation from the message
+        return None
+
+
+def legacy_profile_commands(profile: Path, program: str) -> tuple[str, str | None]:
+    """The commands that convert a legacy profile, as shell words: `migrate --plan` (Tier A), and the
+    exact `migrate --apply --confirm <workspace file>` (Tier B) when its plan can be made, else None."""
+    checkout = profile.parent
+    plan = shlex.join([program, '--project', str(checkout), 'migrate', '--plan'])
+    target = migrate_target(checkout)
+    if target is None:
+        return plan, None
+    return plan, shlex.join([program, '--project', str(checkout), 'migrate', '--apply', '--confirm', str(target)])
+
+
 def legacy_profile_refusal(profile: Path, program: str) -> str:
-    """Why a checkout with the legacy profile is refused, and the fix (`oasis migrate`)."""
-    return (f'{profile} is the old profile format, no longer read: run {program} migrate --plan to see '
-            f'its conversion to {WORKSPACE_NAME}, then {program} migrate --apply --confirm <the workspace file '
-            'the plan writes>.')
+    """Why a checkout with the legacy profile is refused, and the fix (`oasis migrate`, see
+    legacy_profile_commands)."""
+    plan, apply = legacy_profile_commands(profile, program)
+    if apply is None:
+        return (f'{profile} is the old profile format, no longer read: run {plan} to see its conversion to '
+                f'{WORKSPACE_NAME} or what stops it.')
+    return (f'{profile} is the old profile format, no longer read: run {plan} to see its conversion to '
+            f'{WORKSPACE_NAME}, then {apply}.')
+
+
+def legacy_profile_fix(profile: Path, program: str) -> str:
+    """doctor's fix for a legacy profile: the commands of legacy_profile_commands."""
+    plan, apply = legacy_profile_commands(profile, program)
+    return plan if apply is None else f'{plan}, then {apply}'
 
 
 def missing_configuration(root: Path) -> str:

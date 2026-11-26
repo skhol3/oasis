@@ -11,6 +11,7 @@ import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oa
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -192,10 +193,12 @@ class DoctorTests(unittest.TestCase):
     def test_legacy_profile_is_one_fail_naming_the_fix(self):
         profile = self.root / '.odoo19-agent.toml'
         profile.write_text('[tooling]\n')
-        self.assert_report(f'FAIL configuration={profile} is the old profile format, no longer read: run oasis '
-                           'migrate --plan to see its conversion to oasis-workspace.toml, then oasis migrate --apply --confirm <the workspace file the plan writes>.\n'
-                           '  fix: oasis migrate --plan, then oasis migrate --apply --confirm <the workspace file '
-                           'the plan writes>\n'
+        # An invalid profile: migrate cannot plan it, so only its runnable --plan is named (it says why);
+        # tests/test_migrate.py covers the fix that names the exact --apply --confirm <workspace file>.
+        plan = shlex.join(['oasis', '--project', str(self.root), 'migrate', '--plan'])
+        self.assert_report(f'FAIL configuration={profile} is the old profile format, no longer read: run {plan} '
+                           'to see its conversion to oasis-workspace.toml or what stops it.\n'
+                           f'  fix: {plan}\n'
                            'PASS git=2.47.1\nPASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
                            'doctor_failures=1\n')
 

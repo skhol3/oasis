@@ -322,8 +322,10 @@ class WorkspaceTests(unittest.TestCase):
             self.scratch.chmod(mode)
 
     def refusal(self, profile):
-        return (f'{profile} is the old profile format, no longer read: run oasis migrate --plan to see its '
-                'conversion to oasis-workspace.toml, then oasis migrate --apply --confirm <the workspace file the plan writes>.')
+        # migrate cannot plan it here (a workspace file is already found), so only its --plan is named.
+        plan = shlex.join(['oasis', '--project', str(profile.parent), 'migrate', '--plan'])
+        return (f'{profile} is the old profile format, no longer read: run {plan} to see its '
+                'conversion to oasis-workspace.toml or what stops it.')
 
     def test_a_legacy_profile_in_the_checkout_is_refused_next_to_the_workspace(self):
         main = self.layout()
