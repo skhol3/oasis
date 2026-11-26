@@ -142,18 +142,22 @@ class DevelopmentUsersTests(unittest.TestCase):
         return subprocess.run(self.command(*args), input='', text=True,
                               capture_output=True, env=self.env, timeout=10)
 
-    def terminal(self, *args):
+    def terminal(self, *args, generated=()):
+        """Run on a terminal, typing a password (twice) for each login but those in generated, which
+        get Enter at their first prompt."""
         master, slave = pty.openpty()
         process = subprocess.Popen(self.command(*args), stdin=slave, stdout=slave,
                                    stderr=slave, env=self.env, start_new_session=True)
         os.close(slave)
         output = b''
         pending = b''
-        prompts = [f'{kind} for {login}: '.encode()
-                   for login in ('local_admin', 'planner', 'manager')
-                   for kind in ('Password', 'Confirm password')]
+        logins = ('local_admin', 'planner', 'manager')
         secrets = [hashlib.sha256(os.urandom(32)).hexdigest() for _ in range(3)]
-        replies = [value for value in secrets for _ in range(2)]
+        prompts, replies = [], []
+        for login, secret in zip(logins, secrets):
+            kinds = ('Password',) if login in generated else ('Password', 'Confirm password')
+            prompts += [f'{kind} for {login}: '.encode() for kind in kinds]
+            replies += ['' if login in generated else secret] * len(kinds)
         try:
             while True:
                 if not select.select([master], [], [], 15)[0]:
@@ -216,12 +220,60 @@ class DevelopmentUsersTests(unittest.TestCase):
             self.assertFalse(self.state.exists())
             self.assertFalse(self.commands.exists())
 
-    def test_requires_hidden_terminal_without_database_creation(self):
+    def logins_file(self, database='cc_dev_coffee'):
+        """Where the generated passwords of database go: next to the env file (v0.16.0 S2)."""
+        return self.root / 'dev' / f'{database}.logins'
+
+    def assert_generated(self, result, logins, database='cc_dev_coffee'):
+        """The passwords of logins were generated into the logins file (0600), never printed, and are the
+        ones the database accepts."""
+        path = self.logins_file(database)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        lines = path.read_text().splitlines()
+        self.assertEqual(lines[:2], [
+            f'# Written by oasis init-dev-database: the generated passwords of {database} (docs/dev-database.md).',
+            '# One "<login> <password>" per line. Never commit this file.'])
+        found = dict(line.split(' ') for line in lines[2:])
+        self.assertEqual(list(found), list(logins))
+        state = json.loads(self.state.read_text())
+        for login, password in found.items():
+            self.assertRegex(password, r'\A[A-Za-z0-9_-]{32}\Z')
+            self.assertEqual(state['users'][login]['password'], hashlib.sha256(password.encode()).hexdigest())
+            self.assertNotIn(password, result)
+            if self.commands.exists():
+                self.assertNotIn(password, self.commands.read_text())
+
+    def test_without_a_terminal_every_password_is_generated_into_a_0600_file(self):
         result = self.invoke('coffee', 'cc_dev_coffee')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-            (2, '', 'ERROR: Password entry requires an interactive terminal.\n'))
-        self.assertFalse(self.state.exists())
-        self.assertFalse(self.commands.exists())
+        path = self.logins_file()
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout, 'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
+                                        f'Generated passwords: {path} (mode 0600): local_admin, planner, manager\n')
+        self.assert_generated(result.stdout, ('local_admin', 'planner', 'manager'))
+        self.assertEqual(set(json.loads(self.state.read_text())['users']), {'local_admin', 'planner', 'manager'})
+        # An existing database is refused, and its logins file stays as it was.
+        before = path.read_bytes()
+        result = self.invoke('coffee', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', (
+            'ERROR: Could not create a fresh development database; existing data was not modified.\n')))
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(sorted(item.name for item in path.parent.iterdir() if 'logins' in item.name),
+                         ['cc_dev_coffee.logins'])
+
+    def test_on_a_terminal_enter_generates_that_password_and_typed_ones_are_not_stored(self):
+        code, output = self.terminal('coffee', 'cc_dev_coffee', generated=('planner',))
+        self.assertEqual(code, 0, output)
+        path = self.logins_file()
+        self.assertIn(f'Enter at a password prompt generates one into {path} (mode 0600).\n', output)
+        self.assertTrue(output.endswith('Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
+                                        f'Generated passwords: {path} (mode 0600): planner\n'), output)
+        self.assert_generated(output, ('planner',))
+        # Every password typed: no file.
+        self.state.unlink()
+        code, output = self.terminal('coffee', 'cc_dev_other')
+        self.assertEqual(code, 0, output)
+        self.assertTrue(output.endswith('Accounts ready: 3\n'), output)
+        self.assertFalse(self.logins_file('cc_dev_other').exists())
 
     def test_initializes_explicit_admin_and_project_roles_without_demo(self):
         code, output = self.terminal('coffee', 'cc_dev_coffee')
@@ -358,13 +410,13 @@ test_prefix = 'cc_test_'
         workspace.write_text(self.WORKSPACE + development)
         return workspace
 
-    def test_workspace_requires_hidden_terminal_without_database_creation(self):
+    def test_workspace_without_a_terminal_generates_the_passwords_next_to_its_env_file(self):
         self.use_workspace()
         result = self.invoke('coffee', 'cc_dev_coffee')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-            (2, '', 'ERROR: Password entry requires an interactive terminal.\n'))
-        self.assertFalse(self.state.exists())
-        self.assertFalse(self.commands.exists())
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertTrue(result.stdout.endswith(
+            f'Generated passwords: {self.logins_file()} (mode 0600): local_admin, planner, manager\n'))
+        self.assert_generated(result.stdout, ('local_admin', 'planner', 'manager'))
 
     def test_workspace_rejects_invalid_or_secret_declaration_before_runtime(self):
         for development in ('', PROFILE + "password = 'not-a-real-secret'\n",

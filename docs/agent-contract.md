@@ -86,7 +86,7 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `gc --trash` | A | lists the expired trash entries; changes nothing |  |
 | `gc --apply --trash` | B | drops the expired trash entries for good | project root |
 | `drop-database` | B | takes a database (and its filestore) out of use; only trash restore brings it back | database name |
-| `recreate-database-volume` | B | deletes the PostgreSQL volume of the compose project and every database in it, then starts the service again | compose project |
+| `recreate-database-volume` | B | runs docker compose down -v for the compose project (-p), which removes its containers and networks, every named volume of its compose file and every anonymous volume of its containers (every database of its PostgreSQL), then starts the service again | compose project |
 | `trash` | A | lists the trash; trash restore brings an entry back |  |
 | `migrate` | A | without --apply it prints the migration plan; changes nothing |  |
 | `migrate --plan` | A | prints the migration plan; changes nothing |  |

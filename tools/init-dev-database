@@ -3,7 +3,9 @@ set -Eeuo pipefail
 if [[ ${1:-} == --help && $# == 1 ]]; then
   printf '%s\n' 'Usage: init-dev-database [--with-demo] <module> <database>' \
     'Create a NEW development database with explicit administrator and project role accounts.' \
-    'Requires [development] configuration and hidden interactive password entry; excludes tests.' \
+    'Requires [development] configuration; excludes tests. On a terminal it asks each password with the echo' \
+    'off (Enter generates one); otherwise it generates them. Generated passwords go to <database>.logins next' \
+    'to the env file (mode 0600), never to the output.' \
     '--with-demo opts in to the native Odoo demo loader and project development.demo_modules.'
   exit 0
 fi

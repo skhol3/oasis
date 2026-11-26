@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Recreates the PostgreSQL volume of this checkout's compose project (v0.16.0 S2): prints the plan,
-# then runs `docker compose down -v` for that compose project only (its containers, networks and
-# volumes, so every database of its PostgreSQL, the trash included), and starts the database service
-# again, which initializes a new volume with the account of the env file. It is the fix doctor and
-# check-environment name when PostgreSQL refuses the account Odoo uses because the volume was
+# then runs `docker compose -p <compose project> down -v` for that compose project only (it removes the
+# project's containers and networks, every named volume of its compose file and every anonymous volume of
+# its containers, so every database of its PostgreSQL, the trash included), and starts the database
+# service again with the same -p, which initializes a new volume with the account of the env file. The
+# compose project is always passed with -p: a COMPOSE_PROJECT_NAME (in the environment or the env file)
+# that selects another project is refused before anything runs. It is the fix doctor and
+# check-environment name when the compose service refuses the account Odoo uses because the volume was
 # initialized with other credentials. Tier B in the agent policy (tools/policy.py): it runs only with
 # --confirm <compose project>; without it, after the plan, it refuses naming the exact command and
-# changes nothing.
+# changes nothing. A failure after the volume was deleted says so and names the command that starts the
+# service again (exit 1).
 set -Eeuo pipefail
 source "$(dirname "$0")/oasis_env.sh"
 usage() {
@@ -14,9 +18,12 @@ usage() {
 }
 if [[ $# == 1 && ${1:-} == --help ]]; then
   usage
-  printf '%s\n' 'Deletes the PostgreSQL volume of the compose project and every database in it, then starts the' \
-    'database service again with the account of the env file. Tier B: it runs only with --confirm and the' \
-    'compose project (the top-level name: of the compose file); without it, it prints the plan and changes nothing.'
+  printf '%s\n' 'Runs docker compose -p <compose project> down -v: it removes the containers and networks of the' \
+    'compose project, every named volume of its compose file and every anonymous volume of its containers, so' \
+    'every database of its PostgreSQL; then starts the database service again with the account of the env file.' \
+    'Tier B: it runs only with --confirm and the compose project (the top-level name: of the compose file);' \
+    'without it, it prints the plan and changes nothing. A COMPOSE_PROJECT_NAME that selects another project is' \
+    'refused.'
   exit 0
 fi
 source "$(dirname "$0")/common.sh"
@@ -50,14 +57,28 @@ for path in "$COMPOSE_FILE" "$ENV_FILE"; do
     exit 1
   fi
 done
-project=$(python3 -I -B "$(dirname "$0")/db_account.py" compose-project "$COMPOSE_FILE")
+account_helper="$(dirname "$0")/db_account.py"
+project=$(python3 -I -B "$account_helper" compose-project "$COMPOSE_FILE")
 if [[ -z "$project" ]]; then
   printf 'ERROR: %s has no top-level name: add one (%s doctor checks it), then run recreate-database-volume again.\n' \
     "$COMPOSE_FILE" "$(program_name)" >&2
   exit 2
 fi
+# docker compose ranks COMPOSE_PROJECT_NAME (the environment's, else the env file's) above the top-level
+# name: the other oasis commands then run another project, which this command must not leave behind.
+selected=${COMPOSE_PROJECT_NAME:-}
+where='in the environment'
+if [[ -z "$selected" ]]; then
+  selected=$(python3 -I -B "$account_helper" compose-project-name "$ENV_FILE")
+  where="in $ENV_FILE"
+fi
+if [[ -n "$selected" && "$selected" != "$project" ]]; then
+  printf 'ERROR: COMPOSE_PROJECT_NAME %s makes docker compose use the compose project %s, not %s (the top-level name: of %s); nothing changed: unset it or set it to %s, then run recreate-database-volume again.\n' \
+    "$where" "$selected" "$project" "$COMPOSE_FILE" "$project" >&2
+  exit 2
+fi
 printf 'compose_project=%s\ncompose_file=%s\nservice=%s\naccount=%s\n' "$project" "$COMPOSE_FILE" "$DB_SERVICE" "$ENV_FILE"
-printf 'deletes=the volumes of compose project %s: every database of its PostgreSQL, the trash included\n' "$project"
+printf 'deletes=the containers, networks and volumes of compose project %s (docker compose down -v: every named volume of its compose file and every anonymous volume of its containers), so every database of its PostgreSQL, the trash included\n' "$project"
 if [[ "$confirm" != "$project" ]]; then
   command=$(confirm_command recreate-database-volume --confirm "$project")
   if "$confirmed"; then
@@ -69,6 +90,23 @@ if [[ "$confirm" != "$project" ]]; then
   fi
   exit 2
 fi
-compose down -v
-wait_for_database >/dev/null
+# Every compose call of this command names the confirmed project (wait_for_database calls compose too).
+compose() {
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$project" "$@"
+}
+start=$(python3 -I -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' docker compose --env-file "$ENV_FILE" \
+  -f "$COMPOSE_FILE" -p "$project" up -d --wait "$DB_SERVICE")
+status=0
+compose down -v || status=$?
+if (( status != 0 )); then
+  printf 'ERROR: docker compose down -v failed (exit %s): the volume of compose project %s may already be gone; start the service again with %s\n' \
+    "$status" "$project" "$start" >&2
+  exit 1
+fi
+wait_for_database >/dev/null || status=$?
+if (( status != 0 )); then
+  printf 'ERROR: the volume of compose project %s is already gone (docker compose down -v), but service %s did not start again (exit %s): start it with %s\n' \
+    "$project" "$DB_SERVICE" "$status" "$start" >&2
+  exit 1
+fi
 printf 'Recreated the database volume of %s; service %s runs with the account of %s.\n' "$project" "$DB_SERVICE" "$ENV_FILE"
