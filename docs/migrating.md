@@ -3,7 +3,7 @@
 Earlier versions configured each checkout with its own `.odoo19-agent.toml` profile. Since 0.12.0 no command reads it: a checkout that still has one is refused before anything runs (exit 2), also next to an `oasis-workspace.toml`, with
 
 ```text
-ERROR: <checkout>/.odoo19-agent.toml is the old profile format, no longer read: run oasis migrate --plan to see its conversion to oasis-workspace.toml, then oasis migrate --apply.
+ERROR: <checkout>/.odoo19-agent.toml is the old profile format, no longer read: run oasis migrate --plan to see its conversion to oasis-workspace.toml, then oasis migrate --apply --confirm <the workspace file the plan writes>.
 ```
 
 and `doctor` reports the same text as one `FAIL configuration=...`. On the main checkout, `list-databases`, `gc` and the trash also stop when a linked worktree still has one, since its slug can no longer be read. If you have one, migrate it: `oasis migrate`, the only command that still reads the profile, converts the `.odoo19-agent.toml` of every checkout of a repository into one `oasis-workspace.toml`, keeping every profile as a backup. Run it yourself, from any checkout that has a profile, in Gentle Shell or in a terminal:
@@ -13,12 +13,12 @@ and `doctor` reports the same text as one `FAIL configuration=...`. On the main 
 ```
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/checkout migrate [--workspace <dir>] [--apply | --plan]
+~/.agents/skills/odoo19/oasis --project /absolute/checkout migrate [--workspace <dir>] [--apply --confirm <workspace file> | --plan]
 ```
 
 ## How it works
 
-- Without `--apply` it prints the plan and changes nothing; the plan ends with `dry run: nothing changed; run with --apply to migrate`. `--plan` asks for that plan explicitly and can never apply: with `--apply` it is a usage error (exit 2). It is the one form an agent may run (see the [bash guard](bash-guard.md)). `/oasis migrate` (or `/odoo19 migrate`) shows the plan and runs `migrate --apply` after confirmation. Agents cannot run it: the bash guard blocks it, the dry run included.
+- Without `--apply` it prints the plan and changes nothing; the plan ends with `dry run: nothing changed; run with --apply to migrate`. `--plan` asks for that plan explicitly and can never apply: with `--apply` it is a usage error (exit 2). The plan is Tier A in the [agent contract](agent-contract.md); `--apply` is Tier B: it runs only with `--confirm <workspace file>`, the `oasis-workspace.toml` the plan writes. Without it, or with another path, it prints the plan, exits 2 and names the exact command (`migrate --apply rewrites the configuration files of every checkout and writes <file> (Tier B: it needs explicit confirmation); nothing changed. Run: oasis --project <checkout> migrate --apply --confirm <file>`). `/oasis migrate` (or `/odoo19 migrate`) shows the plan and runs `migrate --apply --confirm <file>` after you confirm; in Gentle Shell an agent's `migrate --apply` waits for your confirmation in a dialog (see the [bash guard](bash-guard.md)).
 - Checkouts: every worktree that `git worktree list` reports (outside git, the checkout alone). A missing worktree stops it with `Worktree <path> is missing; restore it or run git worktree prune.`
 - Workspace directory: by default the deepest directory above every checkout and the profile's `odoo.conf` (`<project>` in the [workspace layout](workspace-file.md)). `--workspace <dir>` names another one; it must be an absolute existing directory above every checkout (`Refusing --workspace <dir>: it is not above every checkout (<checkouts>).`). An existing `oasis-workspace.toml` there is never replaced (`<file> already exists.`); a directory the trust rule would refuse, and a nearer `oasis-workspace.toml` between a checkout and that directory, are refused too.
 - Agreement: every profile must give the same `[tooling]` and `[development]` values, paths resolved from its checkout, except `checkout_slug`. Otherwise it stops with `Cannot migrate: the profiles of the checkouts disagree on <section>.<key>, ...` (keys only, never values).
