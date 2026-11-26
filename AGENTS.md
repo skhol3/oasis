@@ -46,6 +46,8 @@ target. Install only after the suite passes and the change is committed:
 
 Versions follow Semantic Versioning and are tagged on `main` only:
 
+0. Run the agent field run of [docs/release-gate.md](docs/release-gate.md) and add its row: the
+   release is blocked when the human handoffs grow over the previous release.
 1. In the release pull request, move the `[Unreleased]` entries of `CHANGELOG.md` under the
    new version and set the same `version` in `package.json` (patch: fixes; minor: additions,
    or contract changes while `0.x`; major: contract changes after `1.0.0`). Commit as

@@ -9,6 +9,8 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-26
+
 ### Added
 
 - `oasis start-database` (Tier A): starts the checkout's database service the way every database command
@@ -1303,7 +1305,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/skhol3/oasis/releases/tag/v0.16.0
 [0.15.1]: https://github.com/skhol3/oasis/releases/tag/v0.15.1
 [0.15.0]: https://github.com/skhol3/oasis/releases/tag/v0.15.0
 [0.14.0]: https://github.com/skhol3/oasis/releases/tag/v0.14.0
