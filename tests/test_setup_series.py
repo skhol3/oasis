@@ -12,6 +12,7 @@ ceiling at the scratch directory, the machine file is a scratch XDG_CONFIG_HOME'
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import hashlib
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
@@ -22,7 +23,7 @@ import sys
 import tempfile
 import unittest
 
-from test_setup import GIT, UV
+from test_setup import ADD_DEVELOPMENT, GIT, UV
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'oasis'
@@ -240,7 +241,7 @@ class SeriesSetupTests(unittest.TestCase):
             f'create {series / "odoo.conf"} (mode 0600): path-free; db_port {port}; db_user and db_password empty',
             f'create {series / "compose.yml"}: PostgreSQL {POSTGRES_15} (postgres:{POSTGRES_15}) as service db on '
             f'127.0.0.1:{port}, compose project {self.compose_name("cc15")}',
-            f'create {series / ".env"} (mode 0600): ODOO_DB_USER and ODOO_DB_PASSWORD, empty',
+            f'create {series / ".env"} (mode 0600): ODOO_DB_USER oasis_cc15 and a generated ODOO_DB_PASSWORD',
             f'create {series / "requirements/runtime.in"}: -r {self.source15}/requirements.txt, setuptools<81',
             f'create {series / "requirements/dev.in"}: -c runtime.txt, -r runtime.in',
             f'create {project / "logs/15.0"}/', f'create {project / "data/15.0"}/',
@@ -263,6 +264,42 @@ class SeriesSetupTests(unittest.TestCase):
         self.assertEqual(self.tree(), before)
         self.assertFalse(self.log.exists())
 
+    def test_the_json_plan_of_a_new_section_says_where_each_value_came_from(self):
+        # v0.16.0 S3: the same plan as one JSON object, the series section's values with their origin.
+        self.workspace.write_text(V1)
+        before = self.tree()
+        arguments = ('--plan', '--json', '--community', str(self.source15), '--no-enterprise', '--exception',
+                     'report_xlsx')
+        result = self.setup_cmd(*arguments)
+        self.assertEqual((result.returncode, result.stderr, result.stdout.count('\n')), (0, '', 1), result.stdout)
+        plan = json.loads(result.stdout)
+        port = plan['inferred']['db_port']['value']
+        environment = self.project / 'environments/cc-15.0'
+        self.assertEqual(plan['inferred'], {
+            'checkout': {'value': str(self.checkout), 'origin': 'main'},
+            'workspace': {'value': str(self.project), 'origin': 'existing'},
+            'series': {'value': '15.0', 'origin': 'from the module manifests'},
+            'community': {'value': str(self.source15), 'origin': 'from --community'},
+            'enterprise': {'value': None, 'origin': 'from --no-enterprise'},
+            'db_port': {'value': port, 'origin': 'a free port'},
+            'environment': {'value': str(environment), 'origin': 'new'},
+            'python': {'value': PYTHON_15, 'origin': 'the default of Odoo 15.0'}})
+        self.assertEqual((plan['complete'], plan['ready_to_apply'], plan['open']), (True, True, []))
+        self.assertEqual(plan['lines'], self.new_plan(port).splitlines())
+        self.assertEqual([(question['id'], question['answer'], question['origin']) for question in plan['questions']],
+                         [('environment', 'create', 'recommended (no terminal)'),
+                          ('python', PYTHON_15, 'recommended (no terminal)')])
+        self.assertEqual(plan['changes'][:2], [
+            {'kind': 'extend', 'path': str(self.machine), 'summary': f'add [series."15.0"] to {self.machine}'},
+            {'kind': 'extend', 'path': str(self.workspace),
+             'summary': f'change workspace_version = 1 to workspace_version = 2 in {self.workspace} (that line only)'}])
+        # --python gives the new environment's Python, and says so.
+        chosen = json.loads(self.setup_cmd(*arguments, '--python', '3.8').stdout)
+        self.assertEqual((chosen['inferred']['python'], chosen['inferred']['environment']['origin']),
+                         ({'value': '3.8', 'origin': 'from --python'}, 'new'))
+        self.assertEqual(self.tree(), before)
+        self.assertFalse(self.log.exists())
+
     def test_apply_writes_the_section_keeps_the_other_series_and_a_second_run_keeps_everything(self):
         self.workspace.write_text(V1)
         self.workspace.chmod(0o600)
@@ -281,12 +318,10 @@ class SeriesSetupTests(unittest.TestCase):
             f'compiled {requirements}/runtime.txt, dev.txt and lock.sha256',
             f'created the environment {environment}',
             'next steps:',
-            f'  1. fill in ODOO_DB_USER and ODOO_DB_PASSWORD in {series / ".env"}, and the same values as db_user '
-            f'and db_password in {series / "odoo.conf"}',
-            f'  2. docker compose --env-file {series / ".env"} -f {series / "compose.yml"} up -d --wait',
-            f'  3. oasis --project {self.checkout} doctor',
-            f'  4. add a [development] table with administrator_login to {self.workspace} (docs/dev-database.md)',
-            f'  5. oasis --project {self.checkout} init-dev-database <module> cc15_dev_manual']) + '\n')
+            f'  1. oasis --project {self.checkout} start-database',
+            f'  2. oasis --project {self.checkout} doctor',
+            f'  3. {ADD_DEVELOPMENT.format(workspace=self.workspace)}',
+            f'  4. oasis --project {self.checkout} init-dev-database <module> cc15_dev_manual']) + '\n')
         # Only the version line changed; the section is appended; the mode is kept.
         self.assertEqual(self.workspace.read_text(),
                          V1.replace('workspace_version = 1', 'workspace_version = 2') + '\n' + SECTION)
@@ -299,7 +334,11 @@ class SeriesSetupTests(unittest.TestCase):
         self.assertIn(f'name: {self.compose_name("cc15")}\n', compose)
         self.assertIn(f'db_port = {port}\n', (series / 'odoo.conf').read_text())
         self.assertEqual((series / '.env').stat().st_mode & 0o777, 0o600)
-        self.assertEqual((series / '.env').read_text().splitlines()[1:], ['ODOO_DB_USER=', 'ODOO_DB_PASSWORD='])
+        # v0.16.0 S2: the series' own generated account.
+        account = (series / '.env').read_text().splitlines()[2:]
+        self.assertEqual(account[0], 'ODOO_DB_USER=oasis_cc15')
+        self.assertRegex(account[1], r'\AODOO_DB_PASSWORD=[A-Za-z0-9_-]{32}\Z')
+        self.assertNotIn(account[1].split('=', 1)[1], result.stdout)
         self.assertEqual((requirements / 'runtime.in').read_text(),
                          '# Written by oasis setup: the requirements of the Odoo source.\n'
                          f'-r {self.source15}/requirements.txt\n' + SETUPTOOLS_15)
@@ -586,21 +625,35 @@ class SeriesSetupTests(unittest.TestCase):
 
     # -- the checkout's series and its exceptions -----------------------------------------------
 
-    def test_a_module_of_another_series_needs_an_exception_before_any_question(self):
+    def test_a_module_of_another_series_gets_the_series_exceptions_question_first(self):
         self.workspace.write_text(V1)
         before = self.tree()
         manifest = self.checkout / 'report_xlsx/__manifest__.py'
-        self.assert_refused(self.setup_cmd(), (
+        question = (f'The modules report_xlsx (Odoo 16.0) of {self.checkout} declare another Odoo series than 15.0: '
+                    f'list them in series_exceptions under [series."15.0"] in {self.workspace}? Answer with --answer '
+                    'series_exceptions=<add|no> (recommended: add).')
+        result = self.setup_cmd()
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertIn(f'open question series_exceptions: {question}\nopen question community: ', result.stdout)
+        self.assertEqual(self.tree(), before)
+        self.assert_refused(self.setup_cmd('--answer', 'series_exceptions=no'), (
             f'The module report_xlsx declares Odoo 16.0 (version 16.0.2.0.2 in {manifest}), but {self.checkout} is '
             'an Odoo 15.0 checkout: pass --exception report_xlsx to list it in series_exceptions under '
             '[series."15.0"], or set its version to 15.0.x.y.z if it is an Odoo 15.0 module.'), before)
+        # Answered: the section lists it, as --exception does.
+        result = self.setup_cmd('--answer', 'series_exceptions=add', '--community', str(self.source15),
+                                '--no-enterprise')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn("  series_exceptions = ['report_xlsx']\n", result.stdout)
+        self.assertEqual(self.tree(), before)
         self.assert_refused(self.setup_cmd('--exception', 'report xlsx'),
                             'Invalid --exception report xlsx: use a module name.', before)
 
     def test_the_checkout_file_series_wins_and_existing_exceptions_count(self):
         # A version 2 file whose 19.0 section already lists report_xlsx: the manifests say 15.0 without a flag.
         self.workspace.write_text(V2 + "\n[series.\"19.0\"]\nseries_exceptions = ['report_xlsx']\n")
-        result = self.setup_cmd('--community', str(self.source15), '--no-enterprise')
+        result = self.setup_cmd('--community', str(self.source15), '--no-enterprise', '--answer',
+                                'series_exceptions=no')
         self.assertEqual(result.returncode, 2)
         self.assertIn('pass --exception report_xlsx', result.stderr)
         (self.checkout / 'report_xlsx/__manifest__.py').write_text("{'name': 'x', 'version': '1.0'}\n")
@@ -867,9 +920,9 @@ series_exceptions = ['report_xlsx']
             f'  1. the locks in {requirements} describe runtime.in, dev.in and overrides.txt: oasis --project '
             f'{self.checkout} bootstrap --apply syncs the adopted environment {environment} to them (it changes '
             'the packages installed there)',
-            f'  2. docker compose --env-file {folder / ".env"} -f {folder / "compose.yml"} up -d --wait',
+            f'  2. oasis --project {self.checkout} start-database',
             f'  3. oasis --project {self.checkout} doctor',
-            f'  4. add a [development] table with administrator_login to {self.workspace} (docs/dev-database.md)',
+            f'  4. {ADD_DEVELOPMENT.format(workspace=self.workspace)}',
             f'  5. oasis --project {self.checkout} init-dev-database <module> cc15_dev_manual']) + '\n')
         self.assertEqual(self.workspace.read_text(),
                          V1.replace('workspace_version = 1', 'workspace_version = 2') + '\n' + section)

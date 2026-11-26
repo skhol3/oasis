@@ -159,6 +159,8 @@ def missing_configuration(root: Path) -> str:
 
 
 SLUG = re.compile(r'[a-z0-9][a-z0-9_]{0,19}')
+# What SLUG accepts, as the slug errors name it (v0.16.0 S4: the 20-character limit).
+SLUG_RULE = '1 to 20 lowercase letters, digits or underscores, starting with a letter or digit'
 GIT_TIMEOUT_SECONDS = 5
 
 
@@ -234,17 +236,30 @@ def checkout_identity(root: Path, override: str | None) -> tuple[str, Path | Non
         raise InvalidConfig(f'Cannot determine the checkout identity: git failed ({exc}).') from exc
 
 
-def derived_slug(top: Path, main: Path) -> str:
-    """Slug of a linked worktree from its directory name, without the main directory prefix."""
+def worktree_slug(top: Path, main: Path) -> str:
+    """What the directory name of a linked worktree gives, without the main directory prefix, valid or not
+    (derived_slug checks it; oasis setup proposes a shorter one, v0.16.0 S4)."""
     name = top.name
     if (main.name and name.startswith(main.name) and len(name) > len(main.name)
             and name[len(main.name)] in '-_.'):
         name = name[len(main.name):].lstrip('-_.')
-    slug = re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
+    return slug_of(name)
+
+
+def derived_slug(top: Path, main: Path) -> str:
+    """Slug of a linked worktree from its directory name, without the main directory prefix."""
+    slug = worktree_slug(top, main)
     if not SLUG.fullmatch(slug):
-        raise InvalidConfig('Cannot derive a checkout slug from the worktree directory name; '
-                            'set [tooling].checkout_slug.')
+        gives = f'{slug} ({len(slug)} characters)' if slug else 'nothing'
+        raise InvalidConfig(f'Cannot derive a checkout slug from the worktree directory name {top.name}: it gives '
+                            f'{gives}, and a slug is {SLUG_RULE}; set [tooling].checkout_slug in '
+                            f'{top / CHECKOUT_NAME}.')
     return slug
+
+
+def slug_of(name: str) -> str:
+    """The slug a worktree directory name gives (its main directory prefix already removed), valid or not."""
+    return re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
 
 
 def find_workspace(root: Path) -> Path | None:
@@ -616,7 +631,8 @@ def workspace_configuration(root: Path) -> tuple[dict, Path, Path, str]:
     return document, base, workspace, name
 
 
-def layered_configuration(root: Path, planned: dict | None = None) -> tuple[dict, Path, Path, str, dict[str, str], str]:
+def layered_configuration(root: Path, planned: dict | None = None,
+                          checkout: dict | None = None) -> tuple[dict, Path, Path, str, dict[str, str], str]:
     """workspace_configuration() plus where its layered values came from (see origins) and the
     refusal resolve() gives when neither the workspace nor the machine file sets the community
     source (missing_source).
@@ -624,7 +640,7 @@ def layered_configuration(root: Path, planned: dict | None = None) -> tuple[dict
     The machine file's series values fill only the source keys the workspace does not set;
     `enterprise = false` in the workspace means no Enterprise, whatever the machine file says.
     planned, when given, is the checked document oasis setup is about to write to the workspace file,
-    read in its place (it is changed).
+    read in its place (it is changed); checkout, when given, is the checkout file it is about to write.
     """
     profile = root / PROFILE_NAME
     if profile.is_file():
@@ -632,7 +648,7 @@ def layered_configuration(root: Path, planned: dict | None = None) -> tuple[dict
     workspace = workspace_file(root)
     if workspace is None:
         raise InvalidConfig(missing_configuration(root))
-    checkout = checkout_file(root)
+    checkout = checkout_file(root) if checkout is None else checkout
     overrides = dict(checkout.get('tooling', {}))
     # The checkout's environment is a name of [environments], not the [tooling] path.
     selected = overrides.pop('environment', None)
@@ -746,11 +762,40 @@ def series_mismatch(values: dict[str, str]) -> dict | None:
     return None
 
 
-def series_fix(mismatch: dict, expected: str, values: dict[str, str] | None = None) -> str:
+def setup_proposes_exceptions(values: dict[str, str]) -> bool:
+    """Whether `oasis setup` in the checkout of values asks the question series_exceptions for its modules of
+    another series (tools/setup.py section_target and with_exceptions; v0.16.0 S6): its workspace file reads and
+    has no [series."<ODOO_VERSION>"] table (setup never edits one, nor adds a second one to a version 1 file, which
+    does not read it), and setup keeps the checkout's series: the
+    checkout file's odoo_version, else the one supported series its manifests declare, is one the workspace
+    configures, or the manifests declare several (or none). Otherwise setup adds a series section instead."""
+    root, workspace = Path(values['PROJECT_ROOT']), Path(values['WORKSPACE_ROOT']) / WORKSPACE_NAME
+    try:
+        document = checked_workspace(workspace)
+        tables = document.get('series')
+        if values['ODOO_VERSION'] in series_sections(document, workspace) or (
+                isinstance(tables, dict) and values['ODOO_VERSION'] in tables):
+            return False
+        series = checkout_file(root).get('odoo_version', MISSING)
+        if series is MISSING:
+            try:
+                series = detected_series(root, document, workspace)
+            except InvalidConfig:
+                return True
+        configured = (declared_series(document, workspace) if document['workspace_version'] == 2
+                      else [document['odoo_version']])
+    except (InvalidConfig, OSError):
+        return False
+    return series is None or series in configured
+
+
+def series_fix(mismatch: dict, expected: str, values: dict[str, str] | None = None, propose: bool = True) -> str:
     """How to fix a series mismatch (doctor's fix line and the end of series_refusal). With the
-    assignments of a version 2 checkout (values), the fix also names series_exceptions. For a
-    supported series it ends with the series model (S3): the checkout file's odoo_version when the
-    workspace configures that series, else oasis setup to add its section."""
+    assignments of a checkout (values) whose setup proposes the exception (setup_proposes_exceptions), the fix
+    first names that oasis action, `setup --answer series_exceptions=add --apply` (v0.16.0 S6), unless propose
+    is False (setup's own refusal after the answer no). With the assignments of a version 2 checkout, the fix
+    also names series_exceptions. For a supported series it ends with the series model (S3): the checkout
+    file's odoo_version when the workspace configures that series, else oasis setup to add its section."""
     program, module, found = program_name(), mismatch['module'], mismatch['series']
     fix = (f'run {program} in a checkout of an Odoo {expected} branch, or set the version of {module} to '
            f'{expected}.x.y.z if it is an Odoo {expected} module')
@@ -759,6 +804,11 @@ def series_fix(mismatch: dict, expected: str, values: dict[str, str] | None = No
     else:
         workspace = Path(values['WORKSPACE_ROOT']) / WORKSPACE_NAME
         configured = workspace_series(workspace) if values.get('WORKSPACE_VERSION') == '2' else []
+        if propose and setup_proposes_exceptions(values):
+            setup = shlex.join([program, '--project', values['PROJECT_ROOT'], 'setup', '--answer',
+                                'series_exceptions=add', '--apply'])
+            fix = (f'{setup} lists {module} in series_exceptions under [series.{json.dumps(expected)}] in {workspace} '
+                   f'(setup proposes the exception), or {fix}')
     if configured:
         fix += f', or list {module} in series_exceptions under [series.{json.dumps(expected)}] in {workspace}'
     if found not in versions().CAPABILITIES:
@@ -779,13 +829,14 @@ def workspace_series(workspace: Path) -> list[str]:
     return declared_series(document, workspace) if document['workspace_version'] == 2 else []
 
 
-def series_refusal(mismatch: dict, values: dict[str, str]) -> str:
-    """The refusal of a checkout with a module of another series: the module, both series, the fix."""
+def series_refusal(mismatch: dict, values: dict[str, str], propose: bool = True) -> str:
+    """The refusal of a checkout with a module of another series: the module, both series, the fix (series_fix;
+    propose False leaves out the setup action, as setup's own refusal after the answer no does)."""
     expected = values['ODOO_VERSION']
     workspace = Path(values['WORKSPACE_ROOT']) / WORKSPACE_NAME
     return (f'The module {mismatch["module"]} declares Odoo {mismatch["series"]} (version {mismatch["version"]} '
             f'in {mismatch["manifest"]}), but {values["PROJECT_ROOT"]} is configured for Odoo {expected} by '
-            f'{workspace}: {series_fix(mismatch, expected, values)}.')
+            f'{workspace}: {series_fix(mismatch, expected, values, propose)}.')
 
 
 def origins(root: Path) -> dict[str, str]:
@@ -930,7 +981,7 @@ def resolve(document: dict, root: Path, base: Path, *, missing_source: str = '')
     override = tooling.get('checkout_slug')
     if 'checkout_slug' in tooling and (not isinstance(override, str)
                                        or not SLUG.fullmatch(override)):
-        raise InvalidConfig('Invalid tooling checkout slug.')
+        raise InvalidConfig(f'Invalid [tooling].checkout_slug in {root / CHECKOUT_NAME}: use {SLUG_RULE}.')
     kind, top, main = checkout_identity(root, override)
     # A checkout file's slug wins for every kind; only a linked worktree derives one.
     output['CHECKOUT_KIND'] = kind

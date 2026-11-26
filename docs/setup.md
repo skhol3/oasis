@@ -16,14 +16,20 @@ cd /absolute/checkout
 ```text
 oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enterprise <dir> | --no-enterprise]
                                    [--workspace <dir>] [--name <name>] [--exception <module>]...
-                                   [--config-dir <dir>] [--environment <dir> | --python <x.y>] [--apply | --plan]
+                                   [--config-dir <dir>] [--environment <dir> | --python <x.y>]
+                                   [--answer <id>=<value>]... [--answers <file.json>] [--apply | --plan [--json]]
 ```
 
 - [Plan and apply](#plan-and-apply): what is printed, what changes, exit status.
 - [What it infers and what it asks](#what-it-infers-and-what-it-asks): the checkout, the series, the source.
+- [Questions and answers](#questions-and-answers): flags, `--answer`, `--answers <file.json>`, open questions.
+- [The plan as JSON](#the-plan-as-json): `--plan --json` for an agent.
+- [Anticipated problems](#anticipated-problems): python-ldap, module requirements, old source archives.
 - [What it creates and what it keeps](#what-it-creates-and-what-it-keeps): every file and directory.
 - [Another Odoo series](#another-odoo-series): a checkout of a series the workspace file has no section for.
+- [The database account](#the-database-account): the generated account, one file, read by the service and Odoo.
 - [Next steps](#next-steps): what is left for you.
+- [setup, bootstrap or migrate](#setup-bootstrap-or-migrate): which one to run when.
 - [oasis setup and /oasis setup](#oasis-setup-and-oasis-setup): two different commands.
 
 ## Plan and apply
@@ -36,7 +42,8 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
   (`from the module manifests`, `from the machine file`, `from --community`, `answered`), then one
   line per piece: `create <path>` for a missing one, `kept <path>` for an existing one. The new
   workspace file and the machine file entry are shown in full, indented; the other files by a
-  summary line. The environment file is never read and its values are never printed.
+  summary line. No password is ever printed: the plan names the generated account by its user name
+  (`ODOO_DB_USER oasis_<name> and a generated ODOO_DB_PASSWORD`).
 - With `--apply` it prints the same plan, creates the files (each one exclusively, so an existing
   file is never replaced), checks that the checkout loads its configuration
   (`verified: <checkout> loads its configuration from <workspace file>`), compiles the locks, creates
@@ -83,25 +90,168 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
   terminal it asks whether to create it or to use an existing one, and the Python of a new one
   ([A new environment and its Python](#a-new-environment-and-its-python)). Without a terminal nothing is
   asked: the environment is created with the configuration's Python, as before.
-- Questions are asked only when standard input and standard error are a terminal. Otherwise a
-  missing answer is an error that names its flag, for example
-  `No Odoo Community source for 19.0 in the machine file <file>: pass --community <dir>.` or
-  `Enterprise or not for 19.0: pass --enterprise <dir> or --no-enterprise.`
+- The `[development]` table of a new workspace (v0.16.0), which `init-dev-database` needs: the question
+  `development`, `init-dev-database needs a [development] table in <workspace file>: add one with
+  administrator_login = 'admin' (its password is generated)?`, answered `add` (recommended) or `none` with
+  `--answer development=<add|none>` or on a terminal (Enter: `add`). Without a terminal and without an
+  answer, `add` applies, as the environment's recommended answers do. `add` writes the table after
+  `[tooling]`, below a comment; `none` leaves it out and the [next steps](#next-steps) name the lines to
+  add. An existing workspace is never asked (an answer is refused as one setup does not use).
+- Questions are asked only when standard input and standard error are a terminal (never with `--json`).
+  Otherwise a missing answer is an [open question](#questions-and-answers) that names its flag, for
+  example `No Odoo Community source for 19.0 in the machine file <file>: pass --community <dir>.` or
+  `Enterprise or not for 19.0: pass --enterprise <dir> or --no-enterprise.`: the plan lists it and
+  `--apply` refuses with it (exit 2).
 - Every question comes before any change, with or without `--apply`. End of input (Ctrl-D) at a question
   refuses like a missing answer (exit 2); Ctrl-C stops with `ERROR: Interrupted at a question: nothing
   changed.` (exit 130). Either way nothing is written.
+
+## Questions and answers
+
+No command needs a terminal (v0.16.0): every question setup asks on one has a flag, and every
+question has an id that `--answer <id>=<value>` (repeatable) or `--answers <file.json>` answers:
+
+| Id | Answer | Same as |
+| --- | --- | --- |
+| `series` | `<x.y>` | `--series <x.y>` |
+| `community` | an absolute directory | `--community <dir>` |
+| `enterprise` | an absolute directory, or `none` | `--enterprise <dir>`, `--no-enterprise` |
+| `environment` | `create`, or the absolute directory of an existing environment | `--environment <dir>` |
+| `python` | `<x.y>` | `--python <x.y>` |
+| `workspace` | the project folder or the clone (the options it lists) | `--workspace <dir>` ([Where the files go](#where-the-files-go)) |
+| `series_exceptions` | `add` or `no` | [Modules of another series](#modules-of-another-series) |
+| `python_ldap` | `yes` or `no` | [python-ldap and OpenLDAP 2.6](#python-ldap-and-openldap-26) |
+| `development` | `add` or `none` | [What it infers and what it asks](#what-it-infers-and-what-it-asks) (a new workspace) |
+| `requirement:<name>` | `add`, `override` or `skip` (the options it lists) | [Module requirements](#module-requirements) |
+
+```json
+{"community": "/srv/odoo/19.0/community", "enterprise": "none", "python_ldap": "yes"}
+```
+
+- The file is one JSON object of ids and text answers; anything else, an unknown id, or an answer given
+  twice (by a flag and by an answer) is refused (exit 2) and changes nothing. An answer to a question that
+  does not arise is not used.
+- Without a terminal and without an answer, setup uses the recommended answer only where it did before:
+  the environment is created, with the configuration's Python; and a new workspace gets its
+  `[development]` table (`development`, v0.16.0). Every other question is open: the plan
+  prints the lines it has, then `open question <id>: <what it needs and the flag that answers it>` and
+  `nothing changed: answer the open questions above (docs/setup.md#questions-and-answers), then run with
+  --apply to set up` (exit 0). A question setup cannot go on without (the series, the source) ends the
+  plan there, and `--apply` refuses with the message it always had. A question of an
+  [anticipated problem](#anticipated-problems) does not stop the plan; `--apply` refuses with one
+  `ERROR: open question <id>: ...` line per open question, then `ERROR: nothing changed: answer the open
+  questions, then run oasis setup --apply again.` (exit 2).
+- On a terminal, a question of an anticipated problem is asked like the others: Enter takes the
+  recommended answer (a question without one asks again); an answer that is not an option is asked again.
+- `init-dev-database` needs no terminal either: on one it asks each password with the echo off (Enter
+  generates one), otherwise it generates them ([Development database](dev-database.md)).
+
+## The plan as JSON
+
+`oasis setup --plan --json` (or `setup --json`) prints the plan as one JSON object on one line and
+changes nothing; it never asks, and `--json` with `--apply` is a usage error. The human plan without
+`--json` is unchanged. A refusal is still `ERROR: <reason>` on stderr with nothing on stdout (exit 2).
+An example, formatted:
+
+```json
+{"format": "oasis-setup-plan", "version": 1, "checkout": "/w/shop", "complete": true, "ready_to_apply": false,
+ "inferred": {"checkout": {"value": "/w/shop", "origin": "main"},
+              "workspace": {"value": "/w/shop", "origin": "new"},
+              "series": {"value": "15.0", "origin": "from the module manifests"},
+              "community": {"value": "/srv/odoo/15.0", "origin": "from the machine file"},
+              "enterprise": {"value": null, "origin": "from the machine file"},
+              "name": {"value": "shop", "origin": "from the checkout name"},
+              "db_port": {"value": 5433, "origin": "a free port"},
+              "environment": {"value": "/w/shop/.oasis/venv", "origin": "new"},
+              "python": {"value": "3.9", "origin": "the default of Odoo 15.0"}},
+ "changes": [{"kind": "mkdir", "path": "/w/shop/.oasis", "summary": "create the directory /w/shop/.oasis/"},
+             {"kind": "create", "path": "/w/shop/.oasis/config/odoo.conf",
+              "summary": "create /w/shop/.oasis/config/odoo.conf (mode 0600): path-free; db_port 5433; db_user and db_password empty"},
+             {"kind": "compile", "path": "/w/shop/.oasis/config/requirements",
+              "summary": "compile /w/shop/.oasis/config/requirements/runtime.txt, dev.txt and lock.sha256 with Python 3.9 (uv pip compile)"}],
+ "questions": [{"id": "environment", "text": "Python environment for Odoo 15.0: create /w/shop/.oasis/venv, or use an existing environment",
+                "options": [{"value": "create", "label": "create /w/shop/.oasis/venv"}], "recommended": "create",
+                "flag": "--environment <dir>", "answer": "create", "origin": "recommended (no terminal)"},
+               {"id": "python_ldap",
+                "text": "Odoo 15.0 pins python-ldap==3.4.0, which does not build against this machine's OpenLDAP 2.6.8 (no libldap_r): pin python-ldap==3.4.4 in /w/shop/.oasis/config/requirements/overrides.txt?",
+                "options": [{"value": "yes", "label": "pin python-ldap==3.4.4 (uv pip compile --override)"},
+                            {"value": "no", "label": "keep Odoo's pin: its build may fail"}],
+                "recommended": "yes", "flag": "--answer python_ldap=<yes|no>", "answer": null, "origin": null}],
+ "open": ["python_ldap"],
+ "lines": ["checkout: /w/shop (main)", "series: 15.0 (from the module manifests)", "..."]}
+```
+
+| Key | Value |
+| --- | --- |
+| `format`, `version` | `oasis-setup-plan` and `1`; keys are only ever added within a version. |
+| `checkout` | The checkout setup plans for. |
+| `complete` | `false` when the plan stopped at a question it cannot go on without; `changes` is then empty. |
+| `ready_to_apply` | `complete` and no open question: `--apply` with the same flags and answers would run. |
+| `inferred` | Each value setup found, with its `origin`: `checkout` (`main`, `linked`, `outside git`), `workspace` (its directory; `new` or `existing`), `series`, `community`, `enterprise` (`null`: none), `name` (a new workspace), `db_port` (`a free port`, `from <odoo.conf>`, `from <compose file>`), `environment` (`new`, `existing`, `from --environment`, `answered`) and `python`. A plan that stopped lists what it found before. |
+| `changes` | Every change `--apply` would make, in order: `kind` (`mkdir`, `create`, `extend` (appended), `fill` (account variables filled in), `edit` (lines removed), `compile`, `environment`), `path`, and `summary` (its plan line). Never a value of the account. |
+| `questions` | Every question the plan met: `id`, `text`, `options` (`value`, `label`), `recommended` (or `null`), `flag` (what answers it), and `answer` with its `origin` (`from --answer`, `from --answers`, `recommended (no terminal)`), both `null` while it is open. |
+| `open` | The ids of the open questions. |
+| `lines` | The human plan, line by line (without the open questions, which are in `questions`). |
+
+## Anticipated problems
+
+When setup writes a new `runtime.in` (a new workspace, or a new [series section](#another-odoo-series)),
+it looks for what would make the compile or the sync fail later and asks about it in the plan, before any
+change (`tools/known_problems.py`). A kept `overrides.txt` is never edited: setup then asks nothing that
+would pin there (python-ldap gets a `WARN` line naming the pin to add yourself).
+
+### python-ldap and OpenLDAP 2.6
+
+Odoo 15.0 pins `python-ldap==3.4.0` (`ldap_override` in `tools/odoo_versions.py`), which links
+`libldap_r`, removed in OpenLDAP 2.6. When the source's `requirements.txt` has that pin and this machine
+has OpenLDAP 2.6 or later without `libldap_r` (`pkg-config --modversion ldap`, else the libldap names
+`ldconfig -p` lists; neither program, no question), the question `python_ldap` (recommended `yes`) pins
+`python-ldap==3.4.4` in a new `overrides.txt`, which builds against both:
+
+```text
+# Odoo 15.0's python-ldap==3.4.0 does not build against OpenLDAP 2.6 (no libldap_r).
+python-ldap==3.4.4
+```
+
+### Module requirements
+
+Each `external_dependencies` `python` entry of the checkout's module manifests is compared with the
+requirements a new `runtime.in` gives (the source's, the series' and the project's
+`requirements-extra.txt`, with `requirements-overrides.txt` replacing what it names), for the
+environment's Python on Linux. Import names of another distribution are translated (`ldap` is
+`python-ldap`, `dateutil` `python-dateutil`, ...) and standard library modules skipped.
+
+- Missing (no requirement names it): `requirement:<name>`, `add` (recommended: below a comment in the new
+  `runtime.in`; setup never edits the project's `requirements-extra.txt`) or `skip`. A name setup does not
+  know as the name of its distribution (not translated, not one of the common names `tools/known_problems.py`
+  lists, and without a `-`) may be only the module it imports, such as `cv2` (`opencv-python`): its question
+  has no recommended answer (`(no recommended answer)`, `"recommended": null`; on a terminal Enter is not an
+  answer). `add` writes it as written; `skip` leaves it out, and the distribution that provides it is yours
+  to add to the project's requirements.
+- Conflicting (an exact pin that does not satisfy it, such as `cryptography>=3.3.1` against Odoo 15.0's
+  `cryptography==2.6.1`): `requirement:<name>`, `override` (recommended: the lowest version it accepts,
+  `cryptography==3.3.1`, in a new `overrides.txt`) or `skip`.
+
+### Old source archives
+
+uv 0.13 and later refuse some old source archives (V7 tar headers, such as `PyPDF2==1.26.0` of Odoo
+15.0) with `invalid tar identity`. Every uv command of setup and `bootstrap --apply`, and the compile both
+run (`tools/locks.py`), gets `UV_LEGACY_TAR_BACKEND=1` when `uv --version` reports 0.13 or later and the
+variable is not set (a value you set, even empty, is kept). When a compile still fails with that message,
+the error names the remedy instead of the package index: set `UV_LEGACY_TAR_BACKEND=1`, or, when it was
+set, pin a version of that package that has a wheel in `overrides.txt`.
 
 ## What it creates and what it keeps
 
 | Piece | When it is missing, setup creates |
 | --- | --- |
 | [Machine file](workspace-file.md#machine-file) entry `[series."<x.y>"]` | `community` and, with Enterprise, `enterprise`. A new file is created with mode 0600; an existing file without the entry gets it appended. An existing entry is used and never edited: a flag that disagrees with it, or an entry without `community`, is refused. |
-| `oasis-workspace.toml` | `workspace_version`, `odoo_version`, and `[tooling]` with the environment, `config`, `env_file`, `compose`, `requirements`, `addons_paths` (the directories that hold the modules, `'.'` by default), `db_service = 'db'`, the prefixes, `logs` and `data_dir`; never a source key. Mode 0600. |
-| `odoo.conf` | Path-free (no `addons_path`, no `data_dir`; see [Path-free odoo.conf](path-free-odoo-conf.md)): `db_host = 127.0.0.1`, the `db_port` of the compose file, `db_user` and `db_password` empty. Mode 0600. |
+| `oasis-workspace.toml` | `workspace_version`, `odoo_version`, and `[tooling]` with the environment, `config`, `env_file`, `compose`, `requirements`, `addons_paths` (the directories that hold the modules, `'.'` by default), `db_service = 'db'`, the prefixes, `logs` and `data_dir`; never a source key. Then `[development]` with `administrator_login = 'admin'`, unless the question `development` is answered `none`. Mode 0600. |
+| `odoo.conf` | Path-free (no `addons_path`, no `data_dir`; see [Path-free odoo.conf](path-free-odoo-conf.md)): `db_host = 127.0.0.1`, the `db_port` of the compose file, `db_user` and `db_password` empty: Odoo gets the [database account](#the-database-account) of the environment file. Mode 0600. |
 | Compose file | `name: oasis-<name>-<6 hex of the workspace directory>` and the PostgreSQL service (`postgres:<postgres_default>` of the series in `tools/odoo_versions.py`: `postgres:17` on 19.0) with the variables oasis uses, published on `127.0.0.1` on the [port](#one-port-for-odooconf-and-the-compose-file) `odoo.conf` connects to. |
-| Environment file | `ODOO_DB_USER=` and `ODOO_DB_PASSWORD=`, names only, empty values; mode 0600. Never read or printed. |
+| Environment file | The [database account](#the-database-account): `ODOO_DB_USER=oasis_<name>` and a random `ODOO_DB_PASSWORD`, or the `db_user` and `db_password` a kept `odoo.conf` sets; mode 0600. The password is never printed. A kept environment file gets the account in the variables it leaves empty, every other byte kept; a kept `odoo.conf` whose account it holds loses those two lines ([The database account](#the-database-account)). |
 | `runtime.in`, `dev.in` | `-r <community>/requirements.txt`, then what the series needs that those requirements do not list (`runtime_requirements` in `tools/odoo_versions.py`: nothing on 19.0, `setuptools<81` on 15.0, [below](#odoo-150-requirements)); `-c runtime.txt` and `-r runtime.in`, to which you add your development tools. With an adopted series folder that holds `requirements-extra.txt`, `runtime.in` also includes it ([Another Odoo series](#the-projects-requirement-files)). |
-| `overrides.txt` | Only with an adopted series folder that holds `requirements-overrides.txt`: `-r <that file>`, given to `uv pip compile` as `--override` ([Another Odoo series](#the-projects-requirement-files)). |
+| `overrides.txt` | With an adopted series folder that holds `requirements-overrides.txt`: `-r <that file>`, given to `uv pip compile` as `--override` ([Another Odoo series](#the-projects-requirement-files)); and the pins of the [anticipated problems](#anticipated-problems) answered `yes` or `override`. |
 | Locks | `runtime.txt`, `dev.txt` and `lock.sha256`, compiled with the series' Python by the same code as `bootstrap --apply` when they are missing or stale; current locks are kept, and a lock changed by hand is kept and leaves the environment uncreated. |
 | Environment | `uv venv --python <python>` and `uv pip sync` of `dev.txt`, with the series' default Python, `--python <x.y>` or the [answered one](#a-new-environment-and-its-python). An existing environment is kept and not synced (run `bootstrap --apply` for that); `--environment <dir>` (or an answered path) [adopts one](#an-existing-environment) instead of creating it. |
 | `logs`, `data_dir` | The directories (mode 0700). |
@@ -129,6 +279,24 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
   ignores them, so no directory layout is imposed and nothing new shows in `git status`. The
   environment goes to `<environments>/<name>` instead when the machine file's entry sets
   `environments`.
+- A clone at `<project>/code/<repo>` or `<project>/codigo/<repo>`, whose `<project>` holds none of
+  `.git`, `oasis-checkout.toml`, a [legacy profile](migrating.md), `__manifest__.py` or `odoo-bin` (and is yours), is
+  different: the question `workspace` recommends `<project>` and offers the clone. Without a terminal the
+  recommended answer applies (as for the environment), so the workspace file and `config/`, `data/`,
+  `logs/` and `venv/` go to `<project>`, and nothing is excluded in the clone; the plan says so
+  (`workspace: <project> (new; the project folder above code/; --workspace <clone> keeps it in the
+  clone)`). On a terminal Enter takes `<project>`, and typing the clone's path keeps the default.
+  `--workspace <clone>` (or `--answer workspace=<clone>`) keeps the workspace in the clone.
+- A workspace that setup created in the clone (`oasis-workspace.toml` at the checkout's root) moves with
+  `--workspace <dir>` above the checkout: the plan moves the file to `<dir>` (its relative paths outside
+  `.oasis/` rewritten so they still resolve, listed in the plan line), `.oasis/` to `<dir>/.oasis/`
+  whole (one rename, on the same file system), and removes `/oasis-workspace.toml` and `/.oasis/` from
+  the clone's `.git/info/exclude`. `--apply` verifies that the checkout loads its configuration from
+  the moved file; any failure undoes every change (`ERROR: Could not set up: <reason>; every change was
+  undone.`). It is refused when `<dir>` already holds `oasis-workspace.toml` or `.oasis`, or when git
+  tracks the workspace file (`Refusing to move <file>: git tracks it; move it yourself.`). Nothing else is
+  created: run `setup` again to fill what is missing. The environment keeps working through its
+  `bin/python`; its console scripts still name the old path, so recreate it if you use them.
 - `--workspace <dir>` puts the workspace file in `<dir>` instead, an absolute existing directory at
   or above the checkout (`Refusing --workspace <dir>: it is not at or above the checkout <checkout>.`),
   with `config/`, `data/`, `logs/` and `venv/` directly under it, as in the
@@ -136,14 +304,45 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
   group or others ([Trust](workspace-file.md#trust)).
 - With a workspace file at or above the checkout (or found through git), that file is adopted: its
   paths decide where everything goes and only the missing pieces are created. The options that
-  answer a new configuration (`--series`, `--name`, `--workspace`, and the source options when the
-  configuration already has a source) are then refused (`<option>: <checkout> is already configured
+  answer a new configuration (`--series`, `--name`, `--workspace` but for the move above, and the
+  source options when the configuration already has a source) are then refused (`<option>: <checkout> is already configured
   by <file>; setup only fills what is missing.`). A workspace file without a source gets the machine
   file entry. A checkout that still has the legacy profile is refused before setup runs: run
   [migrate](migrating.md) first. A checkout of another series than the file configures gets a
   section instead ([Another Odoo series](#another-odoo-series)). `--exception` and `--config-dir` apply
   only then; without a workspace file they are refused (`<option>: <checkout> has no workspace file; it
   only applies when setup adds a [series."<x.y>"] section to one.`).
+
+## Modules of another series
+
+In any checkout (a new workspace, an existing one, or a new series section), modules whose manifest
+declares another series than the checkout's are the question `series_exceptions` (v0.16.0): `The
+modules <module> (Odoo <x.y>), ... of <checkout> declare another Odoo series than <series>: list them in
+series_exceptions under [series."<series>"] in <workspace file>?`, answered `add` (recommended) or `no`
+with `--answer series_exceptions=<add|no>` or on a terminal. Without an answer it is an open question:
+the plan shows what `add` writes and `--apply` refuses. `add` writes a `[series."<series>"]` section with
+`series_exceptions = [...]`: a new workspace file is then `workspace_version = 2`, and an existing
+version 1 file has its `workspace_version` line changed to 2 (that line only) and the section appended;
+an existing section of that series is never edited (refused, naming the modules to add). `no` refuses
+with the series guard's message, as before, without naming the answer just declined.
+
+Where setup would propose the exception (the checkout stays one of the configured series and the workspace
+file has no `[series."<series>"]` table), the series guard's refusal and doctor's `module_series` fix name
+that action first (v0.16.0): `oasis --project <checkout> setup --answer series_exceptions=add --apply lists
+<module> in series_exceptions under [series."<series>"] in <workspace file> (setup proposes the exception),
+or run oasis in a checkout of an Odoo <series> branch, ...` (the alternatives as before).
+
+## The checkout slug of a long worktree name
+
+A linked worktree whose directory name gives a slug over 20 characters (`Cannot derive a checkout slug
+from the worktree directory name <name>: it gives <slug> (<n> characters), and a slug is 1 to 20
+lowercase letters, digits or underscores, starting with a letter or digit; ...`) gets one from setup,
+when it has no `checkout_slug`: the plan creates its `oasis-checkout.toml` with `[tooling]` and
+`checkout_slug` cut to 20 characters (`create <worktree>/oasis-checkout.toml: checkout_slug <slug> (the
+worktree directory name <name> gives <slug>, <n> characters; a slug has at most 20)`), with `_2`, `_3`,
+... when another checkout of the repository already uses it. A checkout file without `[tooling]`
+(only `odoo_version`) gets the table appended; one with `[tooling]` is never edited: refused, naming the
+line to add.
 
 ## Another Odoo series
 
@@ -154,10 +353,11 @@ that series' files, next to the other series and without touching them:
 - The checkout's series: `odoo_version` in its `oasis-checkout.toml`, else the series its module
   manifests declare, the modules of `--exception <module>` (repeatable) and of every section's
   `series_exceptions` left out. Manifests of several supported series are refused as before. A module
-  of another series that is not an exception is refused before any question: `The module <module>
-  declares Odoo 16.0 (version 16.0.2.0.2 in <manifest>), but <checkout> is an Odoo 15.0 checkout: pass
-  --exception <module> to list it in series_exceptions under [series."15.0"], or set its version to
-  15.0.x.y.z if it is an Odoo 15.0 module.`
+  of another series that is not an exception gets the question `series_exceptions` before any other
+  ([Modules of another series](#modules-of-another-series)); answered `no`, it is refused: `The module
+  <module> declares Odoo 16.0 (version 16.0.2.0.2 in <manifest>), but <checkout> is an Odoo 15.0
+  checkout: pass --exception <module> to list it in series_exceptions under [series."15.0"], or set its
+  version to 15.0.x.y.z if it is an Odoo 15.0 module.`
 - The machine file entry of the series, when it is missing, exactly as for a new checkout (`--community`,
   `--enterprise` or `--no-enterprise`, else a question). `--series`, `--name` and `--workspace` are refused.
 - The workspace file: `add [series."<x.y>"] to <file>:` shows the section, appended after a one-line
@@ -443,29 +643,138 @@ section's `environment`, so the section's `python` applies); in a new workspace 
 `[environments.default]` table with the environment's `path` and that `python`, instead of
 `[tooling].environment`.
 
+## The database account
+
+oasis generates the PostgreSQL account of a workspace (one per series) and keeps it in one file, the
+environment file (`[tooling].env_file`, by default `config/.env`; mode 0600). No oasis workflow requires
+reading, copying or typing a password, and no command takes one as an argument or prints one (output,
+logs, errors).
+
+- A new environment file gets `ODOO_DB_USER=oasis_<name>` (`<name>` is the `dev_prefix` without `_dev_`:
+  `oasis_shop`, `oasis_shop15` for a second series) and `ODOO_DB_PASSWORD=<32 random characters>`
+  (`secrets.token_urlsafe(24)`: letters, digits, `-` and `_`). When a kept `odoo.conf` already sets
+  `db_user` or `db_password`, the file gets that value instead, so Odoo and the service keep the account
+  they used (quoted when docker compose would otherwise read it differently; a value it cannot hold either
+  way is refused: `Cannot copy db_password of <odoo.conf> to <env file>: docker compose would not read its
+  value as written; ...`). The user name is `oasis_` and the `dev_prefix` without its `_dev_` suffix (and
+  any trailing `_`), so another prefix is never cut short.
+- An existing environment file is kept, with one exception: the account variables it assigns an empty
+  value (`NAME=`, `NAME=""`, also after `export` or before a ` # comment`, and `NAME= # comment` with only
+  a comment; files written by older setups) get the same values a new file would (the kept `odoo.conf`'s, else generated), in place. Every other byte
+  is kept and the file ends with mode 0600. The plan says `fill <names> in <env file> (mode 0600; every
+  other line kept): <what each gets>`, never a value. A variable the file does not assign is never added:
+  a file that assigns neither (another account's naming) is left unchanged, and the plan says `WARN: <env
+  file> sets neither ODOO_DB_USER nor ODOO_DB_PASSWORD: setup leaves <env file> unchanged (an existing file
+  is respected); to use the account oasis generates, add the empty lines ODOO_DB_USER= and
+  ODOO_DB_PASSWORD= to it, then run oasis setup --apply` (doctor: `WARN env_file=unassigned` with the same
+  fix). A file that assigns one of them and leaves the other out is kept as it is.
+- An existing project's account moves to the environment file ("respects it and offers the move"): when
+  a kept `odoo.conf` sets `db_user` or `db_password` (a value other than empty, `False` or `None`) and the
+  environment file holds the same values, or gets them from `odoo.conf` in this run, the plan says
+  `remove <options> from <odoo.conf> (those lines only): <env file> holds the same account, which oasis
+  passes to Odoo`, and `--apply` removes those lines only, every other byte and the mode of `odoo.conf`
+  kept: Odoo then gets the same account from the environment file, and the database is untouched. When
+  the environment file holds another value or does not set one, the plan says
+  `WARN: <env file> does not hold the account <odoo.conf> sets: <options> (another value|not set): both
+  files kept, ...` and changes neither file; `doctor` reports it too (`WARN odoo_conf_password`). An option
+  repeated, or continued on an indented line, is never edited (a `WARN` line says so).
+- The compose service reads it: `docker compose --env-file <env file>` gives `POSTGRES_USER` and
+  `POSTGRES_PASSWORD`, which PostgreSQL uses when it initializes a new volume, and the database commands
+  run `psql`, `createdb` and `dropdb` in the service with it.
+- Odoo reads the same file: `odoo.conf` stays path-free and password-free, and every command that starts
+  Odoo (`start`, `restart`, `install-module`, `update-module`, `odoo-shell`, `test-module`,
+  `verify-module`, `init-dev-database`) exports `ODOO_DB_USER` and `ODOO_DB_PASSWORD` as `PGUSER` and
+  `PGPASSWORD`, which libpq reads when Odoo passes no user or password of its own; they never appear on
+  Odoo's command line (`start --print-command` shows none). A `db_user` or `db_password` that `odoo.conf`
+  sets (other than empty, `False` or `None`, which Odoo reads as unset) is kept, and that one is not
+  exported, since Odoo 19 ranks `PGUSER` and `PGPASSWORD` above `odoo.conf`: an existing project keeps
+  working unchanged. When either file cannot be read, nothing is exported and the command runs as before
+  (`doctor` reports the file). oasis reads the environment file as docker compose does for literal values:
+  unquoted (up to a ` # comment`), in single quotes, or in double quotes; `~` and `null` are those words
+  (YAML does not apply to an environment file), and a value that is only a ` # comment` is empty, as
+  `doctor` reports it and setup fills it (docker compose alone would read the comment as the value). A value
+  Odoo would get that uses
+  compose interpolation (`$VAR`, `${VAR}`, any `$` outside single quotes) or a double-quoted escape (`\`)
+  is never passed on as written: the command exits 2 with `ERROR: <env file> sets <names> with compose
+  interpolation ($) or a double-quoted escape (\), which oasis does not read: write the value literally in
+  single quotes.`, and `doctor` and `doctor --environment` fail `env_file=unsupported_value <names>`, naming
+  the variables, never the value.
+- `doctor` and `doctor --environment --full` log in with that account (`postgres_connection`, see
+  [The doctor report](checking-environment.md#the-doctor-report)). When the compose service refuses it,
+  its volume was initialized with other credentials (the environment file changed after the service first
+  started, or a volume from an older setup), and the fix is the Tier B
+  `oasis --project <checkout> recreate-database-volume --confirm <compose project>`. That fix is named
+  only when `odoo.conf` points at the compose service: `db_host` `127.0.0.1` or `localhost` and the
+  `db_port` the compose file publishes to 5432 (5432 without a `db_port`). Another server refusing the
+  account gets `correct that account on that server, or set db_host = 127.0.0.1 and the db_port <compose
+  file> publishes in <odoo.conf>` instead: recreating the local volume would not change it. oasis reads the
+  published port only from short entries such as `- '127.0.0.1:6001:5432'`; when the compose file cannot
+  be read, publishes several ports to 5432, or has another entry for it under `ports:` (the long syntax
+  `target: 5432`, a variable such as `${DB_PORT:-6001}:5432`, a range, no host port; `expose:`,
+  `environment:` and other keys are not port entries), the fix says that oasis could not read
+  the port (`it cannot be read`, `several ports` or `an entry other than - [<address>:]<port>:5432`) and
+  names both: the recreate if that server is the compose service, correcting the account if it is not.
+- `recreate-database-volume` prints the plan, then runs `docker compose -p <compose project> down -v`:
+  it removes the compose project's containers and networks, every named volume of its compose file and
+  every anonymous volume of its containers, so every database of its PostgreSQL, the trash included
+  (filestores under `data_dir` are not touched). Then it starts the service again with the same `-p`,
+  which initializes a new volume with the account of the environment file. The compose project is always
+  passed with `-p`; a `COMPOSE_PROJECT_NAME` in the environment or in the environment file that selects
+  another project is refused before anything runs (`ERROR: COMPOSE_PROJECT_NAME ... makes docker compose
+  use the compose project <other>, not <name> ...`), since the other oasis commands would keep using that
+  one. Without `--confirm` and the compose project (the top-level `name:` of the compose file) it changes
+  nothing and names the exact command. When `down -v` fails, or the service does not start again after
+  it, the command exits 1, says the volume may already be gone (or is), and names the command that starts
+  the service again: `oasis --project <checkout> start-database` (v0.16.0; it runs the same compose project,
+  since a `COMPOSE_PROJECT_NAME` that selects another one was refused first, and names no environment file).
+
 ## Next steps
 
 After `--apply`, setup prints what is left, numbered, for example:
 
 ```text
 next steps:
-  1. fill in ODOO_DB_USER and ODOO_DB_PASSWORD in <env file>, and the same values as db_user and db_password in <odoo.conf>
-  2. docker compose --env-file <env file> -f <compose file> up -d --wait
-  3. oasis --project <checkout> doctor
-  4. add a [development] table with administrator_login to <workspace file> (docs/dev-database.md)
-  5. oasis --project <checkout> init-dev-database <module> <name>_dev_manual
+  1. oasis --project <checkout> start-database
+  2. oasis --project <checkout> doctor
+  3. oasis --project <checkout> init-dev-database <module> <name>_dev_manual
 ```
 
-The first step appears only for the files setup created, and `bootstrap --apply` is added when it
-compiled the locks of an environment it kept. With an [adopted environment](#an-existing-environment) that
-step reads `the locks in <requirements> describe runtime.in and dev.in (or runtime.in, dev.in and
-overrides.txt): oasis --project <checkout> bootstrap --apply syncs the adopted environment <dir> to them (it
-changes the packages installed there)`. Choose your own local database account; setup never
-generates or prints one. Then follow [Development database](dev-database.md) and
-[Tests and test databases](testing.md).
+Nothing asks for an account: setup generated it ([The database account](#the-database-account)).
+`start-database` starts the service as every database command does and names no environment file, so an
+agent harness that refuses a command naming one runs it. A workspace without a `[development]` table (an
+existing one, or the answer `none`) gets a step before `init-dev-database` that names the exact lines:
+
+```text
+  3. add these lines to <workspace file> (docs/dev-database.md):
+       [development]
+       administrator_login = 'admin'
+```
+
+`bootstrap --apply` is added when setup compiled the locks of an environment it kept. With an
+[adopted environment](#an-existing-environment) that step reads `the locks in <requirements> describe
+runtime.in and dev.in (or runtime.in, dev.in and overrides.txt): oasis --project <checkout> bootstrap --apply
+syncs the adopted environment <dir> to them (it changes the packages installed there)`. Then follow
+[Development database](dev-database.md) and [Tests and test databases](testing.md).
+
+## setup, bootstrap or migrate
+
+Three commands touch a checkout's configuration or environment. They share code (the locks are compiled by
+`tools/locks.py` for both setup and bootstrap), but none does what another does, so none is an alias of
+another (v0.16.0 S5); each keeps its name:
+
+| Situation | Run | What it changes |
+| --- | --- | --- |
+| A clone without `oasis-workspace.toml` at or above it; a file of the configuration missing; a checkout of a series the workspace file has no section for; a workspace setup created in the clone, to move above it | `oasis setup`, then `oasis setup --apply` (Tier A) | Creates only what is missing (configuration, locks, environment) and never syncs an existing environment |
+| The configuration exists and the environment must match the locks: `runtime.in` or `dev.in` changed, the locks are stale, the environment drifted or was moved away, an [adopted environment](#an-existing-environment) | `oasis bootstrap` (`--preview`, the default), then `oasis bootstrap --apply` (Tier A) | Compiles missing or stale locks, creates a missing environment, syncs it to `dev.txt` every time (`uv pip sync`, saving `bootstrap-before.txt` first) and ends with `doctor --environment --full`; never writes the configuration, and needs a workspace file |
+| A checkout that still has the legacy per-checkout profile | `oasis migrate --plan`, then `oasis migrate --apply --confirm <workspace file>` (Tier B) | Converts every checkout's profile into one workspace file and rewrites `odoo.conf` and `lock.sha256` ([Migrating](migrating.md)); every other command, setup included, refuses such a checkout and names migrate |
+
+A new clone: `setup --apply`. After a pull that changed the requirements: `bootstrap --apply`. A checkout of a
+release before 0.12.0: `migrate`. `doctor` names the one that fixes each failure (its `fix:` lines).
 
 ## oasis setup and /oasis setup
 
 They are different commands. `oasis setup` (this page) is the command-line tool that configures a
-checkout. `/oasis setup` in Gentle Shell installs the subagent overlay (see
-[Subagents](subagents.md)) and writes nothing in the project.
+checkout. `/oasis setup` in Gentle Shell shows the workspace status (`oasis status --json`) and this
+plan (`oasis setup --plan --json`) for the session's checkout, never applies it, and installs the
+subagent overlay (see [The /oasis command](gentle-shell-layer.md#the-oasis-command) and
+[Subagents](subagents.md)); it writes nothing in the project.

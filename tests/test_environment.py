@@ -75,6 +75,8 @@ class EnvironmentTests(unittest.TestCase):
             '  case "$2" in *"sys.prefix"*) echo "' + str(self.python.parent.parent) + '" ;; *) echo 3.12 ;; esac\n'
             '  exit 0\nfi').replace(
                 'if [ "$2" = "--version" ]; then',
+                # The connection probe of check-environment --full (tools/db_account.py, v0.16.0 S2).
+                'case "$3" in */db_account.py) echo "${FAKE_CONNECTION:-ready}"; exit 0 ;; esac\n'
                 'case "$1" in */audit_dependencies.py) exec "$FAKE_HOST_PYTHON" -B "$@" ;; '
                 '*/check_environment.py) echo "locked_packages=0"; echo "missing_packages=0"; '
                 'echo "version_mismatches=0"; exit 0 ;; esac\n'
@@ -166,6 +168,7 @@ if [ "$2" = "--version" ]; then
   echo 'Odoo Server 19.0'
   exit 0
 fi
+case "$3" in */db_account.py) echo "${FAKE_CONNECTION:-ready}"; exit 0 ;; esac
 case "$1" in
   */audit_dependencies.py) exec "$FAKE_HOST_PYTHON" -B "$@" ;;
   */check_environment.py) printf 'locked_packages=0\\nmissing_packages=0\\nversion_mismatches=0\\n'; exit 0 ;;
@@ -235,6 +238,18 @@ esac
         # The snapshot goes to the checkout's log directory, no longer to dev/runtime.
         self.assertTrue((self.root / 'dev/logs/odoo19/bootstrap-before.txt').is_file())
         self.assertFalse((self.root / 'dev/runtime/bootstrap-before.txt').exists())
+
+    def test_apply_with_uv_0_13_gives_every_uv_command_the_legacy_tar_backend(self):
+        # v0.16.0 S3 (docs/setup.md#old-source-archives): uv 0.13 and later read old sdists only with it.
+        self.prepare()
+        self.missing_environment()
+        uv = self.bindir / 'uv'
+        uv.write_text(uv.read_text().replace("echo 'uv 0.1'", "echo 'uv 0.13.1'").replace(
+            "printf 'uv %s\\n' \"$*\"", "printf 'uv %s%s\\n' \"$*\" \"${UV_LEGACY_TAR_BACKEND:+ legacy}\""))
+        result = self.invoke('bootstrap', '--apply')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [line for line in self.commands.read_text().splitlines() if line.startswith('uv ')]
+        self.assertTrue(calls and all(line.endswith(' legacy') for line in calls), calls)
 
     def test_profile_preview_of_a_missing_environment_plans_python_3_12(self):
         self.prepare()

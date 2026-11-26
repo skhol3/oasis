@@ -123,6 +123,18 @@ odoo_config_arguments() {
     "${ENTERPRISE_SOURCE:-}" "${DATA_DIR:-}" "${roots[@]}") || return $?
   # odoo_addons_path.py shell-quoted every word.
   eval "ODOO_CONFIG_ARGUMENTS=($output)"
+  export_database_account
+}
+
+# Odoo's database account (v0.16.0 S2, tools/db_account.py): what odoo.conf leaves empty of db_user
+# and db_password comes from ODOO_DB_USER and ODOO_DB_PASSWORD of the env file, exported as PGUSER
+# and PGPASSWORD (libpq reads them), never on Odoo's command line; what odoo.conf sets is kept.
+# The values travel through a pipe into this shell; nothing is printed.
+export_database_account() {
+  local output
+  output=$(python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/db_account.py" exports "$ODOO_CONFIG" "$ENV_FILE") || return $?
+  # db_account.py shell-quoted every value.
+  eval "$output"
 }
 
 # One option of the configured odoo.conf (http_port, gevent_port, longpolling_port or http_interface),
@@ -251,7 +263,9 @@ require_existing_database() {
 # waiting at most 120 s. Once the first caller finished, the next `up` finds the service
 # running. The lock descriptor is closed before returning, so Odoo never inherits it.
 # OASIS_COMPOSE_LOCK_TIMEOUT (seconds; the legacy ODOO19_COMPOSE_LOCK_TIMEOUT when unset)
-# exists for the tests only.
+# exists for the tests only. Every step checks its own status and returns it (never errexit), so a
+# caller may run it in a condition or a `||` list, where errexit is off, and still get a non-zero
+# status on any failure (recreate-database-volume does; tests/test_credentials.py covers each one).
 wait_for_database() {
   local lock lock_fd timeout=120 status=0
   if ! command -v flock >/dev/null 2>&1; then

@@ -1,7 +1,7 @@
 # Setting up a new workspace
 
 From a clone of the project's repository to a passing `oasis doctor` and a development database:
-`oasis setup` writes the configuration, you fill in the database account and start the service.
+`oasis setup` writes the configuration with a generated database account, and you start the service.
 No directory layout is required; by default everything stays in the clone. The project is the
 fictional `acme`; replace its names, paths and module with your own. The reference of every
 option of `setup` is [Setting up a checkout with oasis setup](setup.md), the reference of every
@@ -35,9 +35,9 @@ git clone --branch 19.0 --depth 1 https://github.com/odoo/enterprise.git ~/odoo/
 
 ## Quick path
 
-You run these in a terminal. Agents may show the plan, but `setup --apply` is yours (the
-[bash guard](bash-guard.md) blocks it for them). Inside the clone no `--project` is needed: the
-checkout is the git top level of the current directory.
+You or an agent run these: every step is Tier A in the [agent contract](agent-contract.md), so
+an agent runs `setup --apply` alone (it creates only what is missing). Inside the clone no
+`--project` is needed: the checkout is the git top level of the current directory.
 
 1. Clone the repository (any folder).
 
@@ -68,7 +68,7 @@ checkout is the git top level of the current directory.
    create /home/you/src/acme/oasis-workspace.toml (mode 0600):
    exclude /oasis-workspace.toml and /.oasis/ in /home/you/src/acme/.git/info/exclude (this clone only; .gitignore unchanged)
    create /home/you/src/acme/.oasis/config/odoo.conf (mode 0600): path-free; db_port 5432; db_user and db_password empty
-   create /home/you/src/acme/.oasis/config/.env (mode 0600): ODOO_DB_USER and ODOO_DB_PASSWORD, empty
+   create /home/you/src/acme/.oasis/config/.env (mode 0600): ODOO_DB_USER oasis_acme and a generated ODOO_DB_PASSWORD
    dry run: nothing changed; run with --apply to set up
    ```
 
@@ -80,26 +80,21 @@ checkout is the git top level of the current directory.
 
    It creates only the `create` pieces (an existing file is never replaced), checks that the
    checkout loads its configuration, compiles the dependency locks, creates the Python
-   environment and prints the next steps with your paths: steps 4 to 7 below.
+   environment and prints the next steps with your paths: steps 4 to 6 below. The database
+   account is generated in the environment file, which the service and Odoo both read (see
+   [The database account](setup.md#the-database-account)): nothing to fill in, and no step needs
+   a password read, copied or typed. Never commit that file.
 
-4. Fill in the database account. The environment file holds only the names, with empty values;
-   choose a local user and password (setup never generates or prints one) and write the same
-   values in `odoo.conf`. Never commit either file.
-
-   ```text
-   .oasis/config/.env         ODOO_DB_USER=odoo
-                              ODOO_DB_PASSWORD=<a local password>
-   .oasis/config/odoo.conf    db_user = odoo
-                              db_password = <the same password>
-   ```
-
-5. Start the database service.
+4. Start the database service. `start-database` runs `docker compose up -d --wait` of the
+   service with the compose file and the environment file of the configuration, as every database
+   command does, prints one line and names no environment file (an agent harness may refuse a
+   command that names one).
 
    ```bash
-   docker compose --env-file .oasis/config/.env -f .oasis/config/compose.yml up -d --wait
+   ~/.agents/skills/odoo19/oasis start-database
    ```
 
-6. Run `doctor` until it prints `doctor_failures=0`. Each `FAIL` line is followed by a `fix:`
+5. Run `doctor` until it prints `doctor_failures=0`. Each `FAIL` line is followed by a `fix:`
    line with the command or action that fixes it, and `PASS odoo_source_from=machine:<file>`
    shows where a value came from (see [The doctor report](checking-environment.md#the-doctor-report)).
 
@@ -107,16 +102,20 @@ checkout is the git top level of the current directory.
    ~/.agents/skills/odoo19/oasis doctor
    ```
 
-7. Create a development database. It needs a `[development]` table with an
-   `administrator_login` in `oasis-workspace.toml` (setup writes none; see
-   [the example tree](#the-example-tree) and [Development database](dev-database.md)), asks for
-   each password with the echo off, and the name must start with the `dev_prefix` (`acme_dev_`,
-   from the checkout's name or `setup --name`). Then check the installed packages against the
+6. Create a development database. It needs a `[development]` table with an
+   `administrator_login` in `oasis-workspace.toml`: a new workspace gets one from setup (the
+   question `development`, recommended `add`: `administrator_login = 'admin'`; `--answer
+   development=none` leaves it out, and the next steps then name the two lines to add; see
+   [the example tree](#the-example-tree) and [Development database](dev-database.md)), and the
+   name must start with the `dev_prefix` (`acme_dev_`, from the checkout's name or
+   `setup --name`). The passwords are generated into `.oasis/config/acme_dev_manual.logins`
+   (mode 0600, never printed); on a terminal it asks each one with the echo off, and Enter
+   generates it, so typing is only for your own. Then check the installed packages against the
    locks.
 
    ```bash
    ~/.agents/skills/odoo19/oasis init-dev-database acme_sale acme_dev_manual
-   ~/.agents/skills/odoo19/oasis check-environment --full
+   ~/.agents/skills/odoo19/oasis doctor --environment --full
    ```
 
 Next, run a module's tests on a disposable database ([Tests and test databases](testing.md)):
@@ -137,8 +136,8 @@ touched.
 ├── oasis-workspace.toml           workspace file: every checkout of acme reads it
 ├── .oasis/
 │   ├── config/
-│   │   ├── .env                   ODOO_DB_USER= and ODOO_DB_PASSWORD=, empty (0600)
-│   │   ├── odoo.conf              path-free, db_user and db_password empty (0600)
+│   │   ├── .env                   the generated database account: ODOO_DB_USER, ODOO_DB_PASSWORD (0600)
+│   │   ├── odoo.conf              path-free and password-free: db_user and db_password empty (0600)
 │   │   ├── compose.yml            PostgreSQL 17 on 127.0.0.1, the port odoo.conf connects to
 │   │   └── requirements/          runtime.in, dev.in, runtime.txt, dev.txt, lock.sha256
 │   ├── data/                      Odoo data directory (filestores)
@@ -218,8 +217,9 @@ cd ~/odoo/19.0/projects/acme/codigo/acme
 ```
 
 With `--workspace`, `config/`, `data/` and `logs/` go directly under that directory, and nothing
-is added to `.git/info/exclude`. The workspace file it writes, after the `[development]` table you
-add for `init-dev-database`; it names no source, which comes from the machine file:
+is added to `.git/info/exclude`. The workspace file it writes, with its `[development]` table
+edited to other logins and a role account (setup writes `administrator_login = 'admin'` below a
+comment); it names no source, which comes from the machine file:
 
 ```toml
 # projects/acme/oasis-workspace.toml
@@ -292,7 +292,9 @@ steps write [the example tree](#the-example-tree); any other folders work the sa
    `POSTGRES_DB`, so the service carries those variables. `odoo.conf` is
    [path-free](path-free-odoo-conf.md): no `addons_path`, `data_dir` or `db_name`, because oasis
    passes `--addons-path` and `--data-dir` and every checkout shares the file; its `db_port` is
-   the port the compose file publishes.
+   the port the compose file publishes. It is password-free too: with `db_user` and `db_password`
+   empty, every oasis command that starts Odoo gives it the account of the environment file
+   ([The database account](setup.md#the-database-account)).
 
    ```yaml
    # projects/acme/config/compose.yml
@@ -319,25 +321,23 @@ steps write [the example tree](#the-example-tree); any other folders work the sa
    ```
 
    ```ini
-   ; projects/acme/config/odoo.conf; config/.env holds ODOO_DB_USER= and ODOO_DB_PASSWORD= with the same values
+   ; projects/acme/config/odoo.conf; Odoo gets the account of config/.env
    [options]
    db_host = 127.0.0.1
    db_port = 5432
-   db_user = odoo
-   db_password = <the password of config/.env>
+   db_user =
+   db_password =
    ```
 
-   The environment file holds the same database account, one `NAME=value` per line; write your
-   own password in both files:
-
-   ```ini
-   # projects/acme/config/.env
-   ODOO_DB_USER=odoo
-   ODOO_DB_PASSWORD=<the same password as db_password in odoo.conf>
-   ```
+   The environment file holds the database account, one `NAME=value` per line. Generate the
+   password straight into the file, so it is never shown (or let `oasis setup --apply` write the
+   whole file):
 
    ```bash
-   chmod 600 ~/odoo/19.0/projects/acme/config/.env ~/odoo/19.0/projects/acme/config/odoo.conf
+   cd ~/odoo/19.0/projects/acme/config
+   (umask 077 && printf 'ODOO_DB_USER=oasis_acme\nODOO_DB_PASSWORD=%s\n' \
+     "$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')" > .env)
+   chmod 600 odoo.conf
    ```
 
 4. Write the dependency inputs, lock them and fingerprint the locks. `runtime.in` takes Odoo's
@@ -360,7 +360,7 @@ steps write [the example tree](#the-example-tree); any other folders work the sa
    [Dependency locks](checking-environment.md#dependency-locks)).
 
 5. Create the environment with the same `python` and install the locked packages. Once steps 1
-   to 4 are done, `oasis bootstrap --apply` does the same and ends with `check-environment --full`
+   to 4 are done, `oasis bootstrap --apply` does the same and ends with `doctor --environment --full`
    (`bootstrap --preview` shows the plan).
 
    ```bash
@@ -370,7 +370,7 @@ steps write [the example tree](#the-example-tree); any other folders work the sa
      ~/odoo/19.0/projects/acme/config/requirements/dev.txt
    ```
 
-Then continue with [step 5 of the quick path](#quick-path): start the database service, run
+Then continue with [step 4 of the quick path](#quick-path): start the database service, run
 `doctor` (`PASS configuration=workspace` shows the workspace file was found and accepted) and
 create a development database.
 
@@ -453,7 +453,7 @@ environment = 'next'
 ```
 
 With these, the main checkout uses `environments/acme` and the worktree `environments/acme-next`;
-`bootstrap` creates each one with its `python`, and `doctor` and `check-environment` check that
+`bootstrap` creates each one with its `python`, and `doctor` and `doctor --environment` check that
 its interpreter reports it. Create the second environment as in [step 5](#steps) with
 `python=3.13`, or run `bootstrap --apply` in the worktree. `oasis-checkout.toml` may set only
 `checkout_slug` and `environment`; see [Workspace file](workspace-file.md#checkout-file-and-named-environments).

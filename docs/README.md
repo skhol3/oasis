@@ -11,7 +11,7 @@ One topic per file. Start from the group that matches what you are doing; the
 | [Setting up a new workspace](new-workspace.md) | Start here: from a clone to `doctor` and a database with `oasis setup`; where each value lives, an example tree, the steps by hand |
 | [Setting up a checkout with oasis setup](setup.md) | `oasis setup` reference: the plan, then `--apply` creates only what is missing |
 | [New project: deliberate setup](project-setup.md) | Workspace file, entry point and optional project wrappers |
-| [Checking the environment](checking-environment.md) | `doctor`, `check-environment` and `lock.sha256` |
+| [Checking the environment](checking-environment.md) | `doctor`, `doctor --environment` (`check-environment`, a deprecated alias) and `lock.sha256` |
 | [Workspace file](workspace-file.md) | One `oasis-workspace.toml` for every checkout |
 | [Gentle Shell layer](gentle-shell-layer.md) | Installing the package, the agent tools and `/oasis` |
 
@@ -20,7 +20,7 @@ One topic per file. Start from the group that matches what you are doing; the
 | Documentation | Purpose |
 | --- | --- |
 | [Action menu](action-menu.md) | `oasis menu` and the Gentle Shell panel (`alt+o`) |
-| [Servers and ports per checkout](servers-and-ports.md) | `start`, `restart`, `stop`, `status`, ports and the database service |
+| [Servers and ports per checkout](servers-and-ports.md) | `start`, `restart`, `stop`, `status`, ports and the database service (`start-database`) |
 | [Tests and test databases](testing.md) | `test-module`, `verify-module`, `--only`, `--reuse` and compact evidence |
 | [Disposable test databases](disposable-test-databases.md) | Per-run databases and `gc` after interrupted runs |
 | [Database trash](trash.md) | `drop-database` moves to the trash; `trash`, `trash restore` and `gc --trash` |
@@ -35,6 +35,7 @@ One topic per file. Start from the group that matches what you are doing; the
 | Documentation | Purpose |
 | --- | --- |
 | [Agent contract](agent-contract.md) | The policy table (`oasis policy --json`): each operation's tier and why; `--confirm` for Tier B |
+| [Release gate](release-gate.md) | The agent field run before each release and its handoff count |
 | [Gentle Shell layer](gentle-shell-layer.md) | Agent tools, their output and the prompt context |
 | [Bash guard](bash-guard.md) | Which agent bash commands run, wait for the user's confirmation or are blocked; `agent_destructive` |
 | [Subagents](subagents.md) | The overlay that gives Gentle Shell subagents the `oasis_*` tools |

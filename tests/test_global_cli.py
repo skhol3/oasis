@@ -24,8 +24,8 @@ def legacy_refusal(profile, program='oasis'):
             'oasis-workspace.toml or what stops it.\n')
 PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
           'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases',
-          'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy', 'restart',
-          'setup', 'start',
+          'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy',
+          'recreate-database-volume', 'restart', 'setup', 'start', 'start-database',
           'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info', 'worktree-init',
           'xmlid-info')
 
@@ -85,7 +85,10 @@ class GlobalCliTests(unittest.TestCase):
         self.assertEqual(result.stderr, '')
         self.assertIn('--project', result.stdout)
         self.assertIn('/absolute/project', result.stdout)
-        self.assertIn('check-environment --quick', result.stdout)
+        self.assertIn('doctor --environment --quick', result.stdout)
+        # v0.16.0 S5: the deprecated name keeps its place in the command list, and the help says it is one.
+        self.assertIn('Deprecated aliases (they keep working): check-environment runs doctor --environment\n',
+                      result.stdout)
         for name in PUBLIC:
             self.assertIn(name, result.stdout)
         [listed] = [line for line in result.stdout.splitlines() if line.startswith('Commands: ')]
@@ -102,7 +105,7 @@ class GlobalCliTests(unittest.TestCase):
                 self.assertEqual((help_text.returncode, help_text.stderr), (0, ''))
                 self.assertTrue(help_text.stdout.startswith(f'usage: {program} [-h] [--project /absolute/project]'),
                                 help_text.stdout)
-                self.assertIn(f'Example: {program} --project /absolute/project check-environment --quick',
+                self.assertIn(f'Example: {program} --project /absolute/project doctor --environment --quick',
                               help_text.stdout)
                 usage = self.invoke('--bogus', program=program)
                 self.assertEqual(usage.returncode, 2)
@@ -309,7 +312,7 @@ class GlobalCliTests(unittest.TestCase):
                 text = ' '.join(result.stdout.split())
                 self.assertIn('without it, the git top level of the current directory '
                               '(the current directory outside git)', text)
-                self.assertIn(f'Example: cd /absolute/project && {program} check-environment --quick', result.stdout)
+                self.assertIn(f'Example: cd /absolute/project && {program} doctor --environment --quick', result.stdout)
         self.assertFalse(self.log.exists())
 
     def test_rejects_unknown_internal_and_pathlike_before_dispatch(self):
@@ -330,7 +333,7 @@ class GlobalCliTests(unittest.TestCase):
         environment = (ROOT / 'odoo19-environment/SKILL.md').read_text()
         lifecycle = (ROOT / 'odoo19-module-lifecycle/SKILL.md').read_text()
         example = ('~/.agents/skills/odoo19/oasis --project /absolute/project '
-                   'check-environment --quick')
+                   'doctor --environment --quick')
         self.assertIn(example, setup)
         self.assertIn(example, environment)
         self.assertIn('Alternatively, if the project wants legacy local CLI entrypoints', setup)

@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Private stdin-only credential transport; invoked by the guarded development CLI."""
+"""Private stdin-only credential transport; invoked by the guarded development CLI.
+
+It runs with the project environment's Python (3.7+ for Odoo 15), so it imports only the standard library
+of that version: dev_users.py (the host's Python) reads the configuration and passes the values this needs
+(the runtime key of the stdin payload), never config.py, which needs 3.11 (tomllib).
+"""
 import json
 import logging
-from pathlib import Path
-import shlex
 import subprocess
 import sys
 
-from config import load, versions
-from odoo_addons_path import config_arguments
+# The exits dev_users.py reads: 0 initialized, CREATED_THEN_FAILED the database was created and a later step
+# failed, 3 nothing was created; any other (1: an uncaught error) is unknown.
+CREATED_THEN_FAILED = 4
 
 
 def main():
@@ -16,23 +20,18 @@ def main():
     # Do not expose credentials through initialization/authentication exception logs.
     logging.disable(logging.CRITICAL)
     try:
-        root, module, database = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
-        values = load(root)
+        module, database = sys.argv[2], sys.argv[3]
         payload = json.load(sys.stdin)
         declaration = payload['declaration']
         passwords = payload['passwords']
         with_demo = payload['with_demo']
-        # The demo options and the users' groups field of the Odoo series (tools/odoo_versions.py):
-        # demo-off through config.py, demo-on (nothing in a series that loads demo data by default).
-        capability = versions().capability
-        demo_flags = (capability(values['ODOO_VERSION'], 'demo_on_args') if with_demo
-                      else shlex.split(values['ODOO_DEMO_OFF_ARGS']))
-        groups_field = capability(values['ODOO_VERSION'], 'user_groups_field')
-        # The options of common.sh's odoo_config_arguments, from the same decision: -c, then
-        # --addons-path (composed for a path-free odoo.conf, or a linked worktree's own root)
-        # and --data-dir ([tooling].data_dir) when they apply.
-        config_args = config_arguments(values)
-        sys.path.insert(0, values['ODOO_SOURCE'])
+        # Decided by dev_users.py (runtime_values): the demo options and users' groups field of the series,
+        # and common.sh's odoo_config_arguments.
+        runtime = payload['runtime']
+        demo_flags = runtime['demo_flags']
+        groups_field = runtime['groups_field']
+        config_args = runtime['config_args']
+        sys.path.insert(0, runtime['odoo_source'])
         import odoo
         import odoo.service.common
         import odoo.service.db
@@ -54,7 +53,7 @@ def main():
         modules = declaration.get('demo_modules', []) if with_demo else []
         for install_module in dict.fromkeys([*modules, module]):
             install = subprocess.run(
-                [values['PYTHON'], values['ODOO_BIN'], *config_args,
+                [runtime['python'], runtime['odoo_bin'], *config_args,
                  '-d', database, '-i', install_module, *demo_flags, '--stop-after-init',
                  '--no-http', '--log-level=critical'], capture_output=True)
             if install.returncode:
@@ -89,8 +88,9 @@ def main():
                 raise ValueError('Account authentication could not be verified.')
         return 0
     except Exception:
-        # The host emits a fixed message, never exception details or database contents.
-        return 1 if created else 3
+        # The host emits a fixed message, never exception details or database contents. CREATED_THEN_FAILED, not
+        # 1: an interpreter error the runner does not catch also exits 1, and says nothing of the database.
+        return CREATED_THEN_FAILED if created else 3
 
 
 if __name__ == '__main__':

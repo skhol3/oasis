@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Starts this checkout's database service (v0.16.0 S1, S6): `docker compose up -d --wait` of
+# [tooling].db_service with the compose file and the env file of the checkout's series, under the
+# cross-checkout lock, exactly as every database command starts it (common.sh wait_for_database), and
+# prints one line. Tier A in the agent policy (tools/policy.py): an agent runs it alone; `stop --database`
+# stops the service again. It is the command setup's next steps, `status --json` and doctor name, because an
+# agent harness may refuse a command that names an env file: no output of this command names the env file's
+# path. docker compose's own output is printed only when it fails, with that path replaced by
+# [tooling].env_file; oasis's own WARNING lines are kept on stderr.
+set -Eeuo pipefail
+source "$(dirname "$0")/oasis_env.sh"
+usage() {
+  printf 'Usage: %s\n' "$(usage_name)"
+}
+if [[ $# == 1 && ${1:-} == --help ]]; then
+  usage
+  printf '%s\n' 'Starts the database service of this checkout (docker compose up -d --wait of [tooling].db_service, with' \
+    'the compose file and the env file of its configuration, under the lock the checkouts sharing that compose' \
+    'file take) and waits until it runs; prints one line, and names no env file. stop --database stops it.'
+  exit 0
+fi
+if (( $# != 0 )); then
+  usage >&2
+  exit 2
+fi
+source "$(dirname "$0")/common.sh"
+if [[ ! -e "$COMPOSE_FILE" ]]; then
+  printf 'ERROR: the compose file %s is missing: %s creates it.\n' "$COMPOSE_FILE" "$(confirm_command setup --apply)" >&2
+  exit 1
+fi
+if [[ ! -e "$ENV_FILE" ]]; then
+  printf 'ERROR: the env file of this checkout ([tooling].env_file) is missing: %s creates it.\n' \
+    "$(confirm_command setup --apply)" >&2
+  exit 1
+fi
+status=0
+output=$(wait_for_database 2>&1) || status=$?
+output=${output//"$ENV_FILE"/[tooling].env_file}
+if (( status != 0 )); then
+  if [[ -n "$output" ]]; then
+    printf '%s\n' "$output" >&2
+  fi
+  printf 'ERROR: the database service %s did not start (exit %s); %s checks its configuration.\n' \
+    "$DB_SERVICE" "$status" "$(confirm_command doctor)" >&2
+  exit 1
+fi
+while IFS= read -r line; do
+  if [[ "$line" == WARNING:* ]]; then
+    printf '%s\n' "$line" >&2
+  fi
+done <<< "$output"
+printf 'database service %s is running (%s)\n' "$DB_SERVICE" "$COMPOSE_FILE"

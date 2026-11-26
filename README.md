@@ -54,12 +54,15 @@ Releases are listed in the [changelog](CHANGELOG.md).
    ~/.agents/skills/odoo19/oasis setup --apply    # creates only what is missing
    ```
 
-2. Fill in the database account the apply step names (`ODOO_DB_USER` and `ODOO_DB_PASSWORD` in
-   the environment file, the same values in `odoo.conf`), start the database service, and run
-   `doctor` until `doctor_failures=0` (each `FAIL` says how to fix it):
+2. Start the database service and run `doctor` until `doctor_failures=0` (each `FAIL` says how to
+   fix it). setup generated the database account in the environment file, which the service and
+   Odoo both read; no step needs a password read, copied or typed
+   ([The database account](docs/setup.md#the-database-account)). `start-database` starts the
+   service the way every database command does and names no environment file, so an agent harness
+   that refuses commands naming one runs it too:
 
    ```bash
-   docker compose --env-file .oasis/config/.env -f .oasis/config/compose.yml up -d --wait
+   ~/.agents/skills/odoo19/oasis start-database
    ~/.agents/skills/odoo19/oasis doctor
    ```
 
@@ -70,7 +73,8 @@ Releases are listed in the [changelog](CHANGELOG.md).
    ```
 
 4. With the package, run `/oasis` for the checkout's status and `alt+o` for the action menu; in
-   Gentle Shell, also run `/oasis setup` once for the subagent overlay.
+   Gentle Shell, `/oasis setup` shows the status and the `oasis setup` plan and installs the subagent
+   overlay.
 
 ## Features
 
@@ -94,7 +98,31 @@ and `migrate --apply` (Tier B) wait for the user's confirmation in a dialog, hon
 Tier A in the skills too. In the CLI, `drop-database`, `gc --apply --trash`, `migrate --apply` and
 `worktree-init` run only with `--confirm <exact name>` (the database, the project root, the
 workspace file, the worktree path); without it they exit 2 and name the exact command. The menu,
-`/oasis worktree` and `/oasis migrate` pass it after your confirmation.
+`/oasis worktree` and `/oasis migrate` pass it after your confirmation. New Tier B command:
+`recreate-database-volume --confirm <compose project>` runs `docker compose -p <compose project> down -v`
+(the project's containers and networks, every named volume of its compose file and every anonymous
+volume of its containers: every database of its PostgreSQL) and starts the service again with the
+account of the env file; it replaces a raw `docker compose down -v`.
+
+oasis generates the database account (`oasis setup`, one 0600 env file read by the compose service
+and by Odoo; `odoo.conf` stays password-free), so no oasis workflow requires reading, copying or
+typing a password, and no command takes or prints one. An existing project keeps its files: setup
+fills an env file's empty account variables in place (never adds absent ones) and moves `db_user` and `db_password` out of `odoo.conf`
+only when the env file holds the same values (otherwise it warns and changes nothing), and
+`init-dev-database` generates the development passwords into `<database>.logins` (mode 0600) unless
+you type your own on a terminal. [Docs →](docs/setup.md#the-database-account)
+
+No command needs a terminal: `oasis setup --plan --json` prints the plan as one JSON object (what it
+inferred and from where, the changes, the questions with their options, the recommended answer and the
+flag that answers each), `--answer <id>=<value>` or `--answers <file.json>` answers them, and the plan
+asks in advance about what would fail later (python-ldap 3.4.0 against OpenLDAP 2.6, module
+requirements missing or conflicting with Odoo's pins; uv 0.13 gets `UV_LEGACY_TAR_BACKEND=1`). Without a
+terminal an unanswered question is listed in the plan and `--apply` refuses, naming its flag.
+`oasis status --json` says what is ready, what is missing and the next oasis command to run
+(`start-database` for a stopped database service). A new workspace gets the `[development]` table
+`init-dev-database` needs (the question `development`, recommended `add`: `administrator_login =
+'admin'`, its password generated), so no step edits the workspace file by hand.
+[Docs →](docs/setup.md#questions-and-answers)
 
 ### Checkouts and worktrees
 
@@ -120,7 +148,8 @@ of a checkout and runs them by hand. [Docs →](docs/action-menu.md)
 
 ### Environment and workspace file
 
-[`oasis setup`](docs/setup.md) configures a clone, `doctor` and `check-environment` check the
+[`oasis setup`](docs/setup.md) configures a clone, `bootstrap` syncs its environment to the locks
+([which one when](docs/setup.md#setup-bootstrap-or-migrate)), `doctor` and `doctor --environment` check the
 environment; one [`oasis-workspace.toml`](docs/workspace-file.md) configures every checkout, and
 the machine file gives the Odoo source of each series.
 [Docs →](docs/checking-environment.md)
@@ -130,6 +159,14 @@ read. A checkout that still has one is refused (exit 2) with
 `<checkout>/.odoo19-agent.toml is the old profile format, no longer read: run oasis migrate --plan to see its conversion to oasis-workspace.toml, then oasis migrate --apply.`;
 `doctor` reports it as one `FAIL configuration`. [`oasis migrate`](docs/migrating.md), the only
 command that still reads it, converts the profiles of every checkout into one workspace file.
+
+Contract note in v0.16.0 (S5): `check-environment [--quick|--full]` is a deprecated alias of
+`doctor --environment [--quick|--full]`. Both names keep working through `oasis` and `odoo19`, the
+project wrappers and the tool script, with the same lines, exit codes and usage line as before; the help of
+`oasis`, `doctor --help` and the policy table (both Tier A) say so, and the `oasis_check_environment` tool runs
+`doctor --environment`. `doctor`'s usage line now names the option: `Usage: <program> doctor
+[--environment [--quick|--full]]`. setup, bootstrap and migrate stay three commands (none would be an
+identical alias): [which one when](docs/setup.md#setup-bootstrap-or-migrate).
 
 ## Documentation
 
@@ -144,7 +181,7 @@ command that still reads it, converts the profiles of every checkout into one wo
 | [Setting up a new workspace](docs/new-workspace.md) | From a clone to `doctor` and a database with `oasis setup`; where each value lives, an example tree, the steps by hand |
 | [Setting up a checkout with oasis setup](docs/setup.md) | `oasis setup`: the plan, then `--apply` creates only what is missing |
 | [New project setup](docs/project-setup.md) | Workspace file, entry point and optional project wrappers |
-| [Checking the environment](docs/checking-environment.md) | `doctor`, `check-environment` and `lock.sha256` |
+| [Checking the environment](docs/checking-environment.md) | `doctor`, `doctor --environment` (`check-environment`, a deprecated alias) and `lock.sha256` |
 | [Workspace file](docs/workspace-file.md) | One `oasis-workspace.toml` for every checkout |
 | [Migrating to the workspace file](docs/migrating.md) | `oasis migrate` |
 | [Path-free odoo.conf](docs/path-free-odoo-conf.md) | What oasis passes on the Odoo command line |

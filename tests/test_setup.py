@@ -30,8 +30,10 @@ MARKER = 'setup-must-not-print-this'
 # A fake uv: records `uv <args> (in <cwd>)`, writes the lock `pip compile ... -o <lock>` names, and
 # makes `venv --python <v> <target>` an environment (pyvenv.cfg and bin/python). FAKE_COMPILE_FAIL,
 # FAKE_VENV_FAIL (exit 3) and FAKE_SYNC_FAIL (exit 4) make that step fail; FAKE_SYNC_BREAK=<file> makes
-# `pip sync` overwrite that file with invalid TOML (a file broken after the verification).
+# `pip sync` overwrite that file with invalid TOML (a file broken after the verification). `uv --version`
+# (tools/locks.py uv_version, v0.16.0 S3) prints a version before 0.13 and is not recorded.
 UV = '''#!/bin/sh
+if [ "$1" = --version ]; then echo 'uv 0.9.0 (fake)'; exit 0; fi
 printf 'uv %s (in %s)\\n' "$*" "$PWD" >> "$FAKE_LOG"
 case "$1 $2" in
   'pip compile')
@@ -54,6 +56,12 @@ case "$1 $2" in
 esac
 exit 0
 '''
+# The [development] table of a new workspace (v0.16.0 S6: the question development, recommended add), and the
+# step that names its lines when a workspace has none.
+DEVELOPMENT = ("\n# The administrator of the databases init-dev-database creates; its password is generated "
+               "(docs/dev-database.md).\n[development]\nadministrator_login = 'admin'\n")
+ADD_DEVELOPMENT = ("add these lines to {workspace} (docs/dev-database.md):\n       [development]\n"
+                   "       administrator_login = 'admin'")
 WORKSPACE = '''# Written by oasis setup. Paths are relative to this file, addons_paths to each checkout;
 # the Odoo source comes from the machine file (docs/workspace-file.md#machine-file).
 workspace_version = 1
@@ -71,12 +79,19 @@ dev_prefix = 'shop_dev_'
 test_prefix = 'shop_test_'
 logs = '{base}logs'
 data_dir = '{base}data'
-'''
+''' + DEVELOPMENT
 MACHINE_HEADER = ('# Written by oasis setup: the Odoo source of each series on this machine '
                   '(docs/workspace-file.md#machine-file).\n')
-ENV_FILE = ('# Written by oasis setup: fill in both values, the PostgreSQL account of the compose service. '
-            'Never commit this file.\nODOO_DB_USER=\nODOO_DB_PASSWORD=\n')
+# v0.16.0 S2: the account is generated (tests/test_credentials.py); the password is random.
+ENV_FILE = re.compile(r'# Written by oasis setup: the PostgreSQL account of the compose service and of Odoo '
+                      r'\(docs/setup\.md#the-database-account\)\.\n# No oasis command needs it read, copied or '
+                      r'typed\. Never commit this file\.\nODOO_DB_USER=oasis_shop\nODOO_DB_PASSWORD=[A-Za-z0-9_-]{32}\n')
 DRY_RUN = 'dry run: nothing changed; run with --apply to set up\n'
+# The section setup adds for the modules of another series (v0.16.0 S4).
+SECTION = ('# Added by oasis setup: what differs for the Odoo 19.0 checkouts (docs/setup.md#another-odoo-series).\n'
+           '[series."19.0"]\nseries_exceptions = [{modules}]\n')
+OPEN_PLAN = ('nothing changed: answer the open questions above (docs/setup.md#questions-and-answers), then run '
+             'with --apply to set up\n')
 NOT_TTY_SERIES = ('ERROR: Cannot infer the Odoo series of {root}: no module manifest declares one and the '
                   'machine file has no single series; pass --series <x.y> (supported: 19.0, 15.0).\n')
 
@@ -168,7 +183,7 @@ class SetupTests(unittest.TestCase):
             f'create {config / "odoo.conf"} (mode 0600): path-free; db_port {port}; db_user and db_password empty',
             f'create {config / "compose.yml"}: PostgreSQL 17 (postgres:17) as service db on 127.0.0.1:{port}, '
             f'compose project {self.compose_name(directory)}',
-            f'create {config / ".env"} (mode 0600): ODOO_DB_USER and ODOO_DB_PASSWORD, empty',
+            f'create {config / ".env"} (mode 0600): ODOO_DB_USER oasis_shop and a generated ODOO_DB_PASSWORD',
             f'create {config / "requirements/runtime.in"}: -r {self.source}/requirements.txt',
             f'create {config / "requirements/dev.in"}: -c runtime.txt, -r runtime.in',
             f'create {prefix / "logs"}/', f'create {prefix / "data"}/',
@@ -208,7 +223,8 @@ class SetupTests(unittest.TestCase):
         before = self.tree()
         usage = (f'Usage: {CLI} setup [--series <x.y>] [--community <dir>] [--enterprise <dir> | --no-enterprise] '
                  '[--workspace <dir>] [--name <name>] [--exception <module>]... [--config-dir <dir>] '
-                 '[--environment <dir> | --python <x.y>] [--apply | --plan]\n')
+                 '[--environment <dir> | --python <x.y>] [--answer <id>=<value>]... [--answers <file.json>] '
+                 '[--apply | --plan [--json]]\n')
         for args in (('--apply', '--plan'), ('--plan', '--apply'), ('--enterprise', '/x', '--no-enterprise'),
                      ('--app',), ('--community',), ('--apply', '--apply'), ('extra',), ('--',), ('--a',),
                      ('--apply=x',), ('--apply=',), ('--appl',),
@@ -235,21 +251,17 @@ class SetupTests(unittest.TestCase):
                  f'compiled {requirements}/runtime.txt, dev.txt and lock.sha256\n'
                  f'created the environment {environment}\n'
                  'next steps:\n'
-                 f'  1. fill in ODOO_DB_USER and ODOO_DB_PASSWORD in {config / ".env"}, and the same values as '
-                 f'db_user and db_password in {config / "odoo.conf"}\n'
-                 f'  2. docker compose --env-file {config / ".env"} -f {config / "compose.yml"} up -d --wait\n'
-                 f'  3. oasis --project {self.checkout} doctor\n'
-                 f'  4. add a [development] table with administrator_login to {workspace} '
-                 '(docs/dev-database.md)\n'
-                 f'  5. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n')
+                 f'  1. oasis --project {self.checkout} start-database\n'
+                 f'  2. oasis --project {self.checkout} doctor\n'
+                 f'  3. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, self.plan(port) + steps, ''))
         # S10: the source goes to the machine file (0600), not to the workspace file.
         self.assertEqual(self.machine.read_text(), MACHINE_HEADER + f"[series.\"19.0\"]\ncommunity = '{self.source}'\n")
         self.assertEqual(self.machine.stat().st_mode & 0o777, 0o600)
         self.assertEqual(workspace.read_text(), WORKSPACE.format(base='.oasis/'))
         self.assertEqual(workspace.stat().st_mode & 0o777, 0o600)
-        # S7: names only, empty values, 0600.
-        self.assertEqual((config / '.env').read_text(), ENV_FILE)
+        # v0.16.0 S2: the generated account, 0600.
+        self.assertRegex((config / '.env').read_text(), ENV_FILE)
         self.assertEqual((config / '.env').stat().st_mode & 0o777, 0o600)
         conf = (config / 'odoo.conf').read_text()
         self.assertEqual(conf.split('[options]\n')[1],
@@ -337,8 +349,14 @@ class SetupTests(unittest.TestCase):
         before = self.tree()
         (self.checkout / 'shop_sale' / '__manifest__.py').write_text("{'name': 'Shop', 'version': '1.0'}\n")
         before = self.tree()
-        self.assert_refused(self.setup_cmd('--community', str(self.source), '--no-enterprise'),
+        # v0.16.0 S3: without a terminal the plan lists the open question; --apply refuses as before.
+        self.assert_refused(self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise'),
                             NOT_TTY_SERIES.format(root=self.checkout)[len('ERROR: '):-1], before)
+        listed = self.setup_cmd('--community', str(self.source), '--no-enterprise')
+        self.assertEqual((listed.returncode, listed.stdout, listed.stderr), (
+            0, f'checkout: {self.checkout} (main)\nopen question series: '
+               f'{NOT_TTY_SERIES.format(root=self.checkout)[len("ERROR: "):]}{OPEN_PLAN}', ''))
+        self.assertEqual(self.tree(), before)
         flagged = self.setup_cmd('--series', '19.0', '--community', str(self.source), '--no-enterprise')
         self.assertEqual((flagged.returncode, flagged.stderr), (0, ''))
         self.assertIn('series: 19.0 (from --series)\n', flagged.stdout)
@@ -368,15 +386,16 @@ class SetupTests(unittest.TestCase):
 
     def test_without_a_terminal_a_missing_answer_names_its_flag_and_a_found_path_is_only_suggested(self):
         before = self.tree()
-        self.assert_refused(self.setup_cmd('--no-enterprise'),
+        # v0.16.0 S3: --apply refuses; the plan lists the open question (tests/test_setup_plan.py).
+        self.assert_refused(self.setup_cmd('--apply', '--no-enterprise'),
                             f'No Odoo Community source for 19.0 in the machine file {self.machine}: '
                             'pass --community <dir>.', before)
         found = self.odoo_source(self.scratch / 'work' / 'odoo')
         before = self.tree()
-        self.assert_refused(self.setup_cmd('--no-enterprise'),
+        self.assert_refused(self.setup_cmd('--apply', '--no-enterprise'),
                             f'No Odoo Community source for 19.0 in the machine file {self.machine}: '
                             f'pass --community <dir>; found {found}, a suggestion only: pass it to use it.', before)
-        self.assert_refused(self.setup_cmd('--community', str(self.source)),
+        self.assert_refused(self.setup_cmd('--apply', '--community', str(self.source)),
                             'Enterprise or not for 19.0: pass --enterprise <dir> or --no-enterprise.', before)
         self.assert_refused(self.setup_cmd('--community', str(self.scratch / 'work'), '--no-enterprise'),
                             f'--community {self.scratch / "work"} is not an Odoo 19.0 source '
@@ -401,7 +420,11 @@ class SetupTests(unittest.TestCase):
                                   f'{self.checkout / ".oasis/venv"}, or type the absolute path of an existing '
                                   'environment to use instead: ', ''),
                                  (f'Python of the new environment {self.checkout / ".oasis/venv"}, one of 3.10, '
-                                  '3.11, 3.12, 3.13, 3.14 [Enter: 3.12]: ', '')):
+                                  '3.11, 3.12, 3.13, 3.14 [Enter: 3.12]: ', ''),
+                                 # v0.16.0 S6: the [development] table of init-dev-database.
+                                 ('init-dev-database needs a [development] table in '
+                                  f'{self.checkout / "oasis-workspace.toml"}: add one with administrator_login = '
+                                  "'admin' (its password is generated)? (add/none) [Enter: add]: ", 'none')):
             deadline = time.monotonic() + 30
             while expected not in prompts and time.monotonic() < deadline:
                 if select.select([master], [], [], 1)[0]:
@@ -412,6 +435,7 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, prompts)
         self.assertIn(f'community: {found} (answered)\nenterprise: {enterprise} (answered)\n', stdout)
         self.assertIn(f"  community = '{found}'\n  enterprise = '{enterprise}'\n", stdout)
+        self.assertNotIn('[development]', stdout)
         self.assertEqual(self.tree(), before)
 
     # -- adopting what exists -------------------------------------------------------------------
@@ -476,8 +500,8 @@ class SetupTests(unittest.TestCase):
         self.assertEqual((project / 'config/compose.yml').read_text(), 'name: mine\n')
         self.assertFalse(self.machine.exists())
         self.assertNotIn('fill in', applied.stdout)
-        self.assertIn(f'  1. docker compose --env-file {env_file} -f {project / "config/compose.yml"} up -d --wait\n',
-                      applied.stdout)
+        self.assertIn(f'  1. oasis --project {self.checkout} start-database\n', applied.stdout)
+        self.assertNotIn(str(env_file), applied.stdout.split('next steps:')[1])
 
     def test_a_workspace_without_a_source_gets_the_machine_entry(self):
         project = self.scratch / 'work'
@@ -555,15 +579,12 @@ class SetupTests(unittest.TestCase):
             f'verified: {self.checkout} loads its configuration from {workspace}\n'
             f'compiled {requirements}/runtime.txt, dev.txt and lock.sha256\n'
             'next steps:\n'
-            f'  1. fill in ODOO_DB_USER and ODOO_DB_PASSWORD in {config / ".env"}, and the same values as '
-            f'db_user and db_password in {config / "odoo.conf"}\n'
-            f'  2. the locks in {requirements} describe runtime.in and dev.in: oasis --project {self.checkout} '
+            f'  1. the locks in {requirements} describe runtime.in and dev.in: oasis --project {self.checkout} '
             f'bootstrap --apply syncs the adopted environment {environment} to them (it changes the packages '
             'installed there)\n'
-            f'  3. docker compose --env-file {config / ".env"} -f {config / "compose.yml"} up -d --wait\n'
-            f'  4. oasis --project {self.checkout} doctor\n'
-            f'  5. add a [development] table with administrator_login to {workspace} (docs/dev-database.md)\n'
-            f'  6. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n'))
+            f'  2. oasis --project {self.checkout} start-database\n'
+            f'  3. oasis --project {self.checkout} doctor\n'
+            f'  4. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n'))
         self.assertEqual(workspace.read_text(), WORKSPACE.format(base='.oasis/').replace(
             "environment = '.oasis/venv'", f"environment = '{environment}'"))
         self.assertEqual(self.log.read_text().splitlines(), [
@@ -764,7 +785,7 @@ class SetupTests(unittest.TestCase):
             f'{hashlib.sha256((requirements / name).read_bytes()).hexdigest()}  {name}\n'
             for name in ('runtime.in', 'runtime.txt', 'dev.in', 'dev.txt')))
         (requirements / 'dev.txt').write_text('pylint==3.0.0\n')
-        for name, text in (('odoo.conf', '[options]\ndb_port = 6543\n'), ('.env', 'ODOO_DB_USER=\n'),
+        for name, text in (('odoo.conf', '[options]\ndb_port = 6543\n'), ('.env', 'ODOO_DB_USER=mine\nODOO_DB_PASSWORD=mine\n'),
                            ('compose.yml', "name: mine\nservices:\n  db:\n    ports:\n      - '6543:5432'\n")):
             (project / 'config' / name).write_text(text)
         before = self.tree()
@@ -785,12 +806,9 @@ class SetupTests(unittest.TestCase):
         """The next steps setup --apply prints for existing_workspace() with every other piece created."""
         config = project / 'config'
         workspace = project / 'oasis-workspace.toml'
-        steps = [f'fill in ODOO_DB_USER and ODOO_DB_PASSWORD in {config / ".env"}, and the same values as db_user '
-                 f'and db_password in {config / "odoo.conf"}',
-                 f'docker compose --env-file {config / ".env"} -f {config / "compose.yml"} up -d --wait',
-                 f'oasis --project {self.checkout} doctor']
+        steps = [f'oasis --project {self.checkout} start-database', f'oasis --project {self.checkout} doctor']
         if add_development:
-            steps.append(f'add a [development] table with administrator_login to {workspace} (docs/dev-database.md)')
+            steps.append(ADD_DEVELOPMENT.format(workspace=workspace))
         steps.append(f'oasis --project {self.checkout} init-dev-database <module> shop_dev_manual')
         return 'next steps:\n' + ''.join(f'  {number}. {step}\n' for number, step in enumerate(steps, 1))
 
@@ -802,7 +820,7 @@ class SetupTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertIn(f'created the environment {project / "envs/shop"}\n', result.stdout)
         self.assertTrue(result.stdout.endswith(self.adopted_next_steps(project, add_development=False)), result.stdout)
-        self.assertNotIn('add a [development] table', result.stdout)
+        self.assertNotIn('add these lines', result.stdout)
         # Without the table the step is there and init-dev-database comes after it.
         shutil.rmtree(project / 'config')
         shutil.rmtree(project / 'envs')
@@ -822,31 +840,87 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(workspace.read_text(), 'broken = [\n')
         self.assertIn(f'verified: {self.checkout} loads its configuration from {workspace}\n', result.stdout)
         self.assertTrue(result.stdout.endswith(self.adopted_next_steps(project, add_development=False)), result.stdout)
-        self.assertNotIn('add a [development] table', result.stdout)
+        self.assertNotIn('add these lines', result.stdout)
 
-    def test_modules_of_another_series_than_the_configured_one_are_refused(self):
-        # S11: an existing configuration (the checkout's modules are 19.0, one is 15.0).
+    def test_a_new_workspace_gets_the_development_table_unless_the_answer_is_none(self):
+        # v0.16.0 S6: init-dev-database needs [development]; setup asks the question development (recommended add,
+        # applied without a terminal), so no manual edit of the workspace file comes before it.
+        workspace = self.checkout / 'oasis-workspace.toml'
+        flags = ('--community', str(self.source), '--no-enterprise')
+        result = self.setup_cmd('--apply', *flags, '--answer', 'development=none')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(workspace.read_text(), WORKSPACE.format(base='.oasis/').replace(DEVELOPMENT, ''))
+        self.assertTrue(result.stdout.endswith(
+            'next steps:\n'
+            f'  1. oasis --project {self.checkout} start-database\n'
+            f'  2. oasis --project {self.checkout} doctor\n'
+            f'  3. {ADD_DEVELOPMENT.format(workspace=workspace)}\n'
+            f'  4. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n'), result.stdout)
+        # The lines the step names are the table setup writes.
+        self.assertIn("\n[development]\nadministrator_login = 'admin'\n", DEVELOPMENT)
+        # An answer setup does not take, and the question asked of an existing workspace, are refused.
+        self.log.unlink()
+        before = self.tree()
+        self.assert_refused(self.setup_cmd('--answer', 'development=add'),
+                            '--answer: setup does not ask development for this checkout; nothing changed: drop it.',
+                            before)
+        shutil.rmtree(self.checkout / '.oasis')
+        workspace.unlink()
+        before = self.tree()
+        self.assert_refused(self.setup_cmd(*flags, '--answer', 'development=maybe'),
+                            'Invalid answer maybe for development: answer add or none.', before)
+
+    def test_modules_of_another_series_than_the_configured_one_get_the_series_exceptions_question(self):
+        # S11, v0.16.0 S4: an existing configuration (the checkout's modules are 19.0, one is 15.0).
         project = self.existing_workspace()
+        workspace = project / 'oasis-workspace.toml'
+        original = workspace.read_text()
         self.module('old_sale', "{'name': 'Old', 'version': '15.0.1.0.0'}\n")
         before = self.tree()
         message = (f'The module old_sale declares Odoo 15.0 (version 15.0.1.0.0 in '
                    f'{self.checkout / "old_sale/__manifest__.py"}), but {self.checkout} is configured for Odoo 19.0 '
-                   f'by {project / "oasis-workspace.toml"}: run oasis in a checkout of an Odoo 19.0 branch, or set the '
+                   f'by {workspace}: run oasis in a checkout of an Odoo 19.0 branch, or set the '
                    'version of old_sale to 19.0.x.y.z if it is an Odoo 19.0 module; for Odoo 15.0 here, run oasis '
-                   f'setup to add a [series."15.0"] section to {project / "oasis-workspace.toml"}.')
-        self.assert_refused(self.setup_cmd(), message, before)
-        # A new configuration whose --series disagrees with a module: refused before anything is written.
-        (project / 'oasis-workspace.toml').unlink()
+                   f'setup to add a [series."15.0"] section to {workspace}.')
+        question = (f'The modules old_sale (Odoo 15.0) of {self.checkout} declare another Odoo series than 19.0: list '
+                    f'them in series_exceptions under [series."19.0"] in {workspace}? Answer with --answer '
+                    'series_exceptions=<add|no> (recommended: add).')
+        result = self.setup_cmd()
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertIn(f'add [series."19.0"] to {workspace}:\n', result.stdout)
+        self.assertTrue(result.stdout.endswith(f'open question series_exceptions: {question}\n{OPEN_PLAN}'),
+                        result.stdout)
+        self.assertEqual(self.tree(), before)
+        result = self.setup_cmd('--apply')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+            f'ERROR: open question series_exceptions: {question}\nERROR: nothing changed: answer the open '
+            'questions, then run oasis setup --apply again.\n')))
+        self.assert_refused(self.setup_cmd('--answer', 'series_exceptions=no'), message, before)
+        result = self.setup_cmd('--apply', '--answer', 'series_exceptions=add')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(workspace.read_text(), original.replace('workspace_version = 1', 'workspace_version = 2')
+                         + '\n' + SECTION.format(modules="'old_sale'"))
+        self.assertIn(f'verified: {self.checkout} loads its configuration from {workspace}\n', result.stdout)
+        # A new configuration whose --series disagrees with a module: the same question, before anything is written.
+        workspace.unlink()
+        self.log.unlink()
+        new = self.checkout / 'oasis-workspace.toml'
         before = self.tree()
-        self.assert_refused(self.setup_cmd('--series', '19.0', '--community', str(self.source), '--no-enterprise'),
-                            message.replace(str(project / 'oasis-workspace.toml'),
-                                            str(self.checkout / 'oasis-workspace.toml')), before)
+        flags = ('--series', '19.0', '--community', str(self.source), '--no-enterprise')
+        self.assert_refused(self.setup_cmd(*flags, '--answer', 'series_exceptions=no'),
+                            message.replace(str(workspace), str(new)), before)
+        result = self.setup_cmd('--apply', *flags, '--answer', 'series_exceptions=add')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(new.read_text(), WORKSPACE.format(base='.oasis/').replace('workspace_version = 1',
+                                                                                    'workspace_version = 2')
+                         + '\n' + SECTION.format(modules="'old_sale'"))
         # Setup detects the series itself: a version that is not series-style does not count.
+        new.unlink()
         (self.checkout / 'old_sale/__manifest__.py').write_text("{'name': 'Old', 'version': '1.2.3.4.5'}\n")
         result = self.setup_cmd('--community', str(self.source), '--no-enterprise')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertIn('series: 19.0 (from the module manifests)\n', result.stdout)
-
+        self.assertNotIn('series_exceptions', result.stdout)
 
 if __name__ == '__main__':
     unittest.main()

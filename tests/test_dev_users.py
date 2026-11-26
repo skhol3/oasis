@@ -1,14 +1,19 @@
 """Fresh development initialization through the public CLI, isolated from Odoo/PG."""
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import pty
 import select
+import shutil
+import signal
 import subprocess
 import sys
+import time
 import unittest
+from unittest import mock
 
 import test_lifecycle
 
@@ -104,6 +109,25 @@ api = SimpleNamespace(Environment=Environment, SUPERUSER_ID=1)
 '''
 
 
+class FailingWrite:
+    """os.fdopen's stream whose write fails (a full disk)."""
+
+    def __init__(self, descriptor, *args, **kwargs):
+        self.stream = open(descriptor, *args, **kwargs)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.stream.close()
+
+    def fileno(self):
+        return self.stream.fileno()
+
+    def write(self, text):
+        raise OSError('no space left on device')
+
+
 class DevelopmentUsersTests(unittest.TestCase):
     def setUp(self):
         test_lifecycle.LifecycleTests.setUp(self)
@@ -131,6 +155,17 @@ class DevelopmentUsersTests(unittest.TestCase):
             ' p=Path(os.environ["FAKE_STATE"]); d=json.loads(p.read_text()); '
             'd["installed"]=True; d.setdefault("installs", []).append(sys.argv[1:]); '
             'p.write_text(json.dumps(d)); sys.exit(0)\n'
+            # The runner: FAKE_RUNNER_EXIT ends it with that status, FAKE_RUNNER_RAISE with a traceback (exit 1),
+            # FAKE_RUNNER_SLEEP records the pid of its parent in that file and waits; nothing is created.
+            'if os.environ.get("FAKE_RUNNER_EXIT"): sys.exit(int(os.environ["FAKE_RUNNER_EXIT"]))\n'
+            'if os.environ.get("FAKE_RUNNER_RAISE"): raise RuntimeError("runner crashed")\n'
+            'if os.environ.get("FAKE_RUNNER_SLEEP"):\n'
+            ' import time; Path(os.environ["FAKE_RUNNER_SLEEP"]).write_text(str(os.getppid())); time.sleep(30)\n'
+            # FAKE_RUNNER_PYTHON runs the runner with that interpreter (an Odoo 15 environment's 3.8 or 3.9),
+            # after the FAKE_RUNNER_PRELUDE script when one is given.
+            'if os.environ.get("FAKE_RUNNER_PYTHON"):\n'
+            ' r = os.environ["FAKE_RUNNER_PYTHON"]\n'
+            ' os.execv(r, [r, "-B", *filter(None, [os.environ.get("FAKE_RUNNER_PRELUDE")]), *sys.argv[2:]])\n'
             'os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n')
         self.python.chmod(0o755)
 
@@ -142,18 +177,22 @@ class DevelopmentUsersTests(unittest.TestCase):
         return subprocess.run(self.command(*args), input='', text=True,
                               capture_output=True, env=self.env, timeout=10)
 
-    def terminal(self, *args):
+    def terminal(self, *args, generated=()):
+        """Run on a terminal, typing a password (twice) for each login but those in generated, which
+        get Enter at their first prompt."""
         master, slave = pty.openpty()
         process = subprocess.Popen(self.command(*args), stdin=slave, stdout=slave,
                                    stderr=slave, env=self.env, start_new_session=True)
         os.close(slave)
         output = b''
         pending = b''
-        prompts = [f'{kind} for {login}: '.encode()
-                   for login in ('local_admin', 'planner', 'manager')
-                   for kind in ('Password', 'Confirm password')]
+        logins = ('local_admin', 'planner', 'manager')
         secrets = [hashlib.sha256(os.urandom(32)).hexdigest() for _ in range(3)]
-        replies = [value for value in secrets for _ in range(2)]
+        prompts, replies = [], []
+        for login, secret in zip(logins, secrets):
+            kinds = ('Password',) if login in generated else ('Password', 'Confirm password')
+            prompts += [f'{kind} for {login}: '.encode() for kind in kinds]
+            replies += ['' if login in generated else secret] * len(kinds)
         try:
             while True:
                 if not select.select([master], [], [], 15)[0]:
@@ -216,12 +255,60 @@ class DevelopmentUsersTests(unittest.TestCase):
             self.assertFalse(self.state.exists())
             self.assertFalse(self.commands.exists())
 
-    def test_requires_hidden_terminal_without_database_creation(self):
+    def logins_file(self, database='cc_dev_coffee'):
+        """Where the generated passwords of database go: next to the env file (v0.16.0 S2)."""
+        return self.root / 'dev' / f'{database}.logins'
+
+    def assert_generated(self, result, logins, database='cc_dev_coffee'):
+        """The passwords of logins were generated into the logins file (0600), never printed, and are the
+        ones the database accepts."""
+        path = self.logins_file(database)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        lines = path.read_text().splitlines()
+        self.assertEqual(lines[:2], [
+            f'# Written by oasis init-dev-database: the generated passwords of {database} (docs/dev-database.md).',
+            '# One "<login> <password>" per line. Never commit this file.'])
+        found = dict(line.split(' ') for line in lines[2:])
+        self.assertEqual(list(found), list(logins))
+        state = json.loads(self.state.read_text())
+        for login, password in found.items():
+            self.assertRegex(password, r'\A[A-Za-z0-9_-]{32}\Z')
+            self.assertEqual(state['users'][login]['password'], hashlib.sha256(password.encode()).hexdigest())
+            self.assertNotIn(password, result)
+            if self.commands.exists():
+                self.assertNotIn(password, self.commands.read_text())
+
+    def test_without_a_terminal_every_password_is_generated_into_a_0600_file(self):
         result = self.invoke('coffee', 'cc_dev_coffee')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-            (2, '', 'ERROR: Password entry requires an interactive terminal.\n'))
-        self.assertFalse(self.state.exists())
-        self.assertFalse(self.commands.exists())
+        path = self.logins_file()
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout, 'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
+                                        f'Generated passwords: {path} (mode 0600): local_admin, planner, manager\n')
+        self.assert_generated(result.stdout, ('local_admin', 'planner', 'manager'))
+        self.assertEqual(set(json.loads(self.state.read_text())['users']), {'local_admin', 'planner', 'manager'})
+        # An existing database is refused, and its logins file stays as it was.
+        before = path.read_bytes()
+        result = self.invoke('coffee', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', (
+            'ERROR: Could not create a fresh development database; existing data was not modified.\n')))
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(sorted(item.name for item in path.parent.iterdir() if 'logins' in item.name),
+                         ['cc_dev_coffee.logins'])
+
+    def test_on_a_terminal_enter_generates_that_password_and_typed_ones_are_not_stored(self):
+        code, output = self.terminal('coffee', 'cc_dev_coffee', generated=('planner',))
+        self.assertEqual(code, 0, output)
+        path = self.logins_file()
+        self.assertIn(f'Enter at a password prompt generates one into {path} (mode 0600).\n', output)
+        self.assertTrue(output.endswith('Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
+                                        f'Generated passwords: {path} (mode 0600): planner\n'), output)
+        self.assert_generated(output, ('planner',))
+        # Every password typed: no file.
+        self.state.unlink()
+        code, output = self.terminal('coffee', 'cc_dev_other')
+        self.assertEqual(code, 0, output)
+        self.assertTrue(output.endswith('Accounts ready: 3\n'), output)
+        self.assertFalse(self.logins_file('cc_dev_other').exists())
 
     def test_initializes_explicit_admin_and_project_roles_without_demo(self):
         code, output = self.terminal('coffee', 'cc_dev_coffee')
@@ -358,13 +445,13 @@ test_prefix = 'cc_test_'
         workspace.write_text(self.WORKSPACE + development)
         return workspace
 
-    def test_workspace_requires_hidden_terminal_without_database_creation(self):
+    def test_workspace_without_a_terminal_generates_the_passwords_next_to_its_env_file(self):
         self.use_workspace()
         result = self.invoke('coffee', 'cc_dev_coffee')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-            (2, '', 'ERROR: Password entry requires an interactive terminal.\n'))
-        self.assertFalse(self.state.exists())
-        self.assertFalse(self.commands.exists())
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertTrue(result.stdout.endswith(
+            f'Generated passwords: {self.logins_file()} (mode 0600): local_admin, planner, manager\n'))
+        self.assert_generated(result.stdout, ('local_admin', 'planner', 'manager'))
 
     def test_workspace_rejects_invalid_or_secret_declaration_before_runtime(self):
         for development in ('', PROFILE + "password = 'not-a-real-secret'\n",
@@ -388,6 +475,247 @@ test_prefix = 'cc_test_'
         self.assertFalse(state['demo'])
         self.assertEqual(set(state['users']), {'local_admin', 'planner', 'manager'})
         self.assertEqual(state['users']['manager']['groups'], [1, 4])
+
+    def staged_files(self, database='cc_dev_coffee'):
+        """The temporary logins files left next to the env file."""
+        return sorted(self.logins_file(database).parent.glob(f'.{database}.logins.*'))
+
+    def assert_kept(self, path, logins=('local_admin', 'planner', 'manager'), database='cc_dev_coffee'):
+        """A staged logins file that holds the generated passwords of logins (0600)."""
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        lines = path.read_text().splitlines()
+        self.assertEqual(lines[0], f'# Written by oasis init-dev-database: the generated passwords of {database} '
+                                   '(docs/dev-database.md).')
+        self.assertEqual([line.split(' ')[0] for line in lines[2:]], list(logins))
+
+    def test_a_missing_logins_directory_stops_before_any_service_or_prompt(self):
+        self.profile.write_text(self.profile.read_text().replace("env_file = 'dev/.env'", "env_file = 'gone/.env'"))
+        result = self.invoke('coffee', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+            f'ERROR: {self.root / "gone"} does not exist: run odoo19 setup --apply; no database was created.\n')))
+        self.assertFalse(self.state.exists())
+        self.assertFalse(self.commands.exists())
+
+    @unittest.skipIf(os.geteuid() == 0, 'root writes into a read-only directory')
+    def test_generated_passwords_that_cannot_be_staged_create_no_database(self):
+        directory = self.logins_file().parent
+        directory.chmod(0o555)
+        self.addCleanup(directory.chmod, 0o755)
+        result = self.invoke('coffee', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+            f'ERROR: Cannot write the generated passwords next to {self.logins_file()}; no database was created.\n')))
+        self.assertFalse(self.state.exists())
+        self.assertEqual(self.staged_files(), [])
+
+    def test_a_staged_file_that_cannot_be_written_is_removed(self):
+        spec = importlib.util.spec_from_file_location('oasis_test_dev_users', ROOT / 'tools/dev_users.py')
+        module = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(ROOT / 'tools'))
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            sys.path.remove(str(ROOT / 'tools'))
+        target = self.logins_file()
+        for name in ('fchmod', 'write'):
+            with self.subTest(failing=name):
+                if name == 'fchmod':
+                    patch = mock.patch.object(module.os, 'fchmod', side_effect=OSError('no'))
+                else:
+                    patch = mock.patch.object(module.os, 'fdopen', FailingWrite)
+                with patch, self.assertRaises(OSError):
+                    module.staged(target, 'cc_dev_coffee', [('local_admin', 'x')])
+                self.assertEqual(self.staged_files(), [])
+                self.assertFalse(target.exists())
+
+    def test_a_runner_failure_it_does_not_report_keeps_the_staged_passwords(self):
+        # Exit 1 is any uncaught error of the interpreter, with or without a traceback: never the runner's answer.
+        for variable, value, code in (('FAKE_RUNNER_EXIT', '9', 9), ('FAKE_RUNNER_EXIT', '2', 2),
+                                      ('FAKE_RUNNER_EXIT', '1', 1), ('FAKE_RUNNER_RAISE', '1', 1)):
+            with self.subTest(variable=variable, value=value):
+                for path in self.staged_files():
+                    path.unlink()
+                result = subprocess.run(self.command('coffee', 'cc_dev_coffee'), input='', text=True,
+                                        capture_output=True, env={**self.env, variable: value}, timeout=10)
+                [pending] = self.staged_files()
+                self.assertEqual((result.returncode, result.stderr), (1, (
+                    f'ERROR: Development setup stopped unexpectedly (exit {code}); cc_dev_coffee may exist: '
+                    'odoo19 list-databases shows it.\n')))
+                self.assertEqual(result.stdout, (
+                    f'Generated passwords: {pending} (mode 0600; rename it to {self.logins_file()} if cc_dev_coffee '
+                    'exists): local_admin, planner, manager\n'))
+                self.assert_kept(pending)
+                self.assertFalse(self.logins_file().exists())
+                self.assertFalse(self.state.exists())
+
+    def test_a_database_the_runner_created_before_a_later_step_failed_keeps_its_passwords(self):
+        # Exit 4: the runner created the database, then a later step failed (dev_users_runtime.py).
+        result = subprocess.run(self.command('coffee', 'cc_dev_coffee'), input='', text=True, capture_output=True,
+                                env={**self.env, 'FAKE_RUNNER_EXIT': '4'}, timeout=10)
+        self.assertEqual((result.returncode, result.stderr),
+                         (1, 'ERROR: Development setup failed; the new database was retained.\n'))
+        self.assertEqual(result.stdout, f'Generated passwords: {self.logins_file()} (mode 0600): local_admin, planner, '
+                                        'manager\n')
+        self.assertEqual(self.staged_files(), [])
+        self.assert_kept(self.logins_file())
+
+    def test_an_interrupt_after_the_runner_started_keeps_the_staged_passwords(self):
+        marker = self.root / 'runner.pid'
+        process = subprocess.Popen(self.command('coffee', 'cc_dev_coffee'), stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                   env={**self.env, 'FAKE_RUNNER_SLEEP': str(marker)},
+                                   preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+        try:
+            deadline = time.monotonic() + 15
+            while not (marker.exists() and marker.read_text()):
+                self.assertLess(time.monotonic(), deadline, 'the runner did not start')
+                time.sleep(0.05)
+            # The runner's parent is init-dev-database's Python (the entry point and bash exec into it).
+            self.assertEqual(int(marker.read_text()), process.pid)
+            os.kill(process.pid, signal.SIGINT)
+            stdout, stderr = process.communicate(timeout=15)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+        [pending] = self.staged_files()
+        self.assertEqual((process.returncode, stderr), (130, (
+            'ERROR: Interrupted while creating cc_dev_coffee; it may exist: odoo19 list-databases shows it.\n')))
+        self.assertEqual(stdout, (
+            f'Generated passwords: {pending} (mode 0600; rename it to {self.logins_file()} if cc_dev_coffee exists): '
+            'local_admin, planner, manager\n'))
+        self.assert_kept(pending)
+        self.assertFalse(self.logins_file().exists())
+
+    def test_a_logins_file_that_cannot_be_renamed_into_place_is_kept_and_named(self):
+        self.logins_file().mkdir()
+        result = self.invoke('coffee', 'cc_dev_coffee')
+        [pending] = self.staged_files()
+        self.assertEqual((result.returncode, result.stderr), (1, (
+            f'ERROR: Cannot rename {pending} to {self.logins_file()}; the generated passwords stay in {pending}.\n')))
+        self.assertEqual(result.stdout, (
+            'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
+            f'Generated passwords: {pending} (mode 0600; it could not be renamed to {self.logins_file()}): '
+            'local_admin, planner, manager\n'))
+        self.assertNotIn('Traceback', result.stderr)
+        self.assert_kept(pending)
+        self.assertEqual(set(json.loads(self.state.read_text())['users']), {'local_admin', 'planner', 'manager'})
+
+    def test_a_typed_password_that_does_not_match_its_confirmation_creates_nothing(self):
+        master, slave = pty.openpty()
+        process = subprocess.Popen(self.command('coffee', 'cc_dev_coffee'), stdin=slave, stdout=slave,
+                                   stderr=slave, env=self.env, start_new_session=True)
+        os.close(slave)
+        output, replies = b'', [(b'Password for local_admin: ', b'first-typed\n'),
+                                (b'Confirm password for local_admin: ', b'second-typed\n')]
+        try:
+            while True:
+                if not select.select([master], [], [], 15)[0]:
+                    self.fail('Terminal command did not finish or prompt within 15 seconds.')
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                output += chunk
+                if replies and replies[0][0] in output:
+                    output = output.replace(replies[0][0], b'<' + replies[0][0].strip() + b'>', 1)
+                    os.write(master, replies.pop(0)[1])
+            code = process.wait(timeout=5)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
+        text = output.decode().replace('\r\n', '\n')
+        self.assertEqual(code, 2, text)
+        self.assertTrue(text.endswith('ERROR: Passwords must match; no database was created.\n'), text)
+        self.assertNotIn('typed', text)
+        self.assertFalse(self.state.exists())
+        self.assertFalse(self.commands.exists())
+        self.assertFalse(self.logins_file().exists())
+        self.assertEqual(self.staged_files(), [])
+
+    # The runner runs with the environment's Python (3.7+ for Odoo 15), not the host's: it imports nothing that
+    # needs 3.11 (tomllib, through config.py).
+    PRELUDE = ('import os, runpy, sys\n'
+               "sys.modules['tomllib'] = None\n"
+               'sys.argv = sys.argv[1:]\n'
+               'sys.path[0] = os.path.dirname(sys.argv[0])\n'
+               "runpy.run_path(sys.argv[0], run_name='__main__')\n")
+
+    def assert_initialized_with(self, **variables):
+        result = subprocess.run(self.command('coffee', 'cc_dev_coffee'), input='', text=True,
+                                capture_output=True, env={**self.env, **variables}, timeout=30)
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout, 'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
+                                        f'Generated passwords: {self.logins_file()} (mode 0600): local_admin, '
+                                        'planner, manager\n')
+        state = json.loads(self.state.read_text())
+        self.assertEqual(set(state['users']), {'local_admin', 'planner', 'manager'})
+        self.assertEqual(state['users']['planner']['groups'], [1, 3])
+        conf = str(self.root / 'dev/odoo.conf')
+        self.assertEqual(json.loads(Path(str(self.state) + '.config').read_text()),
+                         ['-c', conf, '--no-http', '--without-demo', '--log-level=critical'])
+        self.assertEqual(state['installs'], [[str(self.source / 'odoo-bin'), '-c', conf, '-d', 'cc_dev_coffee',
+                                              '-i', 'coffee', '--without-demo', '--stop-after-init', '--no-http',
+                                              '--log-level=critical']])
+
+    def test_the_runner_works_without_tomllib(self):
+        prelude = self.root / 'no_tomllib.py'
+        prelude.write_text(self.PRELUDE)
+        self.assert_initialized_with(FAKE_RUNNER_PYTHON=sys.executable, FAKE_RUNNER_PRELUDE=str(prelude))
+
+    def test_the_runner_works_with_an_odoo_15_python(self):
+        uv = shutil.which('uv')
+        found = []
+        for version in ('3.8', '3.9'):
+            if uv:
+                result = subprocess.run([uv, 'python', 'find', '--no-project', version], capture_output=True,
+                                        text=True, cwd=self.root, timeout=60)
+                if result.returncode == 0 and result.stdout.strip():
+                    found.append((version, result.stdout.strip()))
+        if not found:
+            self.skipTest('no Python 3.8 or 3.9 found by uv python find')
+        for version, python in found:
+            with self.subTest(version=version):
+                self.state.unlink(missing_ok=True)
+                self.logins_file().unlink(missing_ok=True)
+                self.assert_initialized_with(FAKE_RUNNER_PYTHON=python)
+
+    def run_runner(self, declaration, payload_changes=None):
+        """tools/dev_users_runtime.py itself, on the fake Odoo pieces, with the payload dev_users.py sends."""
+        conf = str(self.root / 'dev/odoo.conf')
+        payload = {'declaration': declaration, 'passwords': ['admin-secret', 'planner-secret'], 'with_demo': False,
+                   'runtime': {'python': str(self.python), 'odoo_bin': str(self.source / 'odoo-bin'),
+                               'odoo_source': str(self.source), 'demo_flags': ['--without-demo'],
+                               'groups_field': 'group_ids', 'config_args': ['-c', conf]}}
+        payload.update(payload_changes or {})
+        return subprocess.run([sys.executable, '-B', str(ROOT / 'tools/dev_users_runtime.py'), str(self.root),
+                               'coffee', 'cc_dev_coffee'], input=json.dumps(payload), text=True,
+                              capture_output=True, env=self.env, timeout=30)
+
+    def test_the_runner_exits_4_once_the_database_exists_and_3_before(self):
+        account = {'login': 'planner', 'name': 'Local Planner', 'groups': ['example.group_planner']}
+        declaration = {'administrator_login': 'local_admin', 'users': [account]}
+        result = self.run_runner(declaration)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(set(json.loads(self.state.read_text())['users']), {'local_admin', 'planner'})
+        # Before the database exists: an existing one is refused, an unusable payload stops (3, never details).
+        before = self.state.read_bytes()
+        for changes in ({}, {'runtime': {}}, {'passwords': []}):
+            with self.subTest(before=changes):
+                result = self.run_runner(declaration, changes)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (3, '', ''))
+                self.assertEqual(self.state.read_bytes(), before)
+        # After: a missing role, an account the database already has.
+        for name, account in (('missing role', {**account, 'groups': ['example.missing']}),
+                              ('existing account', {**account, 'login': 'local_admin'})):
+            with self.subTest(after=name):
+                self.state.unlink()
+                result = self.run_runner({'administrator_login': 'local_admin', 'users': [account]})
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (4, '', ''))
+                self.assertEqual(set(json.loads(self.state.read_text())['users']), {'local_admin'})
 
     def test_missing_group_retains_new_database_without_partial_role_accounts(self):
         self.profile.write_text(self.profile.read_text().replace('example.group_manager', 'example.missing'))

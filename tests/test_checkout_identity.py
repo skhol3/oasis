@@ -23,6 +23,8 @@ APPENDED = ['ODOO_VERSION=19.0', 'ODOO_SECOND_PORT_OPTION=--gevent-port', 'ODOO_
             "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12', "DATA_DIR=''", 'AGENT_DESTRUCTIVE=ask']
 GIT = ['git', '-c', 'user.name=oasis tests', '-c', 'user.email=tests@example.invalid',
        '-c', 'init.defaultBranch=main', '-c', 'commit.gpgsign=false']
+# The rule the slug errors name (v0.16.0 S4: the 20-character limit).
+SLUG_RULE = '1 to 20 lowercase letters, digits or underscores, starting with a letter or digit'
 
 
 @unittest.skipUnless(shutil.which('git'), 'git is required')
@@ -158,7 +160,8 @@ class CheckoutIdentityTests(unittest.TestCase):
         for value in ("''", "'07.1'", "'Upper'", "'_lead'", "'a" + 'b' * 20 + "'", '7'):
             with self.subTest(value=value):
                 self.slug(main, f'checkout_slug = {value}\n')
-                self.assert_rejected(main, 'Invalid tooling checkout slug.')
+                self.assert_rejected(main, f'Invalid [tooling].checkout_slug in {main / "oasis-checkout.toml"}: use '
+                                           f'{SLUG_RULE}.')
 
     def test_twenty_byte_checkout_file_slug_is_accepted(self):
         main = self.repository()
@@ -167,13 +170,15 @@ class CheckoutIdentityTests(unittest.TestCase):
 
     def test_too_long_derived_slug_requires_the_checkout_setting(self):
         linked = self.worktree(self.repository('proj'), 'proj-' + 'x' * 21)
-        self.assert_rejected(linked, 'Cannot derive a checkout slug from the worktree directory name; '
-                                     'set [tooling].checkout_slug.')
+        self.assert_rejected(linked, f'Cannot derive a checkout slug from the worktree directory name {linked.name}: it '
+                                     f'gives {"x" * 21} (21 characters), and a slug is {SLUG_RULE}; set '
+                                     f'[tooling].checkout_slug in {linked / "oasis-checkout.toml"}.')
 
     def test_empty_derived_slug_requires_the_checkout_setting(self):
         linked = self.worktree(self.repository('proj'), 'proj--')
-        self.assert_rejected(linked, 'Cannot derive a checkout slug from the worktree directory name; '
-                                     'set [tooling].checkout_slug.')
+        self.assert_rejected(linked, f'Cannot derive a checkout slug from the worktree directory name {linked.name}: it '
+                                     f'gives nothing, and a slug is {SLUG_RULE}; set [tooling].checkout_slug in '
+                                     f'{linked / "oasis-checkout.toml"}.')
 
     def test_project_outside_git_reports_none(self):
         root = self.project()

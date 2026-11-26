@@ -6,7 +6,8 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
-  configHome, gentleShellHost, installOverlay, NOT_GENTLE_SHELL, overlayReminder, overlayState, overlayTarget, runSetup,
+  configHome, formatSetupReport, gentleShellHost, installOverlay, NOT_GENTLE_SHELL, overlayReminder, overlayState,
+  overlayTarget, runSetup, setupCommand,
 } from "../lib/setup.ts";
 
 const TEMPLATE_BODY = '{\n  "gentle-ai-worker": { "add": ["odoo19_test_module"] }\n}\n';
@@ -129,20 +130,28 @@ test("installOverlay refuses a directory target", () => {
 // PI_PROGRAM_STATUS_APP=gentle-shell; an absolute GENTLE_PI_CONFIG_HOME names its config home.
 const GENTLE_SHELL = { PI_PROGRAM_STATUS_APP: "gentle-shell" };
 
-function fakeUi(answers: boolean[] = []) {
-  const notices: { message: string; level: string | undefined }[] = [];
-  const confirms: string[] = [];
+type Call = string[];
+type Result = { code: number; stdout: string; stderr: string };
+
+// The CLI double: `status --json` and `setup --plan --json` answer with these results; any other command fails
+// the test (/oasis setup never applies setup).
+function fakeRun(status: Result, plan: Result) {
+  const calls: Call[] = [];
   return {
-    notices, confirms,
-    ui: {
-      notify: (message: string, level?: "info" | "warning" | "error") => notices.push({ message, level }),
-      confirm: async (_title: string, message: string) => {
-        confirms.push(message);
-        assert.ok(answers.length > 0, `unexpected confirm: ${message}`);
-        return answers.shift() as boolean;
-      },
+    calls,
+    run: async (args: string[]) => {
+      calls.push(args);
+      if (args.join(" ") === "status --json") return status;
+      if (args.join(" ") === "setup --plan --json") return plan;
+      throw new Error(`unexpected command: ${args.join(" ")}`);
     },
   };
+}
+
+function fakeUi() {
+  const notices: { message: string; level: string | undefined }[] = [];
+  const shown: string[] = [];
+  return { notices, shown, ui: { notify: (message: string, level?: "info" | "warning" | "error") => notices.push({ message, level }) } };
 }
 
 function tree(dir: string): string[] {
@@ -159,62 +168,193 @@ test("gentleShellHost: the launcher marker or an absolute GENTLE_PI_CONFIG_HOME"
   assert.equal(gentleShellHost({ GENTLE_SHELL_CONFIG_HOME: "/x/cfg" }), false);
 });
 
-test("runSetup outside Gentle Shell says the overlay is Gentle Shell only and writes nothing", async () => {
-  const dir = scratch();
-  try {
-    const template = join(dir, "template.json");
-    writeFileSync(template, TEMPLATE_BODY);
-    const home = join(dir, "home");
-    mkdirSync(home);
-    // Even a leftover ~/.gentle-shell/gentle-ai does not make a vanilla Pi session Gentle Shell.
-    mkdirSync(join(home, ".gentle-shell", "gentle-ai"), { recursive: true });
-    const before = tree(dir);
-    const run = fakeUi();
-    await runSetup({ env: {}, homedir: home, template, ui: run.ui });
-    assert.deepEqual(run.notices, [{ message: NOT_GENTLE_SHELL, level: "info" }]);
-    assert.equal(NOT_GENTLE_SHELL,
-      "oasis setup: the subagent overlay applies only to Gentle Shell, and this session is not running in it; nothing written.");
-    assert.deepEqual(run.confirms, []);
-    assert.deepEqual(tree(dir), before);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+const CHECKOUT = "/work/shop/code/shop";
+const STATUS = {
+  project: CHECKOUT, ready: ["workspace", "environment"], missing: ["locks", "database_service", "databases", "server"],
+  checks: {
+    workspace: { ready: true, detail: "/work/shop/oasis-workspace.toml" },
+    environment: { ready: true, detail: "/work/shop/.oasis/venv" },
+    locks: { ready: false, detail: "stale" },
+    database_service: { ready: false, detail: "stopped" },
+    databases: { ready: false, detail: "unknown while the database service is stopped" },
+    server: { ready: false, detail: "stopped" },
+  },
+  next: `oasis --project ${CHECKOUT} bootstrap --apply`,
+};
+const PLAN = {
+  format: "oasis-setup-plan", version: 1, checkout: CHECKOUT, complete: true, ready_to_apply: false,
+  inferred: {}, lines: [],
+  changes: [
+    { kind: "create", path: "/work/shop/config/odoo.conf", summary: "create /work/shop/config/odoo.conf (mode 0600)" },
+    { kind: "compile", path: "/work/shop/config/requirements", summary: "compile the locks (uv pip compile)" },
+  ],
+  questions: [
+    { id: "workspace", text: "Workspace directory", flag: "--workspace <dir>", recommended: "/work/shop", answer: null },
+    { id: "requirement:cv2", text: "Add cv2 to runtime.in?", flag: "--answer requirement:cv2=<add|skip>",
+      recommended: null, answer: null },
+  ],
+  open: ["workspace", "requirement:cv2"],
+};
+
+function json(value: unknown, code = 0): Result {
+  return { code, stdout: `${JSON.stringify(value)}\n`, stderr: "" };
+}
+
+test("formatSetupReport: the status checks, the plan's changes and open questions, nothing applied", () => {
+  assert.equal(formatSetupReport({ status: json(STATUS), plan: json(PLAN), overlay: "subagent overlay: x" }), [
+    `oasis setup: ${CHECKOUT}`,
+    "status (oasis status --json):",
+    "  ready: workspace, environment",
+    "  missing: locks (stale), database_service (stopped), databases (unknown while the database service is stopped), " +
+      "server (stopped)",
+    `  next: oasis --project ${CHECKOUT} bootstrap --apply`,
+    "setup plan (oasis setup --plan --json): 2 changes, 2 open questions",
+    "  - create /work/shop/config/odoo.conf (mode 0600)",
+    "  - compile the locks (uv pip compile)",
+    "  open question workspace: Workspace directory (--workspace <dir>; recommended: /work/shop)",
+    "  open question requirement:cv2: Add cv2 to runtime.in? (--answer requirement:cv2=<add|skip>; no recommended answer)",
+    "  nothing applied: answer the open questions, then run oasis --project /work/shop/code/shop setup --apply",
+    "subagent overlay: x",
+  ].join("\n"));
 });
 
-test("runSetup in Gentle Shell still asks, then creates the overlay under the config home", async () => {
+test("formatSetupReport: a plan ready to apply, nothing to set up, a refusal and unreadable output", () => {
+  const ready = { ...PLAN, ready_to_apply: true, questions: [], open: [] };
+  const done = { ...STATUS, ready: [...STATUS.ready, "locks"], missing: [], next: null,
+    checks: { ...STATUS.checks, databases: { ready: true, detail: ["shop_dev_manual"] } } };
+  const report = (status: Result, plan: Result) => formatSetupReport({ status, plan, overlay: "subagent overlay: x" });
+  assert.equal(report(json(done), json(ready)).split("\n").slice(1).join("\n"), [
+    "status (oasis status --json):",
+    "  ready: workspace, environment, locks",
+    "  missing: none",
+    "  next: none",
+    "setup plan (oasis setup --plan --json): 2 changes",
+    "  - create /work/shop/config/odoo.conf (mode 0600)",
+    "  - compile the locks (uv pip compile)",
+    `  nothing applied: oasis --project ${CHECKOUT} setup --apply applies it`,
+    "subagent overlay: x",
+  ].join("\n"));
+  const nothing = { ...ready, changes: [] };
+  assert.match(report(json(done), json(nothing)), /\nsetup plan \(oasis setup --plan --json\): nothing to set up\n/);
+  const refused = { code: 2, stdout: "", stderr: "ERROR: Refusing --workspace /x: it is not at or above the checkout.\n" };
+  const broken = { code: 0, stdout: "not json", stderr: "" };
+  assert.equal(report(broken, refused), [
+    "oasis setup: the current checkout",
+    "status (oasis status --json): unavailable (no JSON output)",
+    "setup plan (oasis setup --plan --json): ERROR: Refusing --workspace /x: it is not at or above the checkout.",
+    "subagent overlay: x",
+  ].join("\n"));
+  assert.match(report({ code: 2, stdout: "", stderr: "" }, json(ready)), /^status \(oasis status --json\): unavailable \(exit 2\)$/m);
+  assert.match(report(json(STATUS), json(ready)), new RegExp(`^oasis setup: ${CHECKOUT}$`, "m"));
+});
+
+test("formatSetupReport: the apply hint shell-quotes the checkout and is left out when none is known", () => {
+  const spaced = "/work/my shop/code/it's";
+  const quoted = "'/work/my shop/code/it'\"'\"'s'";
+  const report = (plan: unknown, status: Result) =>
+    formatSetupReport({ status, plan: json(plan), overlay: "subagent overlay: x" }).split("\n");
+  const ready = { ...PLAN, checkout: spaced, questions: [], open: [] };
+  assert.ok(report(ready, json(STATUS)).includes(`  nothing applied: oasis --project ${quoted} setup --apply applies it`));
+  assert.ok(report({ ...PLAN, checkout: spaced }, json(STATUS)).includes(
+    `  nothing applied: answer the open questions, then run oasis --project ${quoted} setup --apply`));
+  // No checkout in the plan or the status: no command to copy, only what was (not) done.
+  const unknown = { code: 2, stdout: "", stderr: "" };
+  const anonymous = report({ ...ready, checkout: "" }, unknown);
+  assert.equal(anonymous[0], "oasis setup: the current checkout");
+  assert.ok(anonymous.includes("  nothing applied"), anonymous.join("\n"));
+  assert.ok(!anonymous.some((line) => line.includes("--project")), anonymous.join("\n"));
+  const open = report({ ...PLAN, checkout: "" }, unknown);
+  assert.ok(open.includes("  nothing applied: answer the open questions"), open.join("\n"));
+  assert.ok(!open.some((line) => line.includes("--project")), open.join("\n"));
+});
+
+test("setupCommand: --project <root> in the root when the session knows it, else the working directory", () => {
+  const oasis = "/bundle/oasis";
+  assert.deepEqual(setupCommand(oasis, "/work/shop/code/shop", "/work/shop/code/shop/addons", ["status", "--json"]), {
+    command: "python3", args: ["-B", oasis, "--project", "/work/shop/code/shop", "status", "--json"],
+    cwd: "/work/shop/code/shop",
+  });
+  // A clone setup has not configured yet: no root, so the CLI finds the checkout of the working directory.
+  assert.deepEqual(setupCommand(oasis, null, "/work/new/code/new", ["setup", "--plan", "--json"]), {
+    command: "python3", args: ["-B", oasis, "setup", "--plan", "--json"], cwd: "/work/new/code/new",
+  });
+});
+
+test("runSetup shows the status and the plan, never applies setup, and installs the overlay in Gentle Shell", async () => {
   const dir = scratch();
   try {
     const template = join(dir, "template.json");
     writeFileSync(template, TEMPLATE_BODY);
     const home = join(dir, "home");
     const target = join(home, ".gentle-shell", "gentle-ai", "agent-overlays.d", "oasis.json");
-    const run = fakeUi([true]);
-    await runSetup({ env: GENTLE_SHELL, homedir: home, template, ui: run.ui });
-    assert.deepEqual(run.confirms, [`Create ${target} so gentle-ai-worker and gentle-ai-verify get the oasis tools?`]);
-    assert.deepEqual(run.notices, [{
-      message: `oasis setup: subagent overlay created at ${target}. Start a new session or /reload for subagents to use it.`,
-      level: "info",
-    }]);
+    const cli = fakeRun(json(STATUS), json(PLAN));
+    const session = fakeUi();
+    await runSetup({ env: GENTLE_SHELL, homedir: home, template, run: cli.run, show: (text) => session.shown.push(text),
+      ui: session.ui });
+    assert.deepEqual(cli.calls, [["status", "--json"], ["setup", "--plan", "--json"]]);
     assert.equal(readFileSync(target, "utf8"), TEMPLATE_BODY);
+    const installed = `subagent overlay: installed at ${target}; start a new session or /reload for subagents to use it.`;
+    assert.deepEqual(session.shown, [formatSetupReport({ status: json(STATUS), plan: json(PLAN), overlay: installed })]);
+    assert.deepEqual(session.notices, []);
+    // Again: already installed, nothing to do (the file is kept as it is).
     const again = fakeUi();
-    await runSetup({ env: GENTLE_SHELL, homedir: home, template, ui: again.ui });
-    assert.deepEqual(again.notices, [{ message: `oasis setup: subagent overlay is up to date (${target})`, level: "info" }]);
+    await runSetup({ env: GENTLE_SHELL, homedir: home, template, run: fakeRun(json(STATUS), json(PLAN)).run,
+      show: (text) => again.shown.push(text), ui: again.ui });
+    assert.ok(again.shown[0].endsWith(`\nsubagent overlay: already installed, nothing to do (${target}).`), again.shown[0]);
+    // An outdated overlay is updated.
+    writeFileSync(target, "{}");
+    const outdated = fakeUi();
+    await runSetup({ env: GENTLE_SHELL, homedir: home, template, run: fakeRun(json(STATUS), json(PLAN)).run,
+      show: (text) => outdated.shown.push(text), ui: outdated.ui });
+    assert.ok(outdated.shown[0].endsWith(
+      `\nsubagent overlay: updated at ${target}; start a new session or /reload for subagents to use it.`));
+    assert.equal(readFileSync(target, "utf8"), TEMPLATE_BODY);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("runSetup in Gentle Shell writes nothing when the user declines", async () => {
+test("runSetup outside Gentle Shell shows the status and the plan and writes no overlay", async () => {
   const dir = scratch();
   try {
     const template = join(dir, "template.json");
     writeFileSync(template, TEMPLATE_BODY);
+    const home = join(dir, "home");
+    // Even a leftover ~/.gentle-shell/gentle-ai does not make a vanilla Pi session Gentle Shell.
+    mkdirSync(join(home, ".gentle-shell", "gentle-ai"), { recursive: true });
     const before = tree(dir);
-    const run = fakeUi([false]);
-    await runSetup({ env: { GENTLE_PI_CONFIG_HOME: join(dir, "cfg") }, homedir: join(dir, "home"), template, ui: run.ui });
-    assert.equal(run.confirms.length, 1);
-    assert.deepEqual(run.notices, [{ message: "oasis setup: nothing changed.", level: "info" }]);
+    const cli = fakeRun(json(STATUS), json(PLAN));
+    const session = fakeUi();
+    await runSetup({ env: {}, homedir: home, template, run: cli.run, show: (text) => session.shown.push(text),
+      ui: session.ui });
+    assert.deepEqual(cli.calls, [["status", "--json"], ["setup", "--plan", "--json"]]);
+    assert.equal(NOT_GENTLE_SHELL,
+      "subagent overlay: it applies only to Gentle Shell, and this session is not running in it; nothing written.");
+    assert.deepEqual(session.shown, [formatSetupReport({ status: json(STATUS), plan: json(PLAN), overlay: NOT_GENTLE_SHELL })]);
     assert.deepEqual(tree(dir), before);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runSetup reports an overlay it cannot write and a CLI that cannot run", async () => {
+  const dir = scratch();
+  try {
+    const template = join(dir, "template.json");
+    writeFileSync(template, TEMPLATE_BODY);
+    const target = join(dir, "cfg", "agent-overlays.d", "oasis.json");
+    mkdirSync(target, { recursive: true });
+    const session = fakeUi();
+    const failing = async () => { throw new Error("spawn python3 ENOENT"); };
+    await runSetup({ env: { GENTLE_PI_CONFIG_HOME: join(dir, "cfg") }, homedir: join(dir, "home"), template,
+      run: failing, show: (text) => session.shown.push(text), ui: session.ui });
+    assert.deepEqual(session.shown, [[
+      "oasis setup: the current checkout",
+      "status (oasis status --json): unavailable (spawn python3 ENOENT)",
+      "setup plan (oasis setup --plan --json): unavailable (spawn python3 ENOENT)",
+      `subagent overlay: not installed (Refusing to write ${target}: it is a directory.)`,
+    ].join("\n")]);
+    assert.deepEqual(session.notices, []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

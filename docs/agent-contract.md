@@ -23,8 +23,8 @@ Changing a tier is a contract change: a decision, a note in the README and in th
 
 ## Tier B in the CLI: `--confirm <exact name>`
 
-`drop-database`, `gc --apply --trash`, `migrate --apply` and `worktree-init` run only with
-`--confirm` naming exactly what they change:
+`drop-database`, `gc --apply --trash`, `migrate --apply`, `worktree-init` and
+`recreate-database-volume` run only with `--confirm` naming exactly what they change:
 
 | Command | `--confirm` |
 | --- | --- |
@@ -32,6 +32,7 @@ Changing a tier is a contract change: a decision, a note in the README and in th
 | `gc --apply --trash [--older-than <days>]` | the project root (`--project`) |
 | `migrate [--workspace <dir>] --apply` | the workspace file the plan writes (`write <dir>/oasis-workspace.toml`) |
 | `worktree-init <feature> <branch> [--path <dir>]` | the worktree path the plan names (`worktree: <path>`) |
+| `recreate-database-volume` | the compose project (the top-level `name:` of the compose file, `compose_project=<name>` in the plan); see [The database account](setup.md#the-database-account) |
 
 Without it, or with another value, the command changes nothing, exits 2 and names the exact
 command to run, for example:
@@ -63,6 +64,7 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `restart` | A | restarts this checkout's Odoo server |  |
 | `stop` | A | stops this checkout's Odoo server; start runs it again |  |
 | `status` | A | reads and reports; changes nothing |  |
+| `start-database` | A | starts the database service every checkout shares, as every database command does; names no env file |  |
 | `stop --database` | B | stops the database service every checkout shares, ending the sessions of a server on it |  |
 | `install-module` | A | installs a module in a managed database |  |
 | `update-module` | A | updates a module in a managed database |  |
@@ -78,13 +80,15 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `xmlid-info` | A | reads source; changes nothing |  |
 | `audit-dependencies` | A | reads and reports; changes nothing |  |
 | `doctor` | A | reads and reports; changes nothing |  |
-| `check-environment` | A | reads and reports; changes nothing |  |
+| `doctor --environment` | A | checks the environment against its locks; reads and reports, changes nothing |  |
+| `check-environment` | A | deprecated alias of doctor --environment; reads and reports, changes nothing |  |
 | `policy` | A | prints this policy table; changes nothing |  |
 | `gc` | A | lists leftover disposable test databases; changes nothing |  |
 | `gc --apply` | A | drops disposable test databases no live run holds; rebuildable |  |
 | `gc --trash` | A | lists the expired trash entries; changes nothing |  |
 | `gc --apply --trash` | B | drops the expired trash entries for good | project root |
 | `drop-database` | B | takes a database (and its filestore) out of use; only trash restore brings it back | database name |
+| `recreate-database-volume` | B | runs docker compose down -v for the compose project (-p), which removes its containers and networks, every named volume of its compose file and every anonymous volume of its containers (every database of its PostgreSQL), then starts the service again | compose project |
 | `trash` | A | lists the trash; trash restore brings an entry back |  |
 | `migrate` | A | without --apply it prints the migration plan; changes nothing |  |
 | `migrate --plan` | A | prints the migration plan; changes nothing |  |

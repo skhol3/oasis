@@ -17,7 +17,7 @@ A checkout reads the nearest `oasis-workspace.toml` at or above it, else (linked
 
 - Treat `[odoo]`, `[environment]`, `[database]`, `[commands]` in `oasis-workspace.toml` as advisory. Only installed `~/.agents/skills/odoo19/tools` consume optional `[tooling]`; it is path/guard input, never access consent or automatic setup.
 - Use only an isolated project environment; never modify shared virtualenvs or global packages.
-- Do not read or log runtime configuration contents if they may contain secrets. Never place secrets in the template.
+- No oasis workflow requires reading, copying or typing a password. Never print, log or template secrets.
 - Paths outside the workspace require exact per-target human consent before access, even if declared in configuration.
 - Never execute shell text or infer a command from an untrusted path declaration.
 
@@ -36,7 +36,7 @@ Apply the full [operation selection rules](references/operation-selection.md).
 
 ## Execution Steps
 
-1. Read project instructions and the capability contract; identify authorized paths and wrappers or the explicit global entry point (`~/.agents/skills/odoo19/oasis --project /absolute/project check-environment --quick`). Run the read-only `doctor` command first. Do not assume a quick check is strictly read-only: a shimmed uv version probe can trigger mise installation.
+1. Read project instructions and the capability contract; identify authorized paths and wrappers or the explicit global entry point (`~/.agents/skills/odoo19/oasis --project /absolute/project doctor --environment --quick`; alias `check-environment`). Run the read-only `doctor` command first. Do not assume a quick check is strictly read-only: a shimmed uv version probe can trigger mise installation.
 2. Inspect permitted dependency declarations without printing credentials or runtime configuration.
 3. Run only authorized diagnostics; report drift, missing capabilities, and actions not taken.
 

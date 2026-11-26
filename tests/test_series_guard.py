@@ -81,15 +81,23 @@ class SeriesGuardTests(unittest.TestCase):
         return subprocess.run([sys.executable, '-B', str(CLI), '--project', str(self.root), *args],
                               capture_output=True, text=True, env=self.env, stdin=subprocess.DEVNULL)
 
-    def refusal(self, module, found, version, addons='addons'):
-        # A supported series (15.0) is told to add its section (v0.15.0 S3); another one is not supported.
+    def proposal(self, module):
+        """The oasis action the fix names first when setup proposes the exception (v0.16.0 S6): this checkout's
+        modules are Odoo 19.0 ones but this one, and the workspace file has no [series."19.0"] section."""
+        return (f'oasis --project {self.root} setup --answer series_exceptions=add --apply lists {module} in '
+                f'series_exceptions under [series."19.0"] in {self.root / "oasis-workspace.toml"} (setup proposes the '
+                'exception), or ')
+
+    def refusal(self, module, found, version, addons='addons', proposed=True):
+        # A supported series (15.0) is told to add its section (v0.15.0 S3); another one is not supported. Setup's
+        # own refusal, after series_exceptions=no, does not propose it again (proposed=False).
         workspace = self.root / 'oasis-workspace.toml'
         tail = (f'for Odoo {found} here, run oasis setup to add a [series."{found}"] section to {workspace}'
                 if found == '15.0' else f'oasis does not support Odoo {found} (supported: 19.0, 15.0)')
         return (f'The module {module} declares Odoo {found} (version {version} in '
                 f'{self.root / addons / module / "__manifest__.py"}), but {self.root} is configured for Odoo 19.0 by '
-                f'{workspace}: run oasis in a checkout of an Odoo 19.0 branch, or set the '
-                f'version of {module} to 19.0.x.y.z if it is an Odoo 19.0 module; {tail}.')
+                f'{workspace}: {self.proposal(module) if proposed else ""}run oasis in a checkout of an Odoo 19.0 '
+                f'branch, or set the version of {module} to 19.0.x.y.z if it is an Odoo 19.0 module; {tail}.')
 
     def test_a_module_of_another_series_is_refused_by_every_reader(self):
         self.assertEqual(self.reader().returncode, 0, self.reader().stderr)
@@ -141,10 +149,19 @@ class SeriesGuardTests(unittest.TestCase):
         doctor = self.oasis('doctor')
         self.assertEqual((doctor.returncode, doctor.stderr), (1, ''))
         self.assertIn('PASS configuration=workspace\n', doctor.stdout)
-        self.assertIn('FAIL module_series=15.0 module=old_sale expected=19.0\n  fix: run oasis in a checkout', doctor.stdout)
-        setup = self.oasis('setup')
+        self.assertIn('FAIL module_series=15.0 module=old_sale expected=19.0\n  fix: '
+                      f'{self.proposal("old_sale")}run oasis in a checkout', doctor.stdout)
+        # Setup asks to list it in series_exceptions (v0.16.0 S4); answered no, it refuses as the guard does, without
+        # proposing the answer just declined.
+        setup = self.oasis('setup', '--answer', 'series_exceptions=no')
         self.assertEqual((setup.returncode, setup.stdout, setup.stderr),
-                         (2, '', f'ERROR: {self.refusal("old_sale", "15.0", "15.0.1.0.0")}\n'))
+                         (2, '', f'ERROR: {self.refusal("old_sale", "15.0", "15.0.1.0.0", proposed=False)}\n'))
+        # The action the fix names is the one setup plans: it lists the module in series_exceptions.
+        (self.scratch / 'source/odoo/requirements.txt').write_text('')
+        planned = self.oasis('setup', '--answer', 'series_exceptions=add')
+        self.assertEqual((planned.returncode, planned.stderr), (0, ''), planned.stdout)
+        self.assertIn(f'add [series."19.0"] to {self.root / "oasis-workspace.toml"}:\n', planned.stdout)
+        self.assertIn("  series_exceptions = ['old_sale']\n", planned.stdout)
 
     def guard_config(self):
         spec = importlib.util.spec_from_file_location('oasis_series_guard_config', READER)
@@ -177,7 +194,8 @@ class SeriesGuardTests(unittest.TestCase):
             with self.assertRaises(config.InvalidConfig) as refused:
                 config.load(self.root)
             self.assertEqual(str(refused.exception), self.refusal('old_sale', '15.0', '15.0.1.0.0'))
-            self.assertEqual(parsed, [old.read_text()])
+            # Only that manifest is parsed (again by the check whether setup proposes the exception, v0.16.0 S6).
+            self.assertEqual(set(parsed), {old.read_text()})
             old.unlink()
             # A pattern that cannot tell (the key twice, here once in a comment; a value that is not one
             # plain string) falls back to literal_eval, which decides as before.
@@ -196,7 +214,7 @@ class SeriesGuardTests(unittest.TestCase):
                         with self.assertRaises(config.InvalidConfig) as refused:
                             config.load(self.root)
                         self.assertEqual(str(refused.exception), self.refusal(name, '15.0', refused_version))
-                    self.assertEqual(parsed, [text])
+                    self.assertEqual(set(parsed), {text})
                     path.unlink()
                     path.parent.rmdir()
         self.assertEqual(values['ODOO_VERSION'], '19.0')
@@ -223,7 +241,14 @@ class SeriesGuardTests(unittest.TestCase):
                          ('old_sale', '15.0', '15.0.1.0.0'))
         fix = ('run oasis in a checkout of an Odoo 19.0 branch, or set the version of old_sale to 19.0.x.y.z '
                'if it is an Odoo 19.0 module; for Odoo 15.0 here, run oasis setup to add a [series."15.0"] section to ')
-        self.assertEqual(config.series_fix(mismatch, '19.0', values), fix + str(self.root / 'oasis-workspace.toml'))
+        self.assertEqual(config.series_fix(mismatch, '19.0', values),
+                         self.proposal('old_sale') + fix + str(self.root / 'oasis-workspace.toml'))
+        # Where setup would not propose it, it is not named: with only Odoo 15.0 modules setup adds a [series."15.0"]
+        # section instead (the alternative the fix ends with).
+        self.module('addons', 'shop_sale', '1.0')
+        values = config.load(self.root, series_guard=False)
+        self.assertTrue(config.series_fix(mismatch, '19.0', values).startswith('run oasis in a checkout'),
+                        config.series_fix(mismatch, '19.0', values))
         # Without the assignments (no workspace path known) the file is named by its name.
         self.assertEqual(config.series_fix(mismatch, '19.0'), fix + 'oasis-workspace.toml')
 

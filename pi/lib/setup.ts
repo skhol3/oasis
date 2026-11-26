@@ -1,9 +1,11 @@
-// `/oasis setup`: install the subagent overlay template into the Gentle AI config home.
-// Logic and filesystem only; the extension passes its environment and its UI dialogs.
+// `/oasis setup`: the workspace status and the plan of `oasis setup` for the checkout (never applied), and the
+// subagent overlay template installed into the Gentle AI config home. Logic and filesystem only; the extension
+// passes its environment, the CLI runner and its UI.
 import { isDeepStrictEqual } from "node:util";
 import { lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { shellJoin } from "./menu.ts";
 
 export type OverlayState = "missing" | "outdated" | "current";
 export type InstallState = "created" | "updated" | "unchanged";
@@ -30,53 +32,156 @@ export function gentleShellHost(env: Record<string, string | undefined>): boolea
 }
 
 export const NOT_GENTLE_SHELL =
-  "oasis setup: the subagent overlay applies only to Gentle Shell, and this session is not running in it; nothing written.";
+  "subagent overlay: it applies only to Gentle Shell, and this session is not running in it; nothing written.";
 
 type Notify = (message: string, level?: "info" | "warning" | "error") => void;
+export type CommandResult = { code: number; stdout: string; stderr: string };
+// What one CLI call gave: its result, or why it could not run.
+export type Outcome = CommandResult | { error: string };
 export type SetupInput = {
   env: Record<string, string | undefined>;
   homedir: string;
   template: string;
-  ui: { notify: Notify; confirm: (title: string, message: string) => Promise<boolean> };
+  // Runs `oasis <args>` for the session's checkout (the extension adds --project when it knows the root).
+  run: (args: string[]) => Promise<CommandResult>;
+  // Shows the report in the session.
+  show: (report: string) => void;
+  ui: { notify: Notify };
 };
 
-// User-run only (no tool registers it): outside Gentle Shell say so and write nothing; in it,
-// install or update the subagent overlay after confirmation.
-export async function runSetup({ env, homedir, template, ui }: SetupInput): Promise<void> {
+const STATUS_ARGS = ["status", "--json"];
+const PLAN_ARGS = ["setup", "--plan", "--json"];
+const RELOAD = "start a new session or /reload for subagents to use it.";
+
+async function attempt(call: () => Promise<CommandResult>): Promise<Outcome> {
   try {
-    if (!gentleShellHost(env)) {
-      ui.notify(NOT_GENTLE_SHELL, "info");
-      return;
-    }
-    const target = overlayTarget(configHome(env, homedir));
-    const state = overlayState(template, target);
-    if (state === "current") {
-      ui.notify(`oasis setup: subagent overlay is up to date (${target})`, "info");
-      return;
-    }
-    const verb = state === "missing" ? "Create" : "Update";
-    const question = `${verb} ${target} so gentle-ai-worker and gentle-ai-verify get the oasis tools?`;
-    if (!(await ui.confirm("oasis setup", question))) {
-      ui.notify("oasis setup: nothing changed.", "info");
-      return;
-    }
-    const result = installOverlay(template, target);
-    if (result.state === "unchanged") {
-      ui.notify(`oasis setup: subagent overlay is up to date (${target})`, "info");
-      return;
-    }
-    ui.notify(
-      `oasis setup: subagent overlay ${result.state} at ${target}. ` +
-        "Start a new session or /reload for subagents to use it.",
-      "info",
+    return await call();
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+// The overlay step of /oasis setup, done without asking (v0.16.0 L3: the overlay installs itself and says so):
+// outside Gentle Shell nothing is written; in it the template is installed when missing or outdated.
+export function overlayStep(env: Record<string, string | undefined>, homedir: string, template: string): string {
+  if (!gentleShellHost(env)) return NOT_GENTLE_SHELL;
+  const target = overlayTarget(configHome(env, homedir));
+  try {
+    const { state } = installOverlay(template, target);
+    if (state === "unchanged") return `subagent overlay: already installed, nothing to do (${target}).`;
+    return `subagent overlay: ${state === "created" ? "installed" : "updated"} at ${target}; ${RELOAD}`;
+  } catch (error) {
+    return `subagent overlay: not installed (${error instanceof Error ? error.message : String(error)})`;
+  }
+}
+
+type Parsed = { value: Record<string, unknown> } | { problem: string };
+
+// The JSON object a CLI call printed, or why there is none: the error, the command's stderr (exit != 0) or no JSON.
+function parsed(outcome: Outcome, refusal: boolean): Parsed {
+  if ("error" in outcome) return { problem: `unavailable (${outcome.error})` };
+  if (outcome.code !== 0) {
+    const message = outcome.stderr.trim();
+    if (!message) return { problem: `unavailable (exit ${outcome.code})` };
+    return { problem: refusal ? message.split("\n").join("\n  ") : `unavailable (${message.split("\n").pop()})` };
+  }
+  try {
+    const value = JSON.parse(outcome.stdout);
+    if (value && typeof value === "object" && !Array.isArray(value)) return { value };
+  } catch {
+    // Reported below.
+  }
+  return { problem: "unavailable (no JSON output)" };
+}
+
+function detail(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.length ? value.map(String).join(", ") : "none";
+  return JSON.stringify(value);
+}
+
+function counted(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+type Check = { ready?: unknown; detail?: unknown };
+type Question = { id?: unknown; text?: unknown; flag?: unknown; recommended?: unknown };
+
+// The /oasis setup report (v0.16.0 S4.10): the workspace status (`oasis status --json`), the plan of `oasis setup`
+// for the checkout (`oasis setup --plan --json`: its changes and open questions; nothing is applied) and what was
+// done with the subagent overlay.
+export function formatSetupReport({ status, plan, overlay }: { status: Outcome; plan: Outcome; overlay: string }):
+  string {
+  const state = parsed(status, false);
+  const planned = parsed(plan, true);
+  const checkout = ("value" in planned && typeof planned.value.checkout === "string" && planned.value.checkout)
+    || ("value" in state && typeof state.value.project === "string" && state.value.project) || "";
+  const lines = [`oasis setup: ${checkout || "the current checkout"}`];
+  if ("problem" in state) {
+    lines.push(`status (oasis status --json): ${state.problem}`);
+  } else {
+    const checks = (state.value.checks ?? {}) as Record<string, Check>;
+    const ready = Array.isArray(state.value.ready) ? state.value.ready.map(String) : [];
+    const missing = Array.isArray(state.value.missing) ? state.value.missing.map(String) : [];
+    lines.push(
+      "status (oasis status --json):",
+      `  ready: ${ready.length ? ready.join(", ") : "none"}`,
+      `  missing: ${missing.length ? missing.map((name) => `${name} (${detail(checks[name]?.detail)})`).join(", ") : "none"}`,
+      `  next: ${typeof state.value.next === "string" ? state.value.next : "none"}`,
     );
+  }
+  if ("problem" in planned) {
+    lines.push(`setup plan (oasis setup --plan --json): ${planned.problem}`);
+  } else {
+    const changes = Array.isArray(planned.value.changes) ? planned.value.changes as { summary?: unknown }[] : [];
+    const open = Array.isArray(planned.value.open) ? planned.value.open.map(String) : [];
+    const questions = Array.isArray(planned.value.questions) ? planned.value.questions as Question[] : [];
+    const parts = [...(changes.length ? [counted(changes.length, "change")] : []),
+      ...(open.length ? [counted(open.length, "open question")] : [])];
+    lines.push(`setup plan (oasis setup --plan --json): ${parts.length ? parts.join(", ") : "nothing to set up"}`);
+    for (const change of changes) lines.push(`  - ${detail(change.summary)}`);
+    for (const id of open) {
+      const question = questions.find((item) => item.id === id) ?? {};
+      const recommended = typeof question.recommended === "string"
+        ? `recommended: ${question.recommended}` : "no recommended answer";
+      lines.push(`  open question ${id}: ${detail(question.text ?? id)} (${detail(question.flag ?? "")}; ${recommended})`);
+    }
+    // The command to copy, shell-quoted like the CLI's (shellJoin); none without a known checkout.
+    const apply = checkout ? shellJoin(["oasis", "--project", checkout, "setup", "--apply"]) : "";
+    if (open.length) {
+      lines.push(`  nothing applied: answer the open questions${apply ? `, then run ${apply}` : ""}`);
+    } else if (changes.length) {
+      lines.push(`  nothing applied${apply ? `: ${apply} applies it` : ""}`);
+    }
+  }
+  lines.push(overlay);
+  return lines.join("\n");
+}
+
+// How /oasis setup runs `oasis <args>` (the extension's wiring): with `--project <root>` in the root when the session
+// found the checkout under a workspace file, else in the session's working directory, where the CLI finds the
+// checkout itself (a clone setup has not configured yet).
+export function setupCommand(oasis: string, root: string | null, cwd: string, args: string[]):
+  { command: "python3"; args: string[]; cwd: string } {
+  if (root) return { command: "python3", args: ["-B", oasis, "--project", root, ...args], cwd: root };
+  return { command: "python3", args: ["-B", oasis, ...args], cwd };
+}
+
+// User-run only (no tool registers it): shows the workspace status and the plan of `oasis setup` for the
+// checkout, never applies setup, and installs the subagent overlay in Gentle Shell (overlayStep).
+export async function runSetup({ env, homedir, template, run, show, ui }: SetupInput): Promise<void> {
+  try {
+    const status = await attempt(() => run(STATUS_ARGS));
+    const plan = await attempt(() => run(PLAN_ARGS));
+    show(formatSetupReport({ status, plan, overlay: overlayStep(env, homedir, template) }));
   } catch (error) {
     ui.notify(`oasis setup failed: ${error instanceof Error ? error.message : String(error)}`, "error");
   }
 }
 
 // The session-start reminder, or null: none outside Gentle Shell, where /oasis setup writes nothing.
-export function overlayReminder({ env, homedir, template }: Omit<SetupInput, "ui">): string | null {
+export function overlayReminder({ env, homedir, template }: Pick<SetupInput, "env" | "homedir" | "template">):
+  string | null {
   if (!gentleShellHost(env)) return null;
   const state = overlayState(template, overlayTarget(configHome(env, homedir)));
   if (state === "current") return null;

@@ -19,7 +19,7 @@ import {
 } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
 import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
-import { overlayReminder, runSetup, type SetupInput } from "../lib/setup.ts";
+import { overlayReminder, runSetup, setupCommand, type SetupInput } from "../lib/setup.ts";
 import { type Answers, menuShortcut, type PickerChoice, RunForm } from "../lib/menu.ts";
 import { actionPanel, type ExecPurpose } from "../lib/panel.ts";
 import { readTail } from "../lib/log-tail.ts";
@@ -153,9 +153,20 @@ export default function oasisLayer(pi: ExtensionAPI) {
     return status;
   }
 
-  // User-run only (no tool registers it); outside Gentle Shell it writes nothing (lib/setup.ts).
-  async function setup(ctx: { ui: SetupInput["ui"] }): Promise<void> {
-    await runSetup({ env: process.env, homedir: homedir(), template: OVERLAY_TEMPLATE, ui: ctx.ui });
+  // User-run only (no tool registers it): the workspace status and the `oasis setup` plan of the session's
+  // checkout (`--project <root>` under a workspace file, else the checkout of the working directory, as the CLI
+  // finds it), never applied; the subagent overlay is installed in Gentle Shell only (lib/setup.ts).
+  async function setup(ctx: { cwd: string; ui: SetupInput["ui"] }): Promise<void> {
+    const root = await projectRoot(ctx.cwd);
+    await runSetup({
+      env: process.env, homedir: homedir(), template: OVERLAY_TEMPLATE,
+      run: (args) => {
+        const call = setupCommand(OASIS, root, ctx.cwd, args);
+        return pi.exec(call.command, call.args, { cwd: call.cwd, timeout: DOCTOR_TIMEOUT_MS });
+      },
+      show: (content) => pi.sendMessage({ customType: "oasis-setup", content, display: true }),
+      ui: ctx.ui,
+    });
   }
 
   type FlowUi = { notify: (message: string, level?: "info" | "warning" | "error") => void;
@@ -665,7 +676,8 @@ export default function oasisLayer(pi: ExtensionAPI) {
       full: Type.Optional(Type.Boolean({ description: "Run full diagnostics", default: false })),
     }),
     async execute(_id, params, signal, _onUpdate, ctx) {
-      return plain(ctx.cwd, ["check-environment", params.full ? "--full" : "--quick"], signal);
+      // v0.16.0 S5: doctor --environment, which check-environment (a deprecated alias) runs with the same output.
+      return plain(ctx.cwd, ["doctor", "--environment", params.full ? "--full" : "--quick"], signal);
     },
   });
 

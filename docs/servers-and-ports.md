@@ -13,6 +13,7 @@ Each checkout controls only its own Odoo server; the PostgreSQL service is one a
 ## Database service
 
 - Every command that needs the database runs `compose up -d --wait <db_service>` under an exclusive `flock` of `compose-<16 hex of sha256(real path of the compose file)>.lock` (0600) in `${XDG_RUNTIME_DIR:-/tmp}/oasis-<uid>/`, so checkouts that share a compose file start the service one at a time instead of failing with Docker's container name conflict; a command that waits more than 120 s for that lock exits 1 with `Timed out waiting for another checkout to start the database service.`, and without `flock` on `PATH` it prints `WARNING: flock not found; starting the database service without the cross-checkout lock.` and runs `compose up` unlocked.
+- `start-database` (v0.16.0, Tier A in the [agent policy](agent-contract.md)) starts the service that way and nothing else, then prints one line: `database service <db_service> is running (<compose file>)`. No output of it names the environment file, so an agent harness that refuses a command naming one runs it: setup's next steps, `status --json` and doctor name it. When `compose up` fails, what docker compose printed goes to stderr with the environment file's path replaced by `[tooling].env_file`, then `ERROR: the database service <db_service> did not start (exit <n>); oasis --project <checkout> doctor checks its configuration.` (exit 1); a missing compose or environment file exits 1 naming `oasis --project <checkout> setup --apply`, which creates it (the environment file by its key, `[tooling].env_file`). It takes no arguments (exit 2 with its usage). `stop --database` stops the service again.
 
 ## Starting a server
 
@@ -39,5 +40,43 @@ Each checkout controls only its own Odoo server; the PostgreSQL service is one a
 - `stop --force` does the same, then also waits up to 20 s for the other processes of the server (the members of its session and of the process group it leads, and their descendants: of the current user, started after it, never the command's own process or its parents), and sends SIGKILL to every one still running: the server first and, once it has ended, the others, so a prefork master cannot replace a worker it sees die; then the processes of the server are scanned again and new ones killed until a scan finds none (at most 10 rounds). Once the server is gone its record is removed. It reports `Killed Odoo for this checkout after 20 s (SIGKILL to its session): pid <pid>, port <port>.` when the server itself had to be killed, `Stopped Odoo for this checkout: pid <pid>, port <port>; killed <n> process(es) of its session that outlived it.` when only processes it left were, and the plain `Stopped ...` line otherwise (exit 0). A server still running 5 s after SIGKILL exits 1 with `Odoo is still running after SIGKILL: pid <pid>, port <port>.` and keeps its record. When the server's `/proc/<pid>/stat` cannot be read, its other processes are unknown: only the server gets SIGKILL, with `Killed Odoo for this checkout after 20 s (SIGKILL; its other processes could not be read): pid <pid>, port <port>.`. `--force` and `--database` cannot be combined (usage `[--database | --force]`, exit 2).
 - `stop --database` stops the Compose database service (`compose stop <db_service>`) only when no other checkout has a live server; otherwise it exits 2 with `Refusing to stop the database: Odoo is running for other checkouts:` followed by one `  <checkout> (port <port>, pid <pid>)` line each.
 - `status` prints `server: running pid <pid> port <port>` or `server: stopped` for this checkout (`server: unknown (<reason>)` when the runtime state cannot be read, for example a symlinked state directory; the reason is the last line the read wrote to stderr). In a git checkout it then lists the live servers of every checkout of the repository (the worktrees `git worktree list` names, main and linked, and projects inside them), by path: `repository servers: <n>`, then one `  <checkout>: pid <pid>, port <port>[, database <database>][ (this checkout)]` line each, the database when the record names one (`repository servers: unknown (<reason>)` when they cannot be read: an unreadable runtime state, or git missing or failing, for example `unknown (git worktree list failed: <git's last error line>)`; never a count of 0). Only the list read from the helper's stdout is counted; its warnings go to stderr. A project outside git prints only its own line, as before. Then `compose ps`. Warnings of a successful read go to stderr unchanged and never into the server line. No temporary file is used, so a missing or non-writable `TMPDIR` does not stop it.
+
+### Status as JSON
+
+`oasis status --json` (v0.16.0) prints one JSON object on one line: what is ready, what is missing and the
+next command to run. It only reads (the configuration, the environment's `pyvenv.cfg`, the locks,
+`docker compose ps` of the database service, this checkout's databases while the service runs, and the
+server record); it never starts the service, and it also runs in a checkout without a workspace file.
+A step it cannot read (a configuration or lock file it may not open, a worktree whose slug cannot be read)
+is not ready with the `detail` `unknown (<reason>)`, and the output is still one JSON object (exit 0).
+`status` without `--json` is unchanged.
+
+```json
+{"project": "/w/shop", "ready": ["workspace", "environment", "locks"],
+ "missing": ["database_service", "databases", "server"],
+ "checks": {"workspace": {"ready": true, "detail": "/w/shop/oasis-workspace.toml"},
+            "environment": {"ready": true, "detail": "/w/shop/.oasis/venv"},
+            "locks": {"ready": true, "detail": "current"},
+            "database_service": {"ready": false, "detail": "stopped"},
+            "databases": {"ready": false, "detail": "unknown while the database service is stopped"},
+            "server": {"ready": false, "detail": "stopped"}},
+ "next": "oasis --project /w/shop start-database"}
+```
+
+| Check | Ready when | `next` when it is the first one missing |
+| --- | --- | --- |
+| `workspace` | the configuration loads (`detail`: the workspace file, or why not) | `setup --plan --json` without a workspace file, `doctor` when it does not load |
+| `environment` | the environment has a `pyvenv.cfg` and its Python | `bootstrap --apply` |
+| `locks` | `lock.sha256` matches (`detail`: `current`, `missing`, `stale`, `edited`, `unknown (<reason>)`) | `bootstrap --apply` (`doctor` for `edited` and `unknown`) |
+| `database_service` | `docker compose ps` shows it running, and healthy when it has a health check (`detail`: `running`, `starting`, `unhealthy`, `stopped`, `unknown (<reason>)`) | `start-database`, which starts it (and waits until it is healthy), for `stopped` and `starting`; `doctor` for `unhealthy` and `unknown` |
+| `databases` | a development database of this checkout exists (`detail`: this checkout's managed databases, or `unknown (<reason>)`) | `init-dev-database <module> <dev_prefix>manual` with `[development]`, else `install-module <module>` (the first module of the addon roots; `create-database <name>` without modules); `doctor` when they cannot be read |
+| `server` | this checkout's server runs (`detail`: `running pid <pid> port <port>`) | `start` |
+
+`next` is `null` when everything is ready, and a shell-quoted command line otherwise (Python's `shlex.join`:
+a checkout path with spaces or quotes is quoted). Every command is `oasis --project <checkout> ...` (`odoo19`
+through the alias). The database service gets `start-database` rather than `list-databases`: `list-databases`
+starts the service too, but the [agent policy](agent-contract.md) lists it as one that only reads and reports;
+and rather than the `docker compose ... up -d --wait` it runs, which names the environment file. With the
+`[development]` table setup writes in a new workspace, `databases` is followed by `init-dev-database`.
 
 Earlier behaviour of `stop` and of the test databases is recorded in the [changelog](../CHANGELOG.md) (0.3.0, 0.4.0 and 0.8.0, under Changed).

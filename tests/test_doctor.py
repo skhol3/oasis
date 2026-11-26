@@ -78,6 +78,11 @@ class DoctorTests(unittest.TestCase):
         executable(self.bindir / 'git', GIT)
         executable(self.bindir / 'flock', '#!/bin/sh\nexit 0\n')
         executable(self.bindir / 'python3', f'#!/bin/sh\nexec {sys.executable!r} "$@"\n')
+        # The connection probe (tools/db_account.py, v0.16.0 S2) answers FAKE_CONNECTION, by default a
+        # service that does not answer; it runs no docker.
+        self.python.write_text(self.python.read_text().replace(
+            '#!/bin/sh\n', '#!/bin/sh\ncase "$3" in */db_account.py) echo "${FAKE_CONNECTION:-not_running}"; '
+            'exit 0 ;; esac\n', 1))
         (self.bindir / 'dirname').symlink_to(shutil.which('dirname'))
         self.env['PATH'] = str(self.bindir)
         self.workspace = self.root / 'oasis-workspace.toml'
@@ -104,8 +109,12 @@ class DoctorTests(unittest.TestCase):
                  *self.origins().splitlines(), 'PASS git=2.47.1', 'PASS docker',
                  'PASS docker_compose=2.29.1', 'PASS flock', 'PASS proc', 'PASS python=3.12',
                  'PASS odoo_release=19.0', 'PASS odoo_conf', 'PASS compose', 'PASS env_file', 'PASS logs_dir',
-                 *extra, f'PASS http_port={self.port}']
+                 *extra, f'PASS http_port={self.port}', self.not_running()]
         replacements = {re.split(r'[ =]', line, maxsplit=2)[1]: line for line in changed}
+        # The connection check needs the checks it reads: python, odoo_conf and env_file.
+        if any(line.startswith('FAIL ') and name in ('python', 'odoo_conf', 'env_file')
+               for name, line in replacements.items()):
+            omit = (*omit, 'postgres_connection')
         report = []
         for line in lines:
             name = re.split(r'[ =]', line, maxsplit=2)[1]
@@ -116,6 +125,11 @@ class DoctorTests(unittest.TestCase):
                 report.append(after[name])
         failures = sum(line.startswith('FAIL ') for line in report)
         return '\n'.join(report) + f'\ndoctor_failures={failures}\n'
+
+    def not_running(self):
+        """The connection WARN when nothing answers, and its fix: start-database (v0.16.0 S6), naming no env file."""
+        start = shlex.join(['oasis', '--project', str(self.root), 'start-database'])
+        return f'WARN postgres_connection=not_running\n  fix: {start}'
 
     def assert_report(self, expected, docker_calls=1):
         """doctor prints exactly expected (exit 1 with a FAIL line, else 0) and changes nothing."""
@@ -155,7 +169,8 @@ class DoctorTests(unittest.TestCase):
                            'PASS git=2.47.1\n'
                            'PASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
                            'PASS python=3.12\nPASS odoo_release=19.0\nPASS odoo_conf\nPASS compose\n'
-                           f'PASS env_file\nPASS logs_dir\nPASS http_port={self.port}\ndoctor_failures=0\n')
+                           f'PASS env_file\nPASS logs_dir\nPASS http_port={self.port}\n'
+                           f'{self.not_running()}\ndoctor_failures=0\n')
         self.assertEqual(os.listdir(self.runtime.name), [])
 
     def test_workspace_checkout_passes_every_check(self):
@@ -167,7 +182,8 @@ class DoctorTests(unittest.TestCase):
                            'PASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
                            'PASS python=3.12\nPASS odoo_release=19.0\nPASS odoo_conf\nPASS compose\n'
                            'PASS env_file\nPASS logs_dir\nPASS data_dir\n'
-                           f'PASS http_port={self.port}\ndoctor_failures=0\n')
+                           f'PASS http_port={self.port}\n{self.not_running()}\n'
+                           'doctor_failures=0\n')
         self.assertEqual(os.listdir(self.runtime.name), [])
 
     def test_agent_destructive_setting_is_shown(self):
@@ -182,10 +198,11 @@ class DoctorTests(unittest.TestCase):
     def test_help_and_unknown_arguments(self):
         result = self.doctor('--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertTrue(result.stdout.startswith(f'Usage: {CLI} doctor\n'), result.stdout)
+        # v0.16.0 S5: the usage names --environment (tests/test_doctor_environment.py).
+        usage = f'Usage: {CLI} doctor [--environment [--quick|--full]]\n'
+        self.assertTrue(result.stdout.startswith(usage), result.stdout)
         result = self.doctor('--bogus')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'Usage: {CLI} doctor\n'))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', usage))
         self.assertFalse(self.commands.exists())
 
     # -- failures and warnings ------------------------------------------------------------------
@@ -427,19 +444,162 @@ class DoctorTests(unittest.TestCase):
         for text, empty in (
                 ('ODOO_DB_USER=\nODOO_DB_PASSWORD=""\n', 'ODOO_DB_USER,ODOO_DB_PASSWORD'),
                 (f"# account\nODOO_DB_USER={MARKER}\nODOO_DB_PASSWORD= # fill in\n", 'ODOO_DB_PASSWORD'),
+                (f"ODOO_DB_USER=\t# fill in\nODOO_DB_PASSWORD={MARKER}\n", 'ODOO_DB_USER'),
                 (f"export ODOO_DB_USER=''\nODOO_DB_PASSWORD={MARKER}\n", 'ODOO_DB_USER')):
             with self.subTest(text=text):
                 self.commands.unlink(missing_ok=True)
                 env_file.write_text(text)
-                names = ' and '.join(empty.split(','))
-                self.assert_report(self.expected(f'FAIL env_file=empty {empty}\n  fix: fill {names} in {env_file}'))
-        # Filled in (the last assignment wins), or not declared (another account naming): passes.
-        for text in (f'ODOO_DB_PASSWORD=\nODOO_DB_PASSWORD={MARKER}\nODOO_DB_USER={MARKER}\n',
-                     f'POSTGRES_PASSWORD={MARKER}\nOTHER=\n'):
+                # setup --apply generates what is empty (v0.16.0 S2), keeping every other byte.
+                self.assert_report(self.expected(f'FAIL env_file=empty {empty}\n  fix: oasis setup --apply'))
+        # Filled in (the last assignment wins): passes.
+        self.commands.unlink(missing_ok=True)
+        env_file.write_text(f'ODOO_DB_PASSWORD=\nODOO_DB_PASSWORD={MARKER}\nODOO_DB_USER={MARKER}\n')
+        self.assert_report(self.expected())
+        # `~` and `null` are values in an env file, as setup reads them too: passes.
+        for text in ('ODOO_DB_USER=~\nODOO_DB_PASSWORD=null\n', 'ODOO_DB_USER=null # mine\nODOO_DB_PASSWORD=~\n'):
             with self.subTest(text=text):
                 self.commands.unlink(missing_ok=True)
                 env_file.write_text(text)
                 self.assert_report(self.expected())
+        # Neither declared (another account's naming): respected, a WARN that says how to opt in.
+        for text in (f'POSTGRES_PASSWORD={MARKER}\nOTHER=\n', ''):
+            with self.subTest(text=text):
+                self.commands.unlink(missing_ok=True)
+                env_file.write_text(text)
+                self.assert_report(self.expected(self.unassigned()))
+
+    def unassigned(self):
+        env_file = self.root / 'dev/.env'
+        return ('WARN env_file=unassigned ODOO_DB_USER,ODOO_DB_PASSWORD\n'
+                f'  fix: setup leaves {env_file} unchanged (an existing file is respected); to use the account oasis '
+                'generates, add the empty lines ODOO_DB_USER= and ODOO_DB_PASSWORD= to it, then run oasis setup '
+                '--apply')
+
+    def test_an_env_file_value_oasis_cannot_read_fails_naming_only_the_variables(self):
+        env_file = self.root / 'dev/.env'
+        fix = (f'literally in single quotes: oasis does not read compose interpolation ($) or double-quoted escapes '
+               '(\\), so Odoo would get another credential')
+        for text, names in ((f'ODOO_DB_USER=oasis_cc\nODOO_DB_PASSWORD=${{SECRET}}{MARKER}\n', 'ODOO_DB_PASSWORD'),
+                            (f'ODOO_DB_USER="${{USER}}"\nODOO_DB_PASSWORD="{MARKER}\\n" # mine\n',
+                             'ODOO_DB_USER,ODOO_DB_PASSWORD')):
+            with self.subTest(text=text):
+                self.commands.unlink(missing_ok=True)
+                env_file.write_text(text)
+                self.assert_report(self.expected(f'FAIL env_file=unsupported_value {names}\n  fix: write '
+                                                 f'{" and ".join(names.split(","))} in {env_file} {fix}'))
+        # Literal values, single quotes included, pass; so does a value odoo.conf replaces (Odoo never reads it).
+        for text, conf in ((f"ODOO_DB_USER=oasis_cc\nODOO_DB_PASSWORD='{MARKER} $x \\n'\n", ''),
+                           (f'ODOO_DB_USER=${{USER}}\nODOO_DB_PASSWORD={MARKER}\n', 'db_user = mine\n')):
+            with self.subTest(text=text):
+                self.commands.unlink(missing_ok=True)
+                env_file.write_text(text)
+                self.conf.write_text(f'[options]\nhttp_port = {self.port}\n{conf}')
+                self.assert_report(self.expected())
+        self.commands.unlink(missing_ok=True)
+        env_file.write_text(f'ODOO_DB_USER=oasis_cc\nODOO_DB_PASSWORD=${{SECRET}}{MARKER}\n')
+        self.conf.write_text(f'[options]\nhttp_port = {self.port}\ndb_password = {MARKER}\n')
+        result = self.doctor()
+        self.assertIn('PASS env_file\n', result.stdout)
+
+    # -- a database account in odoo.conf (v0.16.0 S2: "Los respeta y ofrece migrar") ---------------
+
+    def test_an_odoo_conf_password_warns_naming_the_setup_move(self):
+        env_file = self.root / 'dev/.env'
+        moves = (f'WARN odoo_conf_password\n  fix: oasis setup --apply moves it to {env_file} and removes {{options}} '
+                 f'from {self.conf} ({{lines}} only)')
+        for options, text, warning in (
+                # The env file holds the same value (the fixture's).
+                (f'db_password = {MARKER}\n', None, moves.format(options='db_password', lines='that line')),
+                # The env file declares no account: respected, so nothing moves.
+                (f'db_user = mine\ndb_password = {MARKER}\n', '# nothing yet\n',
+                 f'WARN odoo_conf_password\n  fix: remove db_user and db_password from {self.conf} once the account '
+                 f'of {env_file} is the one PostgreSQL accepts (oasis doctor checks it); oasis setup --apply removes '
+                 'them itself when both files hold the same values'),
+                (f'db_user = mine\ndb_password = {MARKER}\n', 'ODOO_DB_USER=\nODOO_DB_PASSWORD=\n', None),
+                # Another account: setup keeps both files.
+                ('db_password = other\n', None,
+                 f'WARN odoo_conf_password\n  fix: remove db_password from {self.conf} once the account of {env_file} '
+                 f'is the one PostgreSQL accepts (oasis doctor checks it); oasis setup --apply removes it itself when '
+                 'both files hold the same values')):
+            with self.subTest(options=options, text=text):
+                self.commands.unlink(missing_ok=True)
+                env_file.write_text(text if text is not None else f'ODOO_DB_PASSWORD={MARKER}\n')
+                self.conf.write_text(f'[options]\nhttp_port = {self.port}\n{options}')
+                if warning is None:
+                    # Empty account values fail first; their fix (setup --apply) moves the password too.
+                    report = self.expected('FAIL env_file=empty ODOO_DB_USER,ODOO_DB_PASSWORD\n  fix: oasis setup --apply',
+                                           after={'odoo_conf': moves.format(options='db_user and db_password',
+                                                                            lines='those lines')})
+                elif text == '# nothing yet\n':
+                    report = self.expected(self.unassigned(), after={'odoo_conf': warning})
+                else:
+                    report = self.expected(after={'odoo_conf': warning})
+                self.assert_report(report)
+        # A db_user alone, or values Odoo reads as unset, hold no password: no line.
+        for options in ('db_user = mine\n', 'db_password = False\n', 'db_password =\n'):
+            with self.subTest(options=options):
+                self.commands.unlink(missing_ok=True)
+                env_file.write_text(f'ODOO_DB_PASSWORD={MARKER}\n')
+                self.conf.write_text(f'[options]\nhttp_port = {self.port}\n{options}')
+                self.assert_report(self.expected())
+
+    # -- the connection with Odoo's account (v0.16.0 S2) -----------------------------------------
+
+    def test_the_connection_with_odoos_account_is_reported_and_a_refused_one_names_its_fix(self):
+        # odoo.conf names the endpoint the compose service publishes.
+        (self.root / 'dev/compose.yml').write_text("name: cc-shop\nservices:\n  db:\n    image: postgres:17\n"
+                                                   "    ports:\n      - '127.0.0.1:6001:5432'\n")
+        self.conf.write_text(f'[options]\nhttp_port = {self.port}\ndb_host = 127.0.0.1\ndb_port = 6001\n')
+        for outcome, line in (('ready', 'PASS postgres_connection'),
+                              ('not_running', self.not_running()),
+                              ('no_driver', 'WARN postgres_connection=unchecked'),
+                              ('Traceback', 'WARN postgres_connection=unchecked')):
+            with self.subTest(outcome=outcome):
+                self.commands.unlink(missing_ok=True)
+                self.env['FAKE_CONNECTION'] = outcome
+                self.assert_report(self.expected(line))
+        # Refused: the volume was initialized with other credentials; the fix is the Tier B recreate.
+        self.commands.unlink(missing_ok=True)
+        self.env['FAKE_CONNECTION'] = 'authentication_failed'
+        recreate = shlex.join(['oasis', '--project', str(self.root), 'recreate-database-volume', '--confirm',
+                               'cc-shop'])
+        env_file = self.root / 'dev/.env'
+        self.assert_report(self.expected(
+            'FAIL postgres_connection=authentication_failed\n'
+            f'  fix: the PostgreSQL that {self.conf} names refuses the account Odoo uses: its volume was initialized '
+            f'with other credentials than {env_file}; {recreate} recreates it with them (Tier B: it deletes every '
+            'database of the service)'))
+        # Refused by another server than the compose service: correct the account there, no recreate.
+        compose = self.root / 'dev/compose.yml'
+        for options, where in (('db_host = db.example.invalid\ndb_port = 6001\n',
+                                'db_host db.example.invalid, db_port 6001'),
+                               ('db_host = 127.0.0.1\n', 'db_host 127.0.0.1, no db_port')):
+            with self.subTest(options=options):
+                self.commands.unlink()
+                self.conf.write_text(f'[options]\nhttp_port = {self.port}\n{options}')
+                self.assert_report(self.expected(
+                    'FAIL postgres_connection=authentication_failed\n'
+                    f'  fix: the PostgreSQL that {self.conf} names ({where}) refuses the account Odoo uses, and it is '
+                    f'not the service of {compose} (published on 127.0.0.1:6001): correct that account on that '
+                    f'server, or set db_host = 127.0.0.1 and the db_port {compose} publishes in {self.conf}; then run '
+                    'oasis doctor again'))
+        # Refused while odoo.conf sets its own account, other than the env file's: that is the fix.
+        self.commands.unlink()
+        self.conf.write_text(f'[options]\nhttp_port = {self.port}\ndb_host = 127.0.0.1\ndb_port = 6001\n'
+                             'db_password = other\n')
+        self.assert_report(self.expected(
+            'FAIL postgres_connection=authentication_failed\n'
+            f'  fix: {self.conf} sets db_password to other values than {env_file}: remove db_password from '
+            f'{self.conf} so Odoo uses the account of {env_file}, then run oasis doctor again',
+            after={'odoo_conf': f'WARN odoo_conf_password\n  fix: remove db_password from {self.conf} once the '
+                                f'account of {env_file} is the one PostgreSQL accepts (oasis doctor checks it); oasis '
+                                'setup --apply removes it itself when both files hold the same values'}))
+
+    def test_the_connection_is_left_out_when_a_check_it_needs_failed(self):
+        self.python.write_text(self.python.read_text().replace('echo 3.12', 'echo 3.11'))
+        result = self.doctor()
+        self.assertNotIn('postgres_connection', result.stdout)
+        self.assertIn('FAIL python=3.11 expected=3.12\n', result.stdout)
 
     @unittest.skipIf(os.getuid() == 0, 'root reads any file')
     def test_unreadable_env_file_fails(self):
@@ -467,6 +627,21 @@ class DoctorTests(unittest.TestCase):
                 manifest.write_text(f"{{'name': 'Coffee', 'version': '{version}'}}\n")
                 (self.root / 'tea/__manifest__.py').write_text(f"{{'name': 'Tea', 'version': '{version}'}}\n")
                 self.assert_report(self.expected())
+
+    def test_a_module_of_another_series_in_a_checkout_of_the_series_first_names_the_setup_exception(self):
+        # v0.16.0 S6: when setup would propose the exception (the checkout stays an Odoo 19.0 one and the workspace
+        # file has no [series."19.0"] section, which setup never edits), the fix names that oasis action first.
+        (self.root / 'coffee/__manifest__.py').write_text("{'name': 'Coffee', 'version': '19.0.1.0.0'}\n")
+        (self.root / 'tea').mkdir()
+        (self.root / 'tea/__manifest__.py').write_text("{'name': 'Tea', 'version': '15.0.1.0.0'}\n")
+        setup = shlex.join(['oasis', '--project', str(self.root), 'setup', '--answer', 'series_exceptions=add',
+                            '--apply'])
+        self.assert_report(self.expected(after={'odoo_release': (
+            'FAIL module_series=15.0 module=tea expected=19.0\n'
+            f'  fix: {setup} lists tea in series_exceptions under [series."19.0"] in {self.workspace} (setup proposes '
+            'the exception), or run oasis in a checkout of an Odoo 19.0 branch, or set the version of tea to '
+            '19.0.x.y.z if it is an Odoo 19.0 module; for Odoo 15.0 here, run oasis setup to add a [series."15.0"] '
+            f'section to {self.workspace}')}))
 
 
 class DoctorSurfaceTests(unittest.TestCase):

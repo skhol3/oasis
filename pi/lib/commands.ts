@@ -4,8 +4,9 @@
 export const SUBCOMMANDS = [
   {
     name: "setup", parameters: [],
-    description: "Install or update the subagent overlay",
-    summary: "`setup` installs the subagent overlay",
+    description: "Show the workspace status and the oasis setup plan (never applied); install the subagent overlay",
+    summary: "`setup` shows the workspace status and the `oasis setup` plan of the checkout (it never applies it) and " +
+      "installs the subagent overlay in Gentle Shell",
   },
   {
     name: "doctor", parameters: [],

@@ -261,7 +261,8 @@ class WorkspaceVersion2Tests(unittest.TestCase):
         result = self.reader('--origins', str(shop))
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertNotIn('ODOO_VERSION_FROM', result.stdout)
-        # A module of another series is refused with the version 1 refusal, as before (--origins has no guard).
+        # A module of another series is refused with the version 1 refusal, as before (--origins has no guard); the
+        # [series."19.0"] table, which setup would not add a second time, keeps the setup exception out of its fix.
         (shop / 'old').mkdir()
         (shop / 'old/__manifest__.py').write_text(manifest('15.0.1.0.0'))
         result = self.reader(str(shop))
@@ -288,13 +289,16 @@ class WorkspaceVersion2Tests(unittest.TestCase):
         # With its slug and environment keys next to it.
         (shop / 'oasis-checkout.toml').write_text("odoo_version = '15.0'\n[tooling]\ncheckout_slug = 'feat'\n")
         self.assertEqual(self.config.load(shop)['CHECKOUT_SLUG'], 'feat')
-        # The checkout's series is checked against its manifests like any other.
+        # The checkout's series is checked against its manifests like any other. Setup keeps the series the checkout
+        # file declares and proposes the exception (no [series."19.0"] section): the fix names it first (v0.16.0 S6).
         (shop / 'oasis-checkout.toml').write_text("odoo_version = '19.0'\n")
         (shop / 'cafe_sale').mkdir()
         (shop / 'cafe_sale/__manifest__.py').write_text(manifest('15.0.1.0.0'))
+        setup = (f'oasis --project {shop} setup --answer series_exceptions=add --apply lists cafe_sale in '
+                 f'series_exceptions under [series."19.0"] in {self.workspace} (setup proposes the exception), or ')
         self.assertEqual(self.refused(shop), (
             f'The module cafe_sale declares Odoo 15.0 (version 15.0.1.0.0 in {shop / "cafe_sale/__manifest__.py"}), '
-            f'but {shop} is configured for Odoo 19.0 by {self.workspace}: run oasis in a checkout of an Odoo 19.0 '
+            f'but {shop} is configured for Odoo 19.0 by {self.workspace}: {setup}run oasis in a checkout of an Odoo 19.0 '
             'branch, or set the version of cafe_sale to 19.0.x.y.z if it is an Odoo 19.0 module, or list cafe_sale '
             f'in series_exceptions under [series."19.0"] in {self.workspace}; for Odoo 15.0 here, set '
             f"odoo_version = '15.0' in {shop / 'oasis-checkout.toml'}."))
@@ -302,7 +306,7 @@ class WorkspaceVersion2Tests(unittest.TestCase):
         self.workspace.write_text(WITHOUT_15)
         self.assertEqual(self.refused(shop), (
             f'The module cafe_sale declares Odoo 15.0 (version 15.0.1.0.0 in {shop / "cafe_sale/__manifest__.py"}), '
-            f'but {shop} is configured for Odoo 19.0 by {self.workspace}: run oasis in a checkout of an Odoo 19.0 '
+            f'but {shop} is configured for Odoo 19.0 by {self.workspace}: {setup}run oasis in a checkout of an Odoo 19.0 '
             'branch, or set the version of cafe_sale to 19.0.x.y.z if it is an Odoo 19.0 module, or list cafe_sale '
             f'in series_exceptions under [series."19.0"] in {self.workspace}; for Odoo 15.0 here, run oasis setup to '
             f'add a [series."15.0"] section to {self.workspace}.'))

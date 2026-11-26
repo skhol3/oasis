@@ -47,6 +47,9 @@ OPERATIONS = (
     ('restart', 'A', 'oasis', "restarts this checkout's Odoo server", 'oasis --project /p restart'),
     ('stop', 'A', 'oasis', "stops this checkout's Odoo server; start runs it again", 'oasis --project /p stop'),
     ('status', 'A', 'oasis', 'reads and reports; changes nothing', 'oasis --project /p status'),
+    ('start-database', 'A', 'oasis',
+     'starts the database service every checkout shares, as every database command does; names no env file',
+     'oasis --project /p start-database'),
     ('stop --database', 'B', 'oasis',
      'stops the database service every checkout shares, ending the sessions of a server on it',
      'oasis --project /p stop --database'),
@@ -70,7 +73,9 @@ OPERATIONS = (
     ('audit-dependencies', 'A', 'oasis', 'reads and reports; changes nothing',
      'oasis --project /p audit-dependencies'),
     ('doctor', 'A', 'oasis', 'reads and reports; changes nothing', 'oasis --project /p doctor'),
-    ('check-environment', 'A', 'oasis', 'reads and reports; changes nothing',
+    ('doctor --environment', 'A', 'oasis', 'checks the environment against its locks; reads and reports, changes nothing',
+     'oasis --project /p doctor --environment --quick'),
+    ('check-environment', 'A', 'oasis', 'deprecated alias of doctor --environment; reads and reports, changes nothing',
      'oasis --project /p check-environment --quick'),
     ('policy', 'A', 'oasis', 'prints this policy table; changes nothing', 'oasis --project /p policy --json'),
     ('gc', 'A', 'oasis', 'lists leftover disposable test databases; changes nothing', 'oasis --project /p gc'),
@@ -82,6 +87,10 @@ OPERATIONS = (
      'oasis --project /p gc --apply --trash'),
     ('drop-database', 'B', 'oasis', 'takes a database (and its filestore) out of use; only trash restore brings it back',
      'oasis --project /p drop-database cc_dev_x'),
+    ('recreate-database-volume', 'B', 'oasis',
+     'runs docker compose down -v for the compose project (-p), which removes its containers and networks, '
+     'every named volume of its compose file and every anonymous volume of its containers (every database of its '
+     'PostgreSQL), then starts the service again', 'oasis --project /p recreate-database-volume'),
     ('trash', 'A', 'oasis', 'lists the trash; trash restore brings an entry back', 'oasis --project /p trash'),
     ('migrate', 'A', 'oasis', 'without --apply it prints the migration plan; changes nothing',
      'oasis --project /p migrate'),
@@ -109,10 +118,14 @@ OPERATIONS = (
     ('type a password', 'C', 'action', 'only when the person wants their own; no oasis workflow needs one', None),
 )
 KEYS = ('operation', 'tier', 'kind', 'reason', 'example')
+# Deprecated command names (v0.16.0 S5) and the operation each runs: the alias keeps a row of its own, with
+# the tier of its target (the entry point's DEPRECATED_ALIASES; tests/test_policy.py checks both).
+ALIASES = {'check-environment': 'doctor --environment'}
 # What `--confirm` takes for a Tier B oasis command (its refusal names the exact command); a Tier B
 # operation without one is confirmed only by a person or a harness dialog (stop --database).
 CONFIRM = {'drop-database': 'database name', 'gc --apply --trash': 'project root',
-           'migrate --apply': 'workspace file', 'worktree-init': 'worktree path'}
+           'migrate --apply': 'workspace file', 'worktree-init': 'worktree path',
+           'recreate-database-volume': 'compose project'}
 
 
 def operations() -> list[dict]:

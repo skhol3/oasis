@@ -253,7 +253,9 @@ class WorkspaceTests(unittest.TestCase):
         for value in ("''", "'Upper'", '7'):
             with self.subTest(value=value):
                 (main / 'oasis-checkout.toml').write_text(f'[tooling]\ncheckout_slug = {value}\n')
-                self.assert_rejected(main, 'Invalid tooling checkout slug.')
+                self.assert_rejected(main, f'Invalid [tooling].checkout_slug in {main / "oasis-checkout.toml"}: use 1 '
+                                           'to 20 lowercase letters, digits or underscores, starting with a letter or '
+                                           'digit.')
 
     def test_checkout_file_refuses_every_other_key(self):
         main = self.layout()
@@ -675,7 +677,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertIn('--python "$python"', guide)
         self.assertIn('--python-version "$python"', guide)
         # Checking the installed packages against the locks is --full; --quick skips it.
-        self.assertIn('check-environment --full', guide)
+        self.assertIn('doctor --environment --full', guide)
         # Each block that uses "$python" sets it first: a block pasted in a new shell works alone.
         blocks = re.findall(r'^ *```bash\n(.*?)^ *```$', guide, re.MULTILINE | re.DOTALL)
         using = [block for block in blocks if '"$python"' in block]
