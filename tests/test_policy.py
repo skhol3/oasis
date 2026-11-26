@@ -29,7 +29,7 @@ class PolicyTableTests(unittest.TestCase):
                           'test-module', 'verify-module', 'migrate --plan', 'worktree-init --dry-run'):
             self.assertEqual(table[operation], 'A', operation)
         for operation in ('worktree-init', 'migrate --apply', 'drop-database', 'gc --apply --trash',
-                          'create a branch'):
+                          'recreate-database-volume', 'create a branch'):
             self.assertEqual(table[operation], 'B', operation)
         self.assertEqual(table['type a password'], 'C')
 

@@ -74,8 +74,10 @@ data_dir = '{base}data'
 '''
 MACHINE_HEADER = ('# Written by oasis setup: the Odoo source of each series on this machine '
                   '(docs/workspace-file.md#machine-file).\n')
-ENV_FILE = ('# Written by oasis setup: fill in both values, the PostgreSQL account of the compose service. '
-            'Never commit this file.\nODOO_DB_USER=\nODOO_DB_PASSWORD=\n')
+# v0.16.0 S2: the account is generated (tests/test_credentials.py); the password is random.
+ENV_FILE = re.compile(r'# Written by oasis setup: the PostgreSQL account of the compose service and of Odoo '
+                      r'\(docs/setup\.md#the-database-account\)\.\n# No oasis command needs it read, copied or '
+                      r'typed\. Never commit this file\.\nODOO_DB_USER=oasis_shop\nODOO_DB_PASSWORD=[A-Za-z0-9_-]{32}\n')
 DRY_RUN = 'dry run: nothing changed; run with --apply to set up\n'
 NOT_TTY_SERIES = ('ERROR: Cannot infer the Odoo series of {root}: no module manifest declares one and the '
                   'machine file has no single series; pass --series <x.y> (supported: 19.0, 15.0).\n')
@@ -168,7 +170,7 @@ class SetupTests(unittest.TestCase):
             f'create {config / "odoo.conf"} (mode 0600): path-free; db_port {port}; db_user and db_password empty',
             f'create {config / "compose.yml"}: PostgreSQL 17 (postgres:17) as service db on 127.0.0.1:{port}, '
             f'compose project {self.compose_name(directory)}',
-            f'create {config / ".env"} (mode 0600): ODOO_DB_USER and ODOO_DB_PASSWORD, empty',
+            f'create {config / ".env"} (mode 0600): ODOO_DB_USER oasis_shop and a generated ODOO_DB_PASSWORD',
             f'create {config / "requirements/runtime.in"}: -r {self.source}/requirements.txt',
             f'create {config / "requirements/dev.in"}: -c runtime.txt, -r runtime.in',
             f'create {prefix / "logs"}/', f'create {prefix / "data"}/',
@@ -235,21 +237,19 @@ class SetupTests(unittest.TestCase):
                  f'compiled {requirements}/runtime.txt, dev.txt and lock.sha256\n'
                  f'created the environment {environment}\n'
                  'next steps:\n'
-                 f'  1. fill in ODOO_DB_USER and ODOO_DB_PASSWORD in {config / ".env"}, and the same values as '
-                 f'db_user and db_password in {config / "odoo.conf"}\n'
-                 f'  2. docker compose --env-file {config / ".env"} -f {config / "compose.yml"} up -d --wait\n'
-                 f'  3. oasis --project {self.checkout} doctor\n'
-                 f'  4. add a [development] table with administrator_login to {workspace} '
+                 f'  1. docker compose --env-file {config / ".env"} -f {config / "compose.yml"} up -d --wait\n'
+                 f'  2. oasis --project {self.checkout} doctor\n'
+                 f'  3. add a [development] table with administrator_login to {workspace} '
                  '(docs/dev-database.md)\n'
-                 f'  5. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n')
+                 f'  4. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, self.plan(port) + steps, ''))
         # S10: the source goes to the machine file (0600), not to the workspace file.
         self.assertEqual(self.machine.read_text(), MACHINE_HEADER + f"[series.\"19.0\"]\ncommunity = '{self.source}'\n")
         self.assertEqual(self.machine.stat().st_mode & 0o777, 0o600)
         self.assertEqual(workspace.read_text(), WORKSPACE.format(base='.oasis/'))
         self.assertEqual(workspace.stat().st_mode & 0o777, 0o600)
-        # S7: names only, empty values, 0600.
-        self.assertEqual((config / '.env').read_text(), ENV_FILE)
+        # v0.16.0 S2: the generated account, 0600.
+        self.assertRegex((config / '.env').read_text(), ENV_FILE)
         self.assertEqual((config / '.env').stat().st_mode & 0o777, 0o600)
         conf = (config / 'odoo.conf').read_text()
         self.assertEqual(conf.split('[options]\n')[1],
@@ -555,15 +555,13 @@ class SetupTests(unittest.TestCase):
             f'verified: {self.checkout} loads its configuration from {workspace}\n'
             f'compiled {requirements}/runtime.txt, dev.txt and lock.sha256\n'
             'next steps:\n'
-            f'  1. fill in ODOO_DB_USER and ODOO_DB_PASSWORD in {config / ".env"}, and the same values as '
-            f'db_user and db_password in {config / "odoo.conf"}\n'
-            f'  2. the locks in {requirements} describe runtime.in and dev.in: oasis --project {self.checkout} '
+            f'  1. the locks in {requirements} describe runtime.in and dev.in: oasis --project {self.checkout} '
             f'bootstrap --apply syncs the adopted environment {environment} to them (it changes the packages '
             'installed there)\n'
-            f'  3. docker compose --env-file {config / ".env"} -f {config / "compose.yml"} up -d --wait\n'
-            f'  4. oasis --project {self.checkout} doctor\n'
-            f'  5. add a [development] table with administrator_login to {workspace} (docs/dev-database.md)\n'
-            f'  6. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n'))
+            f'  2. docker compose --env-file {config / ".env"} -f {config / "compose.yml"} up -d --wait\n'
+            f'  3. oasis --project {self.checkout} doctor\n'
+            f'  4. add a [development] table with administrator_login to {workspace} (docs/dev-database.md)\n'
+            f'  5. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n'))
         self.assertEqual(workspace.read_text(), WORKSPACE.format(base='.oasis/').replace(
             "environment = '.oasis/venv'", f"environment = '{environment}'"))
         self.assertEqual(self.log.read_text().splitlines(), [
@@ -785,9 +783,7 @@ class SetupTests(unittest.TestCase):
         """The next steps setup --apply prints for existing_workspace() with every other piece created."""
         config = project / 'config'
         workspace = project / 'oasis-workspace.toml'
-        steps = [f'fill in ODOO_DB_USER and ODOO_DB_PASSWORD in {config / ".env"}, and the same values as db_user '
-                 f'and db_password in {config / "odoo.conf"}',
-                 f'docker compose --env-file {config / ".env"} -f {config / "compose.yml"} up -d --wait',
+        steps = [f'docker compose --env-file {config / ".env"} -f {config / "compose.yml"} up -d --wait',
                  f'oasis --project {self.checkout} doctor']
         if add_development:
             steps.append(f'add a [development] table with administrator_login to {workspace} (docs/dev-database.md)')

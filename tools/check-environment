@@ -71,8 +71,17 @@ if [[ "$mode" == "--full" ]]; then
   fi
   if compose ps --status running --services | grep -qx "$DB_SERVICE"; then
     pass "postgres_service=running"
-    if database_psql -Atqc 'SELECT 1' | grep -qx 1; then pass "postgres_connection=ready"
-    else fail "postgres_connection=failed"
+    # Odoo's own account over the connection odoo.conf names, with the environment's Python and
+    # psycopg2 (tools/db_account.py probe): one word, never a value or the server's message.
+    account_helper="$(dirname "$0")/db_account.py"
+    connection=$("$PYTHON" -I -B "$account_helper" probe "$ODOO_CONFIG" "$ENV_FILE" 2>/dev/null || true)
+    if [[ "$connection" == ready ]]; then pass "postgres_connection=ready"
+    else
+      fail "postgres_connection=${connection:-failed}"
+      if [[ "$connection" == authentication_failed ]]; then
+        printf '  fix: %s\n' "$(python3 -I -B "$account_helper" fix "$ODOO_CONFIG" "$ENV_FILE" "$COMPOSE_FILE" \
+          "$(program_name)" "$PROJECT_ROOT")" >&2
+      fi
     fi
   else fail "postgres_service=not_running"
   fi

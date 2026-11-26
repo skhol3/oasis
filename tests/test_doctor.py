@@ -78,6 +78,11 @@ class DoctorTests(unittest.TestCase):
         executable(self.bindir / 'git', GIT)
         executable(self.bindir / 'flock', '#!/bin/sh\nexit 0\n')
         executable(self.bindir / 'python3', f'#!/bin/sh\nexec {sys.executable!r} "$@"\n')
+        # The connection probe (tools/db_account.py, v0.16.0 S2) answers FAKE_CONNECTION, by default a
+        # service that does not answer; it runs no docker.
+        self.python.write_text(self.python.read_text().replace(
+            '#!/bin/sh\n', '#!/bin/sh\ncase "$3" in */db_account.py) echo "${FAKE_CONNECTION:-not_running}"; '
+            'exit 0 ;; esac\n', 1))
         (self.bindir / 'dirname').symlink_to(shutil.which('dirname'))
         self.env['PATH'] = str(self.bindir)
         self.workspace = self.root / 'oasis-workspace.toml'
@@ -104,8 +109,12 @@ class DoctorTests(unittest.TestCase):
                  *self.origins().splitlines(), 'PASS git=2.47.1', 'PASS docker',
                  'PASS docker_compose=2.29.1', 'PASS flock', 'PASS proc', 'PASS python=3.12',
                  'PASS odoo_release=19.0', 'PASS odoo_conf', 'PASS compose', 'PASS env_file', 'PASS logs_dir',
-                 *extra, f'PASS http_port={self.port}']
+                 *extra, f'PASS http_port={self.port}', 'WARN postgres_connection=not_running']
         replacements = {re.split(r'[ =]', line, maxsplit=2)[1]: line for line in changed}
+        # The connection check needs the checks it reads: python, odoo_conf and env_file.
+        if any(line.startswith('FAIL ') and name in ('python', 'odoo_conf', 'env_file')
+               for name, line in replacements.items()):
+            omit = (*omit, 'postgres_connection')
         report = []
         for line in lines:
             name = re.split(r'[ =]', line, maxsplit=2)[1]
@@ -155,7 +164,8 @@ class DoctorTests(unittest.TestCase):
                            'PASS git=2.47.1\n'
                            'PASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
                            'PASS python=3.12\nPASS odoo_release=19.0\nPASS odoo_conf\nPASS compose\n'
-                           f'PASS env_file\nPASS logs_dir\nPASS http_port={self.port}\ndoctor_failures=0\n')
+                           f'PASS env_file\nPASS logs_dir\nPASS http_port={self.port}\n'
+                           'WARN postgres_connection=not_running\ndoctor_failures=0\n')
         self.assertEqual(os.listdir(self.runtime.name), [])
 
     def test_workspace_checkout_passes_every_check(self):
@@ -167,7 +177,8 @@ class DoctorTests(unittest.TestCase):
                            'PASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
                            'PASS python=3.12\nPASS odoo_release=19.0\nPASS odoo_conf\nPASS compose\n'
                            'PASS env_file\nPASS logs_dir\nPASS data_dir\n'
-                           f'PASS http_port={self.port}\ndoctor_failures=0\n')
+                           f'PASS http_port={self.port}\nWARN postgres_connection=not_running\n'
+                           'doctor_failures=0\n')
         self.assertEqual(os.listdir(self.runtime.name), [])
 
     def test_agent_destructive_setting_is_shown(self):
@@ -440,6 +451,43 @@ class DoctorTests(unittest.TestCase):
                 self.commands.unlink(missing_ok=True)
                 env_file.write_text(text)
                 self.assert_report(self.expected())
+
+    # -- the connection with Odoo's account (v0.16.0 S2) -----------------------------------------
+
+    def test_the_connection_with_odoos_account_is_reported_and_a_refused_one_names_its_fix(self):
+        (self.root / 'dev/compose.yml').write_text("name: cc-shop\nservices:\n  db:\n    image: postgres:17\n")
+        for outcome, line in (('ready', 'PASS postgres_connection'),
+                              ('not_running', 'WARN postgres_connection=not_running'),
+                              ('no_driver', 'WARN postgres_connection=unchecked'),
+                              ('Traceback', 'WARN postgres_connection=unchecked')):
+            with self.subTest(outcome=outcome):
+                self.commands.unlink(missing_ok=True)
+                self.env['FAKE_CONNECTION'] = outcome
+                self.assert_report(self.expected(line))
+        # Refused: the volume was initialized with other credentials; the fix is the Tier B recreate.
+        self.commands.unlink(missing_ok=True)
+        self.env['FAKE_CONNECTION'] = 'authentication_failed'
+        recreate = shlex.join(['oasis', '--project', str(self.root), 'recreate-database-volume', '--confirm',
+                               'cc-shop'])
+        env_file = self.root / 'dev/.env'
+        self.assert_report(self.expected(
+            'FAIL postgres_connection=authentication_failed\n'
+            f'  fix: the PostgreSQL that {self.conf} names refuses the account Odoo uses: its volume was initialized '
+            f'with other credentials than {env_file}; {recreate} recreates it with them (Tier B: it deletes every '
+            'database of the service)'))
+        # Refused while odoo.conf sets its own account, other than the env file's: that is the fix.
+        self.commands.unlink()
+        self.conf.write_text(self.conf.read_text() + 'db_password = other\n')
+        self.assert_report(self.expected(
+            'FAIL postgres_connection=authentication_failed\n'
+            f'  fix: {self.conf} sets db_password to other values than {env_file}: remove db_password from '
+            f'{self.conf} so Odoo uses the account of {env_file}, then run oasis doctor again'))
+
+    def test_the_connection_is_left_out_when_a_check_it_needs_failed(self):
+        self.python.write_text(self.python.read_text().replace('echo 3.12', 'echo 3.11'))
+        result = self.doctor()
+        self.assertNotIn('postgres_connection', result.stdout)
+        self.assertIn('FAIL python=3.11 expected=3.12\n', result.stdout)
 
     @unittest.skipIf(os.getuid() == 0, 'root reads any file')
     def test_unreadable_env_file_fails(self):

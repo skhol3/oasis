@@ -75,6 +75,8 @@ class EnvironmentTests(unittest.TestCase):
             '  case "$2" in *"sys.prefix"*) echo "' + str(self.python.parent.parent) + '" ;; *) echo 3.12 ;; esac\n'
             '  exit 0\nfi').replace(
                 'if [ "$2" = "--version" ]; then',
+                # The connection probe of check-environment --full (tools/db_account.py, v0.16.0 S2).
+                'case "$3" in */db_account.py) echo "${FAKE_CONNECTION:-ready}"; exit 0 ;; esac\n'
                 'case "$1" in */audit_dependencies.py) exec "$FAKE_HOST_PYTHON" -B "$@" ;; '
                 '*/check_environment.py) echo "locked_packages=0"; echo "missing_packages=0"; '
                 'echo "version_mismatches=0"; exit 0 ;; esac\n'
@@ -166,6 +168,7 @@ if [ "$2" = "--version" ]; then
   echo 'Odoo Server 19.0'
   exit 0
 fi
+case "$3" in */db_account.py) echo "${FAKE_CONNECTION:-ready}"; exit 0 ;; esac
 case "$1" in
   */audit_dependencies.py) exec "$FAKE_HOST_PYTHON" -B "$@" ;;
   */check_environment.py) printf 'locked_packages=0\\nmissing_packages=0\\nversion_mismatches=0\\n'; exit 0 ;;

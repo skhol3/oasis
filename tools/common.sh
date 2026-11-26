@@ -123,6 +123,18 @@ odoo_config_arguments() {
     "${ENTERPRISE_SOURCE:-}" "${DATA_DIR:-}" "${roots[@]}") || return $?
   # odoo_addons_path.py shell-quoted every word.
   eval "ODOO_CONFIG_ARGUMENTS=($output)"
+  export_database_account
+}
+
+# Odoo's database account (v0.16.0 S2, tools/db_account.py): what odoo.conf leaves empty of db_user
+# and db_password comes from ODOO_DB_USER and ODOO_DB_PASSWORD of the env file, exported as PGUSER
+# and PGPASSWORD (libpq reads them), never on Odoo's command line; what odoo.conf sets is kept.
+# The values travel through a pipe into this shell; nothing is printed.
+export_database_account() {
+  local output
+  output=$(python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/db_account.py" exports "$ODOO_CONFIG" "$ENV_FILE") || return $?
+  # db_account.py shell-quoted every value.
+  eval "$output"
 }
 
 # One option of the configured odoo.conf (http_port, gevent_port, longpolling_port or http_interface),

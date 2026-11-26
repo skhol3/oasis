@@ -13,8 +13,10 @@ and config/, data/, logs/ and the environment under .oasis/, both excluded in .g
 (never the tracked .gitignore); --workspace <dir> chooses another directory at or above the
 checkout. The Odoo source goes to the machine file, never to a new workspace file. The locks are
 compiled with tools/locks.py, as bootstrap does, then the environment is created with uv and
-synced. The environment file gets only the variable names, with empty values: it is never read or
-printed.
+synced. A new environment file (mode 0600) holds the database account (v0.16.0 S2): ODOO_DB_USER
+oasis_<name> and a random ODOO_DB_PASSWORD (secrets.token_urlsafe), or the db_user and db_password a
+kept odoo.conf sets; the compose service and Odoo both read it (tools/db_account.py), odoo.conf stays
+password-free, and the password is never printed.
 
 In a checkout of a series its workspace file has no section for (v0.15.0 S5), setup appends a
 [series."<x.y>"] section to that file (a version 1 file becomes version 2, that line only) and plans
@@ -42,6 +44,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import socket
 import subprocess
 import sys
@@ -85,10 +88,13 @@ WORKSPACE_HEADER = ('# Written by oasis setup. Paths are relative to this file, 
                     '# the Odoo source comes from the machine file (docs/workspace-file.md#machine-file).\n')
 MACHINE_HEADER = ('# Written by oasis setup: the Odoo source of each series on this machine '
                   '(docs/workspace-file.md#machine-file).\n')
-ENV_FILE = ('# Written by oasis setup: fill in both values, the PostgreSQL account of the compose service. '
-            'Never commit this file.\nODOO_DB_USER=\nODOO_DB_PASSWORD=\n')
+ENV_FILE = ('# Written by oasis setup: the PostgreSQL account of the compose service and of Odoo '
+            '(docs/setup.md#the-database-account).\n# No oasis command needs it read, copied or typed. Never commit '
+            'this file.\n{user}\n{password}\n')
+# An env file value docker compose reads as written: unquoted, else in single quotes (no interpolation).
+PLAIN_VALUE = re.compile(r'''[^\s'"#$\\]+''')
 CONF = '''; Written by oasis setup. Path-free: oasis passes --addons-path and --data-dir on the command line.
-; Set db_user and db_password to the ODOO_DB_USER and ODOO_DB_PASSWORD of {env_file}.
+; db_user and db_password stay empty: oasis passes ODOO_DB_USER and ODOO_DB_PASSWORD of {env_file} to Odoo as PGUSER and PGPASSWORD.
 [options]
 db_host = 127.0.0.1
 db_port = {port}
@@ -138,9 +144,11 @@ can never apply. With --apply it creates only what is missing and keeps everythi
     by default at the checkout's root with config/, data/, logs/ and the environment under .oasis/,
     both excluded from git in .git/info/exclude; --workspace <dir> puts them in <dir>, which must
     be at or above the checkout; an existing workspace file is adopted;
-  - a path-free odoo.conf, a compose file with the PostgreSQL service, the environment file with
-    ODOO_DB_USER and ODOO_DB_PASSWORD (empty values, mode 0600), runtime.in (the source's requirements,
-    and what the series needs besides them: setuptools<81 on 15.0) and dev.in;
+  - a path-free, password-free odoo.conf, a compose file with the PostgreSQL service, the environment
+    file with the generated account (ODOO_DB_USER oasis_<name> and a random ODOO_DB_PASSWORD, or the
+    db_user and db_password a kept odoo.conf sets; mode 0600, never printed), which the service and
+    every Odoo command read, runtime.in (the source's requirements, and what the series needs besides
+    them: setuptools<81 on 15.0) and dev.in;
   - the locks (uv pip compile, as bootstrap --apply) and the Python environment (uv venv, uv pip sync).
 The series comes from the module manifests (<series>.x.y.z), else from the machine file's single series,
 else --series. It ends with the next steps.
@@ -1079,6 +1087,37 @@ def published_port(compose: Path) -> int | None:
     return ports.pop() if len(ports) == 1 else None
 
 
+def new_account(conf: Path, env_file: Path, values: dict) -> tuple[str, str]:
+    """(the text of a new env file, what the plan says of it) (v0.16.0 S2): each of ODOO_DB_USER and
+    ODOO_DB_PASSWORD is the db_user or db_password a kept odoo.conf sets (Odoo keeps using it), else
+    generated: oasis_<name> (the dev_prefix without _dev_) and secrets.token_urlsafe(24). No value is
+    ever in the plan."""
+    reader = sibling('db_account')
+    try:
+        options = reader.conf_options(conf) if conf.exists() else {}
+    except reader.AccountError:
+        options = {}
+    generated = {'db_user': f'oasis_{values["DEV_PREFIX"][:-len("_dev_")].lower()}',
+                 'db_password': secrets.token_urlsafe(24)}
+    assignments, said = [], []
+    for option, name in (('db_user', 'ODOO_DB_USER'), ('db_password', 'ODOO_DB_PASSWORD')):
+        value = options.get(option, generated[option])
+        if option in options:
+            said.append(f'{name} from {option} of {conf}')
+        else:
+            said.append(f'{name} {value}' if option == 'db_user' else f'a generated {name}')
+        if PLAIN_VALUE.fullmatch(value):
+            assignments.append(f'{name}={value}')
+        elif "'" not in value:
+            assignments.append(f"{name}='{value}'")
+        elif '"' not in value and not re.search(r'[$\\]', value):
+            assignments.append(f'{name}="{value}"')
+        else:
+            raise Refused(f'Cannot copy {option} of {conf} to {env_file}: docker compose would not read its value as '
+                          f'written; write {env_file} yourself, then run {config.program_name()} setup again.')
+    return ENV_FILE.format(user=assignments[0], password=assignments[1]), ' and '.join(said)
+
+
 def gaps(plan: dict, directory: Path, planned: set):
     """Plan every missing file, directory, lock and environment of the configuration; keep the rest."""
     values, lines, actions, root = plan['values'], plan['lines'], plan['actions'], plan['root']
@@ -1138,8 +1177,11 @@ def gaps(plan: dict, directory: Path, planned: set):
             and conf_port != compose_port:
         lines.append(f'mismatch: {conf} connects to port {conf_port} but {compose} publishes {compose_port}: make '
                      'them the same')
-    create(env_file, ENV_FILE, 0o600, f'create {env_file} (mode 0600): ODOO_DB_USER and ODOO_DB_PASSWORD, empty',
-           'env')
+    if not env_file.exists():
+        text, described = new_account(conf, env_file, values)
+        create(env_file, text, 0o600, f'create {env_file} (mode 0600): {described}', 'env')
+    else:
+        lines.append(f'kept {env_file}')
     requirements = Path(values['REQUIREMENTS_DIR'])
     source = Path(values['ODOO_SOURCE'])
     if not (requirements / 'runtime.in').exists() and not (source / 'requirements.txt').is_file():
@@ -1308,16 +1350,10 @@ def apply_plan(plan: dict) -> int:
         raise
     if failed:
         return failed
-    values, created = plan['values'], plan['created']
-    env_file, conf = values['ENV_FILE'], values['ODOO_CONFIG']
+    values = plan['values']
+    env_file = values['ENV_FILE']
+    # The account is generated (new_account) and read by the service and Odoo: nothing to fill in.
     steps = []
-    if 'env' in created and 'conf' in created:
-        steps.append(f'fill in ODOO_DB_USER and ODOO_DB_PASSWORD in {env_file}, and the same values as db_user '
-                     f'and db_password in {conf}')
-    elif 'env' in created:
-        steps.append(f'fill in ODOO_DB_USER and ODOO_DB_PASSWORD in {env_file}')
-    elif 'conf' in created:
-        steps.append(f'fill in db_user and db_password in {conf} with ODOO_DB_USER and ODOO_DB_PASSWORD of {env_file}')
     if 'adopted_environment' in plan:
         # S7: setup never syncs an adopted environment; bootstrap --apply does, to the locks.
         requirements = Path(values['REQUIREMENTS_DIR'])

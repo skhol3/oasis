@@ -240,7 +240,7 @@ class SeriesSetupTests(unittest.TestCase):
             f'create {series / "odoo.conf"} (mode 0600): path-free; db_port {port}; db_user and db_password empty',
             f'create {series / "compose.yml"}: PostgreSQL {POSTGRES_15} (postgres:{POSTGRES_15}) as service db on '
             f'127.0.0.1:{port}, compose project {self.compose_name("cc15")}',
-            f'create {series / ".env"} (mode 0600): ODOO_DB_USER and ODOO_DB_PASSWORD, empty',
+            f'create {series / ".env"} (mode 0600): ODOO_DB_USER oasis_cc15 and a generated ODOO_DB_PASSWORD',
             f'create {series / "requirements/runtime.in"}: -r {self.source15}/requirements.txt, setuptools<81',
             f'create {series / "requirements/dev.in"}: -c runtime.txt, -r runtime.in',
             f'create {project / "logs/15.0"}/', f'create {project / "data/15.0"}/',
@@ -281,12 +281,10 @@ class SeriesSetupTests(unittest.TestCase):
             f'compiled {requirements}/runtime.txt, dev.txt and lock.sha256',
             f'created the environment {environment}',
             'next steps:',
-            f'  1. fill in ODOO_DB_USER and ODOO_DB_PASSWORD in {series / ".env"}, and the same values as db_user '
-            f'and db_password in {series / "odoo.conf"}',
-            f'  2. docker compose --env-file {series / ".env"} -f {series / "compose.yml"} up -d --wait',
-            f'  3. oasis --project {self.checkout} doctor',
-            f'  4. add a [development] table with administrator_login to {self.workspace} (docs/dev-database.md)',
-            f'  5. oasis --project {self.checkout} init-dev-database <module> cc15_dev_manual']) + '\n')
+            f'  1. docker compose --env-file {series / ".env"} -f {series / "compose.yml"} up -d --wait',
+            f'  2. oasis --project {self.checkout} doctor',
+            f'  3. add a [development] table with administrator_login to {self.workspace} (docs/dev-database.md)',
+            f'  4. oasis --project {self.checkout} init-dev-database <module> cc15_dev_manual']) + '\n')
         # Only the version line changed; the section is appended; the mode is kept.
         self.assertEqual(self.workspace.read_text(),
                          V1.replace('workspace_version = 1', 'workspace_version = 2') + '\n' + SECTION)
@@ -299,7 +297,11 @@ class SeriesSetupTests(unittest.TestCase):
         self.assertIn(f'name: {self.compose_name("cc15")}\n', compose)
         self.assertIn(f'db_port = {port}\n', (series / 'odoo.conf').read_text())
         self.assertEqual((series / '.env').stat().st_mode & 0o777, 0o600)
-        self.assertEqual((series / '.env').read_text().splitlines()[1:], ['ODOO_DB_USER=', 'ODOO_DB_PASSWORD='])
+        # v0.16.0 S2: the series' own generated account.
+        account = (series / '.env').read_text().splitlines()[2:]
+        self.assertEqual(account[0], 'ODOO_DB_USER=oasis_cc15')
+        self.assertRegex(account[1], r'\AODOO_DB_PASSWORD=[A-Za-z0-9_-]{32}\Z')
+        self.assertNotIn(account[1].split('=', 1)[1], result.stdout)
         self.assertEqual((requirements / 'runtime.in').read_text(),
                          '# Written by oasis setup: the requirements of the Odoo source.\n'
                          f'-r {self.source15}/requirements.txt\n' + SETUPTOOLS_15)
