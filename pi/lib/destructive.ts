@@ -374,9 +374,16 @@ export interface ToolCallContext {
 }
 
 /**
- * The extension's tool_call handler: an agent bash command goes to agentGate, an edit or write tool
- * call to agentFileGate with its path, with the session's cwd, hasUI, abort signal and input dialog;
- * any other tool, or an input without a string command or path, is left alone.
+ * The tools that run their `command` input as shell text: Pi's bash and Gentle Shell's
+ * bash_background and monitor. Each gets agentGate's decision for the same text. Calls nested in
+ * another tool (codemode's tools.bash(...)) reach the tool_call handler under these names too.
+ */
+export const SHELL_TOOLS: readonly string[] = ["bash", "bash_background", "monitor"];
+
+/**
+ * The extension's tool_call handler: an agent shell command (SHELL_TOOLS) goes to agentGate, an
+ * edit or write tool call to agentFileGate with its path, with the session's cwd, hasUI, abort
+ * signal and input dialog; any other tool, or an input without a string command or path, is left alone.
  */
 export function toolCallRouter(effects: GateEffects): (event: ToolCallEvent, ctx: ToolCallContext) => Promise<GateResult> {
   const gate = agentGate(effects);
@@ -392,7 +399,7 @@ export function toolCallRouter(effects: GateEffects): (event: ToolCallEvent, ctx
     if (event.toolName === "edit" || event.toolName === "write") {
       return typeof input.path === "string" ? fileGate(event.toolName, input.path, context) : undefined;
     }
-    if (event.toolName !== "bash") return undefined;
+    if (!SHELL_TOOLS.includes(event.toolName)) return undefined;
     return typeof input.command === "string" ? gate(input.command, context) : undefined;
   };
 }

@@ -402,7 +402,8 @@ export default function oasisLayer(pi: ExtensionAPI) {
     return { systemPrompt: `${event.systemPrompt}\n\n<oasis>\n${context}\n</oasis>` };
   });
 
-  // Agent bash, edit and write tool calls; lib/destructive.ts decides (toolCallRouter). Deny tier:
+  // Agent shell (bash, bash_background, monitor: SHELL_TOOLS), edit and write tool calls, nested
+  // ones (codemode) included; lib/destructive.ts decides (toolCallRouter). Deny tier:
   // direct odoo-bin/dropdb/psql bypass the core's database guards (Odoo projects); worktree-init
   // adds a git worktree and branch, migrate rewrites configuration files and menu is the user's interactive
   // menu, so all three are user-run in every session. Ask tier: drop-database, stop --database and

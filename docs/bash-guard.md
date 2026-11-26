@@ -5,9 +5,24 @@ Pi's `edit` and `write` tools on the files that hold `[tooling].agent_destructiv
 `oasis-checkout.toml` and on the machine file. Each command falls in one of three tiers: it runs (allow), the user confirms it
 first (ask), or only the user can run it (deny).
 
+## Guarded tools
+
+Every tool that runs its `command` input as shell text is checked the same way, so the same
+command gets the same decision (the same deny reason, the same dialog and `agent_destructive`, or
+it runs) whichever tool runs it:
+
+- `bash` (Pi);
+- `bash_background` and `monitor` (Gentle Shell's background jobs).
+
+Calls nested in another tool, such as `tools.bash(...)` or `tools.bash_background(...)` in a
+`codemode` script, go through Pi's `tool_call` event under the nested tool's name, so they are
+checked like the agent's own calls. A call whose `command` is not a string, and every other tool
+(`job_stop`, `job_list`, ...), is left alone. Commands the user types (`!` in the editor) are not
+agent tool calls and are not checked. In the rest of this page, a bash command is any of them.
+
 ```mermaid
 flowchart TD
-    A["Agent bash command"] --> B{"Text bash would run?"}
+    A["Agent bash, bash_background<br/>or monitor command"] --> B{"Text bash would run?"}
     B -->|"no: single-quoted text, a comment,<br/>a heredoc body no command reads"| OK["Runs"]
     B -->|yes| C{"worktree-init, migrate, setup or menu<br/>through oasis, odoo19 or their scripts?"}
     C -->|yes| D{"Only --help or -h, migrate --plan,<br/>or setup without --apply, every argument literal?"}

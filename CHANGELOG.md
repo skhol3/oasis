@@ -9,6 +9,15 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-11-26
+
+### Fixed
+
+- The bash guard now checks every Gentle Shell tool that runs shell text: `bash_background` and
+  `monitor` get the same decision as `bash` for the same command (deny, the ask dialog with
+  `[tooling].agent_destructive`, or allow), also when a `codemode` script calls them. Before, a
+  denied command such as `oasis setup --apply` ran unchecked through `bash_background`.
+
 ## [0.15.0] - 2026-11-25
 
 ### Added
@@ -1133,7 +1142,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/skhol3/oasis/releases/tag/v0.15.1
 [0.15.0]: https://github.com/skhol3/oasis/releases/tag/v0.15.0
 [0.14.0]: https://github.com/skhol3/oasis/releases/tag/v0.14.0
 [0.13.0]: https://github.com/skhol3/oasis/releases/tag/v0.13.0
