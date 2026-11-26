@@ -12,6 +12,9 @@ const DROP = "oasis --project /work/shop drop-database shop_dev_old";
 const STOP = "oasis --project /work/shop stop --database";
 const PURGE = "odoo19 --project /work/shop gc --apply --trash --older-than 0";
 const SECONDS = ASK_TIMEOUT_MS / 1000;
+// v0.16.0 S1: Tier B in the policy table, so they ask like drop-database (before: denied).
+const WORKTREE = "oasis --project /work/shop worktree-init feat feature/x";
+const MIGRATE = "oasis --project /work/shop migrate --apply";
 
 interface Setup {
   root?: string | null;
@@ -73,8 +76,7 @@ function harness(options: Setup = {}) {
 test("the deny tier blocks exactly as before, without a dialog or an entry", async () => {
   const inProject = harness();
   assert.deepEqual(await inProject.gate("psql -l"), { block: true, reason: blockReason("psql", ROOT) });
-  assert.deepEqual(await inProject.gate("oasis --project /p migrate --apply"),
-    { block: true, reason: blockReason("migrate", "") });
+  assert.deepEqual(await inProject.gate("oasis --project /p menu"), { block: true, reason: blockReason("menu", "") });
   assert.deepEqual(await inProject.gate(`${DROP}; dropdb x`), { block: true, reason: blockReason("dropdb", ROOT) });
   const outside = harness({ root: null });
   assert.equal(await outside.gate("psql -l"), undefined);
@@ -141,8 +143,9 @@ test("a wrong answer, `yes` for drop-database, cancel or no answer blocks and re
   }
 });
 
-test("stop --database and gc --apply --trash ask to type yes", async () => {
-  for (const [command, label] of [[STOP, "stop --database"], [PURGE, "gc --apply --trash"]]) {
+test("stop --database, gc --apply --trash, worktree-init and migrate --apply ask to type yes", async () => {
+  for (const [command, label] of [[STOP, "stop --database"], [PURGE, "gc --apply --trash"],
+    [WORKTREE, "worktree-init"], [MIGRATE, "migrate --apply"]]) {
     const approved = harness({ answers: [" yes "] });
     assert.equal(await approved.gate(command), undefined, command);
     assert.equal(approved.prompts[0].title,
@@ -208,6 +211,26 @@ test("agent_destructive = deny turns ask into deny; allow runs without a dialog;
   assert.deepEqual(allowed.entries, [{ label: "Agent command approved", command: PURGE, note: "agent_destructive = allow", output: "" }]);
   // allow never lifts the deny tier.
   assert.deepEqual(await allowed.gate(`${PURGE}; psql`), { block: true, reason: blockReason("psql", ROOT) });
+});
+
+test("worktree-init and migrate --apply honor agent_destructive like drop-database (v0.16.0 S1)", async () => {
+  for (const [command, label] of [[WORKTREE, "worktree-init"], [MIGRATE, "migrate --apply"]]) {
+    const denied = harness({ setting: "deny" });
+    assert.deepEqual(await denied.gate(command), {
+      block: true,
+      reason: `${label} is denied to agents by [tooling].agent_destructive = "deny" in this project's configuration; ` +
+        "nothing ran. Ask the user to run it.",
+    }, command);
+    const allowed = harness({ setting: "allow", hasUI: false });
+    assert.equal(await allowed.gate(command), undefined, command);
+    assert.deepEqual([allowed.prompts, allowed.entries],
+      [[], [{ label: "Agent command approved", command, note: "agent_destructive = allow", output: "" }]], command);
+    // Their dry run and plan are Tier A: no dialog, no entry, no setting read.
+    const plan = harness({ setting: "deny" });
+    assert.equal(await plan.gate(command.replace("--apply", "--plan").replace("feature/x", "feature/x --dry-run")),
+      undefined, command);
+    assert.deepEqual([plan.prompts, plan.entries, plan.settingsRead], [[], [], []], command);
+  }
 });
 
 test("an unreadable or unknown setting, and a session outside a project, keep ask", async () => {
@@ -444,8 +467,7 @@ test("toolCallRouter denies the same command text in bash, bash_background and m
     const pi = piContext();
     for (const [command, reason] of [
       ["psql -l", blockReason("psql", ROOT)],
-      ["oasis setup --apply", blockReason("setup", "")],
-      ["oasis --project /p migrate --apply", blockReason("migrate", "")],
+      ["oasis --project /p menu", blockReason("menu", "")],
     ]) {
       assert.deepEqual(await route({ toolName: tool, input: shellInput(tool, command) }, pi.ctx),
         { block: true, reason }, `${tool}: ${command}`);
@@ -534,22 +556,19 @@ test("the extension's tool_call handler is toolCallRouter over the Pi effects", 
 
 test("a line is judged on every denied program: user-run tools anywhere on it block in every session", async () => {
   const outside = harness({ root: null });
-  assert.deepEqual(await outside.gate("psql -l; oasis --project /p migrate --apply"),
-    { block: true, reason: blockReason("migrate", "") });
+  assert.deepEqual(await outside.gate("psql -l; oasis --project /p menu"), { block: true, reason: blockReason("menu", "") });
   assert.deepEqual(await outside.gate("dropdb x && oasis --project /p menu"), { block: true, reason: blockReason("menu", "") });
-  assert.deepEqual(await outside.gate("odoo-bin --version | oasis --project /p worktree-init f b"),
-    { block: true, reason: blockReason("worktree-init", "") });
   // Single commands keep their tier: odoo-bin, dropdb and psql run outside Odoo projects.
   for (const command of ["psql -l", "dropdb x", "odoo-bin --version", "psql -l; dropdb x"]) {
     assert.equal(await outside.gate(command), undefined, command);
   }
   // In an Odoo project the first denied program still gives the reason, as before.
   const inProject = harness();
-  assert.deepEqual(await inProject.gate("psql -l; oasis --project /p migrate --apply"),
+  assert.deepEqual(await inProject.gate("psql -l; oasis --project /p menu"),
     { block: true, reason: blockReason("psql", ROOT) });
   assert.deepEqual(await inProject.gate("psql -l"), { block: true, reason: blockReason("psql", ROOT) });
-  assert.deepEqual(await inProject.gate("oasis --project /p migrate --apply; psql -l"),
-    { block: true, reason: blockReason("migrate", "") });
+  assert.deepEqual(await inProject.gate("oasis --project /p menu; psql -l"),
+    { block: true, reason: blockReason("menu", "") });
   for (const run of [inProject, outside]) assert.deepEqual([run.prompts, run.entries], [[], []]);
 });
 

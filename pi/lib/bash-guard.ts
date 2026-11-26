@@ -4,21 +4,18 @@
 // Only programs in command position count, so searching or printing their
 // names stays allowed. This is a guard rail for agents, not a sandbox.
 import { posix } from "node:path";
+import { COMMANDS, operationOf, PROGRAMS, policyEntry, tierOf } from "./policy.ts";
 
-const BLOCKED = new Set(["odoo-bin", "dropdb", "psql"]);
-// User-run only: it adds a git worktree and branch for the user.
+// The tiers come from the core policy table (tools/policy.py, see lib/policy.ts): a Tier C program or
+// oasis command is denied, a Tier B one asks, a Tier A one runs.
+const BLOCKED = new Set([...PROGRAMS].filter((program) => tierOf(program) !== "A"));
+// worktree-init's scripts count in any directory, migrate's in any `tools` directory (unchanged).
 export const WORKTREE_INIT = "worktree-init";
 const WORKTREE_INIT_SCRIPTS = new Set([WORKTREE_INIT, "worktree_init.py"]);
-// User-run only: it rewrites the project's configuration files (legacy profiles, odoo.conf, lock.sha256).
 export const MIGRATE = "migrate";
 const MIGRATE_SCRIPTS = new Set([MIGRATE, "migrate.py"]);
-// User-run only with --apply: it writes the project's and the machine's configuration and creates the
-// environment (v0.14.0 S1). Its plan (no --apply) changes nothing, so agents may run it. Its scripts
-// are recognized like the menu's (see oasisScript): `setup` and `setup.py` are common names.
-export const SETUP = "setup";
-const SETUP_SCRIPTS = new Set([SETUP, "setup.py"]);
-// User-run only: the interactive action menu (its catalog included) is for the user, in a terminal
-// or the Gentle Shell panel; agents run the commands it lists directly.
+// The interactive action menu (its catalog included) is for the user, in a terminal or the Gentle
+// Shell panel; agents run the commands it lists directly.
 export const MENU = "menu";
 // Its scripts are blocked by what they are, not by their spelling: `tools/menu` and
 // `tools/actions.py` are common names in other projects, and the menu itself refuses to run
@@ -27,9 +24,9 @@ export const MENU = "menu";
 // it is an oasis menu script (see menuScript). Without one, only the installed bundle's spelling
 // counts (MENU_SCRIPT).
 const MENU_NAMES = new Set([MENU, "actions.py"]);
-// The ask tier's tool scripts, recognized like the menu's (see oasisScript): `stop` and `gc` are
-// common names too.
-const ASK_SCRIPTS = new Set(["drop-database", "stop", "gc"]);
+// The other oasis tool scripts, recognized like the menu's (see oasisScript): `stop`, `gc`, `setup`
+// and `setup.py` are common names too.
+const SCRIPT_NAMES = new Set([...COMMANDS, "setup.py"]);
 // A managed database name as the tools accept it; anything else is not known from the text.
 const DATABASE_NAME = /^[A-Za-z0-9_]+$/;
 // Expansion, globs or substitution leftovers: the word's path is not known from the text. A bare
@@ -419,88 +416,41 @@ function entryPointOptions(words: string[], index: number): { command: number; p
   return { command: i, project, joined };
 }
 
-function entryPointCommandIndex(words: string[], index: number): number {
-  return entryPointOptions(words, index).command;
-}
-
-function entryPointCommand(words: string[], index: number): string | undefined {
-  return words[entryPointCommandIndex(words, index)];
-}
-
 /** Whether the arguments only ask for help: one help flag, redirections aside. */
 function onlyHelp(args: string[]): boolean {
   const rest = args.filter((word) => !REDIRECTION.test(word));
   return rest.length === 1 && HELP_FLAGS.has(rest[0]);
 }
 
-/**
- * Whether the arguments only ask migrate for its plan: `--plan` once, optionally `--workspace` with
- * a literal absolute path, redirections to a file descriptor aside. The tool refuses `--plan` with
- * `--apply`, so this form cannot apply whatever the words expand to.
- */
-function onlyPlan(args: string[]): boolean {
-  const rest = args.filter((word) => !REDIRECTION.test(word));
-  let plan = false;
-  for (let i = 0; i < rest.length; i++) {
-    const word = rest[i];
-    if (word === "--plan" && !plan) plan = true;
-    else if (word === "--workspace" && LITERAL_PATH.test(rest[i + 1] ?? "")) i++;
-    else if (!(word.startsWith("--workspace=") && LITERAL_PATH.test(word.slice("--workspace=".length)))) return false;
-  }
-  return plan;
+/** Whether every argument is literal: none can expand to another option. Redirections aside. */
+function literalArguments(args: string[]): boolean {
+  return args.filter((word) => !REDIRECTION.test(word)).every((word) => word !== "_" && !NOT_LITERAL.test(word));
 }
 
 /**
- * Whether the arguments only ask setup for its plan: no `--apply` (nor `--apply=<value>` or an
- * abbreviation of it, which setup refuses anyway), and every word literal, so none can expand to
- * --apply. Redirections to a file descriptor aside.
+ * The oasis command a script word runs, or null: worktree-init's scripts anywhere, migrate's in a
+ * `tools` directory, the menu's and every other tool script's only when they are an oasis tree's or
+ * spelled like the installed bundle (see oasisScript), since the names are common.
  */
-function setupPlanOnly(args: string[]): boolean {
-  return args.filter((word) => !REDIRECTION.test(word)).every((word) =>
-    word !== "_" && !NOT_LITERAL.test(word) && !word.startsWith("--apply=") &&
-    !(word.length >= 3 && "--apply".startsWith(word)));
-}
-
-/** A user-run tool when words[index] runs it: its tool script, or an entry point with that command.
- * migrate's scripts count only inside a `tools` directory, and menu's only when they are an oasis
- * tree's (see menuScript), since the names are common. Asking only
- * for its help (`--help` or `-h` as the single argument) runs nothing and is not blocked, and
- * neither is migrate's explicit plan (see onlyPlan) nor setup's plan (see setupPlanOnly). setup's
- * scripts count like the menu's: an oasis tree's, or the installed bundle's spelling. */
-function userRunTool(words: string[], index: number, where?: Where): string | null {
-  const word = words[index];
+function scriptCommand(word: string, where: Where | undefined): string | null {
   const name = basename(word);
-  const args = words.slice(index + 1);
-  let tool: string | null = null;
-  let toolArgs = args;
-  if (WORKTREE_INIT_SCRIPTS.has(name)) tool = WORKTREE_INIT;
-  else if (MIGRATE_SCRIPTS.has(name) && /(^|\/)tools\/[^/]+$/.test(word)) tool = MIGRATE;
-  else if (menuScript(word, where)) tool = MENU;
-  else if (oasisScript(word, SETUP_SCRIPTS, where)) tool = SETUP;
-  else if (ENTRY_POINTS.has(name)) {
-    if (args.includes(WORKTREE_INIT)) tool = WORKTREE_INIT;
-    else if (entryPointCommand(words, index) === MIGRATE) tool = MIGRATE;
-    else if (entryPointCommand(words, index) === SETUP) tool = SETUP;
-    else if (entryPointCommand(words, index) === MENU) tool = MENU;
-    // The entry point's own `--project <dir>` (or a prefix of it, see projectOption) and the command
-    // name are not the tool's arguments.
-    const project = args.findIndex(projectOption);
-    toolArgs = args.filter((arg, k) => arg !== tool && (project < 0 || (k !== project && k !== project + 1)));
-  }
-  if (!tool || onlyHelp(toolArgs) || (tool === MIGRATE && onlyPlan(toolArgs))) return null;
-  if (tool === SETUP && setupPlanOnly(toolArgs)) return null;
-  return tool;
+  if (WORKTREE_INIT_SCRIPTS.has(name)) return WORKTREE_INIT;
+  if (MIGRATE_SCRIPTS.has(name) && /(^|\/)tools\/[^/]+$/.test(word)) return MIGRATE;
+  if (menuScript(word, where)) return MENU;
+  if (oasisScript(word, SCRIPT_NAMES, where)) return name === "setup.py" ? "setup" : name;
+  return null;
 }
 
 /**
- * An ask-tier command: the user confirms it before it runs (the extension's dialog), unless the
- * project's `[tooling].agent_destructive` says otherwise. `database` is drop-database's first
- * argument when it is a literal database name, else null (the user could not confirm it).
+ * An ask-tier command, a Tier B operation of the policy table (drop-database, gc --apply --trash,
+ * migrate --apply, worktree-init, ...; `command` is the operation): the user confirms it before it
+ * runs (the extension's dialog), unless the project's `[tooling].agent_destructive` says otherwise.
+ * `database` is drop-database's first argument when it is a literal database name, else null (the
+ * user could not confirm it).
  */
 export type AskAction =
   | ({ command: "drop-database"; database: string | null } & Target)
-  | ({ command: "stop --database" } & Target)
-  | ({ command: "gc --apply --trash" } & Target)
+  | ({ command: string } & Target)
   | { command: "edit"; file: string };
 
 /**
@@ -551,47 +501,40 @@ function targetOf(words: string[], index: number, where: Where | undefined): Tar
   return value === undefined ? {} : { project: targetPath(value, where, true) };
 }
 
-/**
- * The ask command words[index] runs: drop-database, stop --database or gc --apply --trash, through
- * an entry point or the oasis tool script (see oasisScript). Asking only for help runs nothing.
- */
-function askAction(words: string[], index: number, where?: Where): AskAction | null {
-  const word = words[index];
-  const name = basename(word);
-  let tool: string | undefined;
-  let args: string[];
-  if (ENTRY_POINTS.has(name)) {
-    const command = entryPointOptions(words, index).command;
-    tool = words[command];
-    args = words.slice(command + 1);
-  } else if (oasisScript(word, ASK_SCRIPTS, where)) {
-    tool = name;
-    args = words.slice(index + 1);
-  } else {
-    return null;
-  }
-  const rest = args.filter((arg) => !REDIRECTION.test(arg));
-  if (onlyHelp(rest)) return null;
-  const target = targetOf(words, index, where);
-  if (tool === "drop-database") {
-    const database = rest[0];
-    return { command: tool, database: database !== undefined && DATABASE_NAME.test(database) ? database : null, ...target };
-  }
-  if (tool === "stop" && rest.includes("--database")) return { command: "stop --database", ...target };
-  if (tool === "gc" && rest.includes("--apply") && rest.includes("--trash")) return { command: "gc --apply --trash", ...target };
-  return null;
-}
-
 /** What a simple command runs: a denied program, or an ask command. */
 type Finding = { program: string } | { ask: AskAction };
 
-/** The user-run tool words[index] runs as a finding, else the ask command it runs. */
+/**
+ * What the oasis command words[index] runs (through an entry point or its tool script) is, by its
+ * tier in the policy table (see operationOf): nothing (A), an ask command (B) or a denied program
+ * (C, the operation). Asking only for help (`--help` or `-h` as the single argument) runs nothing.
+ */
 function toolFinding(words: string[], index: number, where?: Where): Finding[] {
-  const program = userRunTool(words, index, where);
-  if (program) return [{ program }];
-  const ask = askAction(words, index, where);
-  return ask ? [{ ask }] : [];
+  let tool: string | null | undefined;
+  let args: string[];
+  if (ENTRY_POINTS.has(basename(words[index]))) {
+    const command = entryPointOptions(words, index).command;
+    tool = words[command];
+    args = words.slice(command + 1);
+  } else {
+    tool = scriptCommand(words[index], where);
+    args = words.slice(index + 1);
+  }
+  const rest = args.filter((arg) => !REDIRECTION.test(arg));
+  if (!tool || onlyHelp(rest)) return [];
+  const entry = operationOf(tool, rest, literalArguments(rest));
+  if (entry === null || entry.tier === "A") return [];
+  if (entry.tier === "C") return [{ program: entry.operation }];
+  const target = targetOf(words, index, where);
+  if (entry.operation === "drop-database") {
+    const database = rest[0];
+    return [{ ask: { command: entry.operation, database: database !== undefined && DATABASE_NAME.test(database) ? database : null, ...target } }];
+  }
+  return [{ ask: { command: entry.operation, ...target } }];
 }
+
+// The policy table's operation of a write to a setting file (GuardContext.settingFile).
+const EDIT_SETTING = "edit a setting file";
 
 // A redirection to a file: `>`, `>>`, `2>`, `&>` (segments() leaves `>` of `&>` and `>|`), with
 // its target in the word or, when bare, in the next word. `>&2` duplicates a descriptor instead.
@@ -674,7 +617,11 @@ function settingWrites(words: string[], where: Where | undefined, carried: strin
   const found: Finding[] = [];
   for (const word of targets) {
     const file = settingFile(literalPath(word, where), word);
-    if (file !== null) found.push({ ask: { command: "edit", file } });
+    if (file === null) continue;
+    // Tier B in the policy table: the dialog, which agent_destructive = allow never skips (lib/destructive.ts).
+    const tier = tierOf(EDIT_SETTING);
+    if (tier === "B") found.push({ ask: { command: "edit", file } });
+    else if (tier === "C") found.push({ program: EDIT_SETTING });
   }
   return found;
 }
@@ -763,12 +710,12 @@ function classifySegment(words: string[], start?: Where): Finding[] {
 }
 
 /**
- * Whether a blocked program is user-run and so blocked in every session (it writes configuration,
- * adds a worktree or opens the interactive menu); the others are blocked only in Odoo
+ * Whether a blocked program is the user's in every session (a Tier C oasis command, such as the
+ * interactive menu); the programs outside oasis (odoo-bin, dropdb, psql) are blocked only in Odoo
  * projects, where they would bypass the database guards.
  */
 export function blockedEverywhere(program: string): boolean {
-  return program === WORKTREE_INIT || program === MIGRATE || program === MENU || program === SETUP;
+  return !PROGRAMS.has(program);
 }
 
 /**
@@ -883,30 +830,14 @@ function findingsIn(command: string, start: Where | undefined): Finding[] {
 }
 
 export function blockReason(program: string, root: string): string {
-  if (program === MIGRATE) {
-    return (
-      "migrate rewrites the project's configuration files; ask the user to run /oasis migrate in Gentle Shell " +
-      "or the command in a terminal. To read the plan without changing anything, run it with only --plan."
-    );
-  }
-  if (program === SETUP) {
-    return (
-      "setup --apply writes the project's and the machine's configuration and creates the environment; ask the " +
-      "user to run `oasis setup --apply` in a terminal. To read the plan without changing anything, run it " +
-      "without --apply."
-    );
-  }
   if (program === MENU) {
     return (
       "menu is the user's interactive action menu; ask the user to run `oasis --project <root> menu` in a " +
       "terminal or to open the oasis panel in Gentle Shell."
     );
   }
-  if (program === WORKTREE_INIT) {
-    return (
-      "worktree-init adds a git worktree and branch for the user; ask the user to run /oasis worktree " +
-      "<feature> <branch> in Gentle Shell or the command in a terminal."
-    );
+  if (!PROGRAMS.has(program)) {
+    return `${program} is Tier C in the oasis policy (only the user does it): ${policyEntry(program).reason}.`;
   }
   return (
     `Direct ${program} is blocked in this Odoo project: it bypasses the database prefix guards. ` +

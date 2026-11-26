@@ -223,6 +223,18 @@ export function projectContext(
     `${odoo} project root: ${root} (${source}).`,
     ...routing,
     `framework APIs; load the matching ${skills} skill first.`,
-    "drop-database, stop --database, gc --apply --trash ask the user; never bypass a refusal.",
+    "Tier B commands (oasis policy --json) wait for the user's confirmation; never bypass a refusal.",
   ].join("\n");
+}
+
+/**
+ * The --confirm value of a Tier B command from its dry-run plan (v0.16.0 S1): worktree-init's
+ * `worktree: <path>` line, migrate's `write <dir>/oasis-workspace.toml` line; null when absent.
+ */
+export function planConfirmation(kind: "worktree" | "migrate", plan: string): string | null {
+  for (const line of plan.split("\n")) {
+    if (kind === "worktree" && line.startsWith("worktree: ")) return line.slice("worktree: ".length);
+    if (kind === "migrate" && line.startsWith("write ") && line.endsWith(`/${WORKSPACE_NAME}`)) return line.slice("write ".length);
+  }
+  return null;
 }

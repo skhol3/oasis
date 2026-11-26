@@ -7,6 +7,7 @@ import { dirname, join, relative as relativePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   findProjectRoot, findWorkspaceFile, legacyProfile, notProject, projectContext, projectRootResolver,
+  planConfirmation,
 } from "../lib/project.ts";
 
 function scratch(): string {
@@ -334,8 +335,8 @@ test("projectContext names the configured Odoo series and its skills", () => {
   assert.ok(!/odoo\d+-\*/.test(unknown), unknown);
 });
 
-test("projectContext tells the agent which oasis commands ask the user, and stays compact", () => {
-  const line = "drop-database, stop --database, gc --apply --trash ask the user; never bypass a refusal.";
+test("projectContext tells the agent which oasis commands are Tier B, and stays compact", () => {
+  const line = "Tier B commands (oasis policy --json) wait for the user's confirmation; never bypass a refusal.";
   for (const tools of [undefined, ["read", "bash"]]) {
     const text = projectContext("/work/acme/codigo/acme", "/work/acme/oasis-workspace.toml", tools, "19.0");
     assert.ok(text.split("\n").includes(line), text);
@@ -443,4 +444,15 @@ test("project detection and tools/config.py give one root and workspace for a wo
     rmSync(config, { recursive: true, force: true });
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+// v0.16.0 S1: /oasis worktree and /oasis migrate confirm with the exact name the dry run names.
+test("planConfirmation reads the --confirm value from the plan of worktree-init and migrate", () => {
+  assert.equal(planConfirmation("worktree", "worktree: /work/shop-feat\nbranch: feat (existing)\nslug: feat\n" +
+    "workspace: /work\ndry run: nothing changed\n"), "/work/shop-feat");
+  assert.equal(planConfirmation("migrate", "workspace: /work\ncheckout: /work/shop (main)\nwrite /work/oasis-workspace.toml\n" +
+    "  [tooling]\nwrite /work/shop/oasis-checkout.toml\ndry run: nothing changed; run with --apply to migrate\n"),
+  "/work/oasis-workspace.toml");
+  assert.equal(planConfirmation("worktree", "dry run: nothing changed\n"), null);
+  assert.equal(planConfirmation("migrate", "workspace: /work\n"), null);
 });
