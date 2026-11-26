@@ -208,7 +208,7 @@ class SetupTests(unittest.TestCase):
         before = self.tree()
         usage = (f'Usage: {CLI} setup [--series <x.y>] [--community <dir>] [--enterprise <dir> | --no-enterprise] '
                  '[--workspace <dir>] [--name <name>] [--exception <module>]... [--config-dir <dir>] '
-                 '[--environment <dir>] [--apply | --plan]\n')
+                 '[--environment <dir> | --python <x.y>] [--apply | --plan]\n')
         for args in (('--apply', '--plan'), ('--plan', '--apply'), ('--enterprise', '/x', '--no-enterprise'),
                      ('--app',), ('--community',), ('--apply', '--apply'), ('extra',), ('--',), ('--a',),
                      ('--exception',), ('--config-dir', '/x', '--config-dir', '/y')):
@@ -392,7 +392,13 @@ class SetupTests(unittest.TestCase):
         prompts = ''
         for expected, answer in ((f'Odoo Community source for 19.0 (absolute path) [Enter: {found}]: ', ''),
                                  ('Odoo Enterprise source for 19.0 (absolute path, empty for none): ',
-                                  str(enterprise))):
+                                  str(enterprise)),
+                                 # v0.15.0 S8: the environment setup would create, and its Python.
+                                 ('Python environment for Odoo 19.0: Enter creates '
+                                  f'{self.checkout / ".oasis/venv"}, or type the absolute path of an existing '
+                                  'environment to use instead: ', ''),
+                                 (f'Python of the new environment {self.checkout / ".oasis/venv"}, one of 3.10, '
+                                  '3.11, 3.12, 3.13, 3.14 [Enter: 3.12]: ', '')):
             deadline = time.monotonic() + 30
             while expected not in prompts and time.monotonic() < deadline:
                 if select.select([master], [], [], 1)[0]:

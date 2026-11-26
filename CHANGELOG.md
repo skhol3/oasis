@@ -60,6 +60,16 @@ names) may still change in a minor release; every such change is listed here und
   `PASS series_exceptions=<modules>`, and `PASS|FAIL series_isolation` when two series share a
   database port, compose project, prefixes or env file, each with a fix.
 
+- `oasis setup` asks for the Python environment it would create (a new workspace, or a new
+  `[series."x.y"]` section) on a terminal, in the plan and with `--apply`: Enter creates it, or the
+  absolute path of an existing environment adopts that one exactly as `--environment` does. For a
+  new one it asks its Python among those the series supports, the default marked (`[Enter: 3.10]`).
+  Without a terminal nothing is asked and the plan is unchanged. End of input at a question refuses
+  (exit 2), Ctrl-C stops with `ERROR: Interrupted at a question: nothing changed.` (exit 130).
+- `oasis setup --python <x.y>`: the Python of the environment setup creates, without asking.
+  Refused when the series does not support it, with `--environment`, when the environment already
+  exists, and in an already configured checkout.
+
 ### Changed
 
 - An `oasis-checkout.toml` with a key it may not set is refused with `oasis-checkout.toml may only

@@ -25,6 +25,12 @@ deletes it, and a rollback never touches it. The project's own requirement files
 folder (requirements-extra.txt, requirements-overrides.txt) are referenced, never copied or edited:
 runtime.in includes the first with -r after Odoo's requirements, and <requirements>/overrides.txt
 includes the second, which tools/locks.py passes to uv pip compile as --override.
+
+When setup would create the environment (v0.15.0 S8: a new workspace, or a new series section) without
+--environment or --python, a terminal asks to create it or to adopt an existing one (then as --environment),
+and the Python of a new one among those the series supports; --python <x.y> answers that without asking.
+Without a terminal nothing is asked and the plan is the same as before. Every question comes before any
+change: end of input refuses (exit 2), Ctrl-C exits 130, and nothing is changed.
 """
 import copy
 import hashlib
@@ -38,7 +44,8 @@ import subprocess
 import sys
 import tomllib
 
-VALUE_OPTIONS = ('--series', '--community', '--enterprise', '--workspace', '--name', '--config-dir', '--environment')
+VALUE_OPTIONS = ('--series', '--community', '--enterprise', '--workspace', '--name', '--config-dir', '--environment',
+                 '--python')
 REPEATED_OPTIONS = ('--exception',)
 FLAG_OPTIONS = ('--apply', '--plan', '--no-enterprise')
 # Options that only answer the questions of a new configuration (an existing one is only filled in).
@@ -46,7 +53,7 @@ SOURCE_OPTIONS = ('--community', '--enterprise', '--no-enterprise')
 # Options that only apply when setup adds a series section to an existing workspace file, and every
 # option accepted then.
 SECTION_OPTIONS = ('--exception', '--config-dir')
-SERIES_PLAN_OPTIONS = ('--apply', '--plan', '--environment', *SOURCE_OPTIONS, *SECTION_OPTIONS)
+SERIES_PLAN_OPTIONS = ('--apply', '--plan', '--environment', '--python', *SOURCE_OPTIONS, *SECTION_OPTIONS)
 # The project's own requirement files that an adopted series folder may hold (S7): its extra requirements
 # (runtime.in includes them with -r) and its pins that replace Odoo's (overrides.txt includes them).
 PROJECT_REQUIREMENTS = ('requirements-extra.txt', 'requirements-overrides.txt')
@@ -148,11 +155,23 @@ copied or edited.
 --environment <dir> (a new workspace, or a new series section) uses an existing environment, an absolute
 directory with a pyvenv.cfg whose version is a Python the series supports (read, never run): setup
 never creates, syncs or deletes it, and bootstrap --apply syncs it to the locks.
+
+When setup would create the Python environment (a new workspace, or a new series section) and neither
+--environment nor --python is given, it asks on a terminal: Enter creates it, or the absolute path of an
+existing environment uses that one, exactly as --environment does; for a new one it then asks its Python
+among those the series supports (Enter: the default; any other answer is asked again). --python <x.y>
+gives that Python without asking: one the series supports, never with --environment, and refused when
+the environment already exists. Without a terminal nothing is asked and the environment gets the
+configuration's Python. End of input or Ctrl-C at a question changes nothing (exit 2 or 130).
 '''
 
 
 class Refused(Exception):
     """A refusal before any change: exit 2 with the message."""
+
+
+class Interrupted(Exception):
+    """Ctrl-C at a question, before any change: exit 130."""
 
 
 def sibling(name: str):
@@ -169,7 +188,7 @@ config, migrate, locks = sibling('config'), sibling('migrate'), sibling('locks')
 def usage() -> str:
     return (f'Usage: {config.usage_name()} setup [--series <x.y>] [--community <dir>] '
             '[--enterprise <dir> | --no-enterprise] [--workspace <dir>] [--name <name>] '
-            '[--exception <module>]... [--config-dir <dir>] [--environment <dir>] [--apply | --plan]')
+            '[--exception <module>]... [--config-dir <dir>] [--environment <dir> | --python <x.y>] [--apply | --plan]')
 
 
 def parse_arguments(arguments: list[str]) -> dict | None:
@@ -205,14 +224,23 @@ class Questions:
         self.interactive = sys.stdin.isatty() and sys.stderr.isatty()
 
     def ask(self, prompt: str, refusal: str) -> str:
+        """The answer, stripped. End of input refuses with refusal and Ctrl-C raises Interrupted: every
+        question comes before any change, so either leaves everything as it was."""
         if not self.interactive:
             raise Refused(refusal)
         sys.stderr.write(prompt)
         sys.stderr.flush()
-        line = sys.stdin.readline()
+        try:
+            line = sys.stdin.readline()
+        except KeyboardInterrupt:
+            raise Interrupted() from None
         if not line:
             raise Refused(refusal)
         return line.strip()
+
+    def say(self, text: str):
+        sys.stderr.write(text)
+        sys.stderr.flush()
 
 
 # -- inference -------------------------------------------------------------------------------------
@@ -319,6 +347,55 @@ def adopted_environment(value: str, series: str) -> tuple[Path, str]:
         raise Refused(f'--environment {path} has Python {python}, which Odoo {series} does not support '
                       f'({low} to {high}).')
     return path, python
+
+
+def series_pythons(series: str) -> list[str]:
+    """Every Python "3.<minor>" the series supports, oldest first (tools/odoo_versions.py python)."""
+    low, high = (int(bound.split('.')[1]) for bound in config.versions().capability(series, 'python'))
+    return [f'3.{minor}' for minor in range(low, high + 1)]
+
+
+def chosen_python(options: dict, series: str) -> str | None:
+    """The --python of the environment setup creates (S8), one the series supports, or None without it."""
+    if '--python' not in options:
+        return None
+    value = options['--python']
+    if not config.versions().python_supported(series, value):
+        low, high = config.versions().capability(series, 'python')
+        raise Refused(f'--python {value} is not a Python Odoo {series} supports ({low} to {high}).')
+    return value
+
+
+def environment_choice(options: dict, questions: Questions, series: str, environment: Path, default: str):
+    """(the adopted environment or None, the Python of a new one or None) for the environment setup would
+    create at environment with Python default (S8). --python is refused when that environment exists (it is
+    kept: setup creates none). On a terminal, without --environment or --python, setup asks: Enter creates
+    it, else the answer is adopted exactly as --environment adopts one (adopted_environment); for a new one
+    it asks its Python among those the series supports (Enter: default), again after any other answer.
+    Without a terminal nothing is asked: (None, None), the configuration's own Python."""
+    exists = (environment / 'pyvenv.cfg').is_file()
+    if '--python' in options and exists:
+        raise Refused(f'--python {options["--python"]}: the environment {environment} exists and is kept; setup '
+                      'creates no environment, so drop --python.')
+    if exists or not questions.interactive or '--environment' in options or '--python' in options:
+        return None, None
+    refusal = (f'No answer for the Python environment of Odoo {series} (end of input): nothing changed; pass '
+               '--environment <dir> or --python <x.y>.')
+    answer = questions.ask(f'Python environment for Odoo {series}: Enter creates {environment}, or type the absolute '
+                           'path of an existing environment to use instead: ', refusal)
+    if answer:
+        if not os.path.isabs(answer) or not os.path.isdir(answer):
+            raise Refused('--environment requires an absolute existing directory.')
+        return adopted_environment(answer, series), None
+    pythons = series_pythons(series)
+    listed = ', '.join(pythons)
+    while True:
+        answer = questions.ask(f'Python of the new environment {environment}, one of {listed} [Enter: {default}]: ',
+                               refusal)
+        if not answer or answer in pythons:
+            return None, answer or default
+        questions.say(f'{answer} is not a Python Odoo {series} supports; answer one of {listed}, or Enter for '
+                      f'{default}.\n')
 
 
 def directory_answer(value: str, label: str) -> Path:
@@ -517,6 +594,7 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
         guarded({'ODOO_VERSION': series, 'PROJECT_ROOT': str(root), 'WORKSPACE_ROOT': str(directory),
                  'ADDON_ROOTS': '\n'.join(str((root / item).resolve()) for item in roots)})
         adopted = adopted_environment(options['--environment'], series) if '--environment' in options else None
+        chosen, origin_environment = chosen_python(options, series), 'from --environment'
         community, enterprise, origin, machine_lines, machine_actions, environments = choose_sources(
             root, series, options, machine, questions)
         if '--name' in options:
@@ -532,33 +610,44 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                   f'enterprise: {enterprise or "none"} ({origin[1]})', f'workspace: {directory} (new)', *machine_lines]
         actions += machine_actions
         layout = f'{LAYOUT}/' if directory == root else ''
-        python = config.versions().capability(series, 'python_default')
-        environment = f'{environments}/{name}' if environments else f'{layout}venv'
-        # An adopted environment (S7): [tooling].environment with the series' default Python, else the
-        # default named environment with its own (python_version is derived, never a [tooling] key).
-        named = None
-        if adopted is not None:
-            environment = relative(adopted[0], directory)
-            if adopted[1] != python:
-                named, python = {'path': environment, 'python': adopted[1]}, adopted[1]
-        tooling = {'environment': environment,
-                   'config': f'{layout}config/odoo.conf', 'env_file': f'{layout}config/.env',
-                   'compose': f'{layout}config/compose.yml', 'requirements': f'{layout}config/requirements',
-                   'addons_paths': roots, 'db_service': 'db', 'dev_prefix': f'{name}_dev_',
-                   'test_prefix': f'{name}_test_', 'logs': f'{layout}logs', 'data_dir': f'{layout}data'}
-        if named is not None:
-            del tooling['environment']
-        text = (WORKSPACE_HEADER + f'workspace_version = 1\nodoo_version = {migrate.toml_string(series)}\n\n'
-                + migrate.toml_table('tooling', tooling)
-                + ('\n' + migrate.toml_table('environments.default', named) if named is not None else ''))
-        sources = {'community': str(community), **({'enterprise': str(enterprise)} if enterprise else {})}
-        document = {'workspace_version': 1, 'odoo_version': series,
-                    'tooling': {**tooling, **sources, 'environment': environment, 'version': series,
-                                'python_version': python}}
-        try:
-            values = config.assignments(document, root, directory, workspace, '')
-        except config.InvalidConfig as exc:
-            raise Refused(str(exc)) from exc
+
+        def configured(adopted, chosen):
+            """(the workspace file's text, the values it gives) with that adopted environment or Python."""
+            python = config.versions().capability(series, 'python_default')
+            environment = f'{environments}/{name}' if environments else f'{layout}venv'
+            # An adopted environment (S7), or a new one with another Python (S8): [tooling].environment with the
+            # series' default Python, else the default named environment with its own (python_version is
+            # derived, never a [tooling] key).
+            if adopted is not None:
+                environment, chosen = relative(adopted[0], directory), adopted[1]
+            named = None
+            if chosen is not None and chosen != python:
+                named, python = {'path': environment, 'python': chosen}, chosen
+            tooling = {'environment': environment,
+                       'config': f'{layout}config/odoo.conf', 'env_file': f'{layout}config/.env',
+                       'compose': f'{layout}config/compose.yml', 'requirements': f'{layout}config/requirements',
+                       'addons_paths': roots, 'db_service': 'db', 'dev_prefix': f'{name}_dev_',
+                       'test_prefix': f'{name}_test_', 'logs': f'{layout}logs', 'data_dir': f'{layout}data'}
+            if named is not None:
+                del tooling['environment']
+            text = (WORKSPACE_HEADER + f'workspace_version = 1\nodoo_version = {migrate.toml_string(series)}\n\n'
+                    + migrate.toml_table('tooling', tooling)
+                    + ('\n' + migrate.toml_table('environments.default', named) if named is not None else ''))
+            sources = {'community': str(community), **({'enterprise': str(enterprise)} if enterprise else {})}
+            document = {'workspace_version': 1, 'odoo_version': series,
+                        'tooling': {**tooling, **sources, 'environment': environment, 'version': series,
+                                    'python_version': python}}
+            try:
+                return text, config.assignments(document, root, directory, workspace, '')
+            except config.InvalidConfig as exc:
+                raise Refused(str(exc)) from exc
+        text, values = configured(adopted, chosen)
+        if adopted is None:
+            answered, chosen_now = environment_choice(options, questions, series, Path(values['PROJECT_ENVIRONMENT']),
+                                                      values['PYTHON_VERSION'])
+            if answered is not None or chosen_now is not None:
+                adopted, chosen, origin_environment = answered, chosen_now, 'answered'
+                text, values = configured(adopted, chosen)
         lines.append(f'create {workspace} (mode 0600):')
         lines += [f'  {line}' if line else '' for line in text.splitlines()]
         actions.append(('create', workspace, text.encode(), 0o600))
@@ -579,6 +668,7 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
             'after': [], 'created': set(), 'new': new}
     if new and adopted is not None:
         plan['adopted_environment'] = adopted[1]
+        plan['adopted_origin'] = origin_environment
     gaps(plan, directory, planned)
     return plan
 
@@ -656,7 +746,8 @@ def relative(path: Path, base: Path) -> str:
     return path.relative_to(base).as_posix() if path.is_relative_to(base) else str(path)
 
 
-def series_section(document, workspace, series, exceptions, sources, environments, options, adopted=None):
+def series_section(document, workspace, series, exceptions, sources, environments, options, adopted=None,
+                   python=None):
     """The [series."<series>"] values (in config.SERIES_KEYS order), the adoption plan lines and the adopted
     folder (or None): only
     what [tooling] would otherwise share with the default series. The per-series files go to the
@@ -665,7 +756,9 @@ def series_section(document, workspace, series, exceptions, sources, environment
     <logs>/<x.y> and <data_dir>/<x.y>, the prefixes to <name><major>_dev_ and _test_ (<name> from the
     default series' dev_prefix, its own major left out). A source that [tooling] sets is overridden
     with this series' (sources: community and enterprise or None). An adopted environment (adopted: its
-    path and Python, S7) is the section's environment, with python when it is not the series' default. An
+    path and Python, S7) is the section's environment, with python when it is not the series' default; so is
+    python, the Python of the environment setup creates (S8), and a series that would otherwise use the default
+    named environment with another Python gets that environment's path in the section. An
     adopted folder gives data_dir from its kept odoo.conf's data_dir (conf_data_dir) and logs from an existing
     logs/<folder name> next to the folder's parent."""
     view, base, default = as_version2(document), workspace.parent, document['odoo_version']
@@ -711,6 +804,18 @@ def series_section(document, workspace, series, exceptions, sources, environment
         section['environment'] = relative(adopted[0], base)
         if adopted[1] != config.versions().capability(series, 'python_default'):
             section['python'] = adopted[1]
+    elif python is not None:
+        # Without an environment in the section, the series uses the default named environment and its
+        # python (config.series_document), which the section's python does not change: the section names
+        # that environment's path when another Python is chosen.
+        named = view.get('environments', {}).get('default') if isinstance(view.get('environments'), dict) else None
+        own = (named.get('python') if 'environment' not in section and old.get('environment') is None
+               and isinstance(named, dict) else None)
+        if own is None or python != own:
+            if own is not None:
+                section['environment'] = config.placed(environment, series)
+            if python != config.versions().capability(series, 'python_default'):
+                section['python'] = python
     folder, adopted, origin = series_folder(document, workspace, series, options)
     files = {'config': 'odoo.conf', 'compose': 'compose.yml', 'env_file': '.env', 'requirements': 'requirements'}
     if adopted is not None:
@@ -902,25 +1007,38 @@ def series_plan(root, kind, options, questions, workspace, machine, target, line
                           f'[series.{json.dumps(series)}], or set its version to {series}.x.y.z if it is an Odoo '
                           f'{series} module.')
     adopted = adopted_environment(options['--environment'], series) if '--environment' in options else None
+    chosen, origin_environment = chosen_python(options, series), 'from --environment'
     community, enterprise, source_origin, machine_lines, machine_actions, environments = choose_sources(
         root, series, options, machine, questions)
     lines += [f'series: {series} ({origin}; {workspace} has no [series.{json.dumps(series)}] section)',
               f'community: {community} ({source_origin[0]})', f'enterprise: {enterprise or "none"} ({source_origin[1]})',
               *machine_lines]
-    section, adoption, folder = series_section(document, workspace, series, exceptions, (community, enterprise),
-                                               environments, options, adopted)
-    new, raw, workspace_lines, checked = extended_workspace(workspace, document, series, section)
+
+    def configured(adopted, chosen):
+        """The section, the extended workspace file and the values it gives, with that adopted environment or
+        Python."""
+        section, adoption, folder = series_section(document, workspace, series, exceptions, (community, enterprise),
+                                                   environments, options, adopted, chosen)
+        new, raw, workspace_lines, checked = extended_workspace(workspace, document, series, section)
+        try:
+            planned, base, _workspace, name, _origins, _refusal = config.layered_configuration(root, planned=checked)
+            # A new machine entry is not written yet: its source, as the existing flow does.
+            if 'community' not in planned['tooling']:
+                planned['tooling']['community'] = str(community)
+            if enterprise is not None and 'enterprise' not in planned['tooling']:
+                planned['tooling']['enterprise'] = str(enterprise)
+            values = config.assignments(planned, root, base, workspace, name)
+        except config.InvalidConfig as exc:
+            raise Refused(str(exc)) from exc
+        return adoption, folder, new, raw, workspace_lines, base, values
+    adoption, folder, new, raw, workspace_lines, base, values = configured(adopted, chosen)
+    if adopted is None:
+        answered, chosen_now = environment_choice(options, questions, series, Path(values['PROJECT_ENVIRONMENT']),
+                                                  values['PYTHON_VERSION'])
+        if answered is not None or chosen_now is not None:
+            adopted, chosen, origin_environment = answered, chosen_now, 'answered'
+            adoption, folder, new, raw, workspace_lines, base, values = configured(adopted, chosen)
     lines += [*workspace_lines, *adoption]
-    try:
-        planned, base, _workspace, name, _origins, _refusal = config.layered_configuration(root, planned=checked)
-        # A new machine entry is not written yet: its source, as the existing flow does.
-        if 'community' not in planned['tooling']:
-            planned['tooling']['community'] = str(community)
-        if enterprise is not None and 'enterprise' not in planned['tooling']:
-            planned['tooling']['enterprise'] = str(enterprise)
-        values = config.assignments(planned, root, base, workspace, name)
-    except config.InvalidConfig as exc:
-        raise Refused(str(exc)) from exc
     guarded(values)
     # A failed compile or uv venv undoes the edit of the shared workspace file too (undo_after).
     plan = {'root': root, 'workspace': workspace, 'values': values, 'lines': lines,
@@ -929,6 +1047,7 @@ def series_plan(root, kind, options, questions, workspace, machine, target, line
             'project_requirements': folder}
     if adopted is not None:
         plan['adopted_environment'] = adopted[1]
+        plan['adopted_origin'] = origin_environment
     gaps(plan, base, set())
     return plan
 
@@ -1060,8 +1179,8 @@ def gaps(plan: dict, directory: Path, planned: set):
         plan['after'].append(('compile', requirements, python))
     environment = Path(values['PROJECT_ENVIRONMENT'])
     if 'adopted_environment' in plan:
-        lines.append(f'adopt the environment {environment} (from --environment): Python {plan["adopted_environment"]} '
-                     '(its pyvenv.cfg); setup never creates, syncs or deletes it')
+        lines.append(f'adopt the environment {environment} ({plan["adopted_origin"]}): Python '
+                     f'{plan["adopted_environment"]} (its pyvenv.cfg); setup never creates, syncs or deletes it')
     elif (environment / 'pyvenv.cfg').is_file():
         lines.append(f'kept the environment {environment}')
     elif not usable:
@@ -1272,6 +1391,10 @@ def main(arguments: list[str]) -> int:
     if options is None:
         print(usage(), file=sys.stderr)
         return 2
+    if '--python' in options and '--environment' in options:
+        print('ERROR: --python cannot be combined with --environment: an adopted environment keeps the Python of '
+              'its pyvenv.cfg.', file=sys.stderr)
+        return 2
     for option in ('--workspace', '--config-dir', '--environment'):
         if option in options and (not os.path.isabs(options[option]) or not os.path.isdir(options[option])):
             print(f'ERROR: {option} requires an absolute existing directory.', file=sys.stderr)
@@ -1285,6 +1408,9 @@ def main(arguments: list[str]) -> int:
     except Refused as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 2
+    except Interrupted:
+        print('\nERROR: Interrupted at a question: nothing changed.', file=sys.stderr)
+        return 130
     print('\n'.join(plan['lines']), flush=True)
     if not plan['actions'] and not plan['after']:
         print(f'nothing to set up: run {config.program_name()} --project {root} doctor')

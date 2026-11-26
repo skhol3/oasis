@@ -16,7 +16,7 @@ cd /absolute/checkout
 ```text
 oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enterprise <dir> | --no-enterprise]
                                    [--workspace <dir>] [--name <name>] [--exception <module>]...
-                                   [--config-dir <dir>] [--environment <dir>] [--apply | --plan]
+                                   [--config-dir <dir>] [--environment <dir> | --python <x.y>] [--apply | --plan]
 ```
 
 - [Plan and apply](#plan-and-apply): what is printed, what changes, exit status.
@@ -78,10 +78,18 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
 - The project name, which gives the database prefixes `<name>_dev_` and `<name>_test_` and the compose
   project: the checkout's directory name, lower-cased, or `--name` (2 to 20 lowercase letters,
   digits or underscores, starting with a letter).
+- The Python environment, when setup would create one (a new workspace, or a new
+  [series section](#another-odoo-series)) and neither `--environment` nor `--python` is given: on a
+  terminal it asks whether to create it or to use an existing one, and the Python of a new one
+  ([A new environment and its Python](#a-new-environment-and-its-python)). Without a terminal nothing is
+  asked: the environment is created with the configuration's Python, as before.
 - Questions are asked only when standard input and standard error are a terminal. Otherwise a
   missing answer is an error that names its flag, for example
   `No Odoo Community source for 19.0 in the machine file <file>: pass --community <dir>.` or
   `Enterprise or not for 19.0: pass --enterprise <dir> or --no-enterprise.`
+- Every question comes before any change, with or without `--apply`. End of input (Ctrl-D) at a question
+  refuses like a missing answer (exit 2); Ctrl-C stops with `ERROR: Interrupted at a question: nothing
+  changed.` (exit 130). Either way nothing is written.
 
 ## What it creates and what it keeps
 
@@ -95,7 +103,7 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
 | `runtime.in`, `dev.in` | `-r <community>/requirements.txt`; `-c runtime.txt` and `-r runtime.in`, to which you add your development tools. With an adopted series folder that holds `requirements-extra.txt`, `runtime.in` also includes it ([Another Odoo series](#the-projects-requirement-files)). |
 | `overrides.txt` | Only with an adopted series folder that holds `requirements-overrides.txt`: `-r <that file>`, given to `uv pip compile` as `--override` ([Another Odoo series](#the-projects-requirement-files)). |
 | Locks | `runtime.txt`, `dev.txt` and `lock.sha256`, compiled with the series' Python by the same code as `bootstrap --apply` when they are missing or stale; current locks are kept, and a lock changed by hand is kept and leaves the environment uncreated. |
-| Environment | `uv venv --python <python>` and `uv pip sync` of `dev.txt`. An existing environment is kept and not synced (run `bootstrap --apply` for that); `--environment <dir>` [adopts one](#an-existing-environment) instead of creating it. |
+| Environment | `uv venv --python <python>` and `uv pip sync` of `dev.txt`, with the series' default Python, `--python <x.y>` or the [answered one](#a-new-environment-and-its-python). An existing environment is kept and not synced (run `bootstrap --apply` for that); `--environment <dir>` (or an answered path) [adopts one](#an-existing-environment) instead of creating it. |
 | `logs`, `data_dir` | The directories (mode 0700). |
 
 ### One port for odoo.conf and the compose file
@@ -193,7 +201,7 @@ that series' files, next to the other series and without touching them:
   the series' values: the compose file with its `postgres_default` (`postgres:14` on 15.0) on a free port
   that no other series of the workspace uses, its own compose project (`oasis-<name><major>-...`), the
   requirement inputs of its source, and the locks and environment with its `python_default` (3.10 on
-  15.0).
+  15.0), or the Python of `--python` or of the [answer](#a-new-environment-and-its-python).
 - A kept `odoo.conf` or compose file of the series that uses a port another series of the workspace
   uses (its `odoo.conf`'s `db_port`, 5432 without one, or the port its compose file publishes) is
   refused before anything is written, since setup never edits a kept file and `doctor` fails two
@@ -366,6 +374,45 @@ options: `--environment: <checkout> is already configured by <file>; setup only 
 - The next steps say that the locks describe the inputs and that `oasis --project <checkout> bootstrap
   --apply` syncs the adopted environment to them, which changes the packages installed there: read
   `bootstrap --preview` (its `uv pip sync --dry-run`) first.
+- On a terminal, the path can also be the answer to the environment question
+  ([below](#a-new-environment-and-its-python)): it is checked and adopted exactly as `--environment`, with
+  the same refusals, and the plan line says `(answered)` instead of `(from --environment)`.
+
+### A new environment and its Python
+
+When setup would create the environment (a new workspace, or a new series section; not when the
+environment's directory already has a `pyvenv.cfg`, which is kept) and neither `--environment` nor
+`--python` is given, it asks on a terminal, in the plan and with `--apply` alike:
+
+```text
+Python environment for Odoo 15.0: Enter creates <corpus-cafe>/environments/corpus-cafe-15.0, or type the absolute path of an existing environment to use instead:
+Python of the new environment <corpus-cafe>/environments/corpus-cafe-15.0, one of 3.7, 3.8, 3.9, 3.10, 3.11, 3.12 [Enter: 3.10]:
+```
+
+- A path [adopts that environment](#an-existing-environment), as `--environment` does; Enter creates the
+  new one and asks its Python.
+- The Pythons offered are every one the series supports (`python` in `tools/odoo_versions.py`); Enter takes
+  the marked one, the Python the environment would get without the question (the series' `python_default`,
+  or the `python` of a default named environment the series uses). Any other answer is asked again:
+  `3.13 is not a Python Odoo 15.0 supports; answer one of 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, or Enter for
+  3.10.`
+- Enter twice gives the same plan as without a terminal.
+
+`--python <x.y>` gives that Python without asking, also without a terminal. It is refused (exit 2, nothing
+changed) when the series does not support it (`--python 3.13 is not a Python Odoo 15.0 supports (3.7 to
+3.12).`), with `--environment` (`--python cannot be combined with --environment: an adopted environment
+keeps the Python of its pyvenv.cfg.`), when the environment already exists (`--python 3.8: the environment
+<dir> exists and is kept; setup creates no environment, so drop --python.`), and in a checkout that is
+already configured, like the other options (`--python: <checkout> is already configured by <file>; setup
+only fills what is missing.`).
+
+The chosen Python is the one of the plan's `compile ... with Python <x.y>` and `create the environment
+<dir> with Python <x.y>` lines, of the locks and of `uv venv --python <x.y>`. When it is not the series'
+default it is written to the configuration: in a series section as `python = '<x.y>'` (a series that
+would use a default named environment of another Python also gets that environment's path as the
+section's `environment`, so the section's `python` applies); in a new workspace as the
+`[environments.default]` table with the environment's `path` and that `python`, instead of
+`[tooling].environment`.
 
 ## Next steps
 
