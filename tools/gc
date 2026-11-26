@@ -2,12 +2,14 @@
 set -Eeuo pipefail
 source "$(dirname "$0")/oasis_env.sh"
 usage() {
-  printf 'Usage: %s gc [--apply] [--all-checkouts] | gc [--apply] --trash [--older-than <days>]\n' "$(usage_name)"
+  printf 'Usage: %s gc [--apply] [--all-checkouts] | gc [--apply] --trash [--older-than <days>] [--confirm <project root>]\n' "$(usage_name)"
 }
 apply=false
 scope=checkout
 trash=false
 older_than=
+confirm=
+confirmed=false
 arguments=("$@")
 for (( index = 0; index < ${#arguments[@]}; index++ )); do
   argument=${arguments[index]}
@@ -15,6 +17,16 @@ for (( index = 0; index < ${#arguments[@]}; index++ )); do
     --apply) apply=true ;;
     --all-checkouts) scope=all ;;
     --trash) trash=true ;;
+    --confirm|--confirm=*)
+      if "$confirmed"; then usage >&2; exit 2; fi
+      confirmed=true
+      if [[ "$argument" == --confirm ]]; then
+        index=$(( index + 1 ))
+        confirm=${arguments[index]:-}
+      else
+        confirm=${argument#--confirm=}
+      fi
+      if [[ -z "$confirm" || "$confirm" == -* ]]; then usage >&2; exit 2; fi ;;
     --older-than)
       index=$(( index + 1 ))
       older_than=${arguments[index]:-}
@@ -39,15 +51,32 @@ for (( index = 0; index < ${#arguments[@]}; index++ )); do
       printf '<name> on stderr, then dropped=<n> failed=<m>, exit 1 when m > 0). A database dropped whose filestore\n'
       printf 'cannot be removed counts as failed: stderr names the filestore path to remove by hand.\n'
       printf 'Without --trash the trash is never touched.\n'
+      printf -- '--apply --trash is Tier B in the agent policy (oasis policy --json): it runs only with\n'
+      printf -- '--confirm <project root>; without it, it refuses before any query naming the exact command.\n'
       exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
-if { [[ -n "$older_than" ]] && ! "$trash"; } || { "$trash" && [[ "$scope" == all ]]; }; then
+if { [[ -n "$older_than" ]] && ! "$trash"; } || { "$trash" && [[ "$scope" == all ]]; } \
+    || { "$confirmed" && ! { "$apply" && "$trash"; }; }; then
   usage >&2
   exit 2
 fi
 source "$(dirname "$0")/common.sh"
+# Tier B (tools/policy.py): dropping the trash for good needs --confirm <project root>, before any query.
+if "$apply" && "$trash" && [[ "${confirm%/}" != "$PROJECT_ROOT" ]]; then
+  days=()
+  if [[ -n "$older_than" ]]; then days=(--older-than "$older_than"); fi
+  command=$(confirm_command gc --apply --trash "${days[@]}" --confirm "$PROJECT_ROOT")
+  if "$confirmed"; then
+    printf 'ERROR: --confirm %s does not name the project root %s; nothing changed. Run: %s\n' \
+      "$confirm" "$PROJECT_ROOT" "$command" >&2
+  else
+    printf 'ERROR: gc --apply --trash drops the expired trash entries for good (Tier B: it needs explicit confirmation); nothing changed. List them with %s, then run: %s\n' \
+      "$(confirm_command gc --trash "${days[@]}")" "$command" >&2
+  fi
+  exit 2
+fi
 require_runtime
 if "$trash"; then
   trash_helper() {

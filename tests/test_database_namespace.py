@@ -94,7 +94,7 @@ class WorktreeNamespaceTests(NamespaceFixture):
         self.assert_main_listing_refused(
             f'ERROR: Cannot read the checkout slug of {self.linked}: {profile} is the old profile format, '
             'no longer read: run oasis migrate --plan to see its conversion to oasis-workspace.toml, then '
-            'oasis migrate --apply.\n')
+            'oasis migrate --apply --confirm <the workspace file the plan writes>.\n')
         profile.unlink()
         self.assertEqual(self.listed(self.main), MAIN)
 

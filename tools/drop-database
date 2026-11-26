@@ -1,14 +1,38 @@
 #!/usr/bin/env bash
 # Moves a managed database to the trash (tools/trash.py): prints the plan, then renames the
 # database to its trash name and its filestore directory with it. `trash restore` brings it back;
-# `gc --apply --trash` drops what has been in the trash long enough.
+# `gc --apply --trash` drops what has been in the trash long enough. Tier B in the agent policy
+# (tools/policy.py): it runs only with --confirm <database>; without it, after the plan, it refuses
+# naming the exact command and changes nothing.
 set -Eeuo pipefail
 source "$(dirname "$0")/common.sh"
 database=${1:-}
-mode=${2:-}
+terminate=false
+confirm=
+confirmed=false
+usage_error=false
+[[ -n "$database" && "$database" != -* ]] || usage_error=true
+arguments=("${@:2}")
+for (( index = 0; index < ${#arguments[@]}; index++ )); do
+  argument=${arguments[index]}
+  case $argument in
+    --terminate) "$terminate" && usage_error=true; terminate=true ;;
+    --confirm|--confirm=*)
+      "$confirmed" && usage_error=true
+      confirmed=true
+      if [[ "$argument" == --confirm ]]; then
+        index=$(( index + 1 ))
+        confirm=${arguments[index]:-}
+      else
+        confirm=${argument#--confirm=}
+      fi
+      [[ -n "$confirm" && "$confirm" != -* ]] || usage_error=true ;;
+    *) usage_error=true ;;
+  esac
+done
 require_runtime
-if [[ -z "$database" || ( -n "$mode" && "$mode" != "--terminate" ) || $# -gt 2 ]]; then
-  printf 'Usage: %s <%s*|%s*> [--terminate]\n' "$(usage_name)" "$DEV_PREFIX" "$TEST_PREFIX" >&2
+if "$usage_error"; then
+  printf 'Usage: %s <%s*|%s*> [--terminate] [--confirm <database>]\n' "$(usage_name)" "$DEV_PREFIX" "$TEST_PREFIX" >&2
   exit 2
 fi
 require_managed_database_name "$database"
@@ -29,12 +53,25 @@ size=$(database_size "$database")
 session_count=$(managed_database_session_count "$database")
 printf 'database=%s\nsize=%s\nsessions=%s\nfilestore=%s\ntrash=%s\n' \
   "$database" "$(trash_helper size "$size")" "$session_count" "$filestore" "$trash"
-if (( session_count > 0 )); then
-  if [[ "$mode" != "--terminate" ]]; then
-    printf 'Refusing to drop database with %s active session(s): %s\n' "$session_count" "$database" >&2
-    printf 'Retry with --terminate only after confirming those sessions may be closed.\n' >&2
-    exit 3
+if (( session_count > 0 )) && ! "$terminate"; then
+  printf 'Refusing to drop database with %s active session(s): %s\n' "$session_count" "$database" >&2
+  printf 'Retry with --terminate only after confirming those sessions may be closed.\n' >&2
+  exit 3
+fi
+if [[ "$confirm" != "$database" ]]; then
+  options=()
+  if "$terminate"; then options=(--terminate); fi
+  command=$(confirm_command drop-database "$database" "${options[@]}" --confirm "$database")
+  if "$confirmed"; then
+    printf 'ERROR: --confirm %s does not name the database %s; nothing changed. Run: %s\n' \
+      "$confirm" "$database" "$command" >&2
+  else
+    printf 'ERROR: drop-database moves %s and its filestore to the trash (Tier B: it needs explicit confirmation); nothing changed. Run: %s\n' \
+      "$database" "$command" >&2
   fi
+  exit 2
+fi
+if (( session_count > 0 )); then
   terminate_managed_database_sessions "$database"
 fi
 # The filestore first: when the rename fails it moves back, and nothing has changed.

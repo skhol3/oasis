@@ -310,7 +310,7 @@ class CatalogTests(MenuFixture):
         self.assertEqual(actions['maintenance.trash_empty'], {
             'id': 'maintenance.trash_empty', 'group': 'maintenance', 'label': 'Empty trash', 'kind': 'command',
             'command': 'gc', 'argv': [*prefix, 'gc', '--apply', '--trash',
-                                      {'input': 'older_than', 'option': '--older-than'}],
+                                      {'input': 'older_than', 'option': '--older-than'}, '--confirm', prefix[2]],
             'inputs': [{'id': 'older_than', 'label': 'Dropped at least this many days ago', 'kind': 'text',
                         'source': None, 'required': False, 'allow_new': False, 'pattern': '^[0-9]+$',
                         'error': 'Days must be a whole number.', 'default': None, 'hint': 'Enter for 7',
@@ -320,6 +320,18 @@ class CatalogTests(MenuFixture):
                          ['maintenance.migrate', 'maintenance.worktree'])
         self.assertEqual([key for key, action in actions.items() if action['terminal_only']], ['modules.init_dev'])
         self.assertEqual(actions['maintenance.migrate_plan']['argv'], [*prefix, 'migrate', '--plan'])
+        # v0.16.0 S1: the Tier B actions pass --confirm <exact name> (tools/policy.py).
+        self.assertEqual(actions['maintenance.drop_database']['argv'][-3:],
+                         [{'input': 'database'}, {'input': 'terminate', 'flag': '--terminate'},
+                          {'input': 'database', 'option': '--confirm'}])
+        self.assertEqual(actions['maintenance.migrate']['argv'],
+                         [*prefix, 'migrate', '--apply', {'input': 'workspace_file', 'option': '--confirm'}])
+        self.assertEqual([field['id'] for field in actions['maintenance.migrate']['inputs']], ['workspace_file'])
+        self.assertEqual(actions['maintenance.worktree']['argv'],
+                         [*prefix, 'worktree-init', {'input': 'feature'}, {'input': 'branch'},
+                          {'input': 'path', 'option': '--path'}, {'input': 'path', 'option': '--confirm'}])
+        self.assertEqual([field['id'] for field in actions['maintenance.worktree']['inputs']],
+                         ['feature', 'branch', 'path'])
         # Read-only, from source: no database input, no confirmation.
         self.assertEqual(actions['modules.overview'], {
             'id': 'modules.overview', 'group': 'modules', 'label': "Show a module's overview from source",
@@ -562,13 +574,15 @@ class TerminalMenuTests(MenuFixture):
         self.assertEqual((result.returncode, result.stderr), (1, ''), result.stdout)
         self.assertIn('  r) Repeat: Move a database to the trash (cc_dev_coffee)\n', result.stdout)
         self.assertTrue(result.stdout.endswith(
-            self.command('drop-database', 'cc_dev_coffee') + 'Type the database name to confirm: '
+            self.command('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee') +
+            'Type the database name to confirm: '
             'Not confirmed: nothing ran.\n'), result.stdout)
         self.assertEqual(self.log().count('RENAME TO'), 1)
 
     def test_user_run_actions_are_not_remembered(self):
-        result = self.terminal('4\n11\nshop\nshop\n')
-        self.assertIn(self.command('worktree-init', 'shop', 'shop'), result.stdout)
+        result = self.terminal('4\n11\nshop\nshop\n/work/a-shop\n')
+        self.assertIn(self.command('worktree-init', 'shop', 'shop', '--path', '/work/a-shop', '--confirm', '/work/a-shop'),
+                      result.stdout)
         self.assertFalse(self.state_file().exists())
         result = self.terminal('q\n')
         self.assertNotIn('Repeat', result.stdout)
@@ -667,13 +681,14 @@ class TerminalMenuTests(MenuFixture):
         result = self.terminal('4\n2\n1\nn\ncc_dev_coffe\n')
         self.assertEqual((result.returncode, result.stderr), (1, ''), result.stdout)
         self.assertIn('  1) cc_dev_coffee\n  2) cc_test_other\n', result.stdout)
-        self.assertIn(self.command('drop-database', 'cc_dev_coffee'), result.stdout)
+        self.assertIn(self.command('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee'), result.stdout)
         self.assertTrue(result.stdout.endswith('Not confirmed: nothing ran.\n'), result.stdout)
         self.assertNotIn('ALTER DATABASE', self.log())
         result = self.terminal('4\n2\n1\nn\ncc_dev_coffee\n')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         # The command first, then the confirmation (the typed answer echoes on the terminal only).
-        self.assertRegex(result.stdout, re.escape(self.command('drop-database', 'cc_dev_coffee') +
+        self.assertRegex(result.stdout, re.escape(self.command('drop-database', 'cc_dev_coffee', '--confirm',
+                                                               'cc_dev_coffee') +
                                                   'Type the database name to confirm: database=cc_dev_coffee\n') +
                          r'size=unknown\nsessions=0\nfilestore=none\ntrash=(cc_dev_coffee_trash_\d{8}_\d{6})\n'
                          r'Database moved to trash: cc_dev_coffee -> \1\n'

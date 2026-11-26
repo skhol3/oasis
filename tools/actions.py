@@ -39,7 +39,8 @@ for a choice without source, warning being what to show when it is chosen, or nu
 default is the value an empty answer takes (null: nothing); a text input's default is only shown
 (an empty answer leaves the option out, so the command applies its own rule).
 confirm is `database` (type the chosen database name), `yes` (type yes) or null; destructive is
-true exactly when confirm is set. user_run actions are for the user only (never an agent);
+true exactly when confirm is set. user_run actions are never offered for Repeat (Tier B in the
+agent policy, tools/policy.py: an agent proposes them, the user confirms them);
 terminal_only actions need a terminal (init-dev-database asks for passwords).
 
 argv is a template; fill it in order (build below):
@@ -73,6 +74,8 @@ DAYS_ERROR = 'Days must be a whole number.'
 # A port number, 1-65535 (start validates it the same way).
 PORT_PATTERN = r'^(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$'
 PORT_ERROR = 'Port must be a number from 1 to 65535.'
+ABSOLUTE_PATTERN = r'^/.+'
+ABSOLUTE_ERROR = 'Enter an absolute path.'
 RUN_ACTION = 'server.run'
 SERVER_COMMANDS = ('start', 'restart')
 NO_CONF_DATABASE = 'No database chosen: odoo.conf sets no db_name, so Odoo starts without a database.'
@@ -149,6 +152,12 @@ def action(id, label, command, template=(), inputs=(), *, confirm=None, user_run
             'superseded_by': superseded_by}
 
 
+def worktree_hint(values: dict) -> str:
+    """Where worktree-init puts a worktree by default: next to the main checkout."""
+    main = Path(values.get('CHECKOUT_MAIN_ROOT') or values['PROJECT_ROOT'])
+    return f'for example {main.parent / main.name}-<feature>'
+
+
 def run_action(running: bool, default_database, dev: list[dict], port, dev_option: str) -> dict:
     """The start / restart flow: restart when this checkout's server runs, else start --detach;
     dev_option is the series' developer mode option (odoo_versions.py)."""
@@ -210,24 +219,32 @@ def actions(values: dict, class_filter: bool, run: dict | None = None) -> list[d
         *tests,
         action('maintenance.create_database', 'Create a database', 'create-database', [value('database')],
                [new_database()]),
+        # Tier B (tools/policy.py): each passes --confirm <exact name> after the typed confirmation.
         action('maintenance.drop_database', 'Move a database to the trash', 'drop-database',
-               [value('database'), flag('terminate', '--terminate')], [database(), TERMINATE], confirm='database'),
+               [value('database'), flag('terminate', '--terminate'), option('database', '--confirm')],
+               [database(), TERMINATE], confirm='database'),
         action('maintenance.trash', 'List trash', 'trash'),
         action('maintenance.trash_restore', 'Restore from trash', 'trash', ['restore', value('trash')],
                [field('trash', 'Trash name (as listed by List trash)', 'text', pattern=DATABASE_PATTERN,
                       error=DATABASE_ERROR)]),
-        action('maintenance.trash_empty', 'Empty trash', 'gc', ['--apply', '--trash', option('older_than', '--older-than')],
+        action('maintenance.trash_empty', 'Empty trash', 'gc',
+               ['--apply', '--trash', option('older_than', '--older-than'), '--confirm', values['PROJECT_ROOT']],
                [field('older_than', 'Dropped at least this many days ago', 'text', required=False,
                       pattern=DAYS_PATTERN, error=DAYS_ERROR, hint='Enter for 7')], confirm='yes'),
         action('maintenance.gc', 'List leftover test databases', 'gc'),
         action('maintenance.gc_apply', 'Drop leftover test databases', 'gc', ['--apply'], confirm='yes'),
         action('maintenance.doctor', 'Check the environment (doctor)', 'doctor'),
         action('maintenance.migrate_plan', 'Show the workspace migration plan', 'migrate', ['--plan']),
-        action('maintenance.migrate', 'Migrate to the workspace file', 'migrate', ['--apply'], confirm='yes',
-               user_run=True),
+        action('maintenance.migrate', 'Migrate to the workspace file', 'migrate',
+               ['--apply', option('workspace_file', '--confirm')],
+               [field('workspace_file', 'Workspace file to write (the plan names it after write)', 'text',
+                      pattern=ABSOLUTE_PATTERN, error=ABSOLUTE_ERROR)], confirm='yes', user_run=True),
         action('maintenance.worktree', 'Create a linked worktree', 'worktree-init',
-               [value('feature'), value('branch')],
-               [field('feature', 'Feature name', 'text'), field('branch', 'Branch', 'text')], user_run=True),
+               [value('feature'), value('branch'), option('path', '--path'), option('path', '--confirm')],
+               [field('feature', 'Feature name', 'text'), field('branch', 'Branch', 'text'),
+                field('path', 'Worktree folder (absolute; its name gives the slug)', 'text',
+                      pattern=ABSOLUTE_PATTERN, error=ABSOLUTE_ERROR,
+                      hint=worktree_hint(values))], user_run=True),
     ]
 
 

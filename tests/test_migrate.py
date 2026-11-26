@@ -187,7 +187,12 @@ class MigrateTests(unittest.TestCase):
             result[str(path.relative_to(self.scratch))] = (value, stat.S_IMODE(info.st_mode))
         return result
 
-    def migrate(self, *args, project=None, program=CLI):
+    def migrate(self, *args, project=None, program=CLI, confirm=True):
+        """migrate; with --apply, confirmed (v0.16.0 S1) with the workspace file it writes: under
+        --workspace <dir>, else self.project, unless confirm is False."""
+        if confirm and '--apply' in args:
+            directory = args[args.index('--workspace') + 1] if '--workspace' in args else self.project
+            args = (*args, '--confirm', str(Path(directory) / 'oasis-workspace.toml'))
         return subprocess.run([sys.executable, '-B', str(program), '--project', str(project or self.main),
                                'migrate', *args], capture_output=True, text=True, env=self.env, cwd=self.scratch)
 
@@ -357,6 +362,29 @@ class MigrateTests(unittest.TestCase):
                 self.assertEqual(lines[-1], 'doctor_failures=0')
                 self.assertNotIn(MARKER, doctor.stdout)
 
+    def test_apply_without_confirm_prints_the_plan_and_names_the_exact_command(self):
+        # v0.16.0 S1: --apply is Tier B; --confirm takes the workspace file the plan writes.
+        before = self.tree()
+        workspace = self.project / 'oasis-workspace.toml'
+        for args, confirm, error in (
+                (('--apply',), None, f'ERROR: migrate --apply rewrites the configuration files of every checkout and '
+                                     f'writes {workspace} (Tier B: it needs explicit confirmation); nothing changed. '
+                                     f'Run: oasis --project {self.main} migrate --apply --confirm {workspace}\n'),
+                (('--apply', '--confirm', str(self.project)), str(self.project),
+                 f'ERROR: --confirm {self.project} does not name the workspace file {workspace}; nothing changed. '
+                 f'Run: oasis --project {self.main} migrate --apply --confirm {workspace}\n'),
+                (('--workspace', str(self.project), '--apply', f'--confirm={self.project}/x'), None,
+                 f'ERROR: --confirm {self.project}/x does not name the workspace file {workspace}; nothing changed. '
+                 f'Run: oasis --project {self.main} migrate --workspace {self.project} --apply --confirm {workspace}\n')):
+            with self.subTest(args=args):
+                result = self.migrate(*args, confirm=False)
+                self.assertEqual((result.returncode, result.stderr), (2, error))
+                self.assertEqual(STAMP.sub('.bak-<stamp>', result.stdout), self.plan('')[:-1])
+                self.assertEqual(self.tree(), before)
+        # --confirm without --apply is a usage error.
+        result = self.migrate('--confirm', str(workspace), confirm=False)
+        self.assertEqual((result.returncode, result.stdout), (2, ''))
+
     def test_second_run_has_nothing_to_migrate(self):
         self.assertEqual(self.migrate('--apply').returncode, 0)
         before = self.tree()
@@ -426,10 +454,10 @@ class MigrateTests(unittest.TestCase):
 
     def test_usage(self):
         for args in (('--bogus',), ('--apply', '--apply'), ('--workspace',)):
-            self.assert_refused(args, f'Usage: {CLI} migrate [--workspace <dir>] [--apply | --plan]\n')
+            self.assert_refused(args, f'Usage: {CLI} migrate [--workspace <dir>] [--apply --confirm <workspace file> | --plan]\n')
         result = self.migrate('--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertTrue(result.stdout.startswith(f'Usage: {CLI} migrate [--workspace <dir>] [--apply | --plan]\n'))
+        self.assertTrue(result.stdout.startswith(f'Usage: {CLI} migrate [--workspace <dir>] [--apply --confirm <workspace file> | --plan]\n'))
 
     def test_verification_mismatch_restores_every_file(self):
         # An addons_path item that no [tooling] root gives: the composed --addons-path would differ.
@@ -490,8 +518,9 @@ class MigrateTests(unittest.TestCase):
                     "    if count['n'] == 3:\n"
                     f"        os.kill(os.getpid(), signal.{name}); os.kill(os.getpid(), signal.{name})\n"
                     "migrate.Changes.apply = apply\n"
-                    "sys.exit(migrate.main(['--apply']))\n")
-                result = subprocess.run([sys.executable, '-B', '-c', script, str(ROOT / 'tools' / 'migrate.py')],
+                    "sys.exit(migrate.main(['--apply', '--confirm', sys.argv[2]]))\n")
+                result = subprocess.run([sys.executable, '-B', '-c', script, str(ROOT / 'tools' / 'migrate.py'),
+                                         str(self.project / 'oasis-workspace.toml')],
                                         capture_output=True, text=True, env=env, cwd=self.scratch)
                 self.assertEqual(result.returncode, 128 + number, result.stderr)
                 self.assertIn('every change was undone', result.stderr)
@@ -510,9 +539,10 @@ class MigrateTests(unittest.TestCase):
             "    print(action[0], getattr(action[1], 'name', action[1]), file=sys.stderr)\n"
             "    original(self, action)\n"
             "migrate.Changes.apply = apply\n"
-            "sys.exit(migrate.main(['--apply']))\n")
+            "sys.exit(migrate.main(['--apply', '--confirm', sys.argv[2]]))\n")
         env = dict(self.env, ODOO19_PROJECT_ROOT=str(self.main))
-        result = subprocess.run([sys.executable, '-B', '-c', script, str(ROOT / 'tools' / 'migrate.py')],
+        result = subprocess.run([sys.executable, '-B', '-c', script, str(ROOT / 'tools' / 'migrate.py'),
+                                 str(self.project / 'oasis-workspace.toml')],
                                 capture_output=True, text=True, env=env, cwd=self.scratch)
         self.assertEqual(result.returncode, 0, result.stderr)
         steps = [line for line in result.stderr.splitlines() if line.split(' ')[0] in ('create', 'replace', 'rename')]
@@ -530,7 +560,9 @@ class MigrateSurfaceTests(unittest.TestCase):
         self.assertIn('name: "migrate"', (ROOT / 'pi/lib/commands.ts').read_text())
         self.assertIn('migrate: (ctx) => migrate(ctx),', source)
         self.assertIn('run(root, ["migrate"]', source)
-        self.assertIn('run(root, ["migrate", "--apply"]', source)
+        # v0.16.0 S1: confirmed with the workspace file the plan writes (lib/project.ts planConfirmation).
+        self.assertIn('const workspace = planConfirmation("migrate", plan.stdout);', source)
+        self.assertIn('run(root, ["migrate", "--apply", ...confirm]', source)
         self.assertIn('ctx.ui.confirm("oasis migrate"', source)
 
     def test_readme_documents_migrate(self):
@@ -538,7 +570,7 @@ class MigrateSurfaceTests(unittest.TestCase):
         self.assertIn('](docs/migrating.md)', (ROOT / 'README.md').read_text())
         doc = (ROOT / 'docs/migrating.md').read_text()
         self.assertTrue(doc.startswith('# Migrating to the workspace file\n'))
-        self.assertIn('oasis --project /absolute/checkout migrate [--workspace <dir>] [--apply | --plan]', doc)
+        self.assertIn('oasis --project /absolute/checkout migrate [--workspace <dir>] [--apply --confirm <workspace file> | --plan]', doc)
 
 
 if __name__ == '__main__':

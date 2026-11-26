@@ -193,8 +193,9 @@ class DoctorTests(unittest.TestCase):
         profile = self.root / '.odoo19-agent.toml'
         profile.write_text('[tooling]\n')
         self.assert_report(f'FAIL configuration={profile} is the old profile format, no longer read: run oasis '
-                           'migrate --plan to see its conversion to oasis-workspace.toml, then oasis migrate --apply.\n'
-                           '  fix: oasis migrate --plan, then oasis migrate --apply\n'
+                           'migrate --plan to see its conversion to oasis-workspace.toml, then oasis migrate --apply --confirm <the workspace file the plan writes>.\n'
+                           '  fix: oasis migrate --plan, then oasis migrate --apply --confirm <the workspace file '
+                           'the plan writes>\n'
                            'PASS git=2.47.1\nPASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
                            'doctor_failures=1\n')
 

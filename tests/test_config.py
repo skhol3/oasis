@@ -41,7 +41,7 @@ APPENDED = ['ODOO_VERSION=19.0', 'ODOO_SECOND_PORT_OPTION=--gevent-port', 'ODOO_
 def refusal(profile, program='oasis'):
     """The refusal of a checkout that still has a legacy profile."""
     return (f'ERROR: {profile} is the old profile format, no longer read: run {program} migrate --plan to see '
-            f'its conversion to oasis-workspace.toml, then {program} migrate --apply.\n')
+            f'its conversion to oasis-workspace.toml, then {program} migrate --apply --confirm <the workspace file the plan writes>.\n')
 
 
 class ConfigCliTests(unittest.TestCase):

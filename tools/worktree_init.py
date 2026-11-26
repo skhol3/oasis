@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Create a linked git worktree next to the main checkout, or at --path, for the same workspace file.
 
-User-run only (the Gentle Shell bash guard blocks agents). The new worktree reads the
+Tier B in the agent policy (tools/policy.py): an agent proposes it and a person confirms it; its
+--dry-run is Tier A. The new worktree reads the
 workspace file the main checkout reads (above it, or through git: tools/config.py
 workspace_file), so only `git worktree add` runs: nothing is copied or linked. Nothing is deleted.
 """
@@ -9,10 +10,11 @@ import importlib.util
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 
-USAGE = 'Usage: worktree-init <feature> <branch> [--path <dir>] [--dry-run] [--resume]'
+USAGE = 'Usage: worktree-init <feature> <branch> [--path <dir>] [--dry-run] [--resume] [--confirm <worktree path>]'
 HELP = f"""{USAGE}
 
 Create a linked git worktree named <main folder>-<feature> next to the main checkout and
@@ -32,6 +34,11 @@ keep the workspace file above the checkouts.
 
 --dry-run prints the same plan and changes nothing. --resume accepts an existing folder that
 is a worktree of this repository on <branch>.
+
+Adding a worktree (and a new branch) is Tier B in the agent policy (`oasis policy --json`): it
+runs only with --confirm <worktree path>, the path the plan names after `worktree:`. Without it,
+or with another path, it refuses (exit 2) naming the exact command; nothing changes. --dry-run
+and resuming an existing worktree need no confirmation.
 """
 QUERY_TIMEOUT_SECONDS = 30
 
@@ -64,34 +71,42 @@ def load_config():
 
 
 def parse_arguments(arguments):
-    """(feature, branch, dry_run, resume, path) with path None without --path, or None on a usage
-    error. --path takes the next argument, or its value after `=`, once."""
+    """(feature, branch, dry_run, resume, path, confirm, kept) with path and confirm None without
+    --path or --confirm, or None on a usage error. --path and --confirm take the next argument, or
+    their value after `=`, once. kept: the arguments without --confirm and its value."""
     flags = ('--dry-run', '--resume')
     rest = []
-    path = None
-    paths = 0
+    values = {'--path': None, '--confirm': None}
+    seen = {'--path': 0, '--confirm': 0}
+    kept = []
     index = 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument == '--path' or argument.startswith('--path='):
-            paths += 1
-            if argument == '--path':
+        option = next((name for name in values if argument == name or argument.startswith(name + '=')), None)
+        if option is not None:
+            seen[option] += 1
+            if argument == option:
                 index += 1
                 if index >= len(arguments):
                     return None
-                path = arguments[index]
+                value = arguments[index]
             else:
-                path = argument[len('--path='):]
-            if not path or path.startswith('-'):
+                value = argument[len(option) + 1:]
+            if not value or value.startswith('-'):
                 return None
+            values[option] = value
+            if option == '--path':
+                kept += arguments[index - (argument == option):index + 1]
         else:
             rest.append(argument)
+            kept.append(argument)
         index += 1
     positional = [argument for argument in rest if argument not in flags]
-    if (len(positional) != 2 or paths > 1 or any(rest.count(flag) > 1 for flag in flags)
+    if (len(positional) != 2 or max(seen.values()) > 1 or any(rest.count(flag) > 1 for flag in flags)
             or any(argument.startswith('-') for argument in positional)):
         return None
-    return positional[0], positional[1], '--dry-run' in rest, '--resume' in rest, path
+    return (positional[0], positional[1], '--dry-run' in rest, '--resume' in rest, values['--path'],
+            values['--confirm'], kept)
 
 
 def resolve_commit(main, ref):
@@ -100,15 +115,14 @@ def resolve_commit(main, ref):
 
 
 def checked_out_in(main, branch):
-    """The worktree path that has the branch checked out, or ''."""
+    """(path, prunable) of the worktree entry that has the branch checked out, or ('', False).
+    prunable: git reports the entry as prunable (its folder is gone; `git worktree prune` drops it)."""
     result = git(main, 'worktree', 'list', '--porcelain')
-    path = ''
-    for line in result.stdout.splitlines():
-        if line.startswith('worktree '):
-            path = line[len('worktree '):]
-        elif line == f'branch refs/heads/{branch}':
-            return path
-    return ''
+    for block in result.stdout.split('\n\n'):
+        lines = block.splitlines()
+        if lines and lines[0].startswith('worktree ') and f'branch refs/heads/{branch}' in lines:
+            return lines[0][len('worktree '):], any(line.startswith('prunable') for line in lines)
+    return '', False
 
 
 def registered_branch(main, folder):
@@ -220,7 +234,7 @@ def main():
     parsed = parse_arguments(arguments)
     if parsed is None:
         return fail(USAGE)
-    feature_input, branch, dry_run, resume, path = parsed
+    feature_input, branch, dry_run, resume, path, confirm, kept = parsed
     config = load_config()
     root = config.selected_root()
     if root is None:
@@ -272,7 +286,10 @@ def main():
     check = git(main_root, 'check-ref-format', '--branch', branch)
     if check.returncode != 0 or check.stdout.strip() != branch:
         return fail(f'Invalid branch name: {branch}')
-    holder = '' if resumed else checked_out_in(main_root, branch)
+    holder, prunable = ('', False) if resumed else checked_out_in(main_root, branch)
+    if prunable:
+        return fail(f'Branch {branch} is held by the prunable worktree entry {holder} (its folder is gone); '
+                    f'run git -C {main_root} worktree prune, then run worktree-init again.')
     if holder:
         return fail(f'Branch {branch} is already checked out in {holder}.')
     local = '' if resumed else resolve_commit(main_root, f'refs/heads/{branch}')
@@ -309,6 +326,14 @@ def main():
             print(line)
         print('dry run: nothing changed')
         return 0
+    if add is not None and (confirm is None or chosen_path(confirm) != new):
+        # Tier B (tools/policy.py): explicit intent, named exactly; the plan above decides nothing yet.
+        command = shlex.join([config.program_name(), '--project', str(root), 'worktree-init', *kept,
+                              '--confirm', str(new)])
+        if confirm is None:
+            return fail(f'worktree-init adds the git worktree {new} and its branch {branch} (Tier B: it needs '
+                        f'explicit confirmation); nothing changed. Run: {command}')
+        return fail(f'--confirm {confirm} does not name the worktree {new}; nothing changed. Run: {command}')
 
     if add is not None:
         added = git(main_root, *add, timeout=None)

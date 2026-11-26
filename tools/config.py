@@ -113,7 +113,8 @@ class MissingSeries(InvalidConfig):
 def legacy_profile_refusal(profile: Path, program: str) -> str:
     """Why a checkout with the legacy profile is refused, and the fix (`oasis migrate`)."""
     return (f'{profile} is the old profile format, no longer read: run {program} migrate --plan to see '
-            f'its conversion to {WORKSPACE_NAME}, then {program} migrate --apply.')
+            f'its conversion to {WORKSPACE_NAME}, then {program} migrate --apply --confirm <the workspace file '
+            'the plan writes>.')
 
 
 def missing_configuration(root: Path) -> str:

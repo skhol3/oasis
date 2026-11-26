@@ -265,7 +265,7 @@ exit 0
         profile = self.root / '.odoo19-agent.toml'
         profile.write_text('[tooling]\n')
         refusal = (f'ERROR: {profile} is the old profile format, no longer read: run oasis migrate --plan to see '
-                   'its conversion to oasis-workspace.toml, then oasis migrate --apply.\n')
+                   'its conversion to oasis-workspace.toml, then oasis migrate --apply --confirm <the workspace file the plan writes>.\n')
         for workspace in (False, True):
             if workspace:
                 (self.root / 'oasis-workspace.toml').write_text(WORKSPACE)
@@ -308,14 +308,14 @@ exit 0
         self.env.update(FAKE_SESSIONS='2')
         plan = (r'database=cc_dev_coffee\nsize=unknown\nsessions=2\nfilestore=none\n'
                 r'trash=(cc_dev_coffee_trash_\d{8}_\d{6})\n')
-        result = self.invoke('drop-database', 'cc_dev_coffee')
+        result = self.invoke('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stderr),
                          (3, 'Refusing to drop database with 2 active session(s): cc_dev_coffee\n'
                           'Retry with --terminate only after confirming those sessions may be closed.\n'))
         self.assertRegex(result.stdout, rf'\A{plan}\Z')
         self.assertNotIn('pg_terminate_backend', self.commands.read_text())
         self.assertNotIn('ALTER DATABASE', self.commands.read_text())
-        result = self.invoke('drop-database', 'cc_dev_coffee', '--terminate')
+        result = self.invoke('drop-database', 'cc_dev_coffee', '--terminate', '--confirm', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertRegex(result.stdout, rf'\A{plan}Database moved to trash: cc_dev_coffee -> \1\n'
                                         r'Restore it with: oasis trash restore \1\n\Z')

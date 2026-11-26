@@ -323,7 +323,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def refusal(self, profile):
         return (f'{profile} is the old profile format, no longer read: run oasis migrate --plan to see its '
-                'conversion to oasis-workspace.toml, then oasis migrate --apply.')
+                'conversion to oasis-workspace.toml, then oasis migrate --apply --confirm <the workspace file the plan writes>.')
 
     def test_a_legacy_profile_in_the_checkout_is_refused_next_to_the_workspace(self):
         main = self.layout()
@@ -839,7 +839,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, expected + 'dry run: nothing changed\n', ''))
         self.assertEqual(self.snapshot(), before)
-        result = self.invoke(main, 'worktree-init', 'shop', 'feature/shop')
+        result = self.invoke(main, 'worktree-init', 'shop', 'feature/shop', '--confirm', str(new))
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected, ''))
         self.assertEqual(sorted(path.name for path in new.iterdir()), ['.git', 'README.md'])
         self.assertEqual(self.output(new), self.expected(new, 'linked', 'shop'))
@@ -850,7 +850,7 @@ class WorkspaceTests(unittest.TestCase):
         self.workspace.unlink()
         (main / 'oasis-workspace.toml').write_text(WORKSPACE)
         new = self.project / 'codigo' / 'acme-shop'
-        result = self.invoke(main, 'worktree-init', 'shop', 'feature/shop')
+        result = self.invoke(main, 'worktree-init', 'shop', 'feature/shop', '--confirm', str(new))
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertTrue(result.stdout.endswith(f'slug: shop\nworkspace: {main}\n'), result.stdout)
         self.assertEqual(sorted(path.name for path in new.iterdir()), ['.git', 'README.md'])

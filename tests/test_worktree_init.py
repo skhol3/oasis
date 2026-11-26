@@ -57,6 +57,13 @@ class WorktreeInitTests(unittest.TestCase):
                                'worktree-init', *args],
                               capture_output=True, text=True, env=self.env, cwd=self.scratch)
 
+    def create(self, project, *args):
+        """worktree-init confirmed as v0.16.0 S1 requires: --confirm <the worktree path its dry run names>."""
+        plan = self.invoke(project, *args, '--dry-run')
+        lines = [line for line in plan.stdout.splitlines() if line.startswith('worktree: ')]
+        self.assertEqual((plan.returncode, len(lines)), (0, 1), plan.stderr)
+        return self.invoke(project, *args, '--confirm', lines[0][len('worktree: '):])
+
     def head(self, cwd):
         return self.git(cwd, 'rev-parse', 'HEAD')
 
@@ -100,7 +107,7 @@ class WorktreeInitTests(unittest.TestCase):
         main = self.repository()
         head = self.head(main)
         new = self.scratch / 'proj-feat-x'
-        result = self.invoke(main, 'Feat X', 'feature/x')
+        result = self.create(main, 'Feat X', 'feature/x')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertEqual(result.stdout,
                          self.plan(new, f'feature/x (created from HEAD {head[:12]})', 'feat_x'))
@@ -113,7 +120,7 @@ class WorktreeInitTests(unittest.TestCase):
         main = self.repository()
         self.git(main, 'branch', 'existing')
         new = self.scratch / 'proj-07-1'
-        result = self.invoke(main, '07.1', 'existing')
+        result = self.create(main, '07.1', 'existing')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertEqual(result.stdout, self.plan(new, 'existing (existing)', '07_1'))
         self.assert_prepared(new)
@@ -129,7 +136,7 @@ class WorktreeInitTests(unittest.TestCase):
         self.git(main, 'push', '-q', 'origin', 'remote-only')
         self.git(main, 'branch', '-q', '-D', 'remote-only')
         new = self.scratch / 'proj-remote'
-        result = self.invoke(main, 'remote', 'remote-only')
+        result = self.create(main, 'remote', 'remote-only')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertEqual(result.stdout,
                          self.plan(new, 'remote-only (tracking origin/remote-only)', 'remote'))
@@ -150,10 +157,10 @@ class WorktreeInitTests(unittest.TestCase):
     def test_from_a_linked_worktree_the_folder_goes_next_to_the_main_checkout(self):
         main = self.repository()
         first = self.scratch / 'proj-one'
-        self.assertEqual(self.invoke(main, 'one', 'one').returncode, 0)
+        self.assertEqual(self.create(main, 'one', 'one').returncode, 0)
         head = self.head(main)
         new = self.scratch / 'proj-two'
-        result = self.invoke(first, 'two', 'two')
+        result = self.create(first, 'two', 'two')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertEqual(result.stdout, self.plan(new, f'two (created from HEAD {head[:12]})', 'two'))
         self.assert_prepared(new)
@@ -188,14 +195,14 @@ class WorktreeInitTests(unittest.TestCase):
                                  (0, plan + 'dry run: nothing changed\n', ''))
                 self.assertEqual((self.snapshot(), self.branches(main), self.worktrees(main)), before)
                 self.assertFalse(os.path.lexists(other / 'deep'))
-        result = self.invoke(main, 'feat', 'feature/f', '--path', f'{other}/deep/../deep/proj-feat')
+        result = self.create(main, 'feat', 'feature/f', '--path', f'{other}/deep/../deep/proj-feat')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, plan, ''))
         self.assert_prepared(new)
         self.assertEqual(self.git(new, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature/f')
         self.assertEqual(self.identity(new), ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=feat'])
         self.assertEqual(self.workspace_root(new), [f'WORKSPACE_ROOT={self.scratch}'])
         # From that worktree, the default folder still goes next to the main checkout.
-        result = self.invoke(new, 'two', 'two')
+        result = self.create(new, 'two', 'two')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, self.plan(self.scratch / 'proj-two', f'two (created from HEAD {head[:12]})', 'two'), ''))
 
@@ -205,7 +212,7 @@ class WorktreeInitTests(unittest.TestCase):
         other = self.elsewhere()
         empty = other / 'feat'
         empty.mkdir()
-        result = self.invoke(main, 'feat', 'feat', '--path', str(empty))
+        result = self.create(main, 'feat', 'feat', '--path', str(empty))
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, self.plan(empty, f'feat (created from HEAD {head[:12]})', 'feat'), ''))
         self.assert_prepared(empty)
@@ -219,7 +226,7 @@ class WorktreeInitTests(unittest.TestCase):
         main = self.repository()
         source = self.scratch / 'source' / 'odoo'
         source.mkdir(parents=True)
-        self.assertEqual(self.invoke(main, 'one', 'one').returncode, 0)
+        self.assertEqual(self.create(main, 'one', 'one').returncode, 0)
         another = self.scratch / 'another'
         another.mkdir()
         self.git(another, 'init', '-q')
@@ -297,7 +304,7 @@ class WorktreeInitTests(unittest.TestCase):
         self.inside_workspace(main)
         head = self.head(main)
         new = self.scratch / 'proj-feat'
-        result = self.invoke(main, 'feat', 'feat')
+        result = self.create(main, 'feat', 'feat')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, f'worktree: {new}\nbranch: feat (created from HEAD {head[:12]})\nslug: feat\n'
                              f'workspace: {main}\n', ''))
@@ -325,7 +332,7 @@ class WorktreeInitTests(unittest.TestCase):
         main = self.repository()
         head = self.head(main)
         new = self.scratch / 'proj-feat'
-        result = self.invoke(main, 'feat', 'feat', '--resume')
+        result = self.create(main, 'feat', 'feat', '--resume')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, self.plan(new, f'feat (created from HEAD {head[:12]})', 'feat'), ''))
         self.assert_prepared(new)
@@ -355,6 +362,45 @@ class WorktreeInitTests(unittest.TestCase):
         self.git(main, 'worktree', 'add', '-q', '-b', 'other', str(new))
         self.assert_refused(main, ('feat', 'feat', '--resume'),
                             f'ERROR: Worktree {new} is not on branch feat.\n')
+
+    # -- confirmation (v0.16.0 S1: Tier B) --------------------------------------------------
+
+    def test_without_confirm_it_refuses_naming_the_exact_command(self):
+        main = self.repository()
+        new = self.scratch / 'proj-feat-x'
+        command = f'odoo19 --project {main} worktree-init \'Feat X\' feature/x --confirm {new}'
+        self.assert_refused(main, ('Feat X', 'feature/x'),
+                            f'ERROR: worktree-init adds the git worktree {new} and its branch feature/x '
+                            f'(Tier B: it needs explicit confirmation); nothing changed. Run: {command}\n')
+        self.assert_refused(main, ('Feat X', 'feature/x', '--confirm', str(self.scratch / 'proj-other')),
+                            f'ERROR: --confirm {self.scratch / "proj-other"} does not name the worktree {new}; '
+                            f'nothing changed. Run: {command}\n')
+        other = self.elsewhere()
+        target = other / 'proj-feat'
+        self.assert_refused(main, ('feat', 'feat', f'--path={target}', '--confirm=relative'),
+                            f'ERROR: --confirm relative does not name the worktree {target}; nothing changed. '
+                            f'Run: odoo19 --project {main} worktree-init feat feat --path={target} --confirm {target}\n')
+        result = self.invoke(main, 'Feat X', 'feature/x', f'--confirm={new}')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assert_prepared(new)
+
+    def test_resuming_an_existing_worktree_adds_nothing_and_needs_no_confirmation(self):
+        main = self.repository()
+        new = self.scratch / 'proj-feat'
+        self.git(main, 'worktree', 'add', '-q', '-b', 'feat', str(new))
+        result = self.invoke(main, 'feat', 'feat', '--resume')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.plan(new, 'feat (resumed)', 'feat'), ''))
+
+    def test_a_prunable_worktree_entry_holding_the_branch_names_git_worktree_prune(self):
+        # v0.16.0 S4.9: the folder of a worktree was removed by hand; git still lists its entry.
+        main = self.repository()
+        gone = self.scratch / 'proj-gone'
+        self.git(main, 'worktree', 'add', '-q', '-b', 'feat', str(gone))
+        shutil.rmtree(gone)
+        self.assert_refused(main, ('feat', 'feat'),
+                            f'ERROR: Branch feat is held by the prunable worktree entry {gone} (its folder is '
+                            f'gone); run git -C {main} worktree prune, then run worktree-init again.\n')
 
     # -- refusals ---------------------------------------------------------------------------
 
@@ -396,12 +442,15 @@ class WorktreeInitTests(unittest.TestCase):
 
     def test_usage_errors_are_refused(self):
         main = self.repository()
-        usage = 'ERROR: Usage: worktree-init <feature> <branch> [--path <dir>] [--dry-run] [--resume]\n'
+        usage = ('ERROR: Usage: worktree-init <feature> <branch> [--path <dir>] [--dry-run] [--resume] '
+                 '[--confirm <worktree path>]\n')
         for args in ((), ('feat',), ('feat', 'branch', 'extra'), ('feat', '-b'), ('feat', 'b', '--force'),
                      ('feat', 'b', '--resume', '--resume'), ('feat', 'b', '--dry-run', '--dry-run'),
                      ('feat', 'b', '--path'), ('feat', 'b', '--path='), ('feat', 'b', '--path', '--dry-run'),
                      ('feat', 'b', '--path', '/a/proj-feat', '--path', '/b/proj-feat'),
-                     ('feat', 'b', '--path=/a/proj-feat', '--path', '/b/proj-feat')):
+                     ('feat', 'b', '--path=/a/proj-feat', '--path', '/b/proj-feat'),
+                     ('feat', 'b', '--confirm'), ('feat', 'b', '--confirm='),
+                     ('feat', 'b', '--confirm', '/a', '--confirm', '/a')):
             with self.subTest(args=args):
                 self.assert_refused(main, args, usage)
 
@@ -410,7 +459,7 @@ class WorktreeInitTests(unittest.TestCase):
         # find: the new worktree would not read it either.
         main = self.repository()
         first = self.scratch / 'proj-one'
-        self.assertEqual(self.invoke(main, 'one', 'one').returncode, 0)
+        self.assertEqual(self.create(main, 'one', 'one').returncode, 0)
         (self.scratch / 'oasis-workspace.toml').unlink()
         (first / 'oasis-workspace.toml').write_text(WORKSPACE.replace("'source/odoo'", "'../source/odoo'"))
         self.assert_refused(first, ('two', 'two'),
@@ -422,7 +471,7 @@ class WorktreeInitTests(unittest.TestCase):
         one above the main checkout (the one the new worktree would read)."""
         main = self.repository()
         first = self.scratch / 'proj-one'
-        self.assertEqual(self.invoke(main, 'one', 'one').returncode, 0)
+        self.assertEqual(self.create(main, 'one', 'one').returncode, 0)
         (first / 'oasis-workspace.toml').write_text(WORKSPACE.replace("'source/odoo'", "'../source/odoo'"))
         return first
 

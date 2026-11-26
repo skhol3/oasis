@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Convert the legacy profiles of a project's checkouts into one oasis-workspace.toml (`oasis migrate`).
 
-User-run only: it rewrites project files (the Gentle Shell bash guard blocks agents). Without
+It rewrites project files: --apply is Tier B in the agent policy (tools/policy.py), an agent
+proposes it and a person confirms it; the plan is Tier A. Without
 --apply it prints the plan and changes nothing. With --apply it writes the workspace file (and an
 oasis-checkout.toml for each checkout whose profile sets checkout_slug), removes the location
 options addons_path and data_dir from odoo.conf (the original is kept as odoo.conf.bak-<stamp>,
@@ -22,6 +23,7 @@ import os
 import signal
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -61,6 +63,10 @@ relative to its directory with the same hashes, and each profile is renamed to
 Without --apply it prints the plan and changes nothing. With --apply every checkout must load
 the same configuration afterwards; otherwise every change is undone (exit 1). --plan asks for
 the plan explicitly and can never apply: together with --apply it is a usage error.
+
+--apply is Tier B in the agent policy (`oasis policy --json`): it runs only with --confirm
+<workspace file>, the oasis-workspace.toml the plan writes. Without it, or with another path, it
+prints the plan and refuses (exit 2) naming the exact command; nothing changes.
 '''
 
 
@@ -77,12 +83,14 @@ def sibling(name: str):
 
 
 def usage() -> str:
-    return f'Usage: {sibling("config").usage_name()} migrate [--workspace <dir>] [--apply | --plan]'
+    return (f'Usage: {sibling("config").usage_name()} migrate [--workspace <dir>] '
+            '[--apply --confirm <workspace file> | --plan]')
 
 
 def parse_arguments(arguments: list[str]):
-    """(apply, workspace or None), or None for a usage error (--plan with --apply is one)."""
-    apply, plan, workspace, index = False, False, None, 0
+    """(apply, workspace or None, confirm or None, the arguments without --confirm), or None for a
+    usage error (--plan with --apply is one, and so is --confirm without --apply)."""
+    apply, plan, workspace, confirm, kept, index = False, False, None, None, [], 0
     while index < len(arguments):
         argument = arguments[index]
         if argument == '--apply' and not apply and not plan:
@@ -92,12 +100,25 @@ def parse_arguments(arguments: list[str]):
         elif argument == '--workspace' and workspace is None and index + 1 < len(arguments):
             index += 1
             workspace = arguments[index]
+            kept.append(argument)
+            argument = workspace
         elif argument.startswith('--workspace=') and workspace is None:
             workspace = argument.split('=', 1)[1]
+        elif argument == '--confirm' and confirm is None and index + 1 < len(arguments):
+            index += 1
+            confirm = arguments[index]
+            argument = None
+        elif argument.startswith('--confirm=') and confirm is None:
+            confirm = argument.split('=', 1)[1]
+            argument = None
         else:
             return None
+        if argument is not None:
+            kept.append(argument)
         index += 1
-    return apply, workspace
+    if confirm is not None and (not apply or not confirm):
+        return None
+    return apply, workspace, confirm, kept
 
 
 # -- reading ---------------------------------------------------------------------------------------
@@ -677,7 +698,7 @@ def main(arguments: list[str]) -> int:
     if parsed is None:
         print(usage(), file=sys.stderr)
         return 2
-    apply, workspace = parsed
+    apply, workspace, confirm, kept = parsed
     if workspace is not None and (not os.path.isabs(workspace) or not os.path.isdir(workspace)):
         print('ERROR: --workspace requires an absolute existing directory.', file=sys.stderr)
         return 2
@@ -707,6 +728,18 @@ def main(arguments: list[str]) -> int:
     if not apply:
         print('dry run: nothing changed; run with --apply to migrate')
         return 0
+    written = plan['workspace']
+    if confirm is None or Path(os.path.normpath(os.path.abspath(confirm))) != written:
+        # Tier B (tools/policy.py): explicit intent, named exactly; nothing has changed yet.
+        command = shlex.join([config.program_name(), '--project', str(root), 'migrate', *kept,
+                              '--confirm', str(written)])
+        if confirm is None:
+            print(f'ERROR: migrate --apply rewrites the configuration files of every checkout and writes {written} '
+                  f'(Tier B: it needs explicit confirmation); nothing changed. Run: {command}', file=sys.stderr)
+        else:
+            print(f'ERROR: --confirm {confirm} does not name the workspace file {written}; nothing changed. '
+                  f'Run: {command}', file=sys.stderr)
+        return 2
     return apply_plan(plan, config, reader)
 
 

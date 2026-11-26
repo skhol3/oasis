@@ -369,7 +369,7 @@ test("a non-destructive action that is not confirmed runs nothing and is not rem
 });
 
 test("user-run actions are not remembered; a memory that cannot be written is only a notice", async () => {
-  const worktree = harness({ pick: "maintenance.worktree", answers: ["shop", "shop", true] });
+  const worktree = harness({ pick: "maintenance.worktree", answers: ["shop", "shop", "/work/a-shop", true] });
   await worktree.open(worktree.context());
   assert.equal(worktree.entries.length, 1);
   assert.deepEqual(worktree.remembered, []);
