@@ -84,6 +84,9 @@ VERSION_LINE = re.compile(r'(?m)^(workspace_version[ \t]*=[ \t]*)(1)([ \t]*(?:#[
 SECTION_COMMENT = ('# Added by oasis setup: what differs for the Odoo {series} checkouts '
                    '(docs/setup.md#another-odoo-series).\n')
 COMPOSE_NAMES = ('compose.yml', 'compose.yaml', 'docker-compose.yml', 'docker-compose.yaml')
+# The checkout file setup writes for a linked worktree whose directory name gives a slug over 20 characters.
+CHECKOUT_SLUG = ('# Written by oasis setup: the database namespace of this worktree; its directory name {name} gives '
+                 '{raw}, over 20 characters.\n[tooling]\ncheckout_slug = {slug}\n')
 NAME = re.compile(r'[a-z][a-z0-9_]{1,19}')
 NAME_RULE = '2 to 20 lowercase letters, digits or underscores, starting with a letter'
 PORTS = range(5432, 5532)
@@ -97,9 +100,15 @@ OPEN_PLAN = ('nothing changed: answer the open questions above (docs/setup.md#qu
              '--apply to set up')
 # The questions setup asks (v0.16.0 S3): the ones a flag answers, and those of the problems it anticipates.
 QUESTION_FLAGS = {'series': '--series', 'community': '--community', 'environment': '--environment',
-                  'python': '--python'}
-QUESTION_ID = re.compile(r'series|community|enterprise|environment|python|python_ldap|requirement:[a-z0-9][a-z0-9-]*')
-QUESTION_IDS = 'series, community, enterprise, environment, python, python_ldap and requirement:<name>'
+                  'python': '--python', 'workspace': '--workspace'}
+QUESTION_ID = re.compile(r'series|community|enterprise|environment|python|workspace|series_exceptions|python_ldap'
+                         r'|requirement:[a-z0-9][a-z0-9-]*')
+QUESTION_IDS = ('series, community, enterprise, environment, python, workspace, series_exceptions, python_ldap and '
+                'requirement:<name>')
+# A clone in <project>/code/<repo> or <project>/codigo/<repo> gets <project> as its recommended workspace (v0.16.0
+# S4.11), unless <project> holds one of these: then it is not a project folder of its own.
+CODE_FOLDERS = ('code', 'codigo')
+PROJECT_MARKERS = ('.git', 'oasis-checkout.toml', '.odoo19-agent.toml', '__manifest__.py', 'odoo-bin')
 WORKSPACE_HEADER = ('# Written by oasis setup. Paths are relative to this file, addons_paths to each checkout;\n'
                     '# the Odoo source comes from the machine file (docs/workspace-file.md#machine-file).\n')
 MACHINE_HEADER = ('# Written by oasis setup: the Odoo source of each series on this machine '
@@ -166,7 +175,12 @@ can never apply. With --apply it creates only what is missing and keeps everythi
   - oasis-workspace.toml (no source keys; database prefixes from the checkout's name or --name),
     by default at the checkout's root with config/, data/, logs/ and the environment under .oasis/,
     both excluded from git in .git/info/exclude; --workspace <dir> puts them in <dir>, which must
-    be at or above the checkout; an existing workspace file is adopted;
+    be at or above the checkout; for a clone at <project>/code/<repo> or <project>/codigo/<repo>
+    (<project> holding no .git, oasis-checkout.toml, legacy profile, __manifest__.py or odoo-bin)
+    the question workspace recommends <project> (applied without a terminal) and offers the clone;
+    an existing workspace file is adopted, and one setup created in the clone moves with
+    --workspace <dir> above it (the file, its relative paths rewritten, .oasis/ and the clone's
+    exclude entries; verified once moved, every change undone on failure);
   - a path-free, password-free odoo.conf, a compose file with the PostgreSQL service, the environment
     file with the generated account (ODOO_DB_USER oasis_<name> and a random ODOO_DB_PASSWORD, or the
     db_user and db_password a kept odoo.conf sets; mode 0600, never printed), which the service and
@@ -210,7 +224,8 @@ configuration's Python. End of input or Ctrl-C at a question changes nothing (ex
 Questions and answers (docs/setup.md#questions-and-answers): every question has a flag, and
 --answer <id>=<value> (repeatable) or --answers <file.json> (a JSON object {"<id>": "<value>"}) answers
 it by its id: series, community, enterprise (a path or none), environment (create or a path), python,
-python_ldap (yes or no) and requirement:<name>. Without a terminal and without an answer, a question
+workspace (the project folder or the clone), series_exceptions (add or no), python_ldap (yes or no) and
+requirement:<name>. Without a terminal and without an answer, a question
 whose answer setup cannot go without (series, community, enterprise) or one of an anticipated problem
 is an open question: the plan lists it with its flag and --apply refuses, changing nothing; the
 environment and its Python take the recommended answers, as before. --plan --json prints the plan as
@@ -220,6 +235,12 @@ OpenLDAP 2.6 without libldap_r (python_ldap: pin python-ldap==3.4.4 in a new ove
 external_dependencies python requirement of the checkout's modules that the requirements do not list
 (add it to runtime.in; no recommended answer for a name that may be only an import name, such as cv2)
 or that an Odoo pin does not satisfy (pin the lowest version it accepts in a new overrides.txt). uv 0.13 and later run with UV_LEGACY_TAR_BACKEND=1 (old source archives).
+
+In any checkout, modules whose manifest declares another series are the question series_exceptions:
+add (recommended) lists them in a [series."<x.y>"] section (a version 1 file becomes version 2), no
+refuses as the series guard does; open without an answer. A linked worktree whose directory name gives
+a checkout slug over 20 characters gets an oasis-checkout.toml with checkout_slug cut to 20 (_<n> when
+another checkout uses it); a checkout file with its own [tooling] table is never edited.
 '''
 
 
@@ -662,6 +683,43 @@ def choose_sources(root, series, options, machine, questions):
     return community, enterprise, (community_origin, enterprise_origin), lines, actions, None
 
 
+def project_folder(root: Path) -> Path | None:
+    """<project> for a clone at <project>/code/<repo> or <project>/codigo/<repo> (CODE_FOLDERS) whose <project>
+    holds no PROJECT_MARKERS and is trusted, else None."""
+    folder = root.parent
+    project = folder.parent
+    if folder.name not in CODE_FOLDERS or project == folder:
+        return None
+    if any(os.path.lexists(project / marker) for marker in PROJECT_MARKERS) or migrate.untrusted(project):
+        return None
+    return project
+
+
+def workspace_choice(root: Path, questions: Questions) -> Path:
+    """The directory of a new workspace without --workspace (v0.16.0 S4.11): the clone itself, or, for a clone in
+    a project folder (project_folder), the question workspace: that folder (recommended; without a terminal it
+    applies, as the environment's recommended answers do) or the clone."""
+    project = project_folder(root)
+    if project is None:
+        return root
+    question = {'id': 'workspace', 'text': f'Workspace directory of {root}: the project folder {project} or the clone',
+                'options': [{'value': str(project), 'label': f'the project folder above {root.parent.name}/'},
+                            {'value': str(root), 'label': 'the clone'}],
+                'recommended': str(project), 'flag': '--workspace <dir>'}
+    if not questions.interactive:
+        questions.met(question, str(project), 'recommended (no terminal)')
+        return project
+    while True:
+        answer = questions.ask(f'Workspace directory: Enter puts it in {project} (the project folder above '
+                               f'{root.parent.name}/), or type {root} to keep it in the clone: ',
+                               f'No answer for the workspace directory (end of input): nothing changed; pass '
+                               f'--workspace {project} or --workspace {root}.') or str(project)
+        if answer in (str(project), str(root)):
+            questions.met(question, answer, 'answered')
+            return Path(answer)
+        questions.say(f'Answer {project} or {root}, or Enter for {project}.\n')
+
+
 def directories(target: Path, planned: set) -> list:
     """mkdir actions for target and its missing parents, outermost first, each planned once."""
     missing = []
@@ -718,15 +776,21 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
     actions, planned = [], set()
     workspace = config.workspace_file(root)
     machine = read_machine()
+    if workspace is not None and '--workspace' in options and workspace.parent == root:
+        return move_plan(root, workspace, Path(options['--workspace']).resolve(), options, questions)
     if workspace is not None:
         target = section_target(root, workspace, options)
         if target is not None:
             return series_plan(root, kind, options, questions, workspace, machine, target, lines)
+        checkout, slug_line, slug_action = slug_change(root, kind, main)
         try:
-            document, base, workspace, name, origins, refusal = config.layered_configuration(root)
+            document, base, workspace, name, origins, refusal = config.layered_configuration(root, checkout=checkout)
         except config.InvalidConfig as exc:
             raise Refused(str(exc)) from exc
         lines.append(f'workspace: {workspace} (existing)')
+        if slug_line is not None:
+            lines.append(slug_line)
+            actions.append(slug_action)
         questions.infer('workspace', workspace.parent, 'existing')
         questions.infer('series', document['tooling']['version'], 'from the workspace file')
         try:
@@ -758,6 +822,9 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
         elif origins['ODOO_SOURCE_FROM'] == 'machine':
             lines.append(f'kept {machine[0]}: [series.{json.dumps(document["tooling"]["version"])}] gives the '
                          'Odoo source')
+        found = other_series(values)
+        if found:
+            values = with_exceptions(root, workspace, values, found, questions, lines, actions, checkout)
         directory, new = workspace.parent, False
     else:
         for option in SECTION_OPTIONS:
@@ -767,11 +834,16 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
         if kind == 'linked':
             raise Refused(f'{root} is a linked worktree of {main}: run {config.program_name()} setup in the main '
                           'checkout.')
-        directory = root
+        directory, note = root, ''
         if '--workspace' in options:
             directory = Path(options['--workspace']).resolve()
             if not root.is_relative_to(directory):
                 raise Refused(f'Refusing --workspace {directory}: it is not at or above the checkout {root}.')
+        else:
+            directory = workspace_choice(root, questions)
+            if directory != root:
+                note = (f'; the project folder above {root.parent.name}/; --workspace {root} keeps it in the '
+                        'clone')
         workspace = directory / config.WORKSPACE_NAME
         reason = migrate.untrusted(directory)
         if reason:
@@ -781,9 +853,13 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
         questions.infer('series', series, series_origin)
         roots = sorted({addon_root for addon_root, _series in modules(root)} or {'.'},
                        key=lambda item: (item != '.', item))
-        # The series guard of the configuration about to be written, before any question (S11).
-        guarded({'ODOO_VERSION': series, 'PROJECT_ROOT': str(root), 'WORKSPACE_ROOT': str(directory),
-                 'ADDON_ROOTS': '\n'.join(str((root / item).resolve()) for item in roots)})
+        # The series guard of the configuration about to be written, before any other question (S11): the
+        # modules of another series are the question series_exceptions (v0.16.0 S4).
+        early = {'ODOO_VERSION': series, 'PROJECT_ROOT': str(root), 'WORKSPACE_ROOT': str(directory),
+                 'ADDON_ROOTS': '\n'.join(str((root / item).resolve()) for item in roots)}
+        found = other_series(early)
+        exceptions = (exceptions_question(questions, root, found, series, workspace,
+                                          config.series_refusal(found[0], early)) if found else [])
         adopted = adopted_environment(options['--environment'], series) if '--environment' in options else None
         chosen, origin_environment = chosen_python(options, series), 'from --environment'
         community, enterprise, origin, machine_lines, machine_actions, environments = choose_sources(
@@ -801,7 +877,8 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                               f'<name> ({NAME_RULE}).')
             questions.infer('name', name, 'from the checkout name')
         lines += [f'series: {series} ({series_origin})', f'community: {community} ({origin[0]})',
-                  f'enterprise: {enterprise or "none"} ({origin[1]})', f'workspace: {directory} (new)', *machine_lines]
+                  f'enterprise: {enterprise or "none"} ({origin[1]})', f'workspace: {directory} (new{note})',
+                  *machine_lines]
         actions += machine_actions
         layout = f'{LAYOUT}/' if directory == root else ''
 
@@ -824,13 +901,18 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                        'test_prefix': f'{name}_test_', 'logs': f'{layout}logs', 'data_dir': f'{layout}data'}
             if named is not None:
                 del tooling['environment']
-            text = (WORKSPACE_HEADER + f'workspace_version = 1\nodoo_version = {migrate.toml_string(series)}\n\n'
+            # Modules of another series (series_exceptions) need a [series."<x.y>"] section: version 2.
+            version = 2 if exceptions else 1
+            text = (WORKSPACE_HEADER + f'workspace_version = {version}\nodoo_version = {migrate.toml_string(series)}\n\n'
                     + migrate.toml_table('tooling', tooling)
-                    + ('\n' + migrate.toml_table('environments.default', named) if named is not None else ''))
+                    + ('\n' + migrate.toml_table('environments.default', named) if named is not None else '')
+                    + ('\n' + SECTION_COMMENT.format(series=series) + migrate.toml_table(
+                        f'series.{json.dumps(series)}', {'series_exceptions': exceptions}) if exceptions else ''))
             sources = {'community': str(community), **({'enterprise': str(enterprise)} if enterprise else {})}
-            document = {'workspace_version': 1, 'odoo_version': series,
+            document = {'workspace_version': version, 'odoo_version': series,
                         'tooling': {**tooling, **sources, 'environment': environment, 'version': series,
-                                    'python_version': python}}
+                                    'python_version': python,
+                                    **({'series_exceptions': exceptions} if exceptions else {})}}
             try:
                 return text, config.assignments(document, root, directory, workspace, '')
             except config.InvalidConfig as exc:
@@ -868,6 +950,99 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
         plan['adopted_origin'] = origin_environment
     gaps(plan, directory, planned)
     return plan
+
+
+# -- a workspace created in the clone, moved above it (v0.16.0 S4.11) ------------------------------
+
+def moved_paths(document: dict, root: Path, target: Path) -> list[tuple[str, str, str]]:
+    """(key, value, new value) of every relative path of the workspace file in root that the move to target must
+    rewrite to keep resolving: the SERIES_PATHS of [tooling] and of the [series] tables, and the path of each
+    [environments] table; those in .oasis/, which moves along, are kept, and addons_paths resolve from the checkout."""
+    tables = [document.get('tooling', {}), *document.get('series', {}).values()]
+    found = [(key, table.get(key)) for table in tables if isinstance(table, dict) for key in config.SERIES_PATHS]
+    environments = document.get('environments')
+    found += [('path', table.get('path')) for table in (environments.values() if isinstance(environments, dict) else ())
+              if isinstance(table, dict)]
+    moved = []
+    for key, value in found:
+        if (not isinstance(value, str) or not value or os.path.isabs(value)
+                or Path(value).parts[:1] == (LAYOUT,)):
+            continue
+        new = Path(os.path.relpath(os.path.normpath(root / value), target)).as_posix()
+        if (key, value, new) not in moved:
+            moved.append((key, value, new))
+    return moved
+
+
+def move_plan(root: Path, workspace: Path, target: Path, options: dict, questions: Questions) -> dict:
+    """The plan that moves a workspace setup created in the clone (oasis-workspace.toml at root) to target, a
+    directory above it, with --workspace: the file (its relative paths rewritten, moved_paths), .oasis/ and the
+    exclude entries of the clone; the configuration is verified once moved (apply_plan), and any failure undoes
+    every change. Nothing else is created: a later setup run fills what is missing."""
+    lines = questions.lines
+    for option in options:
+        if option not in (*PLAN_OPTIONS, '--workspace'):
+            raise Refused(f'{option}: {root} is already configured by {workspace}; setup only fills what is '
+                          'missing.')
+    if not root.is_relative_to(target):
+        raise Refused(f'Refusing --workspace {target}: it is not at or above the checkout {root}.')
+    if target == root:
+        raise Refused(f'--workspace {target}: {root} is already configured by {workspace}; setup only fills what is '
+                      'missing.')
+    layout, destination = root / LAYOUT, target / config.WORKSPACE_NAME
+    reason = migrate.untrusted(target)
+    for path in (destination, *((target / LAYOUT,) if os.path.lexists(layout) else ())):
+        if os.path.lexists(path):
+            raise Refused(f'Refusing to move {workspace if path == destination else f"{layout}/"} to {target}: {path} '
+                          'exists.')
+    if reason:
+        raise Refused(f'Refusing to write {destination}: {reason}.')
+    tracked = subprocess.run(['git', '-C', str(root), 'ls-files', '--error-unmatch', '--', config.WORKSPACE_NAME],
+                             capture_output=True, env=migrate.git_env(), timeout=30)
+    if tracked.returncode == 0:
+        raise Refused(f'Refusing to move {workspace}: git tracks it; move it yourself.')
+    try:
+        raw = workspace.read_bytes()
+        text, document = raw.decode('utf-8'), config.checked_workspace(workspace)
+    except (OSError, UnicodeError) as exc:
+        raise Refused(f'Cannot read {workspace}.') from exc
+    except config.InvalidConfig as exc:
+        raise Refused(str(exc)) from exc
+    moved, expected = moved_paths(document, root, target), copy.deepcopy(document)
+    for key, value, new in moved:
+        pattern = re.compile(rf'''(?m)^([ \t]*{re.escape(key)}[ \t]*=[ \t]*)(?:'{re.escape(value)}'|"{re.escape(value)}")''')
+        text = pattern.sub(lambda match: match.group(1) + migrate.toml_string(new), text)
+        for table in [expected.get('tooling', {}), *expected.get('series', {}).values(),
+                      *(expected.get('environments') or {}).values()]:
+            if isinstance(table, dict) and table.get(key) == value:
+                table[key] = new
+    try:
+        same = tomllib.loads(text) == expected
+    except tomllib.TOMLDecodeError:
+        same = False
+    if not same:
+        raise Refused(f'Cannot rewrite the relative paths of {workspace} for {target}: move it yourself.')
+    lines += [f'workspace: {workspace} (existing; to move to {target})',
+              f'move {workspace} to {destination} (mode {workspace.stat().st_mode & 0o777:04o})'
+              + (', its relative paths rewritten: ' + ', '.join(f'{key} {value} -> {new}' for key, value, new in moved)
+                 if moved else '')]
+    actions = [('create', destination, text.encode(), workspace.stat().st_mode & 0o777)]
+    if os.path.lexists(layout):
+        lines.append(f'move {layout}/ to {target / LAYOUT}/')
+        actions.append(('rename', layout, target / LAYOUT))
+    exclude, _missing = git_exclude(root)
+    if exclude.is_file():
+        original = exclude.read_bytes()
+        kept = [line for line in original.splitlines(keepends=True) if line.rstrip(b'\r\n').decode('utf-8', 'replace')
+                not in EXCLUDES]
+        if len(kept) != len(original.splitlines()):
+            removed = [pattern for pattern in EXCLUDES if pattern.encode() in original.splitlines()]
+            lines.append(f'remove {" and ".join(removed)} from {exclude}')
+            actions.append(('extend', exclude, original, b''.join(kept)))
+    actions.append(('delete', workspace, raw))
+    questions.infer('workspace', target, 'moved')
+    return {'root': root, 'workspace': destination, 'values': None, 'lines': lines, 'actions': actions, 'after': [],
+            'created': set(), 'new': False, 'questions': questions, 'python_origin': 'from the workspace file'}
 
 
 # -- another series in an existing workspace file (v0.15.0 S5) ------------------------------------
@@ -1087,11 +1262,12 @@ def effective(document: dict, workspace: Path, series: str) -> list:
     return found
 
 
-def extended_workspace(workspace: Path, document: dict, series: str, section: dict):
+def extended_workspace(workspace: Path, document: dict, series: str, section: dict, exceptions_of: str | None = None):
     """(the new bytes, the original ones, the plan lines, the checked new document) of the workspace
     file with the section appended and, for version 1, its workspace_version line changed to 2. The
     result must parse to the same document with only those changes, pass the workspace checks, and
-    give every series it configured the same configuration; otherwise it is refused."""
+    give every series it configured the same configuration (but the series_exceptions of exceptions_of, the series
+    whose section setup adds for them); otherwise it is refused."""
     table = f'[series.{json.dumps(series)}]'
     try:
         raw = workspace.read_bytes()
@@ -1126,8 +1302,14 @@ def extended_workspace(workspace: Path, document: dict, series: str, section: di
                       'the file yourself.') from exc
     configured = (config.declared_series(document, workspace) if document['workspace_version'] == 2
                   else [document['odoo_version']])
+    def compared(found, other):
+        if other != exceptions_of:
+            return found
+        return [({key: value for key, value in item[0].items() if key != 'series_exceptions'}, item[1])
+                if isinstance(item, tuple) else item for item in found]
     for other in configured:
-        if effective(document, workspace, other) != effective(checked, workspace, other):
+        if compared(effective(document, workspace, other), other) != compared(effective(checked, workspace, other),
+                                                                              other):
             raise Refused(f'Cannot add {table} to {workspace}: the change would alter the configuration of Odoo '
                           f'{other} ({{series}} or a [series] table that version 1 does not read); edit the file '
                           'yourself.')
@@ -1198,14 +1380,16 @@ def series_plan(root, kind, options, questions, workspace, machine, target, line
     addons = document['tooling'].get('addons_paths')
     if isinstance(addons, list) and addons and all(isinstance(path, str) and path and '\x00' not in path
                                                    and '\n' not in path for path in addons):
-        mismatch = config.series_mismatch({'ODOO_VERSION': series, 'SERIES_EXCEPTIONS': '\n'.join(exceptions),
-                                           'ADDON_ROOTS': '\n'.join(str((root / path).resolve()) for path in addons)})
-        if mismatch is not None:
-            raise Refused(f'The module {mismatch["module"]} declares Odoo {mismatch["series"]} (version '
-                          f'{mismatch["version"]} in {mismatch["manifest"]}), but {root} is an Odoo {series} checkout: '
-                          f'pass --exception {mismatch["module"]} to list it in series_exceptions under '
-                          f'[series.{json.dumps(series)}], or set its version to {series}.x.y.z if it is an Odoo '
-                          f'{series} module.')
+        found = other_series({'ODOO_VERSION': series, 'SERIES_EXCEPTIONS': '\n'.join(exceptions),
+                              'ADDON_ROOTS': '\n'.join(str((root / path).resolve()) for path in addons)})
+        if found:
+            mismatch = found[0]
+            exceptions += exceptions_question(questions, root, found, series, workspace, (
+                f'The module {mismatch["module"]} declares Odoo {mismatch["series"]} (version '
+                f'{mismatch["version"]} in {mismatch["manifest"]}), but {root} is an Odoo {series} checkout: '
+                f'pass --exception {mismatch["module"]} to list it in series_exceptions under '
+                f'[series.{json.dumps(series)}], or set its version to {series}.x.y.z if it is an Odoo '
+                f'{series} module.'))
     adopted = adopted_environment(options['--environment'], series) if '--environment' in options else None
     chosen, origin_environment = chosen_python(options, series), 'from --environment'
     community, enterprise, source_origin, machine_lines, machine_actions, environments = choose_sources(
@@ -1253,6 +1437,125 @@ def series_plan(root, kind, options, questions, workspace, machine, target, line
         plan['adopted_origin'] = origin_environment
     gaps(plan, base, set())
     return plan
+
+
+def other_series(values: dict) -> list[dict]:
+    """Every module of the addons paths whose manifest declares another series than ODOO_VERSION
+    (config.series_mismatch, the SERIES_EXCEPTIONS left out), in its order."""
+    found, values = [], dict(values)
+    while (mismatch := config.series_mismatch(values)) is not None:
+        found.append(mismatch)
+        values['SERIES_EXCEPTIONS'] = '\n'.join(filter(None, (values.get('SERIES_EXCEPTIONS', ''), mismatch['module'])))
+    return found
+
+
+def exceptions_question(questions: Questions, root: Path, found: list, series: str, workspace: Path,
+                        refusal: str) -> list[str]:
+    """The modules of another series (found) to list in series_exceptions (v0.16.0 S4): the question
+    series_exceptions, add (recommended) or no (refused with refusal). Open, the plan goes on as if added and
+    --apply refuses."""
+    modules = [mismatch['module'] for mismatch in found]
+    listed = ', '.join(f'{mismatch["module"]} (Odoo {mismatch["series"]})' for mismatch in found)
+    question = {'id': 'series_exceptions',
+                'text': f'The modules {listed} of {root} declare another Odoo series than {series}: list them in '
+                        f'series_exceptions under [series.{json.dumps(series)}] in {workspace}?',
+                'options': [{'value': 'add', 'label': f'add {", ".join(modules)} to series_exceptions'},
+                            {'value': 'no', 'label': f'no: they are Odoo {series} modules with another version, or '
+                                                     f'this is not an Odoo {series} checkout'}],
+                'recommended': 'add', 'flag': '--answer series_exceptions=<add|no>'}
+    if questions.choose(question) == 'no':
+        raise Refused(refusal)
+    return modules
+
+
+def with_exceptions(root, workspace, values, found, questions, lines, actions, checkout=None) -> dict:
+    """An existing configuration whose modules declare another series (found): the question series_exceptions;
+    the workspace file gets a [series."<x.y>"] section that lists them (a version 1 file becomes version 2), and
+    the values it gives. A section of that series already in the file is never edited: refused."""
+    series = values['ODOO_VERSION']
+    try:
+        document = config.checked_workspace(workspace)
+    except config.InvalidConfig as exc:
+        raise Refused(str(exc)) from exc
+    modules = exceptions_question(questions, root, found, series, workspace, config.series_refusal(found[0], values))
+    if series in config.series_sections(document, workspace):
+        raise Refused(f'{workspace} has a [series.{json.dumps(series)}] section, which setup never edits: add '
+                      f'{", ".join(modules)} to its series_exceptions yourself, then run {config.program_name()} setup '
+                      'again.')
+    new, raw, extended, checked = extended_workspace(workspace, document, series, {'series_exceptions': modules},
+                                                     exceptions_of=series)
+    lines += extended
+    actions.append(('extend', workspace, raw, new))
+    try:
+        planned, base, _workspace, name, _origins, _refusal = config.layered_configuration(root, planned=checked,
+                                                                                            checkout=checkout)
+        planned['tooling'].setdefault('community', values['ODOO_SOURCE'])
+        if values.get('ENTERPRISE_SOURCE'):
+            planned['tooling'].setdefault('enterprise', values['ENTERPRISE_SOURCE'])
+        return config.assignments(planned, root, base, workspace, name)
+    except config.InvalidConfig as exc:
+        raise Refused(str(exc)) from exc
+
+
+def worktree_slugs(root: Path, main: Path) -> set[str]:
+    """The checkout slugs of the repository's other checkouts: their checkout file's, else (a linked worktree) the
+    one their directory name gives, as tools/gc.py checkout_slugs reads them; those it cannot read are left out."""
+    try:
+        result = subprocess.run(['git', '-C', str(root), 'worktree', 'list', '--porcelain'], capture_output=True,
+                                text=True, env=migrate.git_env(), timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    slugs = set()
+    for line in result.stdout.splitlines() if result.returncode == 0 else ():
+        path = Path(line[len('worktree '):]).resolve() if line.startswith('worktree ') else None
+        if path is None or path == root:
+            continue
+        try:
+            slug = config.checkout_overrides(path).get('checkout_slug') or (
+                config.derived_slug(path, main) if path != main else '')
+        except config.InvalidConfig:
+            continue
+        if slug:
+            slugs.add(slug)
+    return slugs
+
+
+def slug_change(root: Path, kind: str, main: Path | None):
+    """(the checkout file document setup is about to write, its plan line, its action), or three None: a linked
+    worktree whose directory name gives a slug over 20 characters (v0.16.0 S4), without a checkout_slug, gets one
+    shortened to 20, with _<n> when another checkout of the repository uses it. A checkout file without [tooling] is
+    extended; one with [tooling] is never edited: refused, naming the line to add."""
+    if kind != 'linked' or main is None:
+        return None, None, None
+    try:
+        current = config.checkout_file(root)
+    except config.InvalidConfig:
+        return None, None, None  # the configuration refuses it
+    raw = config.worktree_slug(root, main)
+    if 'checkout_slug' in current.get('tooling', {}) or not raw or config.SLUG.fullmatch(raw):
+        return None, None, None
+    taken, slug, number = worktree_slugs(root, main), raw[:20].rstrip('_'), 2
+    while slug in taken:
+        slug, number = f'{raw[:19 - len(str(number))].rstrip("_")}_{number}', number + 1
+    path, why = root / config.CHECKOUT_NAME, f'{len(raw)} characters; a slug has at most 20'
+    if 'tooling' in current:
+        raise Refused(f'The worktree directory name {root.name} gives the checkout slug {raw} ({why}) and {path} has '
+                      f'a [tooling] table, which setup never edits: add checkout_slug = {migrate.toml_string(slug)} '
+                      f'to it, then run {config.program_name()} setup again.')
+    text = CHECKOUT_SLUG.format(name=root.name, raw=raw, slug=migrate.toml_string(slug))
+    document = {**current, 'tooling': {'checkout_slug': slug}}
+    why = f'the worktree directory name {root.name} gives {raw}, {why}'
+    if not os.path.lexists(path):
+        return document, f'create {path}: checkout_slug {slug} ({why})', ('create', path, text.encode(), 0o644)
+    original = path.read_bytes()
+    new = original + (b'' if not original.strip() else b'\n' if original.endswith(b'\n') else b'\n\n') + text.encode()
+    try:
+        if tomllib.loads(new.decode('utf-8')) != document:
+            raise ValueError
+    except (ValueError, UnicodeError):
+        raise Refused(f'Cannot add checkout_slug to {path}: add checkout_slug = {migrate.toml_string(slug)} under '
+                      '[tooling] yourself.') from None
+    return document, f'add [tooling] checkout_slug {slug} to {path} ({why})', ('extend', path, original, new)
 
 
 def infer_sources(questions: Questions, community: Path, enterprise: Path | None, origin: tuple[str, str]):
@@ -1689,6 +1992,19 @@ class Changes:
             with os.fdopen(descriptor, 'wb') as stream:
                 os.fchmod(stream.fileno(), action[3])
                 stream.write(action[2])
+        elif kind == 'rename':
+            # A directory moved whole (os.rename never moves it across file systems): never onto an existing path.
+            if os.path.lexists(action[2]):
+                raise OSError(17, f'{action[2]} exists')
+            os.rename(path, action[2])
+            self.undo.append(('rename', action[2], path))
+        elif kind == 'delete':
+            # A file removed once its moved copy exists: its bytes and mode come back on rollback.
+            if path.read_bytes() != action[2]:
+                raise OSError(0, f'{path} changed since the plan')
+            mode = path.stat().st_mode & 0o7777
+            os.unlink(path)
+            self.undo.append(('recreate', path, action[2], mode))
         elif kind == 'fill':
             # An env file that gets the account: its bytes and mode come back on rollback; it ends 0600.
             original, data = action[2], action[3]
@@ -1721,6 +2037,13 @@ class Changes:
             try:
                 if step[0] == 'rmdir':
                     os.rmdir(step[1])
+                elif step[0] == 'rename':
+                    os.rename(step[1], step[2])
+                elif step[0] == 'recreate':
+                    descriptor = os.open(step[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, step[3])
+                    with os.fdopen(descriptor, 'wb') as stream:
+                        os.fchmod(stream.fileno(), step[3])
+                        stream.write(step[2])
                 elif step[0] == 'remove':
                     os.unlink(step[1])
                 elif step[0] == 'discard':
@@ -1759,7 +2082,9 @@ def apply_plan(plan: dict) -> int:
     try:
         for action in plan['actions']:
             changes.apply(action)
-        config.load(root)
+        loaded = config.load(root)
+        # A moved workspace (move_plan) gives its values once moved.
+        plan['values'] = plan['values'] or loaded
     except OSError as exc:
         return undone(f'Could not set up: {exc.strerror or exc}', changes.rollback())
     except config.InvalidConfig as exc:

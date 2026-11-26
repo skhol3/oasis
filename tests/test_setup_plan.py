@@ -144,7 +144,8 @@ class PlanJsonTests(unittest.TestCase):
         unknown = self.answers({'colour': 'blue'})
         self.assert_refused(self.setup_cmd('--answers', str(unknown)),
                             f'--answers {unknown}: unknown question colour (setup asks series, community, enterprise, '
-                            'environment, python, python_ldap and requirement:<name>).', before)
+                            'environment, python, workspace, series_exceptions, python_ldap and requirement:<name>).',
+                            before)
         for content in ('[1]', '{"community": 1}', 'not json'):
             with self.subTest(content=content):
                 unknown.write_text(content)

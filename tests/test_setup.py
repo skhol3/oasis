@@ -81,6 +81,9 @@ ENV_FILE = re.compile(r'# Written by oasis setup: the PostgreSQL account of the 
                       r'\(docs/setup\.md#the-database-account\)\.\n# No oasis command needs it read, copied or '
                       r'typed\. Never commit this file\.\nODOO_DB_USER=oasis_shop\nODOO_DB_PASSWORD=[A-Za-z0-9_-]{32}\n')
 DRY_RUN = 'dry run: nothing changed; run with --apply to set up\n'
+# The section setup adds for the modules of another series (v0.16.0 S4).
+SECTION = ('# Added by oasis setup: what differs for the Odoo 19.0 checkouts (docs/setup.md#another-odoo-series).\n'
+           '[series."19.0"]\nseries_exceptions = [{modules}]\n')
 OPEN_PLAN = ('nothing changed: answer the open questions above (docs/setup.md#questions-and-answers), then run '
              'with --apply to set up\n')
 NOT_TTY_SERIES = ('ERROR: Cannot infer the Odoo series of {root}: no module manifest declares one and the '
@@ -832,29 +835,57 @@ class SetupTests(unittest.TestCase):
         self.assertTrue(result.stdout.endswith(self.adopted_next_steps(project, add_development=False)), result.stdout)
         self.assertNotIn('add a [development] table', result.stdout)
 
-    def test_modules_of_another_series_than_the_configured_one_are_refused(self):
-        # S11: an existing configuration (the checkout's modules are 19.0, one is 15.0).
+    def test_modules_of_another_series_than_the_configured_one_get_the_series_exceptions_question(self):
+        # S11, v0.16.0 S4: an existing configuration (the checkout's modules are 19.0, one is 15.0).
         project = self.existing_workspace()
+        workspace = project / 'oasis-workspace.toml'
+        original = workspace.read_text()
         self.module('old_sale', "{'name': 'Old', 'version': '15.0.1.0.0'}\n")
         before = self.tree()
         message = (f'The module old_sale declares Odoo 15.0 (version 15.0.1.0.0 in '
                    f'{self.checkout / "old_sale/__manifest__.py"}), but {self.checkout} is configured for Odoo 19.0 '
-                   f'by {project / "oasis-workspace.toml"}: run oasis in a checkout of an Odoo 19.0 branch, or set the '
+                   f'by {workspace}: run oasis in a checkout of an Odoo 19.0 branch, or set the '
                    'version of old_sale to 19.0.x.y.z if it is an Odoo 19.0 module; for Odoo 15.0 here, run oasis '
-                   f'setup to add a [series."15.0"] section to {project / "oasis-workspace.toml"}.')
-        self.assert_refused(self.setup_cmd(), message, before)
-        # A new configuration whose --series disagrees with a module: refused before anything is written.
-        (project / 'oasis-workspace.toml').unlink()
+                   f'setup to add a [series."15.0"] section to {workspace}.')
+        question = (f'The modules old_sale (Odoo 15.0) of {self.checkout} declare another Odoo series than 19.0: list '
+                    f'them in series_exceptions under [series."19.0"] in {workspace}? Answer with --answer '
+                    'series_exceptions=<add|no> (recommended: add).')
+        result = self.setup_cmd()
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertIn(f'add [series."19.0"] to {workspace}:\n', result.stdout)
+        self.assertTrue(result.stdout.endswith(f'open question series_exceptions: {question}\n{OPEN_PLAN}'),
+                        result.stdout)
+        self.assertEqual(self.tree(), before)
+        result = self.setup_cmd('--apply')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+            f'ERROR: open question series_exceptions: {question}\nERROR: nothing changed: answer the open '
+            'questions, then run oasis setup --apply again.\n')))
+        self.assert_refused(self.setup_cmd('--answer', 'series_exceptions=no'), message, before)
+        result = self.setup_cmd('--apply', '--answer', 'series_exceptions=add')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(workspace.read_text(), original.replace('workspace_version = 1', 'workspace_version = 2')
+                         + '\n' + SECTION.format(modules="'old_sale'"))
+        self.assertIn(f'verified: {self.checkout} loads its configuration from {workspace}\n', result.stdout)
+        # A new configuration whose --series disagrees with a module: the same question, before anything is written.
+        workspace.unlink()
+        self.log.unlink()
+        new = self.checkout / 'oasis-workspace.toml'
         before = self.tree()
-        self.assert_refused(self.setup_cmd('--series', '19.0', '--community', str(self.source), '--no-enterprise'),
-                            message.replace(str(project / 'oasis-workspace.toml'),
-                                            str(self.checkout / 'oasis-workspace.toml')), before)
+        flags = ('--series', '19.0', '--community', str(self.source), '--no-enterprise')
+        self.assert_refused(self.setup_cmd(*flags, '--answer', 'series_exceptions=no'),
+                            message.replace(str(workspace), str(new)), before)
+        result = self.setup_cmd('--apply', *flags, '--answer', 'series_exceptions=add')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(new.read_text(), WORKSPACE.format(base='.oasis/').replace('workspace_version = 1',
+                                                                                    'workspace_version = 2')
+                         + '\n' + SECTION.format(modules="'old_sale'"))
         # Setup detects the series itself: a version that is not series-style does not count.
+        new.unlink()
         (self.checkout / 'old_sale/__manifest__.py').write_text("{'name': 'Old', 'version': '1.2.3.4.5'}\n")
         result = self.setup_cmd('--community', str(self.source), '--no-enterprise')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertIn('series: 19.0 (from the module manifests)\n', result.stdout)
-
+        self.assertNotIn('series_exceptions', result.stdout)
 
 if __name__ == '__main__':
     unittest.main()

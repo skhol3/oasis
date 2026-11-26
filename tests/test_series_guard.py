@@ -142,7 +142,8 @@ class SeriesGuardTests(unittest.TestCase):
         self.assertEqual((doctor.returncode, doctor.stderr), (1, ''))
         self.assertIn('PASS configuration=workspace\n', doctor.stdout)
         self.assertIn('FAIL module_series=15.0 module=old_sale expected=19.0\n  fix: run oasis in a checkout', doctor.stdout)
-        setup = self.oasis('setup')
+        # Setup asks to list it in series_exceptions (v0.16.0 S4); answered no, it refuses as the guard does.
+        setup = self.oasis('setup', '--answer', 'series_exceptions=no')
         self.assertEqual((setup.returncode, setup.stdout, setup.stderr),
                          (2, '', f'ERROR: {self.refusal("old_sale", "15.0", "15.0.1.0.0")}\n'))
 

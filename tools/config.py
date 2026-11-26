@@ -236,13 +236,19 @@ def checkout_identity(root: Path, override: str | None) -> tuple[str, Path | Non
         raise InvalidConfig(f'Cannot determine the checkout identity: git failed ({exc}).') from exc
 
 
-def derived_slug(top: Path, main: Path) -> str:
-    """Slug of a linked worktree from its directory name, without the main directory prefix."""
+def worktree_slug(top: Path, main: Path) -> str:
+    """What the directory name of a linked worktree gives, without the main directory prefix, valid or not
+    (derived_slug checks it; oasis setup proposes a shorter one, v0.16.0 S4)."""
     name = top.name
     if (main.name and name.startswith(main.name) and len(name) > len(main.name)
             and name[len(main.name)] in '-_.'):
         name = name[len(main.name):].lstrip('-_.')
-    slug = slug_of(name)
+    return slug_of(name)
+
+
+def derived_slug(top: Path, main: Path) -> str:
+    """Slug of a linked worktree from its directory name, without the main directory prefix."""
+    slug = worktree_slug(top, main)
     if not SLUG.fullmatch(slug):
         gives = f'{slug} ({len(slug)} characters)' if slug else 'nothing'
         raise InvalidConfig(f'Cannot derive a checkout slug from the worktree directory name {top.name}: it gives '
@@ -625,7 +631,8 @@ def workspace_configuration(root: Path) -> tuple[dict, Path, Path, str]:
     return document, base, workspace, name
 
 
-def layered_configuration(root: Path, planned: dict | None = None) -> tuple[dict, Path, Path, str, dict[str, str], str]:
+def layered_configuration(root: Path, planned: dict | None = None,
+                          checkout: dict | None = None) -> tuple[dict, Path, Path, str, dict[str, str], str]:
     """workspace_configuration() plus where its layered values came from (see origins) and the
     refusal resolve() gives when neither the workspace nor the machine file sets the community
     source (missing_source).
@@ -633,7 +640,7 @@ def layered_configuration(root: Path, planned: dict | None = None) -> tuple[dict
     The machine file's series values fill only the source keys the workspace does not set;
     `enterprise = false` in the workspace means no Enterprise, whatever the machine file says.
     planned, when given, is the checked document oasis setup is about to write to the workspace file,
-    read in its place (it is changed).
+    read in its place (it is changed); checkout, when given, is the checkout file it is about to write.
     """
     profile = root / PROFILE_NAME
     if profile.is_file():
@@ -641,7 +648,7 @@ def layered_configuration(root: Path, planned: dict | None = None) -> tuple[dict
     workspace = workspace_file(root)
     if workspace is None:
         raise InvalidConfig(missing_configuration(root))
-    checkout = checkout_file(root)
+    checkout = checkout_file(root) if checkout is None else checkout
     overrides = dict(checkout.get('tooling', {}))
     # The checkout's environment is a name of [environments], not the [tooling] path.
     selected = overrides.pop('environment', None)

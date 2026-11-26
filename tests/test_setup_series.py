@@ -625,21 +625,35 @@ class SeriesSetupTests(unittest.TestCase):
 
     # -- the checkout's series and its exceptions -----------------------------------------------
 
-    def test_a_module_of_another_series_needs_an_exception_before_any_question(self):
+    def test_a_module_of_another_series_gets_the_series_exceptions_question_first(self):
         self.workspace.write_text(V1)
         before = self.tree()
         manifest = self.checkout / 'report_xlsx/__manifest__.py'
-        self.assert_refused(self.setup_cmd(), (
+        question = (f'The modules report_xlsx (Odoo 16.0) of {self.checkout} declare another Odoo series than 15.0: '
+                    f'list them in series_exceptions under [series."15.0"] in {self.workspace}? Answer with --answer '
+                    'series_exceptions=<add|no> (recommended: add).')
+        result = self.setup_cmd()
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertIn(f'open question series_exceptions: {question}\nopen question community: ', result.stdout)
+        self.assertEqual(self.tree(), before)
+        self.assert_refused(self.setup_cmd('--answer', 'series_exceptions=no'), (
             f'The module report_xlsx declares Odoo 16.0 (version 16.0.2.0.2 in {manifest}), but {self.checkout} is '
             'an Odoo 15.0 checkout: pass --exception report_xlsx to list it in series_exceptions under '
             '[series."15.0"], or set its version to 15.0.x.y.z if it is an Odoo 15.0 module.'), before)
+        # Answered: the section lists it, as --exception does.
+        result = self.setup_cmd('--answer', 'series_exceptions=add', '--community', str(self.source15),
+                                '--no-enterprise')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn("  series_exceptions = ['report_xlsx']\n", result.stdout)
+        self.assertEqual(self.tree(), before)
         self.assert_refused(self.setup_cmd('--exception', 'report xlsx'),
                             'Invalid --exception report xlsx: use a module name.', before)
 
     def test_the_checkout_file_series_wins_and_existing_exceptions_count(self):
         # A version 2 file whose 19.0 section already lists report_xlsx: the manifests say 15.0 without a flag.
         self.workspace.write_text(V2 + "\n[series.\"19.0\"]\nseries_exceptions = ['report_xlsx']\n")
-        result = self.setup_cmd('--community', str(self.source15), '--no-enterprise')
+        result = self.setup_cmd('--community', str(self.source15), '--no-enterprise', '--answer',
+                                'series_exceptions=no')
         self.assertEqual(result.returncode, 2)
         self.assertIn('pass --exception report_xlsx', result.stderr)
         (self.checkout / 'report_xlsx/__manifest__.py').write_text("{'name': 'x', 'version': '1.0'}\n")
