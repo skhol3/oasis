@@ -68,7 +68,7 @@ checkout is the git top level of the current directory.
    create /home/you/src/acme/oasis-workspace.toml (mode 0600):
    exclude /oasis-workspace.toml and /.oasis/ in /home/you/src/acme/.git/info/exclude (this clone only; .gitignore unchanged)
    create /home/you/src/acme/.oasis/config/odoo.conf (mode 0600): path-free; db_port 5432; db_user and db_password empty
-   create /home/you/src/acme/.oasis/config/.env (mode 0600): ODOO_DB_USER and ODOO_DB_PASSWORD, empty
+   create /home/you/src/acme/.oasis/config/.env (mode 0600): ODOO_DB_USER oasis_acme and a generated ODOO_DB_PASSWORD
    dry run: nothing changed; run with --apply to set up
    ```
 
@@ -80,26 +80,18 @@ checkout is the git top level of the current directory.
 
    It creates only the `create` pieces (an existing file is never replaced), checks that the
    checkout loads its configuration, compiles the dependency locks, creates the Python
-   environment and prints the next steps with your paths: steps 4 to 7 below.
+   environment and prints the next steps with your paths: steps 4 to 6 below. The database
+   account is generated in the environment file, which the service and Odoo both read (see
+   [The database account](setup.md#the-database-account)): nothing to fill in, and no step needs
+   a password read, copied or typed. Never commit that file.
 
-4. Fill in the database account. The environment file holds only the names, with empty values;
-   choose a local user and password (setup never generates or prints one) and write the same
-   values in `odoo.conf`. Never commit either file.
-
-   ```text
-   .oasis/config/.env         ODOO_DB_USER=odoo
-                              ODOO_DB_PASSWORD=<a local password>
-   .oasis/config/odoo.conf    db_user = odoo
-                              db_password = <the same password>
-   ```
-
-5. Start the database service.
+4. Start the database service.
 
    ```bash
    docker compose --env-file .oasis/config/.env -f .oasis/config/compose.yml up -d --wait
    ```
 
-6. Run `doctor` until it prints `doctor_failures=0`. Each `FAIL` line is followed by a `fix:`
+5. Run `doctor` until it prints `doctor_failures=0`. Each `FAIL` line is followed by a `fix:`
    line with the command or action that fixes it, and `PASS odoo_source_from=machine:<file>`
    shows where a value came from (see [The doctor report](checking-environment.md#the-doctor-report)).
 
@@ -107,7 +99,7 @@ checkout is the git top level of the current directory.
    ~/.agents/skills/odoo19/oasis doctor
    ```
 
-7. Create a development database. It needs a `[development]` table with an
+6. Create a development database. It needs a `[development]` table with an
    `administrator_login` in `oasis-workspace.toml` (setup writes none; see
    [the example tree](#the-example-tree) and [Development database](dev-database.md)), asks for
    each password with the echo off, and the name must start with the `dev_prefix` (`acme_dev_`,
@@ -137,8 +129,8 @@ touched.
 ├── oasis-workspace.toml           workspace file: every checkout of acme reads it
 ├── .oasis/
 │   ├── config/
-│   │   ├── .env                   ODOO_DB_USER= and ODOO_DB_PASSWORD=, empty (0600)
-│   │   ├── odoo.conf              path-free, db_user and db_password empty (0600)
+│   │   ├── .env                   the generated database account: ODOO_DB_USER, ODOO_DB_PASSWORD (0600)
+│   │   ├── odoo.conf              path-free and password-free: db_user and db_password empty (0600)
 │   │   ├── compose.yml            PostgreSQL 17 on 127.0.0.1, the port odoo.conf connects to
 │   │   └── requirements/          runtime.in, dev.in, runtime.txt, dev.txt, lock.sha256
 │   ├── data/                      Odoo data directory (filestores)
@@ -292,7 +284,9 @@ steps write [the example tree](#the-example-tree); any other folders work the sa
    `POSTGRES_DB`, so the service carries those variables. `odoo.conf` is
    [path-free](path-free-odoo-conf.md): no `addons_path`, `data_dir` or `db_name`, because oasis
    passes `--addons-path` and `--data-dir` and every checkout shares the file; its `db_port` is
-   the port the compose file publishes.
+   the port the compose file publishes. It is password-free too: with `db_user` and `db_password`
+   empty, every oasis command that starts Odoo gives it the account of the environment file
+   ([The database account](setup.md#the-database-account)).
 
    ```yaml
    # projects/acme/config/compose.yml
@@ -319,25 +313,23 @@ steps write [the example tree](#the-example-tree); any other folders work the sa
    ```
 
    ```ini
-   ; projects/acme/config/odoo.conf; config/.env holds ODOO_DB_USER= and ODOO_DB_PASSWORD= with the same values
+   ; projects/acme/config/odoo.conf; Odoo gets the account of config/.env
    [options]
    db_host = 127.0.0.1
    db_port = 5432
-   db_user = odoo
-   db_password = <the password of config/.env>
+   db_user =
+   db_password =
    ```
 
-   The environment file holds the same database account, one `NAME=value` per line; write your
-   own password in both files:
-
-   ```ini
-   # projects/acme/config/.env
-   ODOO_DB_USER=odoo
-   ODOO_DB_PASSWORD=<the same password as db_password in odoo.conf>
-   ```
+   The environment file holds the database account, one `NAME=value` per line. Generate the
+   password straight into the file, so it is never shown (or let `oasis setup --apply` write the
+   whole file):
 
    ```bash
-   chmod 600 ~/odoo/19.0/projects/acme/config/.env ~/odoo/19.0/projects/acme/config/odoo.conf
+   cd ~/odoo/19.0/projects/acme/config
+   (umask 077 && printf 'ODOO_DB_USER=oasis_acme\nODOO_DB_PASSWORD=%s\n' \
+     "$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')" > .env)
+   chmod 600 odoo.conf
    ```
 
 4. Write the dependency inputs, lock them and fingerprint the locks. `runtime.in` takes Odoo's
@@ -370,7 +362,7 @@ steps write [the example tree](#the-example-tree); any other folders work the sa
      ~/odoo/19.0/projects/acme/config/requirements/dev.txt
    ```
 
-Then continue with [step 5 of the quick path](#quick-path): start the database service, run
+Then continue with [step 4 of the quick path](#quick-path): start the database service, run
 `doctor` (`PASS configuration=workspace` shows the workspace file was found and accepted) and
 create a development database.
 

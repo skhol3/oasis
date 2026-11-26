@@ -54,9 +54,10 @@ Releases are listed in the [changelog](CHANGELOG.md).
    ~/.agents/skills/odoo19/oasis setup --apply    # creates only what is missing
    ```
 
-2. Fill in the database account the apply step names (`ODOO_DB_USER` and `ODOO_DB_PASSWORD` in
-   the environment file, the same values in `odoo.conf`), start the database service, and run
-   `doctor` until `doctor_failures=0` (each `FAIL` says how to fix it):
+2. Start the database service and run `doctor` until `doctor_failures=0` (each `FAIL` says how to
+   fix it). setup generated the database account in the environment file, which the service and
+   Odoo both read; no step needs a password read, copied or typed
+   ([The database account](docs/setup.md#the-database-account)):
 
    ```bash
    docker compose --env-file .oasis/config/.env -f .oasis/config/compose.yml up -d --wait
@@ -94,7 +95,14 @@ and `migrate --apply` (Tier B) wait for the user's confirmation in a dialog, hon
 Tier A in the skills too. In the CLI, `drop-database`, `gc --apply --trash`, `migrate --apply` and
 `worktree-init` run only with `--confirm <exact name>` (the database, the project root, the
 workspace file, the worktree path); without it they exit 2 and name the exact command. The menu,
-`/oasis worktree` and `/oasis migrate` pass it after your confirmation.
+`/oasis worktree` and `/oasis migrate` pass it after your confirmation. New Tier B command:
+`recreate-database-volume --confirm <compose project>` deletes the PostgreSQL volume of the compose
+project (every database in it) and starts the service again with the account of the env file; it
+replaces a raw `docker compose down -v`.
+
+oasis generates the database account (`oasis setup`, one 0600 env file read by the compose service
+and by Odoo; `odoo.conf` stays password-free), so no oasis workflow requires reading, copying or
+typing a password, and no command takes or prints one. [Docs →](docs/setup.md#the-database-account)
 
 ### Checkouts and worktrees
 

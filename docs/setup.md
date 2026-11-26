@@ -23,6 +23,7 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
 - [What it infers and what it asks](#what-it-infers-and-what-it-asks): the checkout, the series, the source.
 - [What it creates and what it keeps](#what-it-creates-and-what-it-keeps): every file and directory.
 - [Another Odoo series](#another-odoo-series): a checkout of a series the workspace file has no section for.
+- [The database account](#the-database-account): the generated account, one file, read by the service and Odoo.
 - [Next steps](#next-steps): what is left for you.
 - [oasis setup and /oasis setup](#oasis-setup-and-oasis-setup): two different commands.
 
@@ -36,7 +37,8 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
   (`from the module manifests`, `from the machine file`, `from --community`, `answered`), then one
   line per piece: `create <path>` for a missing one, `kept <path>` for an existing one. The new
   workspace file and the machine file entry are shown in full, indented; the other files by a
-  summary line. The environment file is never read and its values are never printed.
+  summary line. No password is ever printed: the plan names the generated account by its user name
+  (`ODOO_DB_USER oasis_<name> and a generated ODOO_DB_PASSWORD`).
 - With `--apply` it prints the same plan, creates the files (each one exclusively, so an existing
   file is never replaced), checks that the checkout loads its configuration
   (`verified: <checkout> loads its configuration from <workspace file>`), compiles the locks, creates
@@ -97,9 +99,9 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
 | --- | --- |
 | [Machine file](workspace-file.md#machine-file) entry `[series."<x.y>"]` | `community` and, with Enterprise, `enterprise`. A new file is created with mode 0600; an existing file without the entry gets it appended. An existing entry is used and never edited: a flag that disagrees with it, or an entry without `community`, is refused. |
 | `oasis-workspace.toml` | `workspace_version`, `odoo_version`, and `[tooling]` with the environment, `config`, `env_file`, `compose`, `requirements`, `addons_paths` (the directories that hold the modules, `'.'` by default), `db_service = 'db'`, the prefixes, `logs` and `data_dir`; never a source key. Mode 0600. |
-| `odoo.conf` | Path-free (no `addons_path`, no `data_dir`; see [Path-free odoo.conf](path-free-odoo-conf.md)): `db_host = 127.0.0.1`, the `db_port` of the compose file, `db_user` and `db_password` empty. Mode 0600. |
+| `odoo.conf` | Path-free (no `addons_path`, no `data_dir`; see [Path-free odoo.conf](path-free-odoo-conf.md)): `db_host = 127.0.0.1`, the `db_port` of the compose file, `db_user` and `db_password` empty: Odoo gets the [database account](#the-database-account) of the environment file. Mode 0600. |
 | Compose file | `name: oasis-<name>-<6 hex of the workspace directory>` and the PostgreSQL service (`postgres:<postgres_default>` of the series in `tools/odoo_versions.py`: `postgres:17` on 19.0) with the variables oasis uses, published on `127.0.0.1` on the [port](#one-port-for-odooconf-and-the-compose-file) `odoo.conf` connects to. |
-| Environment file | `ODOO_DB_USER=` and `ODOO_DB_PASSWORD=`, names only, empty values; mode 0600. Never read or printed. |
+| Environment file | The [database account](#the-database-account): `ODOO_DB_USER=oasis_<name>` and a random `ODOO_DB_PASSWORD`, or the `db_user` and `db_password` a kept `odoo.conf` sets; mode 0600. The password is never printed. |
 | `runtime.in`, `dev.in` | `-r <community>/requirements.txt`, then what the series needs that those requirements do not list (`runtime_requirements` in `tools/odoo_versions.py`: nothing on 19.0, `setuptools<81` on 15.0, [below](#odoo-150-requirements)); `-c runtime.txt` and `-r runtime.in`, to which you add your development tools. With an adopted series folder that holds `requirements-extra.txt`, `runtime.in` also includes it ([Another Odoo series](#the-projects-requirement-files)). |
 | `overrides.txt` | Only with an adopted series folder that holds `requirements-overrides.txt`: `-r <that file>`, given to `uv pip compile` as `--override` ([Another Odoo series](#the-projects-requirement-files)). |
 | Locks | `runtime.txt`, `dev.txt` and `lock.sha256`, compiled with the series' Python by the same code as `bootstrap --apply` when they are missing or stale; current locks are kept, and a lock changed by hand is kept and leaves the environment uncreated. |
@@ -443,26 +445,60 @@ section's `environment`, so the section's `python` applies); in a new workspace 
 `[environments.default]` table with the environment's `path` and that `python`, instead of
 `[tooling].environment`.
 
+## The database account
+
+oasis generates the PostgreSQL account of a workspace (one per series) and keeps it in one file, the
+environment file (`[tooling].env_file`, by default `config/.env`; mode 0600). No oasis workflow requires
+reading, copying or typing a password, and no command takes one as an argument or prints one (output,
+logs, errors).
+
+- A new environment file gets `ODOO_DB_USER=oasis_<name>` (`<name>` is the `dev_prefix` without `_dev_`:
+  `oasis_shop`, `oasis_shop15` for a second series) and `ODOO_DB_PASSWORD=<32 random characters>`
+  (`secrets.token_urlsafe(24)`: letters, digits, `-` and `_`). When a kept `odoo.conf` already sets
+  `db_user` or `db_password`, the file gets that value instead, so Odoo and the service keep the account
+  they used (quoted when docker compose would otherwise read it differently; a value it cannot hold either
+  way is refused: `Cannot copy db_password of <odoo.conf> to <env file>: docker compose would not read its
+  value as written; ...`). An existing environment file is kept as it is.
+- The compose service reads it: `docker compose --env-file <env file>` gives `POSTGRES_USER` and
+  `POSTGRES_PASSWORD`, which PostgreSQL uses when it initializes a new volume, and the database commands
+  run `psql`, `createdb` and `dropdb` in the service with it.
+- Odoo reads the same file: `odoo.conf` stays path-free and password-free, and every command that starts
+  Odoo (`start`, `restart`, `install-module`, `update-module`, `odoo-shell`, `test-module`,
+  `verify-module`, `init-dev-database`) exports `ODOO_DB_USER` and `ODOO_DB_PASSWORD` as `PGUSER` and
+  `PGPASSWORD`, which libpq reads when Odoo passes no user or password of its own; they never appear on
+  Odoo's command line (`start --print-command` shows none). A `db_user` or `db_password` that `odoo.conf`
+  sets (other than empty, `False` or `None`, which Odoo reads as unset) is kept, and that one is not
+  exported, since Odoo 19 ranks `PGUSER` and `PGPASSWORD` above `odoo.conf`: an existing project keeps
+  working unchanged. When either file cannot be read, nothing is exported and the command runs as before
+  (`doctor` reports the file).
+- `doctor` and `check-environment --full` log in with that account (`postgres_connection`, see
+  [The doctor report](checking-environment.md#the-doctor-report)). A volume initialized with other
+  credentials (the environment file changed after the service first started, or a volume from an older
+  setup) fails there with its fix, the Tier B
+  `oasis --project <checkout> recreate-database-volume --confirm <compose project>`: it prints the plan,
+  then runs `docker compose down -v` for that compose project only (every database of its PostgreSQL, the
+  trash included, is deleted; filestores under `data_dir` are not) and starts the service again, which
+  initializes a new volume with the account of the environment file. Without `--confirm` and the compose
+  project (the top-level `name:` of the compose file) it changes nothing and names the exact command.
+
 ## Next steps
 
 After `--apply`, setup prints what is left, numbered, for example:
 
 ```text
 next steps:
-  1. fill in ODOO_DB_USER and ODOO_DB_PASSWORD in <env file>, and the same values as db_user and db_password in <odoo.conf>
-  2. docker compose --env-file <env file> -f <compose file> up -d --wait
-  3. oasis --project <checkout> doctor
-  4. add a [development] table with administrator_login to <workspace file> (docs/dev-database.md)
-  5. oasis --project <checkout> init-dev-database <module> <name>_dev_manual
+  1. docker compose --env-file <env file> -f <compose file> up -d --wait
+  2. oasis --project <checkout> doctor
+  3. add a [development] table with administrator_login to <workspace file> (docs/dev-database.md)
+  4. oasis --project <checkout> init-dev-database <module> <name>_dev_manual
 ```
 
-The first step appears only for the files setup created, and `bootstrap --apply` is added when it
-compiled the locks of an environment it kept. With an [adopted environment](#an-existing-environment) that
-step reads `the locks in <requirements> describe runtime.in and dev.in (or runtime.in, dev.in and
-overrides.txt): oasis --project <checkout> bootstrap --apply syncs the adopted environment <dir> to them (it
-changes the packages installed there)`. Choose your own local database account; setup never
-generates or prints one. Then follow [Development database](dev-database.md) and
-[Tests and test databases](testing.md).
+Nothing asks for an account: setup generated it ([The database account](#the-database-account)).
+`bootstrap --apply` is added when setup compiled the locks of an environment it kept. With an
+[adopted environment](#an-existing-environment) that step reads `the locks in <requirements> describe
+runtime.in and dev.in (or runtime.in, dev.in and overrides.txt): oasis --project <checkout> bootstrap --apply
+syncs the adopted environment <dir> to them (it changes the packages installed there)`. Then follow
+[Development database](dev-database.md) and [Tests and test databases](testing.md).
 
 ## oasis setup and /oasis setup
 
