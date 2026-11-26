@@ -105,6 +105,13 @@ class GeneratedAccountTests(unittest.TestCase):
                           else 'ODOO_DB_USER oasis_shop')
                 self.assertIn(f'create {env_file} (mode 0600): {source} and ODOO_DB_PASSWORD from db_password of '
                               f'{conf}\n', result.stdout)
+                # The move (S2, "Los respeta y ofrece migrar"): the env file now holds odoo.conf's account, so
+                # setup removes it from odoo.conf, those lines only.
+                moved = 'db_user and db_password' if 'db_user' in options else 'db_password'
+                lines = 'those lines' if 'db_user' in options else 'that line'
+                self.assertIn(f'remove {moved} from {conf} ({lines} only): {env_file} holds the same account, which '
+                              'oasis passes to Odoo\n', result.stdout)
+                self.assertEqual(conf.read_text(), '[options]\ndb_port = 6543\n')
         # A value the env file cannot hold is refused before anything is written.
         env_file.unlink()
         conf.write_text("[options]\ndb_port = 6543\ndb_password = it's \"two\"\n")
@@ -115,6 +122,127 @@ class GeneratedAccountTests(unittest.TestCase):
                                         f'not read its value as written; write {env_file} yourself, then run oasis '
                                         'setup again.\n')
         self.assertEqual(self.tree(), before)
+
+
+    # -- an existing project (S2: "Los respeta y ofrece migrar") ----------------------------------
+
+    def test_setup_moves_an_odoo_conf_account_the_env_file_holds_keeping_every_other_byte(self):
+        project = self.existing_workspace()
+        conf, env_file = project / 'config/odoo.conf', project / 'config/.env'
+        kept = (f'; my odoo.conf\n[options]\ndb_host = 127.0.0.1\ndb_port = 6543\nDB_USER = legacy\n'
+                f'admin_passwd = {MARKER}-admin\n')
+        conf.write_text(f'{kept}db_password = {MARKER}\n; db_password = old\n\n[other]\ndb_user = x\n')
+        conf.chmod(0o640)
+        env_text = f"# mine\nODOO_DB_USER=legacy\nexport ODOO_DB_PASSWORD='{MARKER}' # kept\n"
+        env_file.write_text(env_text)
+        line = (f'remove db_user and db_password from {conf} (those lines only): {env_file} holds the same account, '
+                'which oasis passes to Odoo\n')
+        before = self.tree()
+        plan = self.setup_cmd()
+        self.assertEqual((plan.returncode, plan.stderr), (0, ''))
+        self.assertIn(f'kept {conf}\n', plan.stdout)
+        self.assertIn(f'kept {env_file}\n{line}', plan.stdout)
+        self.assertNotIn(MARKER, plan.stdout)
+        self.assertEqual(self.tree(), before)
+        result = self.setup_cmd('--apply')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn(line, result.stdout)
+        self.assertNotIn(MARKER, result.stdout)
+        self.assertEqual(conf.read_text(), f'{kept.replace("DB_USER = legacy" + chr(10), "")}; db_password = old\n\n'
+                                           '[other]\ndb_user = x\n')
+        self.assertEqual(conf.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(env_file.read_text(), env_text)
+        # Moved: a second run proposes nothing more.
+        again = self.setup_cmd('--apply')
+        self.assertEqual((again.returncode, again.stderr), (0, ''))
+        self.assertNotIn('remove db_', again.stdout)
+        self.assertIn('nothing to set up', again.stdout)
+
+    def test_setup_warns_and_changes_nothing_when_the_env_file_differs_or_lacks_the_account(self):
+        project = self.existing_workspace()
+        conf, env_file = project / 'config/odoo.conf', project / 'config/.env'
+        conf_text = f'[options]\ndb_port = 6543\ndb_user = legacy\ndb_password = {MARKER}\n'
+        tail = (f': both files kept, and Odoo keeps connecting with the account of {conf}; setup moves it to '
+                f'{env_file} only when both hold the same values\n')
+        for env_text, details in (
+                (f'ODOO_DB_USER=legacy\nODOO_DB_PASSWORD={MARKER}-other\n', 'db_password (another value)'),
+                (f'ODOO_DB_PASSWORD={MARKER}\n', 'db_user (not set)'),
+                (f'ODOO_DB_USER=mine\nODOO_DB_PASSWORD="${{SECRET}}"\n', 'db_user and db_password (another value)')):
+            with self.subTest(env_text=env_text):
+                conf.write_text(conf_text)
+                env_file.write_text(env_text)
+                result = self.setup_cmd('--apply')
+                self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+                self.assertIn(f'kept {env_file}\nWARN: {env_file} does not hold the account {conf} sets: '
+                              f'{details}{tail}', result.stdout)
+                self.assertNotIn('remove db_', result.stdout)
+                self.assertNotIn(MARKER, result.stdout)
+                self.assertEqual((conf.read_text(), env_file.read_text()), (conf_text, env_text))
+
+    def test_setup_fills_the_empty_account_of_a_kept_env_file_keeping_every_other_byte(self):
+        project = self.existing_workspace()
+        conf, env_file = project / 'config/odoo.conf', project / 'config/.env'
+        password = r'[A-Za-z0-9_-]{32}'
+        both = 'ODOO_DB_USER and ODOO_DB_PASSWORD'
+        generated = 'ODOO_DB_USER oasis_shop and a generated ODOO_DB_PASSWORD'
+        for conf_text, env_text, names, described, expected, moved in (
+                ('', '# mine\nODOO_DB_USER=\nOTHER=kept\nexport ODOO_DB_PASSWORD="" # fill in\n', both, generated,
+                 rf'# mine\nODOO_DB_USER=oasis_shop\nOTHER=kept\nexport ODOO_DB_PASSWORD={password} # fill in\n',
+                 None),
+                ('', 'ODOO_DB_USER=mine\nODOO_DB_PASSWORD=\n', 'ODOO_DB_PASSWORD', 'a generated ODOO_DB_PASSWORD',
+                 rf'ODOO_DB_USER=mine\nODOO_DB_PASSWORD={password}\n', None),
+                ('db_user = legacy\n', 'ODOO_DB_USER=\nODOO_DB_PASSWORD=\n', both,
+                 f'ODOO_DB_USER from db_user of {conf} and a generated ODOO_DB_PASSWORD',
+                 rf'ODOO_DB_USER=legacy\nODOO_DB_PASSWORD={password}\n', 'db_user')):
+            with self.subTest(env_text=env_text, conf_text=conf_text):
+                conf.write_text(f'[options]\ndb_port = 6543\n{conf_text}')
+                env_file.write_text(env_text)
+                env_file.chmod(0o644)
+                line = f'fill {names} in {env_file} (mode 0600; every other line kept): {described}\n'
+                plan = self.setup_cmd()
+                self.assertEqual((plan.returncode, plan.stderr), (0, ''))
+                self.assertIn(line, plan.stdout)
+                self.assertEqual(env_file.read_text(), env_text)
+                result = self.setup_cmd('--apply')
+                self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+                self.assertIn(line, result.stdout)
+                text = env_file.read_text()
+                self.assertRegex(text, rf'\A{expected}\Z')
+                self.assertEqual(env_file.stat().st_mode & 0o777, 0o600)
+                value = re.search(rf'ODOO_DB_PASSWORD=({password})', text).group(1)
+                self.assertNotIn(value, result.stdout + plan.stdout)
+                if moved:
+                    self.assertIn(f'remove {moved} from {conf} (that line only): {env_file} holds the same account, '
+                                  'which oasis passes to Odoo\n', result.stdout)
+                self.assertEqual(conf.read_text(), '[options]\ndb_port = 6543\n')
+        # Filled: a second run keeps it.
+        again = self.setup_cmd('--apply')
+        self.assertEqual((again.returncode, again.stderr), (0, ''))
+        self.assertIn(f'kept {env_file}\n', again.stdout)
+        self.assertNotIn('fill ', again.stdout)
+
+    def test_setup_leaves_an_env_file_that_declares_no_account_unchanged_and_warns(self):
+        project = self.existing_workspace()
+        conf, env_file = project / 'config/odoo.conf', project / 'config/.env'
+        warning = (f'WARN: {env_file} sets neither ODOO_DB_USER nor ODOO_DB_PASSWORD: setup leaves {env_file} unchanged '
+                   '(an existing file is respected); to use the account oasis generates, add the empty lines '
+                   'ODOO_DB_USER= and ODOO_DB_PASSWORD= to it, then run oasis setup --apply\n')
+        for conf_text, env_text in (('', f'# mine\nPOSTGRES_PASSWORD={MARKER}\nOTHER=kept'), ('', ''),
+                                    (f'db_user = legacy\ndb_password = {MARKER}\n', '# mine\n')):
+            with self.subTest(env_text=env_text, conf_text=conf_text):
+                conf.write_text(f'[options]\ndb_port = 6543\n{conf_text}')
+                env_file.write_text(env_text)
+                env_file.chmod(0o644)
+                for args in ((), ('--apply',)):
+                    result = self.setup_cmd(*args)
+                    self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+                    self.assertIn(f'kept {env_file}\n{warning}', result.stdout)
+                    self.assertNotIn('fill ', result.stdout)
+                    self.assertNotIn('remove db_', result.stdout)
+                    self.assertNotIn(MARKER, result.stdout)
+                    self.assertEqual(env_file.read_text(), env_text)
+                    self.assertEqual(env_file.stat().st_mode & 0o777, 0o644)
+                    self.assertEqual(conf.read_text(), f'[options]\ndb_port = 6543\n{conf_text}')
 
 
 class LaunchTests(unittest.TestCase):
@@ -161,6 +289,28 @@ class LaunchTests(unittest.TestCase):
                 result = self.invoke('install-module', 'coffee')
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
                 self.assertEqual(self.accounts(), [f'account {expected}'])
+
+    def test_a_value_oasis_cannot_read_as_compose_does_is_refused_never_exported(self):
+        env_file = self.root / 'dev/.env'
+        for text, names in ((f'ODOO_DB_USER=oasis_cc\nODOO_DB_PASSWORD=${{SECRET}}{MARKER}\n', 'ODOO_DB_PASSWORD'),
+                            (f'ODOO_DB_USER="$USER"\nODOO_DB_PASSWORD="{MARKER}\\n"\n',
+                             'ODOO_DB_USER and ODOO_DB_PASSWORD')):
+            with self.subTest(text=text):
+                env_file.write_text(text)
+                self.commands.unlink(missing_ok=True)
+                result = self.invoke('install-module', 'coffee')
+                self.assertEqual((result.returncode, result.stdout), (2, ''))
+                self.assertEqual(result.stderr, (
+                    f'ERROR: {env_file} sets {names} with compose interpolation ($) or a double-quoted escape (\\), '
+                    'which oasis does not read: write the value literally in single quotes.\n'))
+                self.assertNotIn(MARKER, result.stderr)
+                self.assertEqual(self.accounts(), [])
+        # What odoo.conf sets is not read from the env file: nothing to refuse.
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text('db_user = mine\ndb_password = theirs\n'))
+        self.commands.unlink(missing_ok=True)
+        result = self.invoke('install-module', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(self.accounts(), ['account user=<unset> password=<unset>'])
 
     def test_exports_are_refused_on_a_terminal(self):
         master, slave = pty.openpty()
@@ -233,7 +383,10 @@ class CheckEnvironmentConnectionTests(unittest.TestCase):
         import test_environment
         test_environment.EnvironmentTests.prepare(self)
         test_environment.EnvironmentTests.running_database(self)
-        (self.root / 'dev/compose.yml').write_text('name: cc-shop\nservices:\n  db:\n    image: postgres:17\n')
+        # odoo.conf names the endpoint the compose service publishes.
+        (self.root / 'dev/compose.yml').write_text("name: cc-shop\nservices:\n  db:\n    image: postgres:17\n"
+                                                   "    ports:\n      - '127.0.0.1:6001:5432'\n")
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text('db_host = 127.0.0.1\ndb_port = 6001\n'))
 
     def test_an_authentication_failure_names_the_volume_recreate(self):
         self.prepare()
@@ -253,6 +406,60 @@ class CheckEnvironmentConnectionTests(unittest.TestCase):
         self.assertIn('PASS postgres_connection=ready\n', result.stdout)
 
 
+    def test_another_server_than_the_compose_service_is_not_offered_the_volume_recreate(self):
+        self.prepare()
+        self.env['FAKE_CONNECTION'] = 'authentication_failed'
+        conf, compose = self.root / 'dev/odoo.conf', self.root / 'dev/compose.yml'
+        for options, where in (('db_host = db.example.invalid\ndb_port = 6001\n', 'db_host db.example.invalid, db_port 6001'),
+                               ('db_host = localhost\ndb_port = 6002\n', 'db_host localhost, db_port 6002'),
+                               ('db_port = 6001\n', 'no db_host, db_port 6001')):
+            with self.subTest(options=options):
+                conf.write_text(lifecycle.conf_text(options))
+                result = self.invoke('check-environment', '--full')
+                self.assertEqual(result.returncode, 1)
+                self.assertTrue(result.stderr.endswith(
+                    'FAIL postgres_connection=authentication_failed\n'
+                    f'  fix: the PostgreSQL that {conf} names ({where}) refuses the account Odoo uses, and it is not '
+                    f'the service of {compose} (published on 127.0.0.1:6001): correct that account on that server, or '
+                    f'set db_host = 127.0.0.1 and the db_port {compose} publishes in {conf}; then run oasis doctor '
+                    'again\n'), result.stderr)
+        # localhost names the published endpoint too.
+        conf.write_text(lifecycle.conf_text('db_host = localhost\ndb_port = 6001\n'))
+        self.assertIn('recreate-database-volume --confirm cc-shop', self.invoke('check-environment', '--full').stderr)
+
+    def test_each_word_of_the_probe_is_checked_and_an_unknown_one_is_unchecked(self):
+        self.prepare()
+        # An empty answer stays empty (the fixture's default answer is ready).
+        self.python.write_text(self.python.read_text().replace('${FAKE_CONNECTION:-ready}', '${FAKE_CONNECTION-ready}'))
+        for answer, word in (('not_running', 'not_running'), ('no_driver', 'no_driver'), ('failed', 'failed'),
+                             ('', 'unchecked'), ('Traceback (most recent call last):', 'unchecked'),
+                             ('ready now', 'unchecked')):
+            with self.subTest(answer=answer):
+                self.env['FAKE_CONNECTION'] = answer
+                result = self.invoke('check-environment', '--full')
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f'FAIL postgres_connection={word}\n', result.stderr)
+                self.assertNotIn('  fix:', result.stderr)
+                self.assertNotIn('PASS postgres_connection', result.stdout)
+
+    def test_an_env_file_value_oasis_cannot_read_fails_naming_the_file_and_variable(self):
+        self.prepare()
+        env_file = self.root / 'dev/.env'
+        env_file.write_text(f'ODOO_DB_USER=oasis_cc\nODOO_DB_PASSWORD="{MARKER}\\t$x"\n')
+        fix = (f'FAIL env_file=unsupported_value ODOO_DB_PASSWORD\n  fix: write ODOO_DB_PASSWORD in {env_file} '
+               'literally in single quotes: oasis does not read compose interpolation ($) or double-quoted escapes '
+               '(\\), so Odoo would get another credential\n')
+        for mode in ('--quick', '--full'):
+            with self.subTest(mode=mode):
+                result = self.invoke('check-environment', mode)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(fix, result.stderr)
+                self.assertNotIn(MARKER, result.stdout + result.stderr)
+                # The probe does not run with a credential oasis cannot read.
+                self.assertNotIn('postgres_connection=', result.stderr)
+                self.assertNotIn('PASS postgres_connection', result.stdout)
+
+
 class RecreateVolumeTests(unittest.TestCase):
     """recreate-database-volume is Tier B: --confirm <compose project>, else the plan and a refusal."""
     setUp_fixture = lifecycle.LifecycleTests.setUp
@@ -261,6 +468,23 @@ class RecreateVolumeTests(unittest.TestCase):
         self.setUp_fixture()
         (self.root / 'dev/compose.yml').write_text("name: 'cc-shop'\nservices:\n  db:\n    image: postgres:17\n")
         (self.root / 'dev/.env').write_text(f'ODOO_DB_USER=oasis_cc\nODOO_DB_PASSWORD={MARKER}\n')
+        self.env.pop('COMPOSE_PROJECT_NAME', None)
+        # FAKE_DOWN_FAIL and FAKE_UP_FAIL make `compose down` and `compose up` fail (exit 1).
+        docker = self.bindir / 'docker'
+        head, tail = docker.read_text().rsplit('exit 0\n', 1)
+        docker.write_text(head + 'case "$*" in\n'
+                          '  *" down -v") [ -z "${FAKE_DOWN_FAIL:-}" ] || exit 1 ;;\n'
+                          '  *" up -d "*) [ -z "${FAKE_UP_FAIL:-}" ] || exit 1 ;;\n'
+                          'esac\nexit 0\n' + tail)
+
+    def compose(self, *args):
+        """A docker compose call as the fake docker records it: always with the confirmed project."""
+        return ' '.join(['docker compose --env-file', str(self.root / 'dev/.env'), '-f', str(self.root / 'dev/compose.yml'),
+                         '-p', 'cc-shop', *args])
+
+    def start_command(self):
+        return shlex.join(['docker', 'compose', '--env-file', str(self.root / 'dev/.env'), '-f',
+                           str(self.root / 'dev/compose.yml'), '-p', 'cc-shop', 'up', '-d', '--wait', 'db'])
 
     def cli(self, *args):
         result = subprocess.run([sys.executable, '-B', str(ROOT / 'oasis'), '--project', str(self.root),
@@ -275,8 +499,9 @@ class RecreateVolumeTests(unittest.TestCase):
     def plan(self):
         return (f'compose_project=cc-shop\ncompose_file={self.root / "dev/compose.yml"}\nservice=db\n'
                 f'account={self.root / "dev/.env"}\n'
-                'deletes=the volumes of compose project cc-shop: every database of its PostgreSQL, the trash '
-                'included\n')
+                'deletes=the containers, networks and volumes of compose project cc-shop (docker compose down -v: '
+                'every named volume of its compose file and every anonymous volume of its containers), so every '
+                'database of its PostgreSQL, the trash included\n')
 
     def test_without_the_exact_compose_project_it_prints_the_plan_and_changes_nothing(self):
         command = shlex.join(['oasis', '--project', str(self.root), 'recreate-database-volume', '--confirm', 'cc-shop'])
@@ -295,8 +520,71 @@ class RecreateVolumeTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertEqual(result.stdout, self.plan() + (
             f'Recreated the database volume of cc-shop; service db runs with the account of {self.root / "dev/.env"}.\n'))
-        compose = f'docker compose --env-file {self.root / "dev/.env"} -f {self.root / "dev/compose.yml"}'
-        self.assertEqual(self.calls(), [f'{compose} down -v', f'{compose} up -d --wait --wait-timeout 60 db'])
+        # The confirmed project explicitly (-p): COMPOSE_PROJECT_NAME never picks another one.
+        self.assertEqual(self.calls(), [self.compose('down', '-v'), self.compose('up', '-d', '--wait', '--wait-timeout',
+                                                                                 '60', 'db')])
+        self.commands.unlink()
+        self.env['COMPOSE_PROJECT_NAME'] = 'cc-shop'
+        result = self.cli('--confirm', 'cc-shop')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(self.calls()[0], self.compose('down', '-v'))
+
+    def test_a_compose_project_name_that_selects_another_project_is_refused(self):
+        env_file = self.root / 'dev/.env'
+        refusal = ('ERROR: COMPOSE_PROJECT_NAME {where} makes docker compose use the compose project other, not cc-shop '
+                   f'(the top-level name: of {self.root / "dev/compose.yml"}); nothing changed: unset it or set it to '
+                   'cc-shop, then run recreate-database-volume again.\n')
+        self.env['COMPOSE_PROJECT_NAME'] = 'other'
+        for args in ((), ('--confirm', 'cc-shop'), ('--confirm', 'other')):
+            with self.subTest(args=args):
+                result = self.cli(*args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (2, '', refusal.format(where='in the environment')))
+        del self.env['COMPOSE_PROJECT_NAME']
+        env_file.write_text(env_file.read_text() + 'COMPOSE_PROJECT_NAME=other # mine\n')
+        result = self.cli('--confirm', 'cc-shop')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', refusal.format(where=f'in {env_file}')))
+        self.assertEqual(self.calls(), [])
+
+    def test_a_failure_after_the_volume_was_deleted_names_the_command_that_starts_the_service(self):
+        self.env['FAKE_UP_FAIL'] = '1'
+        result = self.cli('--confirm', 'cc-shop')
+        self.assertEqual((result.returncode, result.stdout), (1, self.plan()))
+        self.assertEqual(result.stderr, (
+            'ERROR: the volume of compose project cc-shop is already gone (docker compose down -v), but service db did '
+            f'not start again (exit 1): start it with {self.start_command()}\n'))
+        self.assertEqual(self.calls(), [self.compose('down', '-v'), self.compose('up', '-d', '--wait', '--wait-timeout',
+                                                                                 '60', 'db')])
+        self.commands.unlink()
+        del self.env['FAKE_UP_FAIL']
+        self.env['FAKE_DOWN_FAIL'] = '1'
+        result = self.cli('--confirm', 'cc-shop')
+        self.assertEqual((result.returncode, result.stdout), (1, self.plan()))
+        self.assertEqual(result.stderr, (
+            'ERROR: docker compose down -v failed (exit 1): the volume of compose project cc-shop may already be gone; '
+            f'start the service again with {self.start_command()}\n'))
+        self.assertEqual(self.calls(), [self.compose('down', '-v')])
+
+    def test_each_usage_error_and_a_compose_file_without_a_name_change_nothing(self):
+        usage = f'Usage: {ROOT / "oasis"} [--confirm <compose project>]\n'
+        for args in (('--confirm=cc-shop', '--confirm', 'cc-shop'), ('--confirm', 'cc-shop', '--confirm=cc-shop'),
+                     ('--confirm', '--help'), ('--confirm', '-p'), ('--confirm=',), ('--confirm',), ('cc-shop',),
+                     ('-p', 'cc-shop'), ('--confirm', 'cc-shop', 'extra')):
+            with self.subTest(args=args):
+                self.commands.unlink(missing_ok=True)
+                result = self.cli(*args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', usage))
+                self.assertEqual(self.calls(), [])
+        for text in ('services:\n  db:\n    image: postgres:17\n', "name: ''\nservices: {}\n", 'name: ~\n',
+                     'x-meta:\n  name: cc-shop\n'):
+            with self.subTest(text=text):
+                (self.root / 'dev/compose.yml').write_text(text)
+                result = self.cli('--confirm', 'cc-shop')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+                    f'ERROR: {self.root / "dev/compose.yml"} has no top-level name: add one (oasis doctor checks it), '
+                    'then run recreate-database-volume again.\n')))
+                self.assertEqual(self.calls(), [])
 
     def test_usage_errors_and_a_compose_file_without_a_name(self):
         # Like drop-database, the usage names the entry point that ran the tool.

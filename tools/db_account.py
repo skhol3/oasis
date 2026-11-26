@@ -20,14 +20,25 @@ Usage:
   db_account.py compose-project <compose file>
       the compose file's top-level name, or nothing.
   db_account.py fix <odoo.conf> <env_file> <compose file> <program> <project root>
-      what fixes an authentication failure (doctor and check-environment print it).
+      what fixes an authentication failure (doctor and check-environment print it): recreating the volume
+      only when odoo.conf names the endpoint the compose service publishes, else correcting the account on
+      the server odoo.conf names.
+  db_account.py unsupported <odoo.conf> <env_file>
+      a `FAIL env_file=unsupported_value <names>` line and its fix when the env file writes an account
+      variable Odoo would get with compose interpolation ($) or a double-quoted escape (\\), which this reader
+      does not implement (exit 1); nothing otherwise (exit 0).
+  db_account.py compose-project-name <env_file>
+      the env file's COMPOSE_PROJECT_NAME (docker compose reads it from --env-file), or nothing.
 
-Nothing here prints a value of either file, a line of them or a message of the server. Python 3.7
-compatible: the probe runs with the environment's Python, as old as Odoo 15's.
+A value this reader cannot read as docker compose does is never passed on: exports refuses it (exit 2,
+naming the file and the variable) rather than giving Odoo another credential. Nothing here prints a value
+of the account, a line of either file or a message of the server. Python 3.7 compatible: the probe runs
+with the environment's Python, as old as Odoo 15's.
 """
 from __future__ import annotations
 
 import configparser
+import os
 import re
 import shlex
 import sys
@@ -38,6 +49,14 @@ ACCOUNT = (('user', 'db_user', 'ODOO_DB_USER', 'PGUSER'), ('password', 'db_passw
 UNSET = ('', 'False', 'false', 'None')
 TOP_LEVEL_NAME = re.compile(r'''^(?:name|"name"|'name')\s*:(.*)$''')
 EMPTY_VALUES = ('', '""', "''", '~', 'null')
+# A compose short-syntax entry that publishes the container's PostgreSQL port: `- '127.0.0.1:6001:5432'`,
+# `- "6001:5432"`, `- 6001:5432/tcp`, with an optional host address and trailing comment. Anything else
+# (the long syntax, ranges, variables) is not read; no YAML parser is used.
+PUBLISHED_PORT = re.compile(r'''\s*-\s*(["']?)(?:(?:[0-9]{1,3}(?:\.[0-9]{1,3}){3}|localhost|\[[0-9A-Fa-f:]*\]):)?'''
+                            r'''([0-9]{1,5}):5432(?:/tcp)?\1\s*(?:#.*)?''')
+# The hosts that reach the port the compose service publishes on 127.0.0.1.
+LOCAL_HOSTS = ('127.0.0.1', 'localhost')
+POSTGRES_PORT = 5432
 NOT_RUNNING = ('could not connect', 'connection refused', 'no such file or directory', 'timeout expired',
                'could not translate host name', 'server closed the connection', 'network is unreachable')
 
@@ -46,18 +65,52 @@ class AccountError(Exception):
     """A file cannot be read; the message names the path, never content."""
 
 
-def env_value(raw: str) -> str:
+class UnsupportedValue(Exception):
+    """An account variable the env file writes in a way this reader does not implement (compose
+    interpolation, a double-quoted escape); the message names the file and the variables, never a value."""
+
+    def __init__(self, path, names):
+        super().__init__(f'{path} sets {" and ".join(names)} with compose interpolation ($) or a double-quoted '
+                         'escape (\\), which oasis does not read: write the value literally in single quotes.')
+
+
+class Unsupported:
+    """The value of an env file variable that docker compose would interpolate or unescape (UNSUPPORTED)."""
+
+    def __repr__(self):
+        return '<unsupported value>'
+
+
+UNSUPPORTED = Unsupported()
+
+
+def env_value(raw: str):
     """An env file value as docker compose reads it: inside single quotes literal, inside double quotes
-    as written, else up to a ` #` comment, stripped."""
+    as written, else up to a ` #` comment, stripped; UNSUPPORTED when docker compose would read it otherwise:
+    a `$` outside single quotes (interpolation) or a `\\` inside double quotes (an escape)."""
     value = raw.strip()
-    for quote in ("'", '"'):
-        if len(value) >= 2 and value[0] == quote and quote in value[1:]:
-            return value[1:value.index(quote, 1)]
-    return re.sub(r'\s+#.*$', '', value).strip()
+    if len(value) >= 2 and value[0] == "'" and "'" in value[1:]:
+        return value[1:value.index("'", 1)]
+    if len(value) >= 2 and value[0] == '"' and '"' in value[1:]:
+        inner = value[1:value.index('"', 1)]
+        return UNSUPPORTED if '$' in inner or '\\' in inner else inner
+    plain = re.sub(r'\s+#.*$', '', value).strip()
+    return UNSUPPORTED if '$' in plain else plain
 
 
-def env_values(path) -> dict:
-    """ODOO_DB_USER and ODOO_DB_PASSWORD of the env file (the last assignment wins); {} without the file."""
+def text_values(text: str, names) -> dict:
+    """The values of names an env file text assigns (env_value; the last assignment wins)."""
+    found = {}
+    for line in text.splitlines():
+        match = ENV_ASSIGNMENT.fullmatch(line)
+        if match and match.group(1) in names:
+            found[match.group(1)] = env_value(match.group(2))
+    return found
+
+
+def env_values(path, names=None) -> dict:
+    """ODOO_DB_USER and ODOO_DB_PASSWORD (or names) of the env file (the last assignment wins); {} without
+    the file."""
     try:
         with open(path, 'rb') as stream:
             text = stream.read().decode('utf-8', errors='replace')
@@ -65,13 +118,57 @@ def env_values(path) -> dict:
         return {}
     except OSError as exc:
         raise AccountError(f'Cannot read {path}.') from exc
-    names = {name for _key, _option, name, _variable in ACCOUNT}
-    found = {}
-    for line in text.splitlines():
-        match = ENV_ASSIGNMENT.fullmatch(line)
-        if match and match.group(1) in names:
-            found[match.group(1)] = env_value(match.group(2))
+    return text_values(text, names or account_names())
+
+
+def account_names() -> list:
+    return [name for _key, _option, name, _variable in ACCOUNT]
+
+
+def fill_names(values: dict) -> list:
+    """The account variables `oasis setup` writes to an existing env file (v0.16.0 S2): only those it assigns an
+    empty value (as older setups wrote them); an absent one is never added (an existing file is respected)."""
+    return [name for name in account_names() if name in values and not values[name]]
+
+
+def unassigned_advice(env_file, program) -> str:
+    """What setup and doctor say of an env file that assigns neither account variable: kept as it is."""
+    return (f'setup leaves {env_file} unchanged (an existing file is respected); to use the account oasis generates, '
+            f'add the empty lines ODOO_DB_USER= and ODOO_DB_PASSWORD= to it, then run {program} setup --apply')
+
+
+def move(conf, env_file) -> dict:
+    """What `oasis setup` does with the db_user and db_password odoo.conf sets (v0.16.0 S2): {'same': the
+    options the env file holds (or setup writes to it from odoo.conf), 'differs': those it holds another value
+    for, 'lacks': those it does not set}. Setup removes the options from odoo.conf only when none differs or
+    lacks. Raises AccountError when a file cannot be read."""
+    options = conf_options(conf)
+    values = env_values(env_file)
+    fill = fill_names(values) if os.path.lexists(env_file) else account_names()
+    found = {'same': [], 'differs': [], 'lacks': []}
+    for _key, option, name, _variable in ACCOUNT:
+        if option not in options:
+            continue
+        if name in fill or values.get(name) == options[option]:
+            found['same'].append(option)
+        elif values.get(name):
+            found['differs'].append(option)
+        else:
+            found['lacks'].append(option)
     return found
+
+
+def unsupported(conf, env_file) -> list:
+    """The account variables Odoo would get from the env file (odoo.conf leaves them unset) whose value this
+    reader does not implement. Raises AccountError when a file cannot be read."""
+    options, values = conf_options(conf), env_values(env_file)
+    return [name for _key, option, name, _variable in ACCOUNT
+            if option not in options and values.get(name) is UNSUPPORTED]
+
+
+def unsupported_fix(env_file, names) -> str:
+    return (f'write {" and ".join(names)} in {env_file} literally in single quotes: oasis does not read compose '
+            'interpolation ($) or double-quoted escapes (\\), so Odoo would get another credential')
 
 
 def conf_options(path) -> dict:
@@ -115,11 +212,16 @@ def differing(conf, env_file) -> list:
 
 def exports(conf, env_file) -> str:
     """Only what odoo.conf leaves unset: Odoo 19 ranks PGUSER and PGPASSWORD above odoo.conf. When either file
-    cannot be read, nothing: the command runs as before (Odoo reports its odoo.conf, doctor both files)."""
+    cannot be read, nothing: the command runs as before (Odoo reports its odoo.conf, doctor both files). A value
+    this reader does not implement raises UnsupportedValue: never another credential."""
     try:
         found = account(conf, env_file)
     except AccountError:
         return ''
+    refused = [name for key, _option, name, _variable in ACCOUNT
+               if key in found['from_env'] and found[key] is UNSUPPORTED]
+    if refused:
+        raise UnsupportedValue(env_file, refused)
     return ''.join(f'export {variable}={shlex.quote(found[key])}\n'
                    for key, _option, _name, variable in ACCOUNT if key in found['from_env'])
 
@@ -147,6 +249,8 @@ def probe(conf, env_file) -> str:
             arguments[key] = options[option]
     for key in ('user', 'password'):
         if key in found:
+            if found[key] is UNSUPPORTED:
+                return 'failed'
             arguments[key] = found[key]
     try:
         psycopg2.connect(**arguments).close()
@@ -171,9 +275,27 @@ def compose_project(path):
     return None
 
 
+def published_port(compose):
+    """The one host port the compose file publishes to 5432 (PUBLISHED_PORT), or None: none, several
+    different ones, or an unreadable file."""
+    try:
+        with open(compose, encoding='utf-8') as stream:
+            lines = stream.read().splitlines()
+    except (OSError, UnicodeError):
+        return None
+    ports = set()
+    for line in lines:
+        match = PUBLISHED_PORT.fullmatch(line)
+        if match and 1 <= int(match.group(2)) <= 65535:
+            ports.add(int(match.group(2)))
+    return ports.pop() if len(ports) == 1 else None
+
+
 def authentication_fix(conf, env_file, compose, program, root) -> str:
     """What fixes Odoo's account being refused: odoo.conf's own account values when they differ from the
-    env file's, else recreating the volume, which was initialized with other credentials."""
+    env file's; else, when odoo.conf names the endpoint the compose service publishes (db_host 127.0.0.1 or
+    localhost, and its published port), recreating the volume, which was initialized with other credentials;
+    else correcting the account on the server odoo.conf names, which is not that service."""
     try:
         options = differing(conf, env_file)
     except AccountError:
@@ -182,6 +304,22 @@ def authentication_fix(conf, env_file, compose, program, root) -> str:
         names = ' and '.join(options)
         return (f'{conf} sets {names} to other values than {env_file}: remove {names} from {conf} so Odoo uses the '
                 f'account of {env_file}, then run {program} doctor again')
+    try:
+        endpoint = conf_options(conf)
+    except AccountError:
+        endpoint = {}
+    host, port, published = endpoint.get('db_host'), endpoint.get('db_port'), published_port(compose)
+    try:
+        local = host in LOCAL_HOSTS and published is not None and int(port or POSTGRES_PORT) == published
+    except ValueError:
+        local = False
+    if not local:
+        where = (f'db_host {host}' if host else 'no db_host') + (f', db_port {port}' if port else ', no db_port')
+        service = (f'published on 127.0.0.1:{published}' if published is not None
+                   else 'no port published to 5432 found')
+        return (f'the PostgreSQL that {conf} names ({where}) refuses the account Odoo uses, and it is not the service '
+                f'of {compose} ({service}): correct that account on that server, or set db_host = 127.0.0.1 and the '
+                f'db_port {compose} publishes in {conf}; then run {program} doctor again')
     try:
         project = compose_project(compose)
     except (OSError, UnicodeError):
@@ -218,11 +356,27 @@ def main(argv: list) -> int:
         if len(argv) == 6 and argv[0] == 'fix':
             print(authentication_fix(*argv[1:]))
             return 0
-    except AccountError as exc:
+        if len(argv) == 3 and argv[0] == 'unsupported':
+            names = unsupported(argv[1], argv[2])
+            if names:
+                print(f'FAIL env_file=unsupported_value {",".join(names)}\n  fix: {unsupported_fix(argv[2], names)}')
+                return 1
+            return 0
+        if len(argv) == 2 and argv[0] == 'compose-project-name':
+            value = env_values(argv[1], ['COMPOSE_PROJECT_NAME']).get('COMPOSE_PROJECT_NAME')
+            if value is UNSUPPORTED:
+                print(f'ERROR: {argv[1]} sets COMPOSE_PROJECT_NAME with compose interpolation ($) or a double-quoted '
+                      'escape (\\), which oasis does not read.', file=sys.stderr)
+                return 2
+            if value:
+                print(value)
+            return 0
+    except (AccountError, UnsupportedValue) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 2
-    print('Usage: db_account.py exports|probe <odoo.conf> <env_file> | compose-project <compose file> | '
-          'fix <odoo.conf> <env_file> <compose file> <program> <project root>', file=sys.stderr)
+    print('Usage: db_account.py exports|probe|unsupported <odoo.conf> <env_file> | compose-project <compose file> | '
+          'compose-project-name <env_file> | fix <odoo.conf> <env_file> <compose file> <program> <project root>',
+          file=sys.stderr)
     return 2
 
 

@@ -762,7 +762,7 @@ class SetupTests(unittest.TestCase):
             f'{hashlib.sha256((requirements / name).read_bytes()).hexdigest()}  {name}\n'
             for name in ('runtime.in', 'runtime.txt', 'dev.in', 'dev.txt')))
         (requirements / 'dev.txt').write_text('pylint==3.0.0\n')
-        for name, text in (('odoo.conf', '[options]\ndb_port = 6543\n'), ('.env', 'ODOO_DB_USER=\n'),
+        for name, text in (('odoo.conf', '[options]\ndb_port = 6543\n'), ('.env', 'ODOO_DB_USER=mine\nODOO_DB_PASSWORD=mine\n'),
                            ('compose.yml', "name: mine\nservices:\n  db:\n    ports:\n      - '6543:5432'\n")):
             (project / 'config' / name).write_text(text)
         before = self.tree()

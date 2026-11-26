@@ -16,7 +16,12 @@ compiled with tools/locks.py, as bootstrap does, then the environment is created
 synced. A new environment file (mode 0600) holds the database account (v0.16.0 S2): ODOO_DB_USER
 oasis_<name> and a random ODOO_DB_PASSWORD (secrets.token_urlsafe), or the db_user and db_password a
 kept odoo.conf sets; the compose service and Odoo both read it (tools/db_account.py), odoo.conf stays
-password-free, and the password is never printed.
+password-free, and the password is never printed. An existing environment file gets the same account
+written to the variables it assigns an empty value (as older setups wrote them), every other byte kept,
+mode 0600; one that assigns neither is left unchanged with a WARN line. A kept odoo.conf whose db_user
+and db_password the environment file holds (or now gets) loses those lines only, every other byte kept:
+the account moves to the single file; when the file holds other values or lacks them, the plan warns and
+both files are kept.
 
 In a checkout of a series its workspace file has no section for (v0.15.0 S5), setup appends a
 [series."<x.y>"] section to that file (a version 1 file becomes version 2, that line only) and plans
@@ -37,6 +42,7 @@ and the Python of a new one among those the series supports; --python <x.y> answ
 Without a terminal nothing is asked and the plan is the same as before. Every question comes before any
 change: end of input refuses (exit 2), Ctrl-C exits 130, and nothing is changed.
 """
+import configparser
 import copy
 import hashlib
 import importlib.util
@@ -75,11 +81,6 @@ NAME_RULE = '2 to 20 lowercase letters, digits or underscores, starting with a l
 PORTS = range(5432, 5532)
 # The port an odoo.conf without db_port connects to: PostgreSQL's default.
 POSTGRES_PORT = 5432
-# A compose short-syntax entry that publishes the container's PostgreSQL port: `- '127.0.0.1:6001:5432'`,
-# `- "6001:5432"`, `- 6001:5432/tcp`, with an optional host address and trailing comment. Anything else
-# (the long syntax, ranges, variables) is not read; no YAML parser is used.
-PUBLISHED_PORT = re.compile(r'''\s*-\s*(["']?)(?:(?:[0-9]{1,3}(?:\.[0-9]{1,3}){3}|localhost|\[[0-9A-Fa-f:]*\]):)?'''
-                            r'''([0-9]{1,5}):5432(?:/tcp)?\1\s*(?:#.*)?''')
 LAYOUT = '.oasis'
 EXCLUDES = ('/oasis-workspace.toml', f'/{LAYOUT}/')
 DIRECTORY_MODE = 0o700
@@ -93,6 +94,8 @@ ENV_FILE = ('# Written by oasis setup: the PostgreSQL account of the compose ser
             'this file.\n{user}\n{password}\n')
 # An env file value docker compose reads as written: unquoted, else in single quotes (no interpolation).
 PLAIN_VALUE = re.compile(r'''[^\s'"#$\\]+''')
+# An option line of odoo.conf (at the start of the line; an indented line continues the option above).
+OPTION_LINE = re.compile(r'([^\s;#=:\[][^=:]*?)\s*[=:]')
 CONF = '''; Written by oasis setup. Path-free: oasis passes --addons-path and --data-dir on the command line.
 ; db_user and db_password stay empty: oasis passes ODOO_DB_USER and ODOO_DB_PASSWORD of {env_file} to Odoo as PGUSER and PGPASSWORD.
 [options]
@@ -148,7 +151,12 @@ can never apply. With --apply it creates only what is missing and keeps everythi
     file with the generated account (ODOO_DB_USER oasis_<name> and a random ODOO_DB_PASSWORD, or the
     db_user and db_password a kept odoo.conf sets; mode 0600, never printed), which the service and
     every Odoo command read, runtime.in (the source's requirements, and what the series needs besides
-    them: setuptools<81 on 15.0) and dev.in;
+    them: setuptools<81 on 15.0) and dev.in; a kept environment file gets the account in the variables it
+    assigns an empty value, every other byte kept, mode 0600 (one that assigns neither is left unchanged,
+    with a WARN line);
+  - the move of a kept odoo.conf's db_user and db_password to the environment file: removed from odoo.conf
+    (those lines only) when the environment file holds the same values; otherwise a WARN line, and both
+    files are kept;
   - the locks (uv pip compile, as bootstrap --apply) and the Python environment (uv venv, uv pip sync).
 The series comes from the module manifests (<series>.x.y.z), else from the machine file's single series,
 else --series. It ends with the next steps.
@@ -197,7 +205,7 @@ def sibling(name: str):
     return module
 
 
-config, migrate, locks = sibling('config'), sibling('migrate'), sibling('locks')
+config, migrate, locks, db_account = sibling('config'), sibling('migrate'), sibling('locks'), sibling('db_account')
 
 
 def usage() -> str:
@@ -1076,46 +1084,175 @@ def guarded(values: dict):
 
 
 def published_port(compose: Path) -> int | None:
-    """The one host port the compose file publishes to 5432 (PUBLISHED_PORT), or None: none, several
-    different ones, or an unreadable file."""
-    try:
-        lines = compose.read_text(encoding='utf-8').splitlines()
-    except (OSError, UnicodeError):
-        return None
-    ports = {int(match.group(2)) for line in lines if (match := PUBLISHED_PORT.fullmatch(line))}
-    ports = {port for port in ports if 1 <= port <= 65535}
-    return ports.pop() if len(ports) == 1 else None
+    """The one host port the compose file publishes to 5432, or None (tools/db_account.py published_port)."""
+    return db_account.published_port(compose)
 
 
-def new_account(conf: Path, env_file: Path, values: dict) -> tuple[str, str]:
-    """(the text of a new env file, what the plan says of it) (v0.16.0 S2): each of ODOO_DB_USER and
-    ODOO_DB_PASSWORD is the db_user or db_password a kept odoo.conf sets (Odoo keeps using it), else
-    generated: oasis_<name> (the dev_prefix without _dev_) and secrets.token_urlsafe(24). No value is
-    ever in the plan."""
-    reader = sibling('db_account')
+def prefix_name(values: dict) -> str:
+    """The workspace's name from its dev_prefix: the _dev_ suffix removed only when it is there, and any
+    trailing underscore."""
+    prefix = values['DEV_PREFIX']
+    if prefix.endswith('_dev_'):
+        prefix = prefix[:-len('_dev_')]
+    return prefix.rstrip('_').lower()
+
+
+def conf_account(conf: Path) -> dict:
+    """The db_user and db_password a kept odoo.conf sets (tools/db_account.py), {} without it or when it
+    cannot be read (doctor reports it)."""
     try:
-        options = reader.conf_options(conf) if conf.exists() else {}
-    except reader.AccountError:
-        options = {}
-    generated = {'db_user': f'oasis_{values["DEV_PREFIX"][:-len("_dev_")].lower()}',
-                 'db_password': secrets.token_urlsafe(24)}
-    assignments, said = [], []
-    for option, name in (('db_user', 'ODOO_DB_USER'), ('db_password', 'ODOO_DB_PASSWORD')):
-        value = options.get(option, generated[option])
+        return db_account.conf_options(conf) if conf.exists() else {}
+    except db_account.AccountError:
+        return {}
+
+
+def account_values(conf: Path, env_file: Path, values: dict, names) -> tuple[dict, str, dict]:
+    """({name: assignment line} for names of the account, what the plan says of them, {name: value}) (v0.16.0
+    S2): each of
+    ODOO_DB_USER and ODOO_DB_PASSWORD is the db_user or db_password a kept odoo.conf sets (Odoo keeps using
+    it), else generated: oasis_<name> (prefix_name) and secrets.token_urlsafe(24). No value is ever in the
+    plan; a value the env file cannot hold as docker compose reads it is refused."""
+    options = conf_account(conf)
+    generated = {'db_user': f'oasis_{prefix_name(values) or "odoo"}', 'db_password': secrets.token_urlsafe(24)}
+    assignments, said, chosen = {}, [], {}
+    for _key, option, name, _variable in db_account.ACCOUNT:
+        if name not in names:
+            continue
+        value = chosen[name] = options.get(option, generated[option])
         if option in options:
             said.append(f'{name} from {option} of {conf}')
         else:
             said.append(f'{name} {value}' if option == 'db_user' else f'a generated {name}')
         if PLAIN_VALUE.fullmatch(value):
-            assignments.append(f'{name}={value}')
+            assignments[name] = f'{name}={value}'
         elif "'" not in value:
-            assignments.append(f"{name}='{value}'")
+            assignments[name] = f"{name}='{value}'"
         elif '"' not in value and not re.search(r'[$\\]', value):
-            assignments.append(f'{name}="{value}"')
+            assignments[name] = f'{name}="{value}"'
         else:
             raise Refused(f'Cannot copy {option} of {conf} to {env_file}: docker compose would not read its value as '
                           f'written; write {env_file} yourself, then run {config.program_name()} setup again.')
-    return ENV_FILE.format(user=assignments[0], password=assignments[1]), ' and '.join(said)
+    return assignments, ' and '.join(said), chosen
+
+
+def new_account(conf: Path, env_file: Path, values: dict) -> tuple[str, str]:
+    """(the text of a new env file, what the plan says of it): the whole account (account_values)."""
+    assignments, said, _chosen = account_values(conf, env_file, values, db_account.account_names())
+    return ENV_FILE.format(user=assignments['ODOO_DB_USER'], password=assignments['ODOO_DB_PASSWORD']), said
+
+
+def filled_account(conf: Path, env_file: Path, values: dict):
+    """(the original bytes, the new ones, the plan line) of a kept env file whose account variables setup
+    fills (db_account.fill_names: those it assigns an empty value), or None: nothing to fill, or a file that
+    cannot be read (doctor reports it). Each empty assignment gets its value in place (the `export` and a
+    trailing ` # comment` kept); an absent variable is never added. Every other byte is kept; the result must
+    read back as exactly those values."""
+    try:
+        raw = env_file.read_bytes()
+        text = raw.decode('utf-8')
+    except (OSError, UnicodeError):
+        return None
+    names = db_account.account_names()
+    found = db_account.text_values(text, names)
+    fill = db_account.fill_names(found)
+    if not fill:
+        return None
+    assignments, said, chosen = account_values(conf, env_file, values, fill)
+    lines = text.splitlines(keepends=True)
+    for name in fill:
+        index = max(number for number, line in enumerate(lines)
+                    if (match := db_account.ENV_ASSIGNMENT.fullmatch(line.rstrip('\r\n'))) and match.group(1) == name)
+        line = lines[index]
+        body = line.rstrip('\r\n')
+        ending = line[len(body):]
+        head, _equals, value = body.partition('=')
+        comment = re.search(r'\s+#.*$', value)
+        lines[index] = f'{head}={assignments[name].partition("=")[2]}{comment.group(0) if comment else ""}{ending}'
+    new = ''.join(lines)
+    expected = {**found, **chosen}
+    if db_account.text_values(new, names) != expected:
+        raise Refused(f'Cannot fill {" and ".join(fill)} in {env_file}: the result would not read as written; '
+                      f'fill it yourself, then run {config.program_name()} setup again.')
+    line = f'fill {" and ".join(fill)} in {env_file} (mode 0600; every other line kept): {said}'
+    return raw, new.encode('utf-8'), line
+
+
+def conf_sections(text: str) -> dict:
+    """Every section of an odoo.conf text with its options and raw values, as configparser reads it."""
+    parser = configparser.RawConfigParser()
+    parser.read_string(text)
+    found = {section: {option: parser.get(section, option, raw=True) for option in parser.options(section)}
+             for section in parser.sections()}
+    found[parser.default_section] = dict(parser.defaults())
+    return found
+
+
+def without_options(conf: Path, options: list):
+    """(the original bytes, the new ones) of odoo.conf without the [options] lines of options, or None when
+    they are not one line each at the start of a line (a repeated or continued option) or the result does not
+    read as the same file without them. Every other byte is kept."""
+    try:
+        raw = conf.read_bytes()
+        text = raw.decode('utf-8')
+        before = conf_sections(text)
+    except (OSError, UnicodeError, configparser.Error):
+        return None
+    lines = text.splitlines(keepends=True)
+    section, found = None, {option: [] for option in options}
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith('['):
+            header = re.match(r'\[(.+)\]', stripped)
+            section = header.group(1) if header else section
+            continue
+        match = OPTION_LINE.match(line)
+        if section == 'options' and match and match.group(1).strip().lower() in found:
+            found[match.group(1).strip().lower()].append(index)
+    if any(len(indexes) != 1 for indexes in found.values()):
+        return None
+    removed = {indexes[0] for indexes in found.values()}
+    for index in removed:
+        following = lines[index + 1] if index + 1 < len(lines) else ''
+        if following.strip() and following[:1].isspace():
+            return None
+    new = ''.join(line for index, line in enumerate(lines) if index not in removed)
+    expected = {section: dict(values) for section, values in before.items()}
+    for option in options:
+        expected['options'].pop(option, None)
+    try:
+        if conf_sections(new) != expected:
+            return None
+    except configparser.Error:
+        return None
+    return raw, new.encode('utf-8')
+
+
+def account_move(conf: Path, env_file: Path) -> tuple[list, list] | None:
+    """(the plan lines, the actions) of the move of odoo.conf's db_user and db_password to the env file
+    (v0.16.0 S2, "Los respeta y ofrece migrar"), against the env file as this plan leaves it (db_account.move):
+    removed from odoo.conf when the env file holds the same values, else a WARN line and nothing changed. None
+    when odoo.conf sets neither or a file cannot be read (doctor reports it). No value is ever in a line."""
+    try:
+        state = db_account.move(conf, env_file)
+    except db_account.AccountError:
+        return None
+    options = [*state['same'], *state['differs'], *state['lacks']]
+    if not options:
+        return None
+    if state['differs'] or state['lacks']:
+        details = [f'{" and ".join(state[key])} ({reason})'
+                   for key, reason in (('differs', 'another value'), ('lacks', 'not set')) if state[key]]
+        return [f'WARN: {env_file} does not hold the account {conf} sets: {"; ".join(details)}: both files kept, and '
+                f'Odoo keeps connecting with the account of {conf}; setup moves it to {env_file} only when both hold '
+                'the same values'], []
+    names = ' and '.join(options)
+    edit = without_options(conf, options)
+    if edit is None:
+        return [f'WARN: {conf} sets {names} on a repeated or continued line, which setup does not edit: both files '
+                f'kept; {env_file} holds the same account: remove {names} from {conf} yourself'], []
+    lines = 'those lines' if len(options) > 1 else 'that line'
+    return ([f'remove {names} from {conf} ({lines} only): {env_file} holds the same account, which oasis passes to '
+             'Odoo'], [('edit', conf, *edit)])
 
 
 def gaps(plan: dict, directory: Path, planned: set):
@@ -1162,7 +1299,7 @@ def gaps(plan: dict, directory: Path, planned: set):
         port = free_port(taken)
     series = values['ODOO_VERSION']
     postgres = config.versions().capability(series, 'postgres_default')
-    name = values['DEV_PREFIX'][:-len('_dev_')].lower().replace('_', '-')
+    name = prefix_name(values).replace('_', '-')
     compose_name = f'oasis-{name}-{hashlib.sha256(str(directory).encode()).hexdigest()[:6]}'
     service = values['DB_SERVICE']
     create(conf, CONF.format(env_file=env_file, port=port), 0o600,
@@ -1182,6 +1319,23 @@ def gaps(plan: dict, directory: Path, planned: set):
         create(env_file, text, 0o600, f'create {env_file} (mode 0600): {described}', 'env')
     else:
         lines.append(f'kept {env_file}')
+        filled = filled_account(conf, env_file, values)
+        if filled is not None:
+            lines.append(filled[2])
+            actions.append(('fill', env_file, filled[0], filled[1]))
+        else:
+            try:
+                declared = db_account.env_values(env_file)
+            except db_account.AccountError:
+                declared = None
+            if declared == {}:
+                lines.append(f'WARN: {env_file} sets neither ODOO_DB_USER nor ODOO_DB_PASSWORD: '
+                             f'{db_account.unassigned_advice(env_file, config.program_name())}')
+    if 'conf' not in plan['created']:
+        moved = account_move(conf, env_file)
+        if moved is not None:
+            lines.extend(moved[0])
+            actions.extend(moved[1])
     requirements = Path(values['REQUIREMENTS_DIR'])
     source = Path(values['ODOO_SOURCE'])
     if not (requirements / 'runtime.in').exists() and not (source / 'requirements.txt').is_file():
@@ -1266,6 +1420,14 @@ class Changes:
             with os.fdopen(descriptor, 'wb') as stream:
                 os.fchmod(stream.fileno(), action[3])
                 stream.write(action[2])
+        elif kind == 'fill':
+            # An env file that gets the account: its bytes and mode come back on rollback; it ends 0600.
+            original, data = action[2], action[3]
+            if path.read_bytes() != original:
+                raise OSError(0, f'{path} changed since the plan')
+            self.keep(path)
+            os.chmod(path, 0o600)
+            migrate.write_in_place(path, data)
         else:
             original, data = action[2], action[3]
             if path.read_bytes() != original:

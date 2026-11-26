@@ -9,8 +9,9 @@ exit 1 when n > 0, else 0 (a WARN does not count). Every FAIL line is followed b
 `PASS series=<x.y> from=<origin>`, its series exceptions and the isolation of the workspace's
 series (v0.15.0 S3, S4). Doctor never starts a service and never
 prints file contents: files are tested for existence or parsed for the one fact a check needs (the
-env file: which of the database account's variables are empty, never their values; module
-manifests: their series-style version, S11). Its one connection is postgres_connection (v0.16.0
+env file: which of the database account's variables are empty or written in a way oasis does not read,
+never their values; odoo.conf: whether it sets db_password, never its value; module manifests: their
+series-style version, S11). Its one connection is postgres_connection (v0.16.0
 S2): the environment's Python logs in with Odoo's account to the PostgreSQL odoo.conf names
 (tools/db_account.py probe) and reports one word, never a value. The only external programs it runs
 are `git --version`, `docker compose version` and the environment's Python (its version and that
@@ -37,8 +38,9 @@ PYTHON_PROBE = 'import sys; print(f"{sys.version_info.major}.{sys.version_info.m
 LOCATION_OPTIONS = ('addons_path', 'data_dir')
 DEFAULT_HTTP_PORT = 8069
 LINKED_PORT_RANGE = 50
-# The variables of the database account `oasis setup` writes, empty, to the env file (S7): a FAIL when
-# one is assigned an empty value. An env file that does not assign them (other names) is not judged.
+# The variables of the database account in the env file (S7, v0.16.0 S2): a FAIL when one is assigned an
+# empty value (setup --apply generates it); a WARN when neither is assigned (another account's naming,
+# which setup leaves unchanged).
 ACCOUNT_VARIABLES = ('ODOO_DB_USER', 'ODOO_DB_PASSWORD')
 ENV_ASSIGNMENT = re.compile(r'\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)')
 # What two series of one workspace may not share (v0.15.0 S3), in report order, with the facts each
@@ -258,6 +260,35 @@ def show_series(report: Report, values: dict, found: dict, config):
     check_series_isolation(report, values, config)
 
 
+def check_conf_password(report: Report, values: dict, program: str):
+    """A WARN, with its fix, when odoo.conf sets db_password (v0.16.0 S2: the account belongs in the env file):
+    setup --apply moves it when the env file holds the same account (or gets it from odoo.conf, its account
+    being empty); otherwise the fix says which file to correct. No line when odoo.conf sets none or a file cannot
+    be read."""
+    account = sibling('db_account')
+    conf, env_file = values['ODOO_CONFIG'], values['ENV_FILE']
+    try:
+        if 'db_password' not in account.conf_options(conf):
+            return True
+        state = account.move(conf, env_file)
+    except account.AccountError:
+        return True
+    if state['differs'] or state['lacks']:
+        options = [*state['differs'], *state['lacks']]
+        names = ' and '.join(options)
+        pronoun = 'them' if len(options) > 1 else 'it'
+        fix = (f'remove {names} from {conf} once the account of {env_file} is the one PostgreSQL accepts '
+               f'({program} doctor checks it); {program} setup --apply removes {pronoun} itself when both files hold '
+               'the same values')
+    else:
+        names = ' and '.join(state['same'])
+        lines = 'those lines' if len(state['same']) > 1 else 'that line'
+        fix = f'{program} setup --apply moves it to {env_file} and removes {names} from {conf} ({lines} only)'
+    report.warn('odoo_conf_password')
+    print(f'  fix: {fix}')
+    return True
+
+
 def check_conf(report: Report, values: dict, conf_reader, program: str):
     """odoo.conf exists and parses, and holds no location options (oasis passes them)."""
     conf = values['ODOO_CONFIG']
@@ -316,9 +347,22 @@ def check_env_file(report: Report, values: dict, program: str):
         if match and match.group(1) in ACCOUNT_VARIABLES:
             # The last assignment wins, as docker compose reads the file.
             empty[match.group(1)] = empty_value(match.group(2))
+    if not empty:
+        # Neither variable declared (another account's naming): respected; setup leaves it unchanged too.
+        report.warn('env_file', 'unassigned ' + ','.join(ACCOUNT_VARIABLES))
+        print(f'  fix: {sibling("db_account").unassigned_advice(path, program)}')
+        return True
     names = [name for name in ACCOUNT_VARIABLES if empty.get(name)]
     if names:
-        return report.fail('env_file', 'empty ' + ','.join(names), f'fill {" and ".join(names)} in {path}')
+        # setup --apply generates the empty ones in place, every other byte kept (v0.16.0 S2).
+        return report.fail('env_file', 'empty ' + ','.join(names), f'{program} setup --apply')
+    account = sibling('db_account')
+    try:
+        names = account.unsupported(values['ODOO_CONFIG'], path)
+    except account.AccountError:
+        names = []
+    if names:
+        return report.fail('env_file', 'unsupported_value ' + ','.join(names), account.unsupported_fix(path, names))
     return report.check('env_file')
 
 
@@ -410,7 +454,9 @@ file; a legacy profile is one FAIL naming oasis migrate), its agent_destructive 
 its layered values came from (machine, workspace or checkout file, or derived), git 2.31 or newer,
 docker and `docker compose version`, flock, /proc, the environment's Python, the Odoo source
 release, the series of the module manifests, odoo.conf, the compose file's top-level name, the env
-file (exists, and the database account's variables are not empty), the logs and data directories,
+file (exists, and the database account's variables are not empty and are written as oasis reads them),
+whether odoo.conf holds a db_password (a WARN naming setup --apply, which moves it to the env file), the
+logs and data directories,
 and the HTTP port, and that Odoo's database account logs in to the PostgreSQL odoo.conf names (a refused
 account names its fix; a service that does not answer is a WARN). With workspace_version 2: the checkout's series and where it came from, its
 series exceptions, and that the workspace's series share no database port, prefixes, compose
@@ -515,6 +561,8 @@ def main(arguments: list[str]) -> int:
         check_release(report, values, source_fix(values, found, config))
         check_module_series(report, values, config)
         conf_ok = check_conf(report, values, conf_reader, program)
+        if conf_ok:
+            check_conf_password(report, values, program)
         check_compose(report, values, program)
         env_ok = check_env_file(report, values, program)
         logs = Path(values['LOGS_DIR']) if values['LOGS_DIR'] else root / 'dev' / 'logs' / 'odoo19'

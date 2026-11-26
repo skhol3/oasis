@@ -59,6 +59,15 @@ fi
 if compose config -q >/dev/null 2>&1; then pass "compose_config=valid"
 else fail "compose_config=invalid"
 fi
+# An account variable Odoo would get from the env file, written with compose interpolation or a double-quoted
+# escape, which oasis does not read (tools/db_account.py unsupported): a FAIL naming the file and the variable,
+# never its value; the connection is then not tried with another credential.
+account_helper="$(dirname "$0")/db_account.py"
+unsupported=$(python3 -I -B "$account_helper" unsupported "$ODOO_CONFIG" "$ENV_FILE" 2>/dev/null) || true
+if [[ -n "$unsupported" ]]; then
+  printf '%s\n' "$unsupported" >&2
+  failures=$((failures + 1))
+fi
 if [[ "$mode" == "--full" ]]; then
   if uv pip check --python "$PYTHON"; then pass "package_compatibility=valid"
   else fail "package_compatibility=invalid"
@@ -69,21 +78,29 @@ if [[ "$mode" == "--full" ]]; then
   if "$(dirname "$0")/audit-dependencies"; then pass "dependency_audit=clean"
   else fail "dependency_audit=failed"
   fi
+  running=false
   if compose ps --status running --services | grep -qx "$DB_SERVICE"; then
+    running=true
     pass "postgres_service=running"
+  else fail "postgres_service=not_running"
+  fi
+  if "$running" && [[ -z "$unsupported" ]]; then
     # Odoo's own account over the connection odoo.conf names, with the environment's Python and
-    # psycopg2 (tools/db_account.py probe): one word, never a value or the server's message.
-    account_helper="$(dirname "$0")/db_account.py"
+    # psycopg2 (tools/db_account.py probe): one word, never a value or the server's message. A word
+    # the probe does not print (an error of the environment's Python) is reported as unchecked.
     connection=$("$PYTHON" -I -B "$account_helper" probe "$ODOO_CONFIG" "$ENV_FILE" 2>/dev/null || true)
+    case "$connection" in
+      ready|authentication_failed|not_running|no_driver|failed) ;;
+      *) connection=unchecked ;;
+    esac
     if [[ "$connection" == ready ]]; then pass "postgres_connection=ready"
     else
-      fail "postgres_connection=${connection:-failed}"
+      fail "postgres_connection=$connection"
       if [[ "$connection" == authentication_failed ]]; then
         printf '  fix: %s\n' "$(python3 -I -B "$account_helper" fix "$ODOO_CONFIG" "$ENV_FILE" "$COMPOSE_FILE" \
           "$(program_name)" "$PROJECT_ROOT")" >&2
       fi
     fi
-  else fail "postgres_service=not_running"
   fi
 else
   printf 'SKIP locked_environment=use_--full\n'
