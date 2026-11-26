@@ -16,11 +16,15 @@ cd /absolute/checkout
 ```text
 oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enterprise <dir> | --no-enterprise]
                                    [--workspace <dir>] [--name <name>] [--exception <module>]...
-                                   [--config-dir <dir>] [--environment <dir> | --python <x.y>] [--apply | --plan]
+                                   [--config-dir <dir>] [--environment <dir> | --python <x.y>]
+                                   [--answer <id>=<value>]... [--answers <file.json>] [--apply | --plan [--json]]
 ```
 
 - [Plan and apply](#plan-and-apply): what is printed, what changes, exit status.
 - [What it infers and what it asks](#what-it-infers-and-what-it-asks): the checkout, the series, the source.
+- [Questions and answers](#questions-and-answers): flags, `--answer`, `--answers <file.json>`, open questions.
+- [The plan as JSON](#the-plan-as-json): `--plan --json` for an agent.
+- [Anticipated problems](#anticipated-problems): python-ldap, module requirements, old source archives.
 - [What it creates and what it keeps](#what-it-creates-and-what-it-keeps): every file and directory.
 - [Another Odoo series](#another-odoo-series): a checkout of a series the workspace file has no section for.
 - [The database account](#the-database-account): the generated account, one file, read by the service and Odoo.
@@ -85,13 +89,140 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
   terminal it asks whether to create it or to use an existing one, and the Python of a new one
   ([A new environment and its Python](#a-new-environment-and-its-python)). Without a terminal nothing is
   asked: the environment is created with the configuration's Python, as before.
-- Questions are asked only when standard input and standard error are a terminal. Otherwise a
-  missing answer is an error that names its flag, for example
-  `No Odoo Community source for 19.0 in the machine file <file>: pass --community <dir>.` or
-  `Enterprise or not for 19.0: pass --enterprise <dir> or --no-enterprise.`
+- Questions are asked only when standard input and standard error are a terminal (never with `--json`).
+  Otherwise a missing answer is an [open question](#questions-and-answers) that names its flag, for
+  example `No Odoo Community source for 19.0 in the machine file <file>: pass --community <dir>.` or
+  `Enterprise or not for 19.0: pass --enterprise <dir> or --no-enterprise.`: the plan lists it and
+  `--apply` refuses with it (exit 2).
 - Every question comes before any change, with or without `--apply`. End of input (Ctrl-D) at a question
   refuses like a missing answer (exit 2); Ctrl-C stops with `ERROR: Interrupted at a question: nothing
   changed.` (exit 130). Either way nothing is written.
+
+## Questions and answers
+
+No command needs a terminal (v0.16.0): every question setup asks on one has a flag, and every
+question has an id that `--answer <id>=<value>` (repeatable) or `--answers <file.json>` answers:
+
+| Id | Answer | Same as |
+| --- | --- | --- |
+| `series` | `<x.y>` | `--series <x.y>` |
+| `community` | an absolute directory | `--community <dir>` |
+| `enterprise` | an absolute directory, or `none` | `--enterprise <dir>`, `--no-enterprise` |
+| `environment` | `create`, or the absolute directory of an existing environment | `--environment <dir>` |
+| `python` | `<x.y>` | `--python <x.y>` |
+| `python_ldap` | `yes` or `no` | [python-ldap and OpenLDAP 2.6](#python-ldap-and-openldap-26) |
+| `requirement:<name>` | `add`, `override` or `skip` (the options it lists) | [Module requirements](#module-requirements) |
+
+```json
+{"community": "/srv/odoo/19.0/community", "enterprise": "none", "python_ldap": "yes"}
+```
+
+- The file is one JSON object of ids and text answers; anything else, an unknown id, or an answer given
+  twice (by a flag and by an answer) is refused (exit 2) and changes nothing. An answer to a question that
+  does not arise is not used.
+- Without a terminal and without an answer, setup uses the recommended answer only where it did before:
+  the environment is created, with the configuration's Python. Every other question is open: the plan
+  prints the lines it has, then `open question <id>: <what it needs and the flag that answers it>` and
+  `nothing changed: answer the open questions above (docs/setup.md#questions-and-answers), then run with
+  --apply to set up` (exit 0). A question setup cannot go on without (the series, the source) ends the
+  plan there, and `--apply` refuses with the message it always had. A question of an
+  [anticipated problem](#anticipated-problems) does not stop the plan; `--apply` refuses with one
+  `ERROR: open question <id>: ...` line per open question, then `ERROR: nothing changed: answer the open
+  questions, then run oasis setup --apply again.` (exit 2).
+- On a terminal, a question of an anticipated problem is asked like the others: Enter takes the
+  recommended answer; an answer that is not an option is asked again.
+- `init-dev-database` needs no terminal either: on one it asks each password with the echo off (Enter
+  generates one), otherwise it generates them ([Development database](dev-database.md)).
+
+## The plan as JSON
+
+`oasis setup --plan --json` (or `setup --json`) prints the plan as one JSON object on one line and
+changes nothing; it never asks, and `--json` with `--apply` is a usage error. The human plan without
+`--json` is unchanged. A refusal is still `ERROR: <reason>` on stderr with nothing on stdout (exit 2).
+An example, formatted:
+
+```json
+{"format": "oasis-setup-plan", "version": 1, "checkout": "/w/shop", "complete": true, "ready_to_apply": false,
+ "inferred": {"checkout": {"value": "/w/shop", "origin": "main"},
+              "workspace": {"value": "/w/shop", "origin": "new"},
+              "series": {"value": "15.0", "origin": "from the module manifests"},
+              "community": {"value": "/srv/odoo/15.0", "origin": "from the machine file"},
+              "enterprise": {"value": null, "origin": "from the machine file"},
+              "name": {"value": "shop", "origin": "from the checkout name"},
+              "db_port": {"value": 5433, "origin": "a free port"},
+              "environment": {"value": "/w/shop/.oasis/venv", "origin": "new"},
+              "python": {"value": "3.9", "origin": "the default of Odoo 15.0"}},
+ "changes": [{"kind": "mkdir", "path": "/w/shop/.oasis", "summary": "create the directory /w/shop/.oasis/"},
+             {"kind": "create", "path": "/w/shop/.oasis/config/odoo.conf",
+              "summary": "create /w/shop/.oasis/config/odoo.conf (mode 0600): path-free; db_port 5433; db_user and db_password empty"},
+             {"kind": "compile", "path": "/w/shop/.oasis/config/requirements",
+              "summary": "compile /w/shop/.oasis/config/requirements/runtime.txt, dev.txt and lock.sha256 with Python 3.9 (uv pip compile)"}],
+ "questions": [{"id": "environment", "text": "Python environment for Odoo 15.0: create /w/shop/.oasis/venv, or use an existing environment",
+                "options": [{"value": "create", "label": "create /w/shop/.oasis/venv"}], "recommended": "create",
+                "flag": "--environment <dir>", "answer": "create", "origin": "recommended (no terminal)"},
+               {"id": "python_ldap",
+                "text": "Odoo 15.0 pins python-ldap==3.4.0, which does not build against this machine's OpenLDAP 2.6.8 (no libldap_r): pin python-ldap==3.4.4 in /w/shop/.oasis/config/requirements/overrides.txt?",
+                "options": [{"value": "yes", "label": "pin python-ldap==3.4.4 (uv pip compile --override)"},
+                            {"value": "no", "label": "keep Odoo's pin: its build may fail"}],
+                "recommended": "yes", "flag": "--answer python_ldap=<yes|no>", "answer": null, "origin": null}],
+ "open": ["python_ldap"],
+ "lines": ["checkout: /w/shop (main)", "series: 15.0 (from the module manifests)", "..."]}
+```
+
+| Key | Value |
+| --- | --- |
+| `format`, `version` | `oasis-setup-plan` and `1`; keys are only ever added within a version. |
+| `checkout` | The checkout setup plans for. |
+| `complete` | `false` when the plan stopped at a question it cannot go on without; `changes` is then empty. |
+| `ready_to_apply` | `complete` and no open question: `--apply` with the same flags and answers would run. |
+| `inferred` | Each value setup found, with its `origin`: `checkout` (`main`, `linked`, `outside git`), `workspace` (its directory; `new` or `existing`), `series`, `community`, `enterprise` (`null`: none), `name` (a new workspace), `db_port` (`a free port`, `from <odoo.conf>`, `from <compose file>`), `environment` (`new`, `existing`, `from --environment`, `answered`) and `python`. A plan that stopped lists what it found before. |
+| `changes` | Every change `--apply` would make, in order: `kind` (`mkdir`, `create`, `extend` (appended), `fill` (account variables filled in), `edit` (lines removed), `compile`, `environment`), `path`, and `summary` (its plan line). Never a value of the account. |
+| `questions` | Every question the plan met: `id`, `text`, `options` (`value`, `label`), `recommended` (or `null`), `flag` (what answers it), and `answer` with its `origin` (`from --answer`, `from --answers`, `recommended (no terminal)`), both `null` while it is open. |
+| `open` | The ids of the open questions. |
+| `lines` | The human plan, line by line (without the open questions, which are in `questions`). |
+
+## Anticipated problems
+
+When setup writes a new `runtime.in` (a new workspace, or a new [series section](#another-odoo-series)),
+it looks for what would make the compile or the sync fail later and asks about it in the plan, before any
+change (`tools/known_problems.py`). A kept `overrides.txt` is never edited: setup then asks nothing that
+would pin there (python-ldap gets a `WARN` line naming the pin to add yourself).
+
+### python-ldap and OpenLDAP 2.6
+
+Odoo 15.0 pins `python-ldap==3.4.0` (`ldap_override` in `tools/odoo_versions.py`), which links
+`libldap_r`, removed in OpenLDAP 2.6. When the source's `requirements.txt` has that pin and this machine
+has OpenLDAP 2.6 or later without `libldap_r` (`pkg-config --modversion ldap`, else the libldap names
+`ldconfig -p` lists; neither program, no question), the question `python_ldap` (recommended `yes`) pins
+`python-ldap==3.4.4` in a new `overrides.txt`, which builds against both:
+
+```text
+# Odoo 15.0's python-ldap==3.4.0 does not build against OpenLDAP 2.6 (no libldap_r).
+python-ldap==3.4.4
+```
+
+### Module requirements
+
+Each `external_dependencies` `python` entry of the checkout's module manifests is compared with the
+requirements a new `runtime.in` gives (the source's, the series' and the project's
+`requirements-extra.txt`, with `requirements-overrides.txt` replacing what it names), for the
+environment's Python on Linux. Import names of another distribution are translated (`ldap` is
+`python-ldap`, `dateutil` `python-dateutil`, ...) and standard library modules skipped.
+
+- Missing (no requirement names it): `requirement:<name>`, `add` (recommended: below a comment in the new
+  `runtime.in`; setup never edits the project's `requirements-extra.txt`) or `skip`.
+- Conflicting (an exact pin that does not satisfy it, such as `cryptography>=3.3.1` against Odoo 15.0's
+  `cryptography==2.6.1`): `requirement:<name>`, `override` (recommended: the lowest version it accepts,
+  `cryptography==3.3.1`, in a new `overrides.txt`) or `skip`.
+
+### Old source archives
+
+uv 0.13 and later refuse some old source archives (V7 tar headers, such as `PyPDF2==1.26.0` of Odoo
+15.0) with `invalid tar identity`. Every uv command of setup and `bootstrap --apply`, and the compile both
+run (`tools/locks.py`), gets `UV_LEGACY_TAR_BACKEND=1` when `uv --version` reports 0.13 or later and the
+variable is not set (a value you set, even empty, is kept). When a compile still fails with that message,
+the error names the remedy instead of the package index: set `UV_LEGACY_TAR_BACKEND=1`, or, when it was
+set, pin a version of that package that has a wheel in `overrides.txt`.
 
 ## What it creates and what it keeps
 
@@ -103,7 +234,7 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
 | Compose file | `name: oasis-<name>-<6 hex of the workspace directory>` and the PostgreSQL service (`postgres:<postgres_default>` of the series in `tools/odoo_versions.py`: `postgres:17` on 19.0) with the variables oasis uses, published on `127.0.0.1` on the [port](#one-port-for-odooconf-and-the-compose-file) `odoo.conf` connects to. |
 | Environment file | The [database account](#the-database-account): `ODOO_DB_USER=oasis_<name>` and a random `ODOO_DB_PASSWORD`, or the `db_user` and `db_password` a kept `odoo.conf` sets; mode 0600. The password is never printed. A kept environment file gets the account in the variables it leaves empty, every other byte kept; a kept `odoo.conf` whose account it holds loses those two lines ([The database account](#the-database-account)). |
 | `runtime.in`, `dev.in` | `-r <community>/requirements.txt`, then what the series needs that those requirements do not list (`runtime_requirements` in `tools/odoo_versions.py`: nothing on 19.0, `setuptools<81` on 15.0, [below](#odoo-150-requirements)); `-c runtime.txt` and `-r runtime.in`, to which you add your development tools. With an adopted series folder that holds `requirements-extra.txt`, `runtime.in` also includes it ([Another Odoo series](#the-projects-requirement-files)). |
-| `overrides.txt` | Only with an adopted series folder that holds `requirements-overrides.txt`: `-r <that file>`, given to `uv pip compile` as `--override` ([Another Odoo series](#the-projects-requirement-files)). |
+| `overrides.txt` | With an adopted series folder that holds `requirements-overrides.txt`: `-r <that file>`, given to `uv pip compile` as `--override` ([Another Odoo series](#the-projects-requirement-files)); and the pins of the [anticipated problems](#anticipated-problems) answered `yes` or `override`. |
 | Locks | `runtime.txt`, `dev.txt` and `lock.sha256`, compiled with the series' Python by the same code as `bootstrap --apply` when they are missing or stale; current locks are kept, and a lock changed by hand is kept and leaves the environment uncreated. |
 | Environment | `uv venv --python <python>` and `uv pip sync` of `dev.txt`, with the series' default Python, `--python <x.y>` or the [answered one](#a-new-environment-and-its-python). An existing environment is kept and not synced (run `bootstrap --apply` for that); `--environment <dir>` (or an answered path) [adopts one](#an-existing-environment) instead of creating it. |
 | `logs`, `data_dir` | The directories (mode 0700). |

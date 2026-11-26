@@ -109,6 +109,15 @@ only when the env file holds the same values (otherwise it warns and changes not
 `init-dev-database` generates the development passwords into `<database>.logins` (mode 0600) unless
 you type your own on a terminal. [Docs →](docs/setup.md#the-database-account)
 
+No command needs a terminal: `oasis setup --plan --json` prints the plan as one JSON object (what it
+inferred and from where, the changes, the questions with their options, the recommended answer and the
+flag that answers each), `--answer <id>=<value>` or `--answers <file.json>` answers them, and the plan
+asks in advance about what would fail later (python-ldap 3.4.0 against OpenLDAP 2.6, module
+requirements missing or conflicting with Odoo's pins; uv 0.13 gets `UV_LEGACY_TAR_BACKEND=1`). Without a
+terminal an unanswered question is listed in the plan and `--apply` refuses, naming its flag.
+`oasis status --json` says what is ready, what is missing and the next oasis command.
+[Docs →](docs/setup.md#questions-and-answers)
+
 ### Checkouts and worktrees
 
 The main checkout and every linked worktree get their own database namespace, server, port and

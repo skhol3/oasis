@@ -40,4 +40,36 @@ Each checkout controls only its own Odoo server; the PostgreSQL service is one a
 - `stop --database` stops the Compose database service (`compose stop <db_service>`) only when no other checkout has a live server; otherwise it exits 2 with `Refusing to stop the database: Odoo is running for other checkouts:` followed by one `  <checkout> (port <port>, pid <pid>)` line each.
 - `status` prints `server: running pid <pid> port <port>` or `server: stopped` for this checkout (`server: unknown (<reason>)` when the runtime state cannot be read, for example a symlinked state directory; the reason is the last line the read wrote to stderr). In a git checkout it then lists the live servers of every checkout of the repository (the worktrees `git worktree list` names, main and linked, and projects inside them), by path: `repository servers: <n>`, then one `  <checkout>: pid <pid>, port <port>[, database <database>][ (this checkout)]` line each, the database when the record names one (`repository servers: unknown (<reason>)` when they cannot be read: an unreadable runtime state, or git missing or failing, for example `unknown (git worktree list failed: <git's last error line>)`; never a count of 0). Only the list read from the helper's stdout is counted; its warnings go to stderr. A project outside git prints only its own line, as before. Then `compose ps`. Warnings of a successful read go to stderr unchanged and never into the server line. No temporary file is used, so a missing or non-writable `TMPDIR` does not stop it.
 
+### Status as JSON
+
+`oasis status --json` (v0.16.0) prints one JSON object on one line: what is ready, what is missing and the
+next oasis command to run. It only reads (the configuration, the environment's `pyvenv.cfg`, the locks,
+`docker compose ps` of the database service, this checkout's databases while the service runs, and the
+server record); it never starts the service, and it also runs in a checkout without a workspace file.
+`status` without `--json` is unchanged.
+
+```json
+{"project": "/w/shop", "ready": ["workspace", "environment", "locks"],
+ "missing": ["database_service", "databases", "server"],
+ "checks": {"workspace": {"ready": true, "detail": "/w/shop/oasis-workspace.toml"},
+            "environment": {"ready": true, "detail": "/w/shop/.oasis/venv"},
+            "locks": {"ready": true, "detail": "current"},
+            "database_service": {"ready": false, "detail": "stopped"},
+            "databases": {"ready": false, "detail": "unknown while the database service is stopped"},
+            "server": {"ready": false, "detail": "stopped"}},
+ "next": "oasis --project /w/shop list-databases"}
+```
+
+| Check | Ready when | `next` when it is the first one missing |
+| --- | --- | --- |
+| `workspace` | the configuration loads (`detail`: the workspace file, or why not) | `setup --plan --json` without a workspace file, `doctor` when it does not load |
+| `environment` | the environment has a `pyvenv.cfg` and its Python | `bootstrap --apply` |
+| `locks` | `lock.sha256` matches (`detail`: `current`, `missing`, `stale`, `edited`) | `bootstrap --apply` (`doctor` for `edited`) |
+| `database_service` | `docker compose ps` shows it running (and healthy) | `list-databases`, which starts it |
+| `databases` | a development database of this checkout exists (`detail`: this checkout's managed databases) | `init-dev-database <module> <dev_prefix>manual` with `[development]`, else `install-module <module>` (the first module of the addon roots; `create-database <name>` without modules) |
+| `server` | this checkout's server runs (`detail`: `running pid <pid> port <port>`) | `start` |
+
+`next` is `null` when everything is ready. Every command is `oasis --project <checkout> ...` (`odoo19`
+through the alias).
+
 Earlier behaviour of `stop` and of the test databases is recorded in the [changelog](../CHANGELOG.md) (0.3.0, 0.4.0 and 0.8.0, under Changed).
