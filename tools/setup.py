@@ -332,6 +332,7 @@ class Questions:
     def __init__(self, answers=None, interactive=None):
         self.interactive = (sys.stdin.isatty() and sys.stderr.isatty()) if interactive is None else interactive
         self.answers = answers or {}
+        self.used = set()
         self.lines, self.inferred, self.listed, self.refusals = [], {}, [], {}
 
     def infer(self, key: str, value, origin: str):
@@ -376,6 +377,7 @@ class Questions:
         listed = ', '.join(values[:-1]) + f' or {values[-1]}'
         if question['id'] in self.answers:
             answer, source = self.answers[question['id']]
+            self.used.add(question['id'])
             if answer not in values:
                 raise Refused(f'Invalid answer {answer} for {question["id"]}: answer {listed}.')
             self.met(question, answer, f'from {source.split()[0]}')
@@ -531,9 +533,12 @@ def environment_choice(options: dict, questions: Questions, series: str, environ
         raise Refused(f'--python {options["--python"]}: the environment {environment} exists and is kept; setup '
                       'creates no environment, so drop --python.')
     if exists or '--environment' in options or '--python' in options:
+        if not exists:
+            questions.used.add('environment')  # environment=create with --python: it is created
         return None, None
     pythons = series_pythons(series)
     create = questions.answers.get('environment')
+    questions.used.add('environment')
     asked = [({'id': 'environment', 'text': f'Python environment for Odoo {series}: create {environment}, or use an '
                                             'existing environment',
                'options': [{'value': 'create', 'label': f'create {environment}'}], 'recommended': 'create',
@@ -1877,6 +1882,13 @@ def main(arguments: list[str]) -> int:
         if '--apply' in options:
             print(f'ERROR: {exc}', file=sys.stderr)
             return 2
+    unused = [key for key in questions.answers if key not in questions.used]
+    if unused:
+        # An answer setup never used would otherwise look applied (v0.16.0 S3 review): refuse it.
+        source = questions.answers[unused[0]][1].split()[0]
+        print(f'ERROR: {source}: setup does not ask {unused[0]} for this checkout; nothing changed: drop it.',
+              file=sys.stderr)
+        return 2
     still_open = questions.open()
     if '--json' in options:
         print(json.dumps(plan_document(root, questions, plan)))

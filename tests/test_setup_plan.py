@@ -154,6 +154,18 @@ class PlanJsonTests(unittest.TestCase):
         self.assert_refused(self.setup_cmd('--answer', 'community'),
                             '--answer community: use --answer <question id>=<value>.', before)
 
+    def test_an_answer_to_a_question_setup_does_not_ask_is_refused(self):
+        self.setup_cmd('--community', str(self.source), '--no-enterprise')
+        before = self.tree()
+        for answer in ('python_ldap=yes', 'requirement:phonenumbers=add'):
+            with self.subTest(answer=answer):
+                question = answer.partition('=')[0]
+                for mode in ((), ('--apply',), ('--json',)):
+                    self.assert_refused(
+                        self.setup_cmd('--community', str(self.source), '--no-enterprise', '--answer', answer, *mode),
+                        f'--answer: setup does not ask {question} for this checkout; nothing changed: drop it.',
+                        before)
+
     def use_15(self, ldconfig=LDCONFIG_26):
         """An Odoo 15.0 checkout whose source pins python-ldap 3.4.0 and cryptography 2.6.1, whose module needs
         cryptography>=3.3.1 and phonenumbers, on a machine with that ldconfig (and pkg-config's OpenLDAP 2.6.8)."""
