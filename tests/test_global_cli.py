@@ -15,7 +15,8 @@ CLI = ROOT / 'oasis'
 PROGRAMS = ('oasis', 'odoo19')
 PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
           'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases',
-          'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'restart', 'setup', 'start',
+          'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy', 'restart',
+          'setup', 'start',
           'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info', 'worktree-init',
           'xmlid-info')
 
@@ -176,7 +177,7 @@ class GlobalCliTests(unittest.TestCase):
             with self.subTest(program=program):
                 self.assert_no_calls(self.invoke('--project', str(self.project), 'status', program=program), (
                     f'ERROR: {profile} is the old profile format, no longer read: run {program} migrate --plan to '
-                    f'see its conversion to oasis-workspace.toml, then {program} migrate --apply.\n'))
+                    f'see its conversion to oasis-workspace.toml, then {program} migrate --apply --confirm <the workspace file the plan writes>.\n'))
         # Without the workspace file next to it, the same refusal (not the missing configuration).
         (self.project / 'oasis-workspace.toml').unlink()
         self.assertIn('is the old profile format', self.invoke('--project', str(self.project), 'list-databases').stderr)
@@ -220,7 +221,23 @@ class GlobalCliTests(unittest.TestCase):
         profile.write_text('[tooling]\n')
         self.assert_no_calls(self.invoke('--project', str(self.project), 'setup'), (
             f'ERROR: {profile} is the old profile format, no longer read: run oasis migrate --plan to '
-            'see its conversion to oasis-workspace.toml, then oasis migrate --apply.\n'))
+            'see its conversion to oasis-workspace.toml, then oasis migrate --apply --confirm <the workspace file the plan writes>.\n'))
+
+    def test_policy_runs_without_a_workspace_file_and_in_a_legacy_checkout(self):
+        # v0.16.0 S1: the agent contract is readable before any configuration exists.
+        (self.project / 'oasis-workspace.toml').unlink()
+        plain = self.temp / 'plain'
+        plain.mkdir()
+        (plain / '.odoo19-agent.toml').write_text('[tooling]\n')
+        for program in PROGRAMS:
+            for args, cwd in ((('--project', str(self.project), 'policy', '--json'), self.temp),
+                              (('policy', '--json'), plain)):
+                with self.subTest(program=program, args=args):
+                    self.log.unlink(missing_ok=True)
+                    result = self.invoke(*args, program=program, cwd=cwd)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                     (17, 'delegated\n', 'delegated error\n'))
+                    self.assertEqual(json.loads(self.log.read_text())['tool'], 'policy')
 
     def test_checkout_below_a_workspace_file_dispatches(self):
         (self.project / 'oasis-workspace.toml').unlink()
@@ -275,7 +292,7 @@ class GlobalCliTests(unittest.TestCase):
         profile.write_text('[tooling]\n')
         self.assert_no_calls(self.invoke('status', cwd=plain), (
             f'ERROR: {profile} is the old profile format, no longer read: run oasis migrate --plan to '
-            'see its conversion to oasis-workspace.toml, then oasis migrate --apply.\n'))
+            'see its conversion to oasis-workspace.toml, then oasis migrate --apply --confirm <the workspace file the plan writes>.\n'))
         result = self.invoke('migrate', '--plan', cwd=plain)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (17, 'delegated\n', 'delegated error\n'))
         self.assertEqual(json.loads(self.log.read_text())['root'], str(plain))
