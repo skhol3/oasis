@@ -188,11 +188,14 @@ that series' files, next to the other series and without touching them:
     `<data_dir>/<x.y>`, read as Odoo reads it (variables and `~` expanded, a relative path from the
     directory setup runs in, as Odoo's working directory), written relative to the workspace file's
     directory when it is below it: `data_dir: <corpus-cafe>/data/odoo-15 (data_dir from
-    <corpus-cafe>/config/odoo-15/odoo.conf)`. Only `data_dir` is read from that file. Without one, or with
-    an empty one, the default stays.
-  - When `logs/<folder name>` exists next to the folder's parent (`logs/odoo-15` for `config/odoo-15`), it
-    is the section's `logs`: `logs: <corpus-cafe>/logs/odoo-15 (named for <corpus-cafe>/config/odoo-15)`;
-    otherwise `<logs>/<x.y>`.
+    <corpus-cafe>/config/odoo-15/odoo.conf)`. Only `data_dir` is read from that file. Without one, with
+    an empty one, or when the file cannot be read, the default stays; a `data_dir` of several lines or
+    with a NUL is refused (`Invalid data_dir in <odoo.conf>: it must be one directory path.`).
+  - When `logs/<folder name>` exists next to the folder's parent (`logs/odoo-15` for `config/odoo-15`)
+    and is inside the workspace file's directory, it is the section's `logs`: `logs:
+    <corpus-cafe>/logs/odoo-15 (named for <corpus-cafe>/config/odoo-15)`; otherwise `<logs>/<x.y>`. A
+    `--config-dir` folder outside the workspace (`/home/user/legacy15`) keeps `<logs>/<x.y>`: setup does not
+    look for `/home/logs/legacy15`.
   - Either is left out when it is what `[tooling]` already gives the series.
 
   Two such folders are refused (`Several folders hold Odoo 15.0

@@ -470,6 +470,74 @@ class SeriesSetupTests(unittest.TestCase):
                 self.assertNotIn('data_dir: ', result.stdout)
                 self.assertNotIn(MARKER, result.stdout)
 
+    def test_an_unreadable_adopted_odoo_conf_keeps_the_default_data_dir(self):
+        # Invalid UTF-8, or a file Odoo's parser refuses: data_dir cannot be read, so the default stays.
+        self.workspace.write_text(V1)
+        self.write_machine(f"[series.\"19.0\"]\ncommunity = '{self.source19}'\n"
+                           f"[series.\"15.0\"]\ncommunity = '{self.source15}'\n")
+        folder = self.project / 'config/odoo-15'
+        self.series_files(folder, 5415, 'corpus-cafe-15')
+        (self.project / 'data/odoo-15').mkdir(parents=True)
+        for name, conf in (
+                ('invalid utf-8', b'[options]\ndb_port = 5415\ndata_dir = /srv/\xff\n'),
+                ('no section', b'data_dir = /srv/filestore15\n[options]\ndb_port = 5415\n'),
+                ('duplicate', b'[options]\ndata_dir = /srv/a\ndata_dir = /srv/b\n')):
+            with self.subTest(conf=name):
+                (folder / 'odoo.conf').write_bytes(conf + f'admin_passwd = {MARKER}\n'.encode())
+                before = self.tree()
+                result = self.setup_cmd('--exception', 'report_xlsx')
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                self.assertIn("  logs = 'logs/15.0'\n  data_dir = 'data/15.0'\n", result.stdout)
+                self.assertNotIn('data_dir: ', result.stdout)
+                self.assertIn(f'create {self.project / "data/15.0"}/\n', result.stdout)
+                self.assertNotIn(MARKER, result.stdout)
+                self.assertEqual(self.tree(), before)
+
+    def test_a_data_dir_of_several_lines_or_with_nul_is_refused_naming_only_the_file(self):
+        for name, value in (('several lines', '/srv/filestore15\n  /srv/other'), ('nul', '/srv/file\x00store15')):
+            with self.subTest(data_dir=name):
+                folder = self.adopted_conf(value)
+                before = self.tree()
+                for apply in ((), ('--apply',)):
+                    self.assert_refused(self.setup_cmd(*apply, '--exception', 'report_xlsx'),
+                                        f'Invalid data_dir in {folder / "odoo.conf"}: it must be one directory path.',
+                                        before)
+
+    def test_folder_logs_that_tooling_already_gives_the_series_are_left_out_of_the_section(self):
+        # [tooling] logs = 'logs/{series}' gives the series logs/15.0, the logs/<folder name> of config/15.0.
+        self.workspace.write_text(V2)
+        self.write_machine(f"[series.\"19.0\"]\ncommunity = '{self.source19}'\n"
+                           f"[series.\"15.0\"]\ncommunity = '{self.source15}'\n")
+        folder = self.project / 'config/15.0'
+        self.series_files(folder, 5415, 'corpus-cafe-15')
+        (self.project / 'logs/15.0').mkdir(parents=True)
+        result = self.setup_cmd('--exception', 'report_xlsx')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        section = result.stdout.split(f'add [series."15.0"] to {self.workspace}:\n')[1].split('\nadopt ')[0]
+        self.assertIn("  test_prefix = 'cc15_test_'\n  series_exceptions = ['report_xlsx']", section)
+        self.assertNotIn('logs', section)
+        self.assertIn(f'adopt {folder} (found): odoo.conf, compose.yml, .env\n'
+                      f'logs: {self.project / "logs/15.0"} (named for {folder})\n', result.stdout)
+        self.assertIn(f'kept {self.project / "logs/15.0"}/\n', result.stdout)
+
+    def test_a_config_dir_outside_the_workspace_keeps_the_default_logs(self):
+        # <scratch>/outside/legacy15 is outside the workspace <scratch>/corpus-cafe: <scratch>/logs/legacy15,
+        # next to its parent, is not the workspace's and is not the section's logs.
+        self.workspace.write_text(V1)
+        folder = self.scratch / 'outside/legacy15'
+        folder.mkdir(parents=True)
+        (folder / 'odoo.conf').write_text(f'[options]\ndb_port = 5415\nadmin_passwd = {MARKER}\n')
+        (self.scratch / 'logs/legacy15').mkdir(parents=True)
+        before = self.tree()
+        result = self.setup_cmd('--config-dir', str(folder), '--community', str(self.source15), '--no-enterprise',
+                                '--exception', 'report_xlsx')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertIn("  logs = 'logs/15.0'\n  data_dir = 'data/15.0'\n", result.stdout)
+        self.assertNotIn('logs: ', result.stdout)
+        self.assertNotIn(str(self.scratch / 'logs'), result.stdout)
+        self.assertIn(f'create {self.project / "logs/15.0"}/\n', result.stdout)
+        self.assertEqual(self.tree(), before)
+
     def test_config_dir_names_the_folder_to_adopt_and_missing_pieces_are_created_there(self):
         self.workspace.write_text(V1)
         folder = self.scratch / 'legacy15'

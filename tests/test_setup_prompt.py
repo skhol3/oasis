@@ -426,6 +426,22 @@ class SeriesPromptTests(unittest.TestCase):
         self.assertEqual((after19.returncode, after19.stderr), (0, ''))
         self.assertIn('PYTHON_VERSION=3.12\n', after19.stdout)
 
+    def test_over_a_named_environment_of_another_python_the_marked_default_is_its_python(self):
+        # The series would use the default named environment with its Python 3.12, not the series' 3.10: that is
+        # the default the question marks, and Enter, Enter gives the plan without a terminal.
+        self.workspace.write_text(self.named(test_setup_series.V2, 'environments/cc-{series}', '3.12'))
+        before = self.tree()
+        plain = self.setup_cmd(*self.sources())
+        self.assertEqual((plain.returncode, plain.stderr), (0, ''))
+        self.assertIn(f'create the environment {self.venv()} with Python 3.12 (uv venv)', plain.stdout)
+        prompt = python_prompt(self.venv(), PYTHONS_15, '3.12')
+        status, stdout, written = self.terminal(*self.sources(), steps=(
+            (environment_prompt('15.0', self.venv()), b'\n'), (prompt, b'\n')))
+        self.assertEqual((status, stdout), (0, plain.stdout), written)
+        self.assertEqual(written, environment_prompt('15.0', self.venv()) + prompt)
+        self.assertEqual(self.tree(), before)
+        self.assertFalse(self.log.exists())
+
     def test_end_of_input_or_ctrl_c_at_a_question_changes_nothing(self):
         self.workspace.write_text(test_setup_series.V1)
         before = self.tree()

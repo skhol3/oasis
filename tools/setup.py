@@ -760,7 +760,7 @@ def series_section(document, workspace, series, exceptions, sources, environment
     python, the Python of the environment setup creates (S8), and a series that would otherwise use the default
     named environment with another Python gets that environment's path in the section. An
     adopted folder gives data_dir from its kept odoo.conf's data_dir (conf_data_dir) and logs from an existing
-    logs/<folder name> next to the folder's parent."""
+    logs/<folder name> next to the folder's parent, when that logs folder is inside the workspace directory."""
     view, base, default = as_version2(document), workspace.parent, document['odoo_version']
     old = config.series_tooling(view, workspace, default)
     new = config.series_tooling(view, workspace, series)
@@ -853,13 +853,14 @@ def series_section(document, workspace, series, exceptions, sources, environment
     if adopted is not None:
         # An adopted folder keeps its data and logs where they are (L18): the data_dir its kept odoo.conf
         # sets, and a logs/<folder name> folder next to the folder's parent (config/odoo-15 gives
-        # logs/odoo-15).
+        # logs/odoo-15) when that folder is inside the workspace directory: a --config-dir folder elsewhere
+        # (/home/user/legacy15) never makes setup look at /home/logs/legacy15.
         data = conf_data_dir(adopted / files['config']) if (adopted / files['config']).is_file() else None
         if data is not None:
             section['data_dir'] = relative(data, base)
             lines.append(f'data_dir: {data} (data_dir from {adopted / files["config"]})')
         logs = adopted.parent.parent / 'logs' / adopted.name
-        if logs.is_dir():
+        if logs.is_relative_to(base.resolve()) and logs.is_dir():
             section['logs'] = relative(logs, base)
             lines.append(f'logs: {logs} (named for {adopted})')
         for key in ('logs', 'data_dir'):
