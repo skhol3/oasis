@@ -30,7 +30,8 @@ INVOKED = Path(globals().get('ALIAS_PATH') or __file__)
 # reports it as one FAIL, policy prints the agent contract. Every other command is refused before it runs.
 LEGACY_COMMANDS = ('migrate', 'doctor', 'policy')
 # Commands that run in a checkout without a workspace file: setup creates it, policy reads no
-# configuration. Every other command is refused there (missing configuration).
+# configuration, and `status --json` reports that the workspace is missing (v0.16.0 S3). Every other
+# command is refused there (missing configuration).
 UNCONFIGURED_COMMANDS = ('doctor', 'policy', 'setup')
 
 
@@ -112,7 +113,8 @@ def main() -> int:
         if args.command not in LEGACY_COMMANDS:
             print(f'ERROR: {config.legacy_profile_refusal(root / config.PROFILE_NAME, prog)}', file=sys.stderr)
             return 2
-    elif args.command not in UNCONFIGURED_COMMANDS and (config is None or config.workspace_file(root) is None):
+    elif (args.command not in UNCONFIGURED_COMMANDS and not (args.command == 'status' and args.arguments == ['--json'])
+          and (config is None or config.workspace_file(root) is None)):
         message = (config.missing_configuration(root) if config is not None
                    else f'Missing tooling configuration: no oasis-workspace.toml at or above {root}.')
         print(f'ERROR: {message}', file=sys.stderr)

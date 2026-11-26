@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+# --json (v0.16.0 S3): what is ready, what is missing and the next command, as one JSON object; it reads
+# only, also in a checkout without a workspace file (tools/status_json.py). Without it, unchanged.
+if [[ ${1:-} == --json ]]; then
+  exec python3 -B "$(dirname "$0")/status_json.py" "$@"
+fi
 source "$(dirname "$0")/common.sh"
 require_runtime
 # This checkout's server first, then, in a git checkout, the servers of every checkout of the
