@@ -328,6 +328,19 @@ class WorktreeInitTests(unittest.TestCase):
         self.assertEqual((self.snapshot(), self.branches(main), self.worktrees(main)), before)
         self.assertEqual(self.identity(new), ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=feat'])
 
+    def test_resume_refuses_an_explicit_wrong_confirmation(self):
+        main = self.repository()
+        new = self.scratch / 'proj-feat'
+        self.git(main, 'worktree', 'add', '-q', '-b', 'feat', str(new))
+        before = (self.snapshot(), self.branches(main), self.worktrees(main))
+        result = self.invoke(main, 'feat', 'feat', '--resume', '--confirm', '/wrong')
+        self.assertEqual((result.returncode, result.stdout), (2, ''))
+        self.assertIn(f'--confirm /wrong does not name the worktree {new}; nothing changed.', result.stderr)
+        self.assertEqual((self.snapshot(), self.branches(main), self.worktrees(main)), before)
+        result = self.invoke(main, 'feat', 'feat', '--resume', '--confirm', str(new))
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.plan(new, 'feat (resumed)', 'feat'), ''))
+
     def test_resume_without_a_folder_creates_the_worktree(self):
         main = self.repository()
         head = self.head(main)

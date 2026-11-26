@@ -326,7 +326,8 @@ def main():
             print(line)
         print('dry run: nothing changed')
         return 0
-    if add is not None and (confirm is None or chosen_path(confirm) != new):
+    # Resuming adds nothing and needs no confirmation, but an explicit value must still name the worktree.
+    if (add is not None or confirm is not None) and (confirm is None or chosen_path(confirm) != new):
         # Tier B (tools/policy.py): explicit intent, named exactly; the plan above decides nothing yet.
         command = shlex.join([config.program_name(), '--project', str(root), 'worktree-init', *kept,
                               '--confirm', str(new)])
