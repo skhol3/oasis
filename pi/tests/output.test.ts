@@ -282,6 +282,20 @@ test("summarizeTestLog control line excludes odoo.tests.result errors and odoo.t
   );
 });
 
+test("summarizeTestLog reads the Odoo 15 result logger odoo.tests.runner like odoo.tests.result", () => {
+  // Odoo 15 logs the result through odoo.tests.runner (odoo/service/server.py), 16+ through odoo.tests.result.
+  const failed = `${STAMP} ERROR db odoo.tests.runner: 1 failed, 0 error(s) of 2 tests when loading database 'db'\n`;
+  assert.equal(
+    summarizeTestLog(failed, "", NO_ERRORS),
+    "result: 1 failed, 0 error(s) of 2 tests when loading database 'db'\nproblems: 0\nlog: 1 lines, 0 errors, 0 warnings",
+  );
+  const none = `${STAMP} WARNING db odoo.tests.runner: 0 failed, 0 error(s) of 0 tests when loading database 'db'\n`;
+  assert.equal(
+    summarizeTestLog(none, "", NO_ERRORS),
+    "result: 0 failed, 0 error(s) of 0 tests when loading database 'db'\nproblems: 0\nlog: 1 lines, 0 errors, 0 warnings",
+  );
+});
+
 test("limitLines keeps head and tail and says how much it dropped", () => {
   const text = Array.from({ length: 10 }, (_, i) => `line ${i}`).join("\n");
   assert.equal(limitLines(text, 20), text);

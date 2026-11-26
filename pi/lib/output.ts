@@ -1,7 +1,8 @@
 // Token-saving output shaping. No Pi imports: tested directly with node:test.
 
 const LOG_LINE = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+ \d+ (\w+) \S+ ([\w.]+): (.*)$/;
-const RESULT_LOGGER = "odoo.tests.result";
+// The test result line: odoo.tests.result from Odoo 16, odoo.tests.runner in Odoo 15 (odoo/service/server.py).
+const RESULT_LOGGERS = new Set(["odoo.tests.result", "odoo.tests.runner"]);
 const STATS_LOGGER = "odoo.tests.stats";
 const MAX_STATS = 5;
 const SHOWN_WARNING_GROUPS = 3;
@@ -58,7 +59,8 @@ function countNewlines(text: string): number {
  * entries, one line of grouped warnings (omitted when there are none) and, always last, the control
  * line `log: <lines> lines, <errors> errors, <warnings> warnings`. Its counts are never capped, so
  * a reader can check the summary against the full logs: lines as `cat stdout stderr | wc -l`,
- * errors as ERROR/CRITICAL log lines except odoo.tests.result, warnings as WARNING log lines except
+ * errors as ERROR/CRITICAL log lines except the result loggers (odoo.tests.result, and
+ * odoo.tests.runner in Odoo 15), warnings as WARNING log lines except
  * odoo.tests.* loggers. With `tests` false (a run that executes no tests) the result and stats lines
  * are left out.
  */
@@ -78,9 +80,9 @@ export function summarizeTestLog(stdout: string, stderr: string, options: Summar
     }
     const [, level, logger, message] = match;
     current = null;
-    if ((level === "ERROR" || level === "CRITICAL") && logger !== RESULT_LOGGER) errorCount++;
+    if ((level === "ERROR" || level === "CRITICAL") && !RESULT_LOGGERS.has(logger)) errorCount++;
     if (level === "WARNING" && !logger.startsWith("odoo.tests.")) warningCount++;
-    if (logger === RESULT_LOGGER) {
+    if (RESULT_LOGGERS.has(logger)) {
       result = message;
     } else if (logger === STATS_LOGGER) {
       if (stats.length < MAX_STATS) stats.push(`stats: ${message.trim()}`);

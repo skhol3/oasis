@@ -3,11 +3,23 @@ from __future__ import annotations
 
 import argparse
 import ast
+import csv
+import email.parser
+import inspect
+import os
 import re
 import sys
+import sysconfig
 from collections import defaultdict
-from importlib.metadata import PackageNotFoundError, packages_distributions, version
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+
+# This helper runs with the project environment's Python, 3.7 and later (Odoo 15 supports 3.7):
+# importlib.metadata exists from 3.8, packages_distributions and sys.stdlib_module_names from 3.10.
+# Where they exist they are used as they are; otherwise the fallbacks below compute the same data.
+try:
+    from importlib import metadata
+except ImportError:  # Python 3.7
+    metadata = None
 
 IMPORT_DISTRIBUTIONS = {
     "dateutil": "python-dateutil", "defusedxml": "defusedxml",
@@ -16,6 +28,146 @@ IMPORT_DISTRIBUTIONS = {
 }
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+")
 MODULE_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
+DISTRIBUTION_DIR = re.compile(r"\.(dist-info|egg-info)$")
+# Standard library packages that some distributions ship apart (Debian: python3-distutils, ...).
+SPLIT_STDLIB = frozenset({"distutils", "ensurepip", "idlelib", "lib2to3", "tkinter", "turtledemo", "venv"})
+
+
+class ScannedDistribution:
+    """A *.dist-info or *.egg-info directory read without importlib.metadata (Python 3.7)."""
+
+    def __init__(self, path: Path):
+        self._path = path
+        text = self.read_text("METADATA") or self.read_text("PKG-INFO") or ""
+        self.metadata = email.parser.Parser().parsestr(text, headersonly=True)
+        self.version = self.metadata["Version"]
+
+    def read_text(self, name: str) -> str | None:
+        try:
+            return (self._path / name).read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+    @property
+    def files(self) -> list[PurePosixPath] | None:
+        """RECORD, else installed-files.txt (relative to the egg-info directory), else SOURCES.txt."""
+        record = self.read_text("RECORD")
+        if record:
+            return [PurePosixPath(row[0]) for row in csv.reader(record.splitlines()) if row]
+        installed = self.read_text("installed-files.txt")
+        if installed:
+            return [PurePosixPath(os.path.normpath(f"{self._path.name}/{line.strip()}"))
+                    for line in installed.splitlines() if line.strip()]
+        sources = self.read_text("SOURCES.txt")
+        if sources:
+            return [PurePosixPath(line) for line in sources.splitlines() if line.strip()]
+        return None
+
+
+def scan_distributions(paths: list[str]) -> list[ScannedDistribution]:
+    """The distributions installed on `paths` (sys.path), first one of each name, as
+    importlib.metadata finds them."""
+    found: dict[str, ScannedDistribution] = {}
+    for entry in paths:
+        try:
+            names = sorted(os.listdir(entry or "."))
+        except OSError:
+            continue
+        for name in names:
+            path = Path(entry or ".") / name
+            if not DISTRIBUTION_DIR.search(name) or not path.is_dir():
+                continue
+            distribution = ScannedDistribution(path)
+            if distribution.metadata["Name"]:
+                found.setdefault(normalize_distribution(distribution.metadata["Name"]), distribution)
+    return list(found.values())
+
+
+_DISTRIBUTIONS = None
+
+
+def installed_distributions() -> list:
+    global _DISTRIBUTIONS
+    if _DISTRIBUTIONS is None:
+        _DISTRIBUTIONS = list(metadata.distributions()) if metadata else scan_distributions(sys.path)
+    return _DISTRIBUTIONS
+
+
+def top_level_name(name: PurePosixPath) -> str:
+    """The importable name a distribution file provides, as importlib.metadata infers it."""
+    parts = name.parts
+    if len(parts) > 1:
+        return parts[0]
+    return inspect.getmodulename(str(name)) or str(name)
+
+
+def top_level_mapping(distributions) -> dict[str, list[str]]:
+    """importlib.metadata.packages_distributions (Python 3.10+) over `distributions`: top_level.txt
+    when the distribution declares it, else the top-level names of its files."""
+    mapping: dict[str, list[str]] = defaultdict(list)
+    for distribution in distributions:
+        declared = (distribution.read_text("top_level.txt") or "").split()
+        names = declared or [name for name in {top_level_name(PurePosixPath(str(path)))
+                                                for path in distribution.files or ()}
+                             if "." not in name]
+        for name in names:
+            mapping[name].append(distribution.metadata["Name"])
+    return dict(mapping)
+
+
+def scan_stdlib_module_names() -> frozenset[str]:
+    """sys.stdlib_module_names (Python 3.10+) from this interpreter's library directories: the
+    built-in and frozen modules, the modules and packages of the standard library and its extension
+    modules."""
+    names = set(sys.builtin_module_names) | SPLIT_STDLIB
+    names |= {name for name, module in list(sys.modules.items())
+              if "." not in name and getattr(getattr(module, "__spec__", None), "origin", None) == "frozen"}
+    paths = sysconfig.get_paths()
+    directories = []
+    for key in ("stdlib", "platstdlib"):
+        if paths.get(key):
+            directories += [paths[key], os.path.join(paths[key], "lib-dynload")]
+    for directory in directories:
+        try:
+            entries = os.listdir(directory)
+        except OSError:
+            continue
+        for entry in entries:
+            full = os.path.join(directory, entry)
+            if os.path.isdir(full):
+                name = entry if os.path.isfile(os.path.join(full, "__init__.py")) else None
+            else:
+                name = inspect.getmodulename(entry)
+            if name and name.isidentifier():
+                names.add(name)
+    return frozenset(names)
+
+
+_STDLIB_MODULE_NAMES = None
+_TOP_LEVEL = None
+
+
+def stdlib_module_names() -> frozenset[str]:
+    global _STDLIB_MODULE_NAMES
+    if _STDLIB_MODULE_NAMES is None:
+        _STDLIB_MODULE_NAMES = getattr(sys, "stdlib_module_names", None) or scan_stdlib_module_names()
+    return _STDLIB_MODULE_NAMES
+
+
+def packages_distributions() -> dict[str, list[str]]:
+    global _TOP_LEVEL
+    if _TOP_LEVEL is None:
+        native = getattr(metadata, "packages_distributions", None)
+        _TOP_LEVEL = native() if native else top_level_mapping(installed_distributions())
+    return _TOP_LEVEL
+
+
+def relative_path(path: Path, root: Path) -> Path:
+    """`path` relative to `root` when inside it (Path.is_relative_to is Python 3.9+)."""
+    try:
+        return path.relative_to(root)
+    except ValueError:
+        return path
 
 
 def normalize_distribution(name: str) -> str:
@@ -77,8 +229,7 @@ def collect_imports(targets: list[Path], project_root: Path, roots: list[Path]) 
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             except (SyntaxError, UnicodeDecodeError) as error:
-                relative = path.relative_to(project_root) if path.is_relative_to(project_root) else path
-                raise ValueError(f"Cannot parse {relative}: {error}") from error
+                raise ValueError(f"Cannot parse {relative_path(path, project_root)}: {error}") from error
             for node in ast.walk(tree):
                 names: list[str] = []
                 if isinstance(node, ast.Import):
@@ -86,10 +237,9 @@ def collect_imports(targets: list[Path], project_root: Path, roots: list[Path]) 
                 elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                     names = [node.module.split(".", 1)[0]]
                 for name in names:
-                    if name in sys.stdlib_module_names or name in local_roots:
+                    if name in stdlib_module_names() or name in local_roots:
                         continue
-                    relative = path.relative_to(project_root) if path.is_relative_to(project_root) else path
-                    imports[name].append(f"{relative}:{node.lineno}")
+                    imports[name].append(f"{relative_path(path, project_root)}:{node.lineno}")
     return imports
 
 
@@ -101,9 +251,13 @@ def distribution_for_import(import_name: str) -> str | None:
 
 
 def installed_version(distribution: str) -> str:
+    if metadata is None:
+        wanted = normalize_distribution(distribution)
+        return next((found.version for found in installed_distributions()
+                     if normalize_distribution(found.metadata["Name"]) == wanted), "missing")
     try:
-        return version(distribution)
-    except PackageNotFoundError:
+        return metadata.version(distribution)
+    except metadata.PackageNotFoundError:
         return "missing"
 
 

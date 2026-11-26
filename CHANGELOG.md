@@ -42,6 +42,14 @@ names) may still change in a minor release; every such change is listed here und
 
 - `worktree-init` names `git worktree prune` when a prunable worktree entry (its folder gone) holds
   the target branch, instead of saying the branch is checked out there (S4.9).
+- `check-environment --full` and `bootstrap` no longer report `FAIL dependency_audit=failed` on an
+  environment whose Python is older than 3.10 (Odoo 15: 3.7 to 3.9): the dependency audit works out
+  which distribution provides each module from the installed distributions and the standard-library
+  names from the interpreter itself. On 3.10 and later its output is unchanged.
+- `oasis_test_module` and `oasis_test_summary` read the Odoo 15 result line (logger
+  `odoo.tests.runner`): Odoo 15 runs no longer report `result: not reported`, and a failing run's
+  result line is no longer counted as a problem. A run in which no test ran adds
+  `no tests ran: the run only installed <module>` (`updated` in reuse update mode).
 
 ## [0.15.1] - 2026-11-26
 

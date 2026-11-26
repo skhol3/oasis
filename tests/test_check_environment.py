@@ -12,6 +12,7 @@ import subprocess
 import sys
 import unittest
 
+import test_audit_dependencies
 import test_environment
 import test_lifecycle as lifecycle
 
@@ -93,6 +94,33 @@ class DependencyLockTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         self.assertIn('mutation=none\nlocks=stale\n', result.stdout)
         self.assertTrue(result.stdout.endswith('planned_action=compile_locks_then_sync_lock\n'), result.stdout)
+
+
+class OldPythonAuditTests(unittest.TestCase):
+    """bootstrap --apply ends with the full check, whose dependency audit runs with the environment's
+    Python: a 3.9 or 3.8 one (Odoo 15) passes it (v0.16.0 S4.3)."""
+    setUp = lifecycle.LifecycleTests.setUp
+    invoke = lifecycle.LifecycleTests.invoke
+    prepare = test_environment.EnvironmentTests.prepare
+    missing_environment = test_environment.EnvironmentTests.missing_environment
+    expected_apply_output = test_environment.EnvironmentTests.expected_apply_output
+
+    def assert_audit_passes(self, minor):
+        python = test_audit_dependencies.find_python(minor)
+        if python is None:
+            self.skipTest(f'uv python find {minor} found no interpreter')
+        self.prepare()
+        environment = self.missing_environment()
+        self.env['FAKE_HOST_PYTHON'] = python
+        result = self.invoke('bootstrap', '--apply')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, self.expected_apply_output(environment), ''))
+
+    def test_full_check_audits_dependencies_with_python_39(self):
+        self.assert_audit_passes('3.9')
+
+    def test_full_check_audits_dependencies_with_python_38(self):
+        self.assert_audit_passes('3.8')
 
 
 if __name__ == '__main__':

@@ -79,10 +79,12 @@ export function formatTestRun(
   const detail = values.mode !== undefined ? `mode=${values.mode}` : `dropped=${values.dropped ?? ""}`;
   const lifecycle = values.database_lifecycle ? ` database_lifecycle=${values.database_lifecycle} ${detail}` : "";
   const summary = summarizeTestLog(readLog(values.stdout_log), stderrLog ? readLog(stderrLog) : "", options);
-  // Odoo reports success when a class or method filter matches nothing: say so.
-  const unmatched = only && /^result: .* of 0 tests\b/m.test(summary)
-    ? [`no test matched only=${only}: check the class and method names`]
-    : [];
+  // Odoo reports success when a class or method filter matches nothing, or when the module has no
+  // tests at all: say so, so an install-only pass is not read as passing tests.
+  const noTests = /^result: .* of 0 tests\b/m.test(summary);
+  const unmatched = !noTests ? []
+    : only ? [`no test matched only=${only}: check the class and method names`]
+    : [`no tests ran: the run only ${values.mode === "update" ? "updated" : "installed"} ${module}`];
   return [
     `module=${module} database=${values.database ?? ""} exit=${result.code}${lifecycle}`,
     summary,
