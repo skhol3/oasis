@@ -52,6 +52,7 @@ jobs:
           uv python find --no-project --system 3.9
       - name: Odoo 15 Python tests (none may skip)
         working-directory: tests
+        shell: bash -eo pipefail {0}
         run: |
           python3 -B -m unittest -v \
             test_audit_dependencies.AuditDependenciesTests.test_python_39_and_38_give_the_same_output \
