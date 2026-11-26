@@ -101,7 +101,7 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
 | `oasis-workspace.toml` | `workspace_version`, `odoo_version`, and `[tooling]` with the environment, `config`, `env_file`, `compose`, `requirements`, `addons_paths` (the directories that hold the modules, `'.'` by default), `db_service = 'db'`, the prefixes, `logs` and `data_dir`; never a source key. Mode 0600. |
 | `odoo.conf` | Path-free (no `addons_path`, no `data_dir`; see [Path-free odoo.conf](path-free-odoo-conf.md)): `db_host = 127.0.0.1`, the `db_port` of the compose file, `db_user` and `db_password` empty: Odoo gets the [database account](#the-database-account) of the environment file. Mode 0600. |
 | Compose file | `name: oasis-<name>-<6 hex of the workspace directory>` and the PostgreSQL service (`postgres:<postgres_default>` of the series in `tools/odoo_versions.py`: `postgres:17` on 19.0) with the variables oasis uses, published on `127.0.0.1` on the [port](#one-port-for-odooconf-and-the-compose-file) `odoo.conf` connects to. |
-| Environment file | The [database account](#the-database-account): `ODOO_DB_USER=oasis_<name>` and a random `ODOO_DB_PASSWORD`, or the `db_user` and `db_password` a kept `odoo.conf` sets; mode 0600. The password is never printed. |
+| Environment file | The [database account](#the-database-account): `ODOO_DB_USER=oasis_<name>` and a random `ODOO_DB_PASSWORD`, or the `db_user` and `db_password` a kept `odoo.conf` sets; mode 0600. The password is never printed. A kept environment file gets the account in the variables it leaves empty, every other byte kept; a kept `odoo.conf` whose account it holds loses those two lines ([The database account](#the-database-account)). |
 | `runtime.in`, `dev.in` | `-r <community>/requirements.txt`, then what the series needs that those requirements do not list (`runtime_requirements` in `tools/odoo_versions.py`: nothing on 19.0, `setuptools<81` on 15.0, [below](#odoo-150-requirements)); `-c runtime.txt` and `-r runtime.in`, to which you add your development tools. With an adopted series folder that holds `requirements-extra.txt`, `runtime.in` also includes it ([Another Odoo series](#the-projects-requirement-files)). |
 | `overrides.txt` | Only with an adopted series folder that holds `requirements-overrides.txt`: `-r <that file>`, given to `uv pip compile` as `--override` ([Another Odoo series](#the-projects-requirement-files)). |
 | Locks | `runtime.txt`, `dev.txt` and `lock.sha256`, compiled with the series' Python by the same code as `bootstrap --apply` when they are missing or stale; current locks are kept, and a lock changed by hand is kept and leaves the environment uncreated. |
@@ -458,7 +458,28 @@ logs, errors).
   `db_user` or `db_password`, the file gets that value instead, so Odoo and the service keep the account
   they used (quoted when docker compose would otherwise read it differently; a value it cannot hold either
   way is refused: `Cannot copy db_password of <odoo.conf> to <env file>: docker compose would not read its
-  value as written; ...`). An existing environment file is kept as it is.
+  value as written; ...`). The user name is `oasis_` and the `dev_prefix` without its `_dev_` suffix (and
+  any trailing `_`), so another prefix is never cut short.
+- An existing environment file is kept, with one exception: the account variables it assigns an empty
+  value (`NAME=`, `NAME=""`, also after `export` or before a ` # comment`; files written by older setups)
+  get the same values a new file would (the kept `odoo.conf`'s, else generated), in place. Every other byte
+  is kept and the file ends with mode 0600. The plan says `fill <names> in <env file> (mode 0600; every
+  other line kept): <what each gets>`, never a value. A variable the file does not assign is never added:
+  a file that assigns neither (another account's naming) is left unchanged, and the plan says `WARN: <env
+  file> sets neither ODOO_DB_USER nor ODOO_DB_PASSWORD: setup leaves <env file> unchanged (an existing file
+  is respected); to use the account oasis generates, add the empty lines ODOO_DB_USER= and
+  ODOO_DB_PASSWORD= to it, then run oasis setup --apply` (doctor: `WARN env_file=unassigned` with the same
+  fix). A file that assigns one of them and leaves the other out is kept as it is.
+- An existing project's account moves to the environment file ("respects it and offers the move"): when
+  a kept `odoo.conf` sets `db_user` or `db_password` (a value other than empty, `False` or `None`) and the
+  environment file holds the same values, or gets them from `odoo.conf` in this run, the plan says
+  `remove <options> from <odoo.conf> (those lines only): <env file> holds the same account, which oasis
+  passes to Odoo`, and `--apply` removes those lines only, every other byte and the mode of `odoo.conf`
+  kept: Odoo then gets the same account from the environment file, and the database is untouched. When
+  the environment file holds another value or does not set one, the plan says
+  `WARN: <env file> does not hold the account <odoo.conf> sets: <options> (another value|not set): both
+  files kept, ...` and changes neither file; `doctor` reports it too (`WARN odoo_conf_password`). An option
+  repeated, or continued on an indented line, is never edited (a `WARN` line says so).
 - The compose service reads it: `docker compose --env-file <env file>` gives `POSTGRES_USER` and
   `POSTGRES_PASSWORD`, which PostgreSQL uses when it initializes a new volume, and the database commands
   run `psql`, `createdb` and `dropdb` in the service with it.
@@ -470,16 +491,35 @@ logs, errors).
   sets (other than empty, `False` or `None`, which Odoo reads as unset) is kept, and that one is not
   exported, since Odoo 19 ranks `PGUSER` and `PGPASSWORD` above `odoo.conf`: an existing project keeps
   working unchanged. When either file cannot be read, nothing is exported and the command runs as before
-  (`doctor` reports the file).
+  (`doctor` reports the file). oasis reads the environment file as docker compose does for literal values:
+  unquoted (up to a ` # comment`), in single quotes, or in double quotes. A value Odoo would get that uses
+  compose interpolation (`$VAR`, `${VAR}`, any `$` outside single quotes) or a double-quoted escape (`\`)
+  is never passed on as written: the command exits 2 with `ERROR: <env file> sets <names> with compose
+  interpolation ($) or a double-quoted escape (\), which oasis does not read: write the value literally in
+  single quotes.`, and `doctor` and `check-environment` fail `env_file=unsupported_value <names>`, naming
+  the variables, never the value.
 - `doctor` and `check-environment --full` log in with that account (`postgres_connection`, see
-  [The doctor report](checking-environment.md#the-doctor-report)). A volume initialized with other
-  credentials (the environment file changed after the service first started, or a volume from an older
-  setup) fails there with its fix, the Tier B
-  `oasis --project <checkout> recreate-database-volume --confirm <compose project>`: it prints the plan,
-  then runs `docker compose down -v` for that compose project only (every database of its PostgreSQL, the
-  trash included, is deleted; filestores under `data_dir` are not) and starts the service again, which
-  initializes a new volume with the account of the environment file. Without `--confirm` and the compose
-  project (the top-level `name:` of the compose file) it changes nothing and names the exact command.
+  [The doctor report](checking-environment.md#the-doctor-report)). When the compose service refuses it,
+  its volume was initialized with other credentials (the environment file changed after the service first
+  started, or a volume from an older setup), and the fix is the Tier B
+  `oasis --project <checkout> recreate-database-volume --confirm <compose project>`. That fix is named
+  only when `odoo.conf` points at the compose service: `db_host` `127.0.0.1` or `localhost` and the
+  `db_port` the compose file publishes to 5432 (5432 without a `db_port`). Another server refusing the
+  account gets `correct that account on that server, or set db_host = 127.0.0.1 and the db_port <compose
+  file> publishes in <odoo.conf>` instead: recreating the local volume would not change it.
+- `recreate-database-volume` prints the plan, then runs `docker compose -p <compose project> down -v`:
+  it removes the compose project's containers and networks, every named volume of its compose file and
+  every anonymous volume of its containers, so every database of its PostgreSQL, the trash included
+  (filestores under `data_dir` are not touched). Then it starts the service again with the same `-p`,
+  which initializes a new volume with the account of the environment file. The compose project is always
+  passed with `-p`; a `COMPOSE_PROJECT_NAME` in the environment or in the environment file that selects
+  another project is refused before anything runs (`ERROR: COMPOSE_PROJECT_NAME ... makes docker compose
+  use the compose project <other>, not <name> ...`), since the other oasis commands would keep using that
+  one. Without `--confirm` and the compose project (the top-level `name:` of the compose file) it changes
+  nothing and names the exact command. When `down -v` fails, or the service does not start again after
+  it, the command exits 1, says the volume may already be gone (or is), and names the command that starts
+  the service again: `docker compose --env-file <env file> -f <compose file> -p <compose project> up -d
+  --wait <service>`.
 
 ## Next steps
 

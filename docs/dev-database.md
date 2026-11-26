@@ -16,7 +16,7 @@ groups = ['your_module.group_planner']
 
 Replace the example group with an actual installed `res.groups` XML ID. Additional `[[development.users]]` entries declare other roles; omit them when only the administrator is needed. Every role account receives `base.group_user` plus its declared groups, limited to the initial company. The module must define its roles outside demo data. Logins must be unique and names/groups nonempty; unknown keys, including credentials, are rejected.
 
-From an interactive terminal, run the full executable path with the actual module and a fresh database name under the project's `[tooling].dev_prefix`:
+Run the full executable path with the actual module and a fresh database name under the project's `[tooling].dev_prefix`, from a terminal or not (an agent runs it too: Tier A in the [agent contract](agent-contract.md)):
 
 ```bash
 ~/.agents/skills/odoo19/oasis --project /absolute/project init-dev-database your_module project_dev_manual
@@ -50,8 +50,25 @@ demo_modules = ['purchase_stock']
 
 `--with-demo` remains restricted to fresh development databases. It cannot load demo into an existing database, enable it for tests, reset credentials, or modify previously created project data. No project configuration is automatically edited by this command.
 
-## Credential entry and recovery
+## Passwords: generated, or typed only if you want your own
 
-The command requests and confirms each password with terminal echo disabled. It refuses piped password entry, test/unmanaged databases, and existing databases; it never resets existing credentials. Passwords are not passed in arguments or environment variables, saved to files, or relayed in logs. Do not put them in the workspace file, shell commands, or chat. A failed setup retains the new database for inspection and reports a sanitized error; no automatic deletion or retry occurs. Base initialization, module installation, and account creation are separate phases; role accounts are created in one transaction. Tests continue to create their own actors independently.
+No password needs to be typed (v0.16.0: no oasis workflow requires reading, copying or typing one):
+
+- Without a terminal (an agent, a script, CI), every account's password is generated (`secrets.token_urlsafe(24)`: 32 letters, digits, `-` and `_`).
+- On a terminal, the command first says `Enter at a password prompt generates one into <file> (mode 0600).`, then asks `Password for <login>: ` for each account with the echo off. Enter generates that password; a typed one is asked again (`Confirm password for <login>: `) and must match (`ERROR: Passwords must match; no database was created.`). Typing is for a person who wants their own password (Tier C).
+
+Generated passwords go to one file next to the env file (`[tooling].env_file`), named for the database: `<database>.logins`, for example `.oasis/config/acme_dev_manual.logins`, mode 0600. It holds two comment lines, then one `<login> <password>` line per generated account; typed passwords are never written to it, and with every password typed there is no file. The command prints only where it is and for which logins, never a password:
+
+```text
+Development database initialized: acme_dev_manual
+Accounts ready: 2
+Generated passwords: /home/you/src/acme/.oasis/config/acme_dev_manual.logins (mode 0600): local_admin, planner
+```
+
+The file is written once the database exists: an existing database is refused (`ERROR: Could not create a fresh development database; existing data was not modified.`) and keeps the file it had; a failed setup after the database was created keeps the new database and still writes the file, since the administrator's password is already set there. Read it to log in; never commit it (it sits next to the env file; in the default layout under `.oasis/`, which setup excludes from git). Dropping the database does not remove it; a new database of the same name replaces it.
+
+## Credential handling and recovery
+
+The command refuses test/unmanaged databases and existing databases; it never resets existing credentials. Passwords are not passed in arguments or environment variables, printed, or relayed in logs; generated ones are only in the `.logins` file. Do not put them in the workspace file, shell commands, or chat. A failed setup retains the new database for inspection and reports a sanitized error; no automatic deletion or retry occurs. Base initialization, module installation, and account creation are separate phases; role accounts are created in one transaction. Tests continue to create their own actors independently.
 
 Before modifying an installed bundle without a source checkout, make and validate a complete backup. Recover only affected files after preserving unrelated later edits; a reinstall may overwrite local changes. Fresh database initialization is not permission to modify an existing database.

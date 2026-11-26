@@ -32,6 +32,22 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- `oasis setup` respects an existing env file: it fills only account variables present with an empty
+  value (files from older setups), in place, every other byte kept, mode 0600; a file that sets
+  neither `ODOO_DB_USER` nor `ODOO_DB_PASSWORD` is left unchanged with a WARN saying how to opt in. It
+  moves `db_user`/`db_password` out of a kept `odoo.conf` (those lines only) only when the env file
+  holds the same values; otherwise it warns and changes nothing.
+- `oasis doctor`: `WARN odoo_conf_password` (fix: `oasis setup --apply`), `WARN env_file=unassigned`,
+  `env_file=empty` names `oasis setup --apply`, and `FAIL env_file=unsupported_value <names>` for values
+  using compose interpolation (`$`) or double-quoted escapes (`\`), which oasis refuses instead of passing
+  Odoo another credential (`check-environment` fails the same way). The authentication-failure fix names
+  `recreate-database-volume` only when `odoo.conf` points at the port the compose service publishes.
+- `init-dev-database` no longer needs a terminal: passwords are generated into `<database>.logins` next
+  to the env file (mode 0600, never printed); on a terminal Enter generates one and typing your own
+  still works.
+- `recreate-database-volume` always runs with `-p <compose project>`, refuses a `COMPOSE_PROJECT_NAME`
+  that selects another project, and on a failure after `down -v` names the command that starts the
+  service again (exit 1).
 - `oasis setup` no longer asks you to fill in the database account; its next steps start with starting the
   database service. `doctor` makes one connection: the `postgres_connection` login check (WARN when the
   service does not answer).
@@ -67,6 +83,7 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Fixed
 
+- The generated database user name strips `_dev_` only when it is there.
 - `worktree-init` names `git worktree prune` when a prunable worktree entry (its folder gone) holds
   the target branch, instead of saying the branch is checked out there (S4.9).
 - `check-environment --full` and `bootstrap` no longer report `FAIL dependency_audit=failed` on an

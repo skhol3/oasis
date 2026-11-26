@@ -96,13 +96,18 @@ Tier A in the skills too. In the CLI, `drop-database`, `gc --apply --trash`, `mi
 `worktree-init` run only with `--confirm <exact name>` (the database, the project root, the
 workspace file, the worktree path); without it they exit 2 and name the exact command. The menu,
 `/oasis worktree` and `/oasis migrate` pass it after your confirmation. New Tier B command:
-`recreate-database-volume --confirm <compose project>` deletes the PostgreSQL volume of the compose
-project (every database in it) and starts the service again with the account of the env file; it
-replaces a raw `docker compose down -v`.
+`recreate-database-volume --confirm <compose project>` runs `docker compose -p <compose project> down -v`
+(the project's containers and networks, every named volume of its compose file and every anonymous
+volume of its containers: every database of its PostgreSQL) and starts the service again with the
+account of the env file; it replaces a raw `docker compose down -v`.
 
 oasis generates the database account (`oasis setup`, one 0600 env file read by the compose service
 and by Odoo; `odoo.conf` stays password-free), so no oasis workflow requires reading, copying or
-typing a password, and no command takes or prints one. [Docs →](docs/setup.md#the-database-account)
+typing a password, and no command takes or prints one. An existing project keeps its files: setup
+fills an env file's empty account variables in place (never adds absent ones) and moves `db_user` and `db_password` out of `odoo.conf`
+only when the env file holds the same values (otherwise it warns and changes nothing), and
+`init-dev-database` generates the development passwords into `<database>.logins` (mode 0600) unless
+you type your own on a terminal. [Docs →](docs/setup.md#the-database-account)
 
 ### Checkouts and worktrees
 

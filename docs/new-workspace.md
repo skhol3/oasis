@@ -1,7 +1,7 @@
 # Setting up a new workspace
 
 From a clone of the project's repository to a passing `oasis doctor` and a development database:
-`oasis setup` writes the configuration, you fill in the database account and start the service.
+`oasis setup` writes the configuration with a generated database account, and you start the service.
 No directory layout is required; by default everything stays in the clone. The project is the
 fictional `acme`; replace its names, paths and module with your own. The reference of every
 option of `setup` is [Setting up a checkout with oasis setup](setup.md), the reference of every
@@ -35,9 +35,9 @@ git clone --branch 19.0 --depth 1 https://github.com/odoo/enterprise.git ~/odoo/
 
 ## Quick path
 
-You run these in a terminal. Agents may show the plan, but `setup --apply` is yours (the
-[bash guard](bash-guard.md) blocks it for them). Inside the clone no `--project` is needed: the
-checkout is the git top level of the current directory.
+You or an agent run these: every step is Tier A in the [agent contract](agent-contract.md), so
+an agent runs `setup --apply` alone (it creates only what is missing). Inside the clone no
+`--project` is needed: the checkout is the git top level of the current directory.
 
 1. Clone the repository (any folder).
 
@@ -101,9 +101,11 @@ checkout is the git top level of the current directory.
 
 6. Create a development database. It needs a `[development]` table with an
    `administrator_login` in `oasis-workspace.toml` (setup writes none; see
-   [the example tree](#the-example-tree) and [Development database](dev-database.md)), asks for
-   each password with the echo off, and the name must start with the `dev_prefix` (`acme_dev_`,
-   from the checkout's name or `setup --name`). Then check the installed packages against the
+   [the example tree](#the-example-tree) and [Development database](dev-database.md)), and the
+   name must start with the `dev_prefix` (`acme_dev_`, from the checkout's name or
+   `setup --name`). The passwords are generated into `.oasis/config/acme_dev_manual.logins`
+   (mode 0600, never printed); on a terminal it asks each one with the echo off, and Enter
+   generates it, so typing is only for your own. Then check the installed packages against the
    locks.
 
    ```bash
