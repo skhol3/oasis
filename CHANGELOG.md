@@ -72,6 +72,13 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- Odoo 15.0's default Python is 3.9, the Python of Odoo's official 15.0 Debian package
+  (`setup/package.dfdebian`: `debian:bullseye`; 19.0 stays 3.12, `ubuntu:noble`). A 15.0 workspace
+  that declares no `python` now expects 3.9; declare `python` to keep another one.
+- The `runtime.in` that `oasis setup` writes for 15.0 also requires `setuptools<81`: Odoo 15 imports
+  `pkg_resources` without listing setuptools, so a uv environment could not start it and `uv pip
+  sync` removed setuptools from an adopted one. docs/setup.md "Odoo 15.0 requirements" also covers
+  `python-ldap==3.4.4` for OpenLDAP 2.6.
 - An `oasis-checkout.toml` with a key it may not set is refused with `oasis-checkout.toml may only
   set odoo_version, [tooling].checkout_slug and [tooling].environment: <key>`.
 - The menu's start / restart flow takes the dev mode option and choices from the series table.

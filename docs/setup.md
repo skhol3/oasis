@@ -100,7 +100,7 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
 | `odoo.conf` | Path-free (no `addons_path`, no `data_dir`; see [Path-free odoo.conf](path-free-odoo-conf.md)): `db_host = 127.0.0.1`, the `db_port` of the compose file, `db_user` and `db_password` empty. Mode 0600. |
 | Compose file | `name: oasis-<name>-<6 hex of the workspace directory>` and the PostgreSQL service (`postgres:<postgres_default>` of the series in `tools/odoo_versions.py`: `postgres:17` on 19.0) with the variables oasis uses, published on `127.0.0.1` on the [port](#one-port-for-odooconf-and-the-compose-file) `odoo.conf` connects to. |
 | Environment file | `ODOO_DB_USER=` and `ODOO_DB_PASSWORD=`, names only, empty values; mode 0600. Never read or printed. |
-| `runtime.in`, `dev.in` | `-r <community>/requirements.txt`; `-c runtime.txt` and `-r runtime.in`, to which you add your development tools. With an adopted series folder that holds `requirements-extra.txt`, `runtime.in` also includes it ([Another Odoo series](#the-projects-requirement-files)). |
+| `runtime.in`, `dev.in` | `-r <community>/requirements.txt`, then what the series needs that those requirements do not list (`runtime_requirements` in `tools/odoo_versions.py`: nothing on 19.0, `setuptools<81` on 15.0, [below](#odoo-150-requirements)); `-c runtime.txt` and `-r runtime.in`, to which you add your development tools. With an adopted series folder that holds `requirements-extra.txt`, `runtime.in` also includes it ([Another Odoo series](#the-projects-requirement-files)). |
 | `overrides.txt` | Only with an adopted series folder that holds `requirements-overrides.txt`: `-r <that file>`, given to `uv pip compile` as `--override` ([Another Odoo series](#the-projects-requirement-files)). |
 | Locks | `runtime.txt`, `dev.txt` and `lock.sha256`, compiled with the series' Python by the same code as `bootstrap --apply` when they are missing or stale; current locks are kept, and a lock changed by hand is kept and leaves the environment uncreated. |
 | Environment | `uv venv --python <python>` and `uv pip sync` of `dev.txt`, with the series' default Python, `--python <x.y>` or the [answered one](#a-new-environment-and-its-python). An existing environment is kept and not synced (run `bootstrap --apply` for that); `--environment <dir>` (or an answered path) [adopts one](#an-existing-environment) instead of creating it. |
@@ -203,8 +203,9 @@ that series' files, next to the other series and without touching them:
 - The missing files as for any checkout ([What it creates](#what-it-creates-and-what-it-keeps)), with
   the series' values: the compose file with its `postgres_default` (`postgres:14` on 15.0) on a free port
   that no other series of the workspace uses, its own compose project (`oasis-<name><major>-...`), the
-  requirement inputs of its source, and the locks and environment with its `python_default` (3.10 on
-  15.0), or the Python of `--python` or of the [answer](#a-new-environment-and-its-python).
+  requirement inputs of its source (on 15.0 with `setuptools<81`, [below](#odoo-150-requirements)), and the
+  locks and environment with its `python_default` (3.9 on 15.0), or the Python of `--python` or of the
+  [answer](#a-new-environment-and-its-python).
 - A kept `odoo.conf` or compose file of the series that uses a port another series of the workspace
   uses (its `odoo.conf`'s `db_port`, 5432 without one, or the port its compose file publishes) is
   refused before anything is written, since setup never edits a kept file and `doctor` fails two
@@ -281,13 +282,37 @@ adopt <corpus-cafe>/config/odoo-15 (found): odoo.conf, compose.yml, .env
 kept <corpus-cafe>/config/odoo-15/odoo.conf
 kept <corpus-cafe>/config/odoo-15/compose.yml
 kept <corpus-cafe>/config/odoo-15/.env
-create <corpus-cafe>/config/odoo-15/requirements/runtime.in: -r <15.0 source>/requirements.txt
+create <corpus-cafe>/config/odoo-15/requirements/runtime.in: -r <15.0 source>/requirements.txt, setuptools<81
 ...
-create the environment <corpus-cafe>/environments/corpus-cafe-15.0 with Python 3.10 (uv venv) and sync dev.txt (uv pip sync)
+create the environment <corpus-cafe>/environments/corpus-cafe-15.0 with Python 3.9 (uv venv) and sync dev.txt (uv pip sync)
 ```
 
 The 19.0 checkouts keep `config/odoo.conf`, `cc_dev_` and their environment; `doctor` in either shows
 `PASS series_isolation=19.0,15.0` once the two compose files publish different ports.
+
+### Odoo 15.0 requirements
+
+- The default Python of 15.0 is 3.9, the one Odoo builds its official 15.0 Debian package on
+  (`setup/package.dfdebian` of the 15.0 source: `FROM debian:bullseye`; 19.0's is `ubuntu:noble`, Python
+  3.12). Older Odoo 15 pins, such as `reportlab` 3.5.59 and `gevent` 21.8.0, have no wheels for later
+  Pythons and their sources may not build with a current compiler.
+- Odoo 15 imports `pkg_resources` without listing `setuptools`, which provides it: an environment uv
+  creates has no `setuptools`, and `uv pip sync` removes it from an environment that has it, so Odoo stops
+  with `No module named 'pkg_resources'`. A new 15.0 `runtime.in` therefore requires it, with a comment,
+  after the Odoo requirements:
+
+  ```text
+  # Odoo 15.0 imports pkg_resources without listing setuptools, which provides it: an environment uv creates has none and uv pip sync would remove it; setuptools advises <81 to keep pkg_resources.
+  setuptools<81
+  ```
+
+  The plan line says `create <requirements>/runtime.in: -r <source>/requirements.txt, setuptools<81`. A
+  kept `runtime.in` is not changed: add the two lines yourself, then `bootstrap --apply` compiles the
+  locks again (they are stale once `runtime.in` changes).
+- On a machine with OpenLDAP 2.6, the `python-ldap==3.4.0` that Odoo 15 pins does not build from source:
+  it links `-lldap_r`, a library OpenLDAP 2.6 no longer has. Put `python-ldap==3.4.4` in the project's
+  `requirements-overrides.txt` ([below](#the-projects-requirement-files)); setup and `bootstrap` give it to
+  `uv pip compile` as an override.
 
 ### The project's requirement files
 
@@ -305,7 +330,8 @@ setup references and never copies or edits:
   removing it makes the locks stale ([Dependency locks](checking-environment.md#dependency-locks)).
 
 The plan names them in the `adopt` line, then `create <requirements>/runtime.in: -r <source>/requirements.txt,
--r ../requirements-extra.txt` and `create <requirements>/overrides.txt: -r ../requirements-overrides.txt (uv pip
+-r ../requirements-extra.txt` (on 15.0 `-r <source>/requirements.txt, setuptools<81, -r ../requirements-extra.txt`)
+and `create <requirements>/overrides.txt: -r ../requirements-overrides.txt (uv pip
 compile --override)`. A `runtime.in` or `overrides.txt` that exists is kept as it is. `lock.sha256` records
 `runtime.in` and `overrides.txt`, not the files they include: after you change `requirements-extra.txt` or
 `requirements-overrides.txt`, move `lock.sha256` away and run `bootstrap --apply` to compile the locks again.
@@ -341,7 +367,7 @@ adopt <corpus-cafe>/config/odoo-15 (found): odoo.conf, compose.yml, .env, requir
 kept <corpus-cafe>/config/odoo-15/odoo.conf
 kept <corpus-cafe>/config/odoo-15/compose.yml
 kept <corpus-cafe>/config/odoo-15/.env
-create <corpus-cafe>/config/odoo-15/requirements/runtime.in: -r <15.0 source>/requirements.txt, -r ../requirements-extra.txt
+create <corpus-cafe>/config/odoo-15/requirements/runtime.in: -r <15.0 source>/requirements.txt, setuptools<81, -r ../requirements-extra.txt
 create <corpus-cafe>/config/odoo-15/requirements/dev.in: -c runtime.txt, -r runtime.in
 create <corpus-cafe>/config/odoo-15/requirements/overrides.txt: -r ../requirements-overrides.txt (uv pip compile --override)
 create <corpus-cafe>/logs/15.0/
@@ -389,7 +415,7 @@ environment's directory already has a `pyvenv.cfg`, which is kept) and neither `
 
 ```text
 Python environment for Odoo 15.0: Enter creates <corpus-cafe>/environments/corpus-cafe-15.0, or type the absolute path of an existing environment to use instead:
-Python of the new environment <corpus-cafe>/environments/corpus-cafe-15.0, one of 3.7, 3.8, 3.9, 3.10, 3.11, 3.12 [Enter: 3.10]:
+Python of the new environment <corpus-cafe>/environments/corpus-cafe-15.0, one of 3.7, 3.8, 3.9, 3.10, 3.11, 3.12 [Enter: 3.9]:
 ```
 
 - A path [adopts that environment](#an-existing-environment), as `--environment` does; Enter creates the
@@ -398,7 +424,7 @@ Python of the new environment <corpus-cafe>/environments/corpus-cafe-15.0, one o
   the marked one, the Python the environment would get without the question (the series' `python_default`,
   or the `python` of a default named environment the series uses). Any other answer is asked again:
   `3.13 is not a Python Odoo 15.0 supports; answer one of 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, or Enter for
-  3.10.`
+  3.9.`
 - Enter twice gives the same plan as without a terminal.
 
 `--python <x.y>` gives that Python without asking, also without a terminal. It is refused (exit 2, nothing

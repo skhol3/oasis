@@ -24,7 +24,9 @@ read from its pyvenv.cfg (never run) and must be one the series supports; setup 
 deletes it, and a rollback never touches it. The project's own requirement files in an adopted series
 folder (requirements-extra.txt, requirements-overrides.txt) are referenced, never copied or edited:
 runtime.in includes the first with -r after Odoo's requirements, and <requirements>/overrides.txt
-includes the second, which tools/locks.py passes to uv pip compile as --override.
+includes the second, which tools/locks.py passes to uv pip compile as --override. A new runtime.in also
+requires what the series needs that its source's requirements do not list (v0.15.0 S9:
+odoo_versions.py runtime_requirements, setuptools<81 on 15.0), before the project's own.
 
 When setup would create the environment (v0.15.0 S8: a new workspace, or a new series section) without
 --environment or --python, a terminal asks to create it or to adopt an existing one (then as --environment),
@@ -118,6 +120,9 @@ volumes:
 RUNTIME_IN = '# Written by oasis setup: the requirements of the Odoo source.\n-r {source}/requirements.txt\n'
 DEV_IN = ('# Written by oasis setup: the runtime requirements within their lock; add development tools '
           'below.\n-c runtime.txt\n-r runtime.in\n')
+# What the series needs that its source's requirements do not list (odoo_versions.py runtime_requirements,
+# v0.15.0 S9): each below a comment with its reason.
+RUNTIME_SERIES = '# {reason}\n{requirement}\n'
 RUNTIME_EXTRA = "# The project's own requirements (oasis setup found them in the series folder).\n-r {extra}\n"
 OVERRIDES_TXT = ("# Written by oasis setup: the project's pins that replace Odoo's, given to uv pip compile as "
                  '--override for runtime.txt and dev.txt.\n-r {overrides}\n')
@@ -133,7 +138,8 @@ can never apply. With --apply it creates only what is missing and keeps everythi
     both excluded from git in .git/info/exclude; --workspace <dir> puts them in <dir>, which must
     be at or above the checkout; an existing workspace file is adopted;
   - a path-free odoo.conf, a compose file with the PostgreSQL service, the environment file with
-    ODOO_DB_USER and ODOO_DB_PASSWORD (empty values, mode 0600), runtime.in and dev.in;
+    ODOO_DB_USER and ODOO_DB_PASSWORD (empty values, mode 0600), runtime.in (the source's requirements,
+    and what the series needs besides them: setuptools<81 on 15.0) and dev.in;
   - the locks (uv pip compile, as bootstrap --apply) and the Python environment (uv venv, uv pip sync).
 The series comes from the module manifests (<series>.x.y.z), else from the machine file's single series,
 else --series. It ends with the next steps.
@@ -1146,9 +1152,13 @@ def gaps(plan: dict, directory: Path, planned: set):
     def included(path: Path) -> str:
         inside = path.is_relative_to(directory) and requirements.is_relative_to(directory)
         return os.path.relpath(path, requirements) if inside else str(path)
+    needed = config.versions().capability(series, 'runtime_requirements')
     create(requirements / 'runtime.in',
-           RUNTIME_IN.format(source=source) + (RUNTIME_EXTRA.format(extra=included(extra)) if extra else ''), 0o644,
+           RUNTIME_IN.format(source=source)
+           + ''.join(RUNTIME_SERIES.format(requirement=requirement, reason=reason) for requirement, reason in needed)
+           + (RUNTIME_EXTRA.format(extra=included(extra)) if extra else ''), 0o644,
            f'create {requirements / "runtime.in"}: -r {source}/requirements.txt'
+           + ''.join(f', {requirement}' for requirement, _reason in needed)
            + (f', -r {included(extra)}' if extra else ''), 'inputs')
     create(requirements / 'dev.in', DEV_IN, 0o644,
            f'create {requirements / "dev.in"}: -c runtime.txt, -r runtime.in', 'inputs')

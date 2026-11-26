@@ -343,10 +343,10 @@ class SeriesPromptTests(unittest.TestCase):
         self.workspace.write_text(test_setup_series.V1)
         before = self.tree()
         status, stdout, written = self.terminal(*self.sources(), steps=(
-            (environment_prompt('15.0', self.venv()), b'\n'), (python_prompt(self.venv(), PYTHONS_15, '3.10'), b'\n')))
+            (environment_prompt('15.0', self.venv()), b'\n'), (python_prompt(self.venv(), PYTHONS_15, test_setup_series.PYTHON_15), b'\n')))
         self.assertEqual((status, stdout), (0, self.new_plan(self.port_of(stdout)) + DRY_RUN), written)
         self.assertEqual(written, environment_prompt('15.0', self.venv())
-                         + python_prompt(self.venv(), PYTHONS_15, '3.10'))
+                         + python_prompt(self.venv(), PYTHONS_15, test_setup_series.PYTHON_15))
         self.assertEqual(self.tree(), before)
         self.assertFalse(self.log.exists())
 
@@ -373,12 +373,12 @@ class SeriesPromptTests(unittest.TestCase):
 
     def test_a_python_answer_gives_the_section_its_python_and_a_wrong_one_is_asked_again(self):
         self.workspace.write_text(test_setup_series.V1)
-        prompt = python_prompt(self.venv(), PYTHONS_15, '3.10')
+        prompt = python_prompt(self.venv(), PYTHONS_15, test_setup_series.PYTHON_15)
         status, stdout, written = self.terminal('--apply', *self.sources(), steps=(
             (environment_prompt('15.0', self.venv()), b'\n'), (prompt, b'3.13\n'), (prompt, b'3.8\n')))
         self.assertEqual(status, 0, written + stdout)
         self.assertEqual(written, environment_prompt('15.0', self.venv()) + prompt
-                         + asked_again('3.13', '15.0', PYTHONS_15, '3.10') + prompt)
+                         + asked_again('3.13', '15.0', PYTHONS_15, test_setup_series.PYTHON_15) + prompt)
         self.assertTrue(stdout.startswith(self.with_python(self.new_plan(self.port_of(stdout)), '3.8')), stdout)
         self.assertIn("[series.\"15.0\"]\nenvironment = 'environments/cc-15.0'\npython = '3.8'\n",
                       self.workspace.read_text())
@@ -392,7 +392,7 @@ class SeriesPromptTests(unittest.TestCase):
         result = self.setup_cmd('--python', '3.8', *self.sources())
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, self.with_python(self.new_plan(self.port_of(result.stdout)), '3.8') + DRY_RUN, ''))
-        default = self.setup_cmd('--python', '3.10', *self.sources())
+        default = self.setup_cmd('--python', test_setup_series.PYTHON_15, *self.sources())
         self.assertEqual((default.returncode, default.stdout, default.stderr),
                          (0, self.new_plan(self.port_of(default.stdout)) + DRY_RUN, ''))
         status, stdout, written = self.terminal('--python', '3.8', *self.sources())
@@ -427,7 +427,7 @@ class SeriesPromptTests(unittest.TestCase):
         self.assertIn('PYTHON_VERSION=3.12\n', after19.stdout)
 
     def test_over_a_named_environment_of_another_python_the_marked_default_is_its_python(self):
-        # The series would use the default named environment with its Python 3.12, not the series' 3.10: that is
+        # The series would use the default named environment with its Python 3.12, not the series' 3.9: that is
         # the default the question marks, and Enter, Enter gives the plan without a terminal.
         self.workspace.write_text(self.named(test_setup_series.V2, 'environments/cc-{series}', '3.12'))
         before = self.tree()
@@ -446,7 +446,7 @@ class SeriesPromptTests(unittest.TestCase):
         self.workspace.write_text(test_setup_series.V1)
         before = self.tree()
         first = environment_prompt('15.0', self.venv())
-        second = python_prompt(self.venv(), PYTHONS_15, '3.10')
+        second = python_prompt(self.venv(), PYTHONS_15, test_setup_series.PYTHON_15)
         for name, steps, status, tail in (
                 ('end of input, python', ((first, b'\n'), (second, b'\x04')), 2, no_answer('15.0')),
                 ('ctrl-c, environment', ((first, b'\x03'),), 130, INTERRUPTED)):

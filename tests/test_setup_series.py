@@ -99,6 +99,11 @@ def table():
 
 PYTHON_15 = table().capability('15.0', 'python_default')
 POSTGRES_15 = table().capability('15.0', 'postgres_default')
+# What a 15.0 runtime.in requires besides the Odoo source's requirements (v0.15.0 S9): Odoo 15 imports
+# pkg_resources without listing setuptools.
+SETUPTOOLS_15 = ('# Odoo 15.0 imports pkg_resources without listing setuptools, which provides it: an environment '
+                 'uv creates has none and uv pip sync would remove it; setuptools advises <81 to keep '
+                 'pkg_resources.\nsetuptools<81\n')
 
 
 def first_free_port():
@@ -236,7 +241,7 @@ class SeriesSetupTests(unittest.TestCase):
             f'create {series / "compose.yml"}: PostgreSQL {POSTGRES_15} (postgres:{POSTGRES_15}) as service db on '
             f'127.0.0.1:{port}, compose project {self.compose_name("cc15")}',
             f'create {series / ".env"} (mode 0600): ODOO_DB_USER and ODOO_DB_PASSWORD, empty',
-            f'create {series / "requirements/runtime.in"}: -r {self.source15}/requirements.txt',
+            f'create {series / "requirements/runtime.in"}: -r {self.source15}/requirements.txt, setuptools<81',
             f'create {series / "requirements/dev.in"}: -c runtime.txt, -r runtime.in',
             f'create {project / "logs/15.0"}/', f'create {project / "data/15.0"}/',
             f'compile {series / "requirements"}/runtime.txt, dev.txt and lock.sha256 with Python {PYTHON_15} '
@@ -295,8 +300,9 @@ class SeriesSetupTests(unittest.TestCase):
         self.assertIn(f'db_port = {port}\n', (series / 'odoo.conf').read_text())
         self.assertEqual((series / '.env').stat().st_mode & 0o777, 0o600)
         self.assertEqual((series / '.env').read_text().splitlines()[1:], ['ODOO_DB_USER=', 'ODOO_DB_PASSWORD='])
-        self.assertEqual((requirements / 'runtime.in').read_text().splitlines()[-1],
-                         f'-r {self.source15}/requirements.txt')
+        self.assertEqual((requirements / 'runtime.in').read_text(),
+                         '# Written by oasis setup: the requirements of the Odoo source.\n'
+                         f'-r {self.source15}/requirements.txt\n' + SETUPTOOLS_15)
         self.assertEqual([line.split(' (in ')[0] for line in self.log.read_text().splitlines()], [
             f'uv pip compile --python-version {PYTHON_15} runtime.in -o runtime.txt',
             f'uv pip compile --python-version {PYTHON_15} dev.in -o dev.txt',
@@ -839,7 +845,8 @@ series_exceptions = ['report_xlsx']
             f'adopt {folder} (found): odoo.conf, compose.yml, .env, requirements-extra.txt, '
             'requirements-overrides.txt',
             f'kept {folder / "odoo.conf"}', f'kept {folder / "compose.yml"}', f'kept {folder / ".env"}',
-            f'create {requirements / "runtime.in"}: -r {self.source15}/requirements.txt, -r ../requirements-extra.txt',
+            f'create {requirements / "runtime.in"}: -r {self.source15}/requirements.txt, setuptools<81, '
+            '-r ../requirements-extra.txt',
             f'create {requirements / "dev.in"}: -c runtime.txt, -r runtime.in',
             f'create {requirements / "overrides.txt"}: -r ../requirements-overrides.txt (uv pip compile --override)',
             f'create {self.project / "logs/15.0"}/', f'create {self.project / "data/15.0"}/',
@@ -872,7 +879,7 @@ series_exceptions = ['report_xlsx']
             f'uv pip compile --python-version 3.8 --override overrides.txt dev.in -o dev.txt (in {requirements})'])
         self.assertEqual((requirements / 'runtime.in').read_text(), (
             '# Written by oasis setup: the requirements of the Odoo source.\n'
-            f'-r {self.source15}/requirements.txt\n'
+            f'-r {self.source15}/requirements.txt\n' + SETUPTOOLS_15 +
             "# The project's own requirements (oasis setup found them in the series folder).\n"
             '-r ../requirements-extra.txt\n'))
         self.assertEqual((requirements / 'overrides.txt').read_text(), (
@@ -921,7 +928,7 @@ series_exceptions = ['report_xlsx']
     def test_an_environment_under_the_workspace_is_written_relative_and_its_default_python_is_not(self):
         self.workspace.write_text(V1)
         environment = self.existing_environment(self.project / 'environments/cc15-own',
-                                                'home = /usr/bin\nuv = 0.13.10\nversion_info = 3.10.12\n')
+                                                f'home = /usr/bin\nuv = 0.13.10\nversion_info = {PYTHON_15}.12\n')
         before = self.tree()
         result = self.setup_cmd('--environment', str(environment), '--community', str(self.source15),
                                 '--no-enterprise', '--exception', 'report_xlsx')
@@ -930,7 +937,7 @@ series_exceptions = ['report_xlsx']
                       result.stdout)
         # Without the project's requirement files: runtime.in from Odoo's only, no overrides.txt.
         self.assertIn(f'create {self.project / "config/15.0/requirements/runtime.in"}: -r '
-                      f'{self.source15}/requirements.txt\n', result.stdout)
+                      f'{self.source15}/requirements.txt, setuptools<81\n', result.stdout)
         self.assertNotIn('overrides', result.stdout)
         self.assertTrue(result.stdout.endswith(
             f'adopt the environment {environment} (from --environment): Python {PYTHON_15} (its pyvenv.cfg); setup '

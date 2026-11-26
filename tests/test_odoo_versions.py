@@ -23,17 +23,20 @@ class CapabilityTableTests(unittest.TestCase):
         'test_tags_implies_stop': True, 'test_class_filter': True,
         'dev_option': '--dev', 'dev_features': ['access', 'qweb', 'reload', 'replica', 'xml'],
         'dev_all': ['access', 'qweb', 'reload', 'xml'], 'dev_reload_packages': ['inotify', 'watchdog'],
-        'user_groups_field': 'group_ids'}
+        'user_groups_field': 'group_ids', 'runtime_requirements': []}
     # v0.15.0 S2, read from the local 15.0 source (tools/odoo_versions.py cites the lines).
     ODOO_15 = {
-        'python': ('3.7', '3.12'), 'python_default': '3.10', 'postgres_min': 12,
+        'python': ('3.7', '3.12'), 'python_default': '3.9', 'postgres_min': 12,
         'postgres_default': 14, 'second_port_option': '--longpolling-port', 'second_port_conf_option': 'longpolling_port',
         'demo_off_args': ['--without-demo=all'], 'demo_on_args': [],
         'test_tags_implies_stop': False, 'test_class_filter': True,
         'dev_option': '--dev',
         'dev_features': ['ipdb', 'pdb', 'pudb', 'wdb', 'qweb', 'reload', 'werkzeug', 'xml'],
         'dev_all': ['pdb', 'reload', 'qweb', 'werkzeug', 'xml'], 'dev_reload_packages': ['inotify', 'watchdog'],
-        'user_groups_field': 'groups_id'}
+        'user_groups_field': 'groups_id',
+        'runtime_requirements': [('setuptools<81', 'Odoo 15.0 imports pkg_resources without listing setuptools, '
+                                  'which provides it: an environment uv creates has none and uv pip sync would '
+                                  'remove it; setuptools advises <81 to keep pkg_resources.')]}
 
     def test_odoo_19_and_15_are_supported_with_their_capabilities(self):
         self.assertEqual(odoo_versions.CAPABILITIES, {'19.0': self.ODOO_19, '15.0': self.ODOO_15})

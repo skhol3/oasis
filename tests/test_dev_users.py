@@ -305,10 +305,10 @@ class DevelopmentUsersTests(unittest.TestCase):
             self.assertFalse(self.commands.exists())
 
     def use_odoo_15(self):
-        """An Odoo 15.0 checkout (v0.15.0 S2): workspace series, source release, Python 3.10."""
+        """An Odoo 15.0 checkout (v0.15.0 S2): workspace series, source release, Python 3.9."""
         self.profile.write_text(self.profile.read_text().replace("odoo_version = '19.0'", "odoo_version = '15.0'", 1))
         (self.source / 'odoo/release.py').write_text('version_info = (15, 0, 0, "final", 0)\n')
-        self.python.write_text(self.python.read_text().replace('print("3.12")', 'print("3.10")', 1)
+        self.python.write_text(self.python.read_text().replace('print("3.12")', 'print("3.9")', 1)
                                .replace('Odoo Server 19.0', 'Odoo Server 15.0', 1))
 
     def test_odoo_15_uses_its_demo_options_and_groups_field(self):

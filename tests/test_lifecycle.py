@@ -107,12 +107,12 @@ RUN_DATABASE = r'_r[0-9a-f]{6}'
 
 def use_odoo_15(case):
     """Turn a LifecycleTests fixture into an Odoo 15.0 checkout (v0.15.0 S2): the workspace's
-    odoo_version, the source release and what the fake environment reports (Python 3.10, the
+    odoo_version, the source release and what the fake environment reports (Python 3.9, the
     15.0 python_default, and Odoo Server 15.0)."""
     workspace = case.root / 'oasis-workspace.toml'
     workspace.write_text(workspace.read_text().replace("odoo_version = '19.0'", "odoo_version = '15.0'", 1))
     (case.source / 'odoo/release.py').write_text('version_info = (15, 0, 0, "final", 0)\n')
-    case.python.write_text(case.python.read_text().replace('echo 3.12', 'echo 3.10', 1)
+    case.python.write_text(case.python.read_text().replace('echo 3.12', 'echo 3.9', 1)
                            .replace('Odoo Server 19.0', 'Odoo Server 15.0', 1))
 
 

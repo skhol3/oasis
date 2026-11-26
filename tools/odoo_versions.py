@@ -18,7 +18,10 @@ Keys:
 - python: lowest and highest supported Python minor version, inclusive ("3.10", "3.14").
   15.0: 3.7-3.12.
 - python_default: the Python of a workspace that sets [tooling].environment instead of named
-  [environments] (a named environment declares its own); within the range above. 15.0: 3.10.
+  [environments] (a named environment declares its own); within the range above. The Python of the
+  official Debian package Odoo builds for the series (v0.15.0 S9), from the base image of its
+  setup/package.dfdebian: 19.0 `FROM ubuntu:noble` (Python 3.12), 15.0 `FROM debian:bullseye`
+  (Python 3.9).
 - postgres_min: lowest supported PostgreSQL major version.
 - postgres_default: the PostgreSQL major version of the compose file `oasis setup` writes (the image
   postgres:<version>); at or above postgres_min. 19.0: 17, a release with years of upstream support
@@ -53,6 +56,13 @@ Keys:
   feature (19.0: odoo/service/server.py:1663-1675; 15.0: server.py:28-47); without any, Odoo logs a
   warning and disables reload. Empty for a series without `reload`.
 - user_groups_field: the res.users field of a user's groups (init-dev-database writes it).
+- runtime_requirements: what the series needs at run time that the requirements.txt of its source
+  does not list, as (requirement, reason) pairs; a new runtime.in that `oasis setup` writes requires
+  each after the source's requirements, below a comment with its reason (v0.15.0 S9). 19.0: none.
+  15.0: setuptools<81, since Odoo 15 imports pkg_resources without listing setuptools, an environment
+  uv creates has none and uv pip sync removes it from one that has it (without it odoo-bin stops with
+  "No module named 'pkg_resources'"; odd/tasks/v0.15.0.md L24); setuptools' deprecation warning for
+  pkg_resources says to pin Setuptools<81 to keep it.
 
 Shell tools read one value with `python3 -I -B odoo_versions.py <version> <key>`: a boolean
 prints true or false, a list its items quoted for the shell, anything else its text. An
@@ -81,10 +91,12 @@ CAPABILITIES = {
         'dev_all': ['access', 'qweb', 'reload', 'xml'],
         'dev_reload_packages': ['inotify', 'watchdog'],
         'user_groups_field': 'group_ids',
+        'runtime_requirements': [],
     },
     '15.0': {
         'python': ('3.7', '3.12'),
-        'python_default': '3.10',
+        # setup/package.dfdebian of the 15.0 source: FROM debian:bullseye, whose Python is 3.9.
+        'python_default': '3.9',
         'postgres_min': 12,
         'postgres_default': 14,
         'second_port_option': '--longpolling-port',
@@ -98,6 +110,9 @@ CAPABILITIES = {
         'dev_all': ['pdb', 'reload', 'qweb', 'werkzeug', 'xml'],
         'dev_reload_packages': ['inotify', 'watchdog'],
         'user_groups_field': 'groups_id',
+        'runtime_requirements': [('setuptools<81', 'Odoo 15.0 imports pkg_resources without listing setuptools, '
+                                  'which provides it: an environment uv creates has none and uv pip sync would '
+                                  'remove it; setuptools advises <81 to keep pkg_resources.')],
     },
 }
 
