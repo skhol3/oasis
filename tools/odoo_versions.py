@@ -63,6 +63,11 @@ Keys:
   uv creates has none and uv pip sync removes it from one that has it (without it odoo-bin stops with
   "No module named 'pkg_resources'"; odd/tasks/v0.15.0.md L24); setuptools' deprecation warning for
   pkg_resources says to pin Setuptools<81 to keep it.
+- ldap_override: (Odoo's python-ldap pin, the pin that replaces it) when that pin does not build against
+  OpenLDAP 2.6, else None (v0.16.0 S3). 15.0: python-ldap==3.4.0 links libldap_r, which OpenLDAP 2.6
+  removed; 3.4.4 builds against both. `oasis setup` proposes the replacement in overrides.txt when the
+  source's requirements.txt has that pin and this machine has OpenLDAP 2.6 without libldap_r
+  (tools/known_problems.py).
 
 Shell tools read one value with `python3 -I -B odoo_versions.py <version> <key>`: a boolean
 prints true or false, a list its items quoted for the shell, anything else its text. An
@@ -92,6 +97,7 @@ CAPABILITIES = {
         'dev_reload_packages': ['inotify', 'watchdog'],
         'user_groups_field': 'group_ids',
         'runtime_requirements': [],
+        'ldap_override': None,
     },
     '15.0': {
         'python': ('3.7', '3.12'),
@@ -113,6 +119,7 @@ CAPABILITIES = {
         'runtime_requirements': [('setuptools<81', 'Odoo 15.0 imports pkg_resources without listing setuptools, '
                                   'which provides it: an environment uv creates has none and uv pip sync would '
                                   'remove it; setuptools advises <81 to keep pkg_resources.')],
+        'ldap_override': ('python-ldap==3.4.0', 'python-ldap==3.4.4'),
     },
 }
 

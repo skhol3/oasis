@@ -5,7 +5,8 @@ Tier A in the agent policy (tools/policy.py): --apply writes the project's and t
 configuration, creating only what is missing, so an agent runs it alone. Without --apply it prints
 the plan and changes nothing. It infers what it can (the checkout, the Odoo series from the module
 manifests, the source from the machine file), asks on a terminal what it cannot (every answer also
-has a flag; without a terminal a missing answer is an error naming the flag), adopts what exists
+has a flag and an id for --answer/--answers; without a terminal a missing answer is an open question
+of the plan and --apply refuses naming its flag, v0.16.0 S3), adopts what exists
 and never overwrites: an existing workspace file, odoo.conf, compose file, environment file,
 requirement inputs, locks and environment are kept, and only the missing pieces are created.
 Without a workspace file, the workspace is the checkout itself: oasis-workspace.toml at its root
@@ -41,6 +42,11 @@ When setup would create the environment (v0.15.0 S8: a new workspace, or a new s
 and the Python of a new one among those the series supports; --python <x.y> answers that without asking.
 Without a terminal nothing is asked and the plan is the same as before. Every question comes before any
 change: end of input refuses (exit 2), Ctrl-C exits 130, and nothing is changed.
+
+v0.16.0 S3 (docs/setup.md#questions-and-answers): --plan --json prints the plan as one JSON object
+(plan_document); --answer <id>=<value> and --answers <file.json> answer the questions by id (answered);
+a new runtime.in gets the questions of the problems tools/known_problems.py anticipates (anticipated):
+python-ldap against OpenLDAP 2.6 and the modules' external_dependencies.
 """
 import configparser
 import copy
@@ -57,15 +63,17 @@ import sys
 import tomllib
 
 VALUE_OPTIONS = ('--series', '--community', '--enterprise', '--workspace', '--name', '--config-dir', '--environment',
-                 '--python')
-REPEATED_OPTIONS = ('--exception',)
-FLAG_OPTIONS = ('--apply', '--plan', '--no-enterprise')
+                 '--python', '--answers')
+REPEATED_OPTIONS = ('--exception', '--answer')
+FLAG_OPTIONS = ('--apply', '--plan', '--no-enterprise', '--json')
+# Options of the plan itself, accepted with an existing configuration too (the answers become flags first).
+PLAN_OPTIONS = ('--apply', '--plan', '--json')
 # Options that only answer the questions of a new configuration (an existing one is only filled in).
 SOURCE_OPTIONS = ('--community', '--enterprise', '--no-enterprise')
 # Options that only apply when setup adds a series section to an existing workspace file, and every
 # option accepted then.
 SECTION_OPTIONS = ('--exception', '--config-dir')
-SERIES_PLAN_OPTIONS = ('--apply', '--plan', '--environment', '--python', *SOURCE_OPTIONS, *SECTION_OPTIONS)
+SERIES_PLAN_OPTIONS = (*PLAN_OPTIONS, '--environment', '--python', *SOURCE_OPTIONS, *SECTION_OPTIONS)
 # The project's own requirement files that an adopted series folder may hold (S7): its extra requirements
 # (runtime.in includes them with -r) and its pins that replace Odoo's (overrides.txt includes them).
 PROJECT_REQUIREMENTS = ('requirements-extra.txt', 'requirements-overrides.txt')
@@ -85,6 +93,13 @@ LAYOUT = '.oasis'
 EXCLUDES = ('/oasis-workspace.toml', f'/{LAYOUT}/')
 DIRECTORY_MODE = 0o700
 DRY_RUN = 'dry run: nothing changed; run with --apply to set up'
+OPEN_PLAN = ('nothing changed: answer the open questions above (docs/setup.md#questions-and-answers), then run with '
+             '--apply to set up')
+# The questions setup asks (v0.16.0 S3): the ones a flag answers, and those of the problems it anticipates.
+QUESTION_FLAGS = {'series': '--series', 'community': '--community', 'environment': '--environment',
+                  'python': '--python'}
+QUESTION_ID = re.compile(r'series|community|enterprise|environment|python|python_ldap|requirement:[a-z0-9][a-z0-9-]*')
+QUESTION_IDS = 'series, community, enterprise, environment, python, python_ldap and requirement:<name>'
 WORKSPACE_HEADER = ('# Written by oasis setup. Paths are relative to this file, addons_paths to each checkout;\n'
                     '# the Odoo source comes from the machine file (docs/workspace-file.md#machine-file).\n')
 MACHINE_HEADER = ('# Written by oasis setup: the Odoo source of each series on this machine '
@@ -136,6 +151,11 @@ RUNTIME_SERIES = '# {reason}\n{requirement}\n'
 RUNTIME_EXTRA = "# The project's own requirements (oasis setup found them in the series folder).\n-r {extra}\n"
 OVERRIDES_TXT = ("# Written by oasis setup: the project's pins that replace Odoo's, given to uv pip compile as "
                  '--override for runtime.txt and dev.txt.\n-r {overrides}\n')
+OVERRIDES_PINS = ("# Written by oasis setup: pins that replace Odoo's, given to uv pip compile as --override for "
+                  'runtime.txt and dev.txt.\n')
+# An answered anticipated problem (v0.16.0 S3): a pin of overrides.txt, a requirement of runtime.in.
+ANSWERED_PIN = '# {reason}\n{pin}\n'
+RUNTIME_MODULE = '# The module {module} requires it (external_dependencies).\n{requirement}\n'
 HELP = '''
 Sets up the checkout (--project, else the git top level of the current directory) for oasis.
 Without --apply it prints the plan and changes nothing; --plan asks for that plan explicitly and
@@ -186,6 +206,20 @@ among those the series supports (Enter: the default; any other answer is asked a
 gives that Python without asking: one the series supports, never with --environment, and refused when
 the environment already exists. Without a terminal nothing is asked and the environment gets the
 configuration's Python. End of input or Ctrl-C at a question changes nothing (exit 2 or 130).
+
+Questions and answers (docs/setup.md#questions-and-answers): every question has a flag, and
+--answer <id>=<value> (repeatable) or --answers <file.json> (a JSON object {"<id>": "<value>"}) answers
+it by its id: series, community, enterprise (a path or none), environment (create or a path), python,
+python_ldap (yes or no) and requirement:<name>. Without a terminal and without an answer, a question
+whose answer setup cannot go without (series, community, enterprise) or one of an anticipated problem
+is an open question: the plan lists it with its flag and --apply refuses, changing nothing; the
+environment and its Python take the recommended answers, as before. --plan --json prints the plan as
+one JSON object (inferred values and their origin, changes, questions; never a password).
+Anticipated problems (a new runtime.in only): Odoo 15.0's python-ldap==3.4.0 on a machine with
+OpenLDAP 2.6 without libldap_r (python_ldap: pin python-ldap==3.4.4 in a new overrides.txt), and each
+external_dependencies python requirement of the checkout's modules that the requirements do not list
+(add it to runtime.in) or that an Odoo pin does not satisfy (pin the lowest version it accepts in a new
+overrides.txt). uv 0.13 and later run with UV_LEGACY_TAR_BACKEND=1 (old source archives).
 '''
 
 
@@ -206,12 +240,14 @@ def sibling(name: str):
 
 
 config, migrate, locks, db_account = sibling('config'), sibling('migrate'), sibling('locks'), sibling('db_account')
+known_problems = sibling('known_problems')
 
 
 def usage() -> str:
     return (f'Usage: {config.usage_name()} setup [--series <x.y>] [--community <dir>] '
             '[--enterprise <dir> | --no-enterprise] [--workspace <dir>] [--name <name>] '
-            '[--exception <module>]... [--config-dir <dir>] [--environment <dir> | --python <x.y>] [--apply | --plan]')
+            '[--exception <module>]... [--config-dir <dir>] [--environment <dir> | --python <x.y>] '
+            '[--answer <id>=<value>]... [--answers <file.json>] [--apply | --plan [--json]]')
 
 
 def parse_arguments(arguments: list[str]) -> dict | None:
@@ -235,21 +271,89 @@ def parse_arguments(arguments: list[str]) -> dict | None:
         else:
             return None
         index += 1
-    if ('--apply' in options and '--plan' in options) or ('--enterprise' in options and '--no-enterprise' in options):
+    if ('--apply' in options and ('--plan' in options or '--json' in options)) or (
+            '--enterprise' in options and '--no-enterprise' in options):
         return None
     return options
 
 
+def answered(options: dict) -> dict:
+    """{question id: (answer, where it came from)} of --answers and --answer (v0.16.0 S3), both removed from
+    options; an answer to a question a flag answers becomes that flag (refused when the flag is given too), and
+    environment=create is kept as an answer."""
+    answers = {}
+    if '--answers' in options:
+        path = options.pop('--answers')
+        try:
+            document = json.loads(Path(path).read_text(encoding='utf-8'))
+        except (OSError, UnicodeError, ValueError):
+            document = None
+        if not isinstance(document, dict) or not all(isinstance(value, str) for value in document.values()):
+            raise Refused(f'--answers {path} must be a JSON object of question ids and text answers.')
+        answers = {key: (value, f'--answers {path}') for key, value in document.items()}
+    for item in options.pop('--answer', []):
+        key, equals, value = item.partition('=')
+        if not equals or not key:
+            raise Refused(f'--answer {item}: use --answer <question id>=<value>.')
+        if key in answers:
+            raise Refused(f'The question {key} is answered twice: by {answers[key][1]} and by --answer.')
+        answers[key] = (value, '--answer')
+    for key, (value, source) in list(answers.items()):
+        if not QUESTION_ID.fullmatch(key):
+            raise Refused(f'{source}: unknown question {key} (setup asks {QUESTION_IDS}).')
+        if key == 'enterprise':
+            flags, flag, given = (('--enterprise', '--no-enterprise'), '--no-enterprise' if value == 'none'
+                                  else '--enterprise', True if value == 'none' else value)
+        elif key == 'environment' and value == 'create':
+            flags, flag, given = ('--environment',), None, None
+        elif key in QUESTION_FLAGS:
+            flags, flag, given = (QUESTION_FLAGS[key],), QUESTION_FLAGS[key], value
+        else:
+            continue
+        clash = next((other for other in flags if other in options), None)
+        if clash is not None:
+            raise Refused(f'The question {key} is answered twice: by {clash} and by {source}.')
+        if flag is not None:
+            options[flag] = given
+            del answers[key]
+    return answers
+
+
+class Open(Exception):
+    """A question setup cannot go on without, with neither a terminal nor an answer: the plan stops there and
+    lists it (v0.16.0 S3); --apply refuses with its refusal."""
+
+
 class Questions:
-    """What setup cannot infer: asked on a terminal, else refused with the flag that answers it."""
+    """What setup cannot infer: asked on a terminal, else an open question of the plan naming the flag that
+    answers it (v0.16.0 S3). It also holds what the plan inferred so far and every question it met, answered
+    or open, for --json: a plan that stops at an open question still reports them."""
 
-    def __init__(self):
-        self.interactive = sys.stdin.isatty() and sys.stderr.isatty()
+    def __init__(self, answers=None, interactive=None):
+        self.interactive = (sys.stdin.isatty() and sys.stderr.isatty()) if interactive is None else interactive
+        self.answers = answers or {}
+        self.lines, self.inferred, self.listed, self.refusals = [], {}, [], {}
 
-    def ask(self, prompt: str, refusal: str) -> str:
+    def infer(self, key: str, value, origin: str):
+        self.inferred[key] = {'value': value if value is None or isinstance(value, int) else str(value),
+                              'origin': origin}
+
+    def met(self, question: dict, answer, origin, refusal: str = ''):
+        self.listed.append({**question, 'answer': answer, 'origin': origin})
+        if answer is None:
+            self.refusals[question['id']] = refusal
+
+    def open(self) -> list[str]:
+        return [question['id'] for question in self.listed if question['answer'] is None]
+
+    def ask(self, prompt: str, refusal: str, question: dict | None = None) -> str:
         """The answer, stripped. End of input refuses with refusal and Ctrl-C raises Interrupted: every
-        question comes before any change, so either leaves everything as it was."""
+        question comes before any change, so either leaves everything as it was. Without a terminal, a
+        question is open (Open) and anything else refused."""
         if not self.interactive:
+            if question is not None:
+                self.met(question, None, None, refusal)
+                raise Open(refusal)
             raise Refused(refusal)
         sys.stderr.write(prompt)
         sys.stderr.flush()
@@ -264,6 +368,29 @@ class Questions:
     def say(self, text: str):
         sys.stderr.write(text)
         sys.stderr.flush()
+
+    def choose(self, question: dict) -> str | None:
+        """The answer to a question of an anticipated problem (v0.16.0 S3): --answer or --answers, else asked
+        on a terminal (Enter: the recommended one), else None: an open question that --apply refuses."""
+        values = [option['value'] for option in question['options']]
+        listed = ', '.join(values[:-1]) + f' or {values[-1]}'
+        if question['id'] in self.answers:
+            answer, source = self.answers[question['id']]
+            if answer not in values:
+                raise Refused(f'Invalid answer {answer} for {question["id"]}: answer {listed}.')
+            self.met(question, answer, f'from {source.split()[0]}')
+            return answer
+        refusal = f'{question["text"]} Answer with {question["flag"]} (recommended: {question["recommended"]}).'
+        if not self.interactive:
+            self.met(question, None, None, refusal)
+            return None
+        while True:
+            answer = self.ask(f'{question["text"]} ({"/".join(values)}) [Enter: {question["recommended"]}]: ',
+                              f'No answer for {question["id"]} (end of input): nothing changed; pass '
+                              f'{question["flag"]}.') or question['recommended']
+            if answer in values:
+                return answer
+            self.say(f'Answer {listed}, or Enter for {question["recommended"]}.\n')
 
 
 # -- inference -------------------------------------------------------------------------------------
@@ -330,7 +457,10 @@ def choose_series(root, options, machine_document, questions) -> tuple[str, str]
         return next(iter(tables)), 'from the machine file'
     answer = questions.ask(f'Odoo series (supported: {", ".join(supported)}): ',
                            f'Cannot infer the Odoo series of {root}: no module manifest declares one and the '
-                           f'machine file has no single series; pass --series <x.y> (supported: {", ".join(supported)}).')
+                           f'machine file has no single series; pass --series <x.y> (supported: {", ".join(supported)}).',
+                           {'id': 'series', 'text': 'Odoo series of the checkout',
+                            'options': [{'value': item, 'label': f'Odoo {item}'} for item in supported],
+                            'recommended': None, 'flag': '--series <x.y>'})
     return checked(answer), 'answered'
 
 
@@ -400,17 +530,32 @@ def environment_choice(options: dict, questions: Questions, series: str, environ
     if '--python' in options and exists:
         raise Refused(f'--python {options["--python"]}: the environment {environment} exists and is kept; setup '
                       'creates no environment, so drop --python.')
-    if exists or not questions.interactive or '--environment' in options or '--python' in options:
+    if exists or '--environment' in options or '--python' in options:
+        return None, None
+    pythons = series_pythons(series)
+    create = questions.answers.get('environment')
+    asked = [({'id': 'environment', 'text': f'Python environment for Odoo {series}: create {environment}, or use an '
+                                            'existing environment',
+               'options': [{'value': 'create', 'label': f'create {environment}'}], 'recommended': 'create',
+               'flag': '--environment <dir>'}, 'create'),
+             ({'id': 'python', 'text': f'Python of the new environment {environment}',
+               'options': [{'value': python, 'label': f'Python {python}'} for python in pythons],
+               'recommended': default, 'flag': '--python <x.y>'}, default)]
+    if not questions.interactive:
+        # Without a terminal the recommended answers apply, as before v0.16.0: the configuration's own Python.
+        for question, answer in asked:
+            questions.met(question, answer, f'from {create[1].split()[0]}' if create and question['id'] == 'environment'
+                          else 'recommended (no terminal)')
         return None, None
     refusal = (f'No answer for the Python environment of Odoo {series} (end of input): nothing changed; pass '
                '--environment <dir> or --python <x.y>.')
-    answer = questions.ask(f'Python environment for Odoo {series}: Enter creates {environment}, or type the absolute '
-                           'path of an existing environment to use instead: ', refusal)
+    answer = '' if create else questions.ask(
+        f'Python environment for Odoo {series}: Enter creates {environment}, or type the absolute path of an existing '
+        'environment to use instead: ', refusal)
     if answer:
         if not os.path.isabs(answer) or not os.path.isdir(answer):
             raise Refused('--environment requires an absolute existing directory.')
         return adopted_environment(answer, series), None
-    pythons = series_pythons(series)
     listed = ', '.join(pythons)
     while True:
         answer = questions.ask(f'Python of the new environment {environment}, one of {listed} [Enter: {default}]: ',
@@ -466,7 +611,10 @@ def choose_sources(root, series, options, machine, questions):
         answer = questions.ask(
             f'Odoo Community source for {series} (absolute path)' + (f' [Enter: {found}]' if found else '') + ': ',
             f'No Odoo Community source for {series} in the machine file {path}: pass --community <dir>'
-            + (f'; found {found}, a suggestion only: pass it to use it' if found else '') + '.')
+            + (f'; found {found}, a suggestion only: pass it to use it' if found else '') + '.',
+            {'id': 'community', 'text': f'Odoo Community source for {series} (absolute path)',
+             'options': [{'value': str(found), 'label': 'found near the checkout'}] if found else [],
+             'recommended': str(found) if found else None, 'flag': '--community <dir>'})
         community, community_origin = community_source(answer or str(found or ''), 'The answer', series), 'answered'
     if '--enterprise' in options:
         enterprise, enterprise_origin = directory_answer(options['--enterprise'], '--enterprise'), 'from --enterprise'
@@ -474,7 +622,10 @@ def choose_sources(root, series, options, machine, questions):
         enterprise, enterprise_origin = None, 'from --no-enterprise'
     else:
         answer = questions.ask(f'Odoo Enterprise source for {series} (absolute path, empty for none): ',
-                               f'Enterprise or not for {series}: pass --enterprise <dir> or --no-enterprise.')
+                               f'Enterprise or not for {series}: pass --enterprise <dir> or --no-enterprise.',
+                               {'id': 'enterprise', 'text': f'Odoo Enterprise source for {series} (absolute path, or none)',
+                                'options': [{'value': 'none', 'label': 'no Odoo Enterprise source'}],
+                                'recommended': None, 'flag': '--enterprise <dir> | --no-enterprise'})
         enterprise = directory_answer(answer, 'The answer') if answer else None
         enterprise_origin = 'answered'
     entry = f'{table}\ncommunity = {migrate.toml_string(str(community))}\n'
@@ -551,7 +702,9 @@ def git_exclude(root: Path) -> tuple[Path, list[str]]:
 def make_plan(root: Path, options: dict, questions: Questions) -> dict:
     """Every line to print, every change to make and the steps after them; nothing is written."""
     kind, main = checkout_kind(root)
-    lines = [f'checkout: {root} ({"outside git" if kind == "none" else kind})']
+    lines = questions.lines
+    lines.append(f'checkout: {root} ({"outside git" if kind == "none" else kind})')
+    questions.infer('checkout', root, 'outside git' if kind == 'none' else kind)
     actions, planned = [], set()
     workspace = config.workspace_file(root)
     machine = read_machine()
@@ -564,6 +717,8 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
         except config.InvalidConfig as exc:
             raise Refused(str(exc)) from exc
         lines.append(f'workspace: {workspace} (existing)')
+        questions.infer('workspace', workspace.parent, 'existing')
+        questions.infer('series', document['tooling']['version'], 'from the workspace file')
         try:
             values, missing_source = config.assignments(document, root, base, workspace, name,
                                                         missing_source=refusal), False
@@ -572,7 +727,7 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                 raise Refused(str(exc)) from exc
             values, missing_source = None, True
         for option in options:
-            if option not in ('--apply', '--plan') and not (missing_source and option in SOURCE_OPTIONS):
+            if option not in PLAN_OPTIONS and not (missing_source and option in SOURCE_OPTIONS):
                 raise Refused(f'{option}: {root} is already configured by {workspace}; setup only fills what is '
                               'missing.')
         if missing_source:
@@ -581,6 +736,7 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                 root, series, options, machine, questions)
             lines += [f'community: {community} ({origin[0]})', f'enterprise: {enterprise or "none"} ({origin[1]})',
                       *machine_lines]
+            infer_sources(questions, community, enterprise, origin)
             actions += machine_actions
             document['tooling']['community'] = str(community)
             if enterprise is not None and 'enterprise' not in document['tooling']:
@@ -610,7 +766,9 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
         reason = migrate.untrusted(directory)
         if reason:
             raise Refused(f'Refusing to write {workspace}: {reason}.')
+        questions.infer('workspace', directory, 'new')
         series, series_origin = choose_series(root, options, machine[2], questions)
+        questions.infer('series', series, series_origin)
         roots = sorted({addon_root for addon_root, _series in modules(root)} or {'.'},
                        key=lambda item: (item != '.', item))
         # The series guard of the configuration about to be written, before any question (S11).
@@ -620,15 +778,18 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
         chosen, origin_environment = chosen_python(options, series), 'from --environment'
         community, enterprise, origin, machine_lines, machine_actions, environments = choose_sources(
             root, series, options, machine, questions)
+        infer_sources(questions, community, enterprise, origin)
         if '--name' in options:
             name = options['--name']
             if not NAME.fullmatch(name):
                 raise Refused(f'Invalid --name {name}: use {NAME_RULE}.')
+            questions.infer('name', name, 'from --name')
         else:
             name = re.sub(r'[^a-z0-9]+', '_', root.name.lower()).strip('_')
             if not NAME.fullmatch(name):
                 raise Refused(f'Cannot derive database prefixes from the checkout name {root.name}: pass --name '
                               f'<name> ({NAME_RULE}).')
+            questions.infer('name', name, 'from the checkout name')
         lines += [f'series: {series} ({series_origin})', f'community: {community} ({origin[0]})',
                   f'enterprise: {enterprise or "none"} ({origin[1]})', f'workspace: {directory} (new)', *machine_lines]
         actions += machine_actions
@@ -665,11 +826,13 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
             except config.InvalidConfig as exc:
                 raise Refused(str(exc)) from exc
         text, values = configured(adopted, chosen)
+        python_origin = 'from --python' if chosen is not None else f'the default of Odoo {series}'
         if adopted is None:
-            answered, chosen_now = environment_choice(options, questions, series, Path(values['PROJECT_ENVIRONMENT']),
-                                                      values['PYTHON_VERSION'])
-            if answered is not None or chosen_now is not None:
-                adopted, chosen, origin_environment = answered, chosen_now, 'answered'
+            answered_now, chosen_now = environment_choice(options, questions, series,
+                                                          Path(values['PROJECT_ENVIRONMENT']), values['PYTHON_VERSION'])
+            if answered_now is not None or chosen_now is not None:
+                adopted, chosen, origin_environment = answered_now, chosen_now, 'answered'
+                python_origin = 'answered'
                 text, values = configured(adopted, chosen)
         lines.append(f'create {workspace} (mode 0600):')
         lines += [f'  {line}' if line else '' for line in text.splitlines()]
@@ -688,7 +851,8 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                     actions += [*directories(exclude.parent, planned), ('create', exclude, addition, 0o644)]
     guarded(values)
     plan = {'root': root, 'workspace': workspace, 'values': values, 'lines': lines, 'actions': actions,
-            'after': [], 'created': set(), 'new': new}
+            'after': [], 'created': set(), 'new': new, 'questions': questions,
+            'python_origin': python_origin if new else 'from the workspace file'}
     if new and adopted is not None:
         plan['adopted_environment'] = adopted[1]
         plan['adopted_origin'] = origin_environment
@@ -1010,6 +1174,8 @@ def series_plan(root, kind, options, questions, workspace, machine, target, line
     """make_plan for a checkout of a series the workspace file has no section for (section_target)."""
     series, origin, document = target
     lines.append(f'workspace: {workspace} (existing)')
+    questions.infer('workspace', workspace.parent, 'existing')
+    questions.infer('series', series, origin)
     for option in options:
         if option not in SERIES_PLAN_OPTIONS:
             raise Refused(f'{option}: {root} is already configured by {workspace}; setup only fills what is '
@@ -1037,6 +1203,7 @@ def series_plan(root, kind, options, questions, workspace, machine, target, line
     lines += [f'series: {series} ({origin}; {workspace} has no [series.{json.dumps(series)}] section)',
               f'community: {community} ({source_origin[0]})', f'enterprise: {enterprise or "none"} ({source_origin[1]})',
               *machine_lines]
+    infer_sources(questions, community, enterprise, source_origin)
 
     def configured(adopted, chosen):
         """The section, the extended workspace file and the values it gives, with that adopted environment or
@@ -1056,11 +1223,13 @@ def series_plan(root, kind, options, questions, workspace, machine, target, line
             raise Refused(str(exc)) from exc
         return adoption, folder, new, raw, workspace_lines, base, values
     adoption, folder, new, raw, workspace_lines, base, values = configured(adopted, chosen)
+    python_origin = 'from --python' if chosen is not None else f'the default of Odoo {series}'
     if adopted is None:
-        answered, chosen_now = environment_choice(options, questions, series, Path(values['PROJECT_ENVIRONMENT']),
-                                                  values['PYTHON_VERSION'])
-        if answered is not None or chosen_now is not None:
-            adopted, chosen, origin_environment = answered, chosen_now, 'answered'
+        answered_now, chosen_now = environment_choice(options, questions, series, Path(values['PROJECT_ENVIRONMENT']),
+                                                      values['PYTHON_VERSION'])
+        if answered_now is not None or chosen_now is not None:
+            adopted, chosen, origin_environment = answered_now, chosen_now, 'answered'
+            python_origin = 'answered'
             adoption, folder, new, raw, workspace_lines, base, values = configured(adopted, chosen)
     lines += [*workspace_lines, *adoption]
     guarded(values)
@@ -1068,12 +1237,17 @@ def series_plan(root, kind, options, questions, workspace, machine, target, line
     plan = {'root': root, 'workspace': workspace, 'values': values, 'lines': lines,
             'actions': [*machine_actions, ('extend', workspace, raw, new)], 'after': [], 'created': set(),
             'new': False, 'taken': series_ports(document, workspace), 'undo_after': True,
-            'project_requirements': folder}
+            'project_requirements': folder, 'questions': questions, 'python_origin': python_origin}
     if adopted is not None:
         plan['adopted_environment'] = adopted[1]
         plan['adopted_origin'] = origin_environment
     gaps(plan, base, set())
     return plan
+
+
+def infer_sources(questions: Questions, community: Path, enterprise: Path | None, origin: tuple[str, str]):
+    questions.infer('community', community, origin[0])
+    questions.infer('enterprise', enterprise, origin[1])
 
 
 def guarded(values: dict):
@@ -1297,6 +1471,13 @@ def gaps(plan: dict, directory: Path, planned: set):
         port, unread = (compose_port, False) if compose_port is not None else (free_port(taken), True)
     elif not conf.exists():
         port = free_port(taken)
+    questions = plan['questions']
+    if conf.exists() and conf_port is not None:
+        questions.infer('db_port', conf_port, f'from {conf}')
+    elif compose.exists() and compose_port is not None:
+        questions.infer('db_port', compose_port, f'from {compose}')
+    else:
+        questions.infer('db_port', port, 'a free port')
     series = values['ODOO_VERSION']
     postgres = config.versions().capability(series, 'postgres_default')
     name = prefix_name(values).replace('_', '-')
@@ -1350,19 +1531,27 @@ def gaps(plan: dict, directory: Path, planned: set):
         inside = path.is_relative_to(directory) and requirements.is_relative_to(directory)
         return os.path.relpath(path, requirements) if inside else str(path)
     needed = config.versions().capability(series, 'runtime_requirements')
+    target = requirements / locks.OVERRIDES
+    pins, additions = (anticipated(plan, source, requirements, extra, overrides, needed)
+                       if not (requirements / 'runtime.in').exists() else ([], []))
     create(requirements / 'runtime.in',
            RUNTIME_IN.format(source=source)
            + ''.join(RUNTIME_SERIES.format(requirement=requirement, reason=reason) for requirement, reason in needed)
-           + (RUNTIME_EXTRA.format(extra=included(extra)) if extra else ''), 0o644,
+           + (RUNTIME_EXTRA.format(extra=included(extra)) if extra else '')
+           + ''.join(RUNTIME_MODULE.format(requirement=requirement, module=module) for requirement, module in additions),
+           0o644,
            f'create {requirements / "runtime.in"}: -r {source}/requirements.txt'
            + ''.join(f', {requirement}' for requirement, _reason in needed)
-           + (f', -r {included(extra)}' if extra else ''), 'inputs')
+           + (f', -r {included(extra)}' if extra else '')
+           + ''.join(f', {requirement}' for requirement, _module in additions), 'inputs')
     create(requirements / 'dev.in', DEV_IN, 0o644,
            f'create {requirements / "dev.in"}: -c runtime.txt, -r runtime.in', 'inputs')
-    target = requirements / locks.OVERRIDES
-    if overrides is not None:
-        create(target, OVERRIDES_TXT.format(overrides=included(overrides)), 0o644,
-               f'create {target}: -r {included(overrides)} (uv pip compile --override)', 'inputs')
+    pinned = ''.join(ANSWERED_PIN.format(pin=pin, reason=reason) for pin, reason in pins)
+    if overrides is not None or pins:
+        listed = [*([f'-r {included(overrides)}'] if overrides is not None else []), *(pin for pin, _reason in pins)]
+        create(target, (OVERRIDES_TXT.format(overrides=included(overrides)) if overrides is not None
+                        else OVERRIDES_PINS) + pinned, 0o644,
+               f'create {target}: {", ".join(listed)} (uv pip compile --override)', 'inputs')
     elif os.path.lexists(target):
         lines.append(f'kept {target}')
     for key in ('LOGS_DIR', 'DATA_DIR'):
@@ -1386,6 +1575,11 @@ def gaps(plan: dict, directory: Path, planned: set):
                      '(uv pip compile)')
         plan['after'].append(('compile', requirements, python))
     environment = Path(values['PROJECT_ENVIRONMENT'])
+    kept_environment = (environment / 'pyvenv.cfg').is_file()
+    questions.infer('environment', environment, plan.get('adopted_origin') if 'adopted_environment' in plan
+                    else 'existing' if kept_environment else 'new')
+    questions.infer('python', python, 'from the adopted environment' if 'adopted_environment' in plan
+                    else plan['python_origin'])
     if 'adopted_environment' in plan:
         lines.append(f'adopt the environment {environment} ({plan["adopted_origin"]}): Python '
                      f'{plan["adopted_environment"]} (its pyvenv.cfg); setup never creates, syncs or deletes it')
@@ -1397,6 +1591,56 @@ def gaps(plan: dict, directory: Path, planned: set):
         lines.append(f'create the environment {environment} with Python {python} (uv venv) and sync dev.txt '
                      '(uv pip sync)')
         plan['after'].append(('environment', environment, python, requirements / 'dev.txt'))
+
+
+def anticipated(plan: dict, source: Path, requirements: Path, extra, overrides, needed) -> tuple[list, list]:
+    """([(pin, reason)] for a new overrides.txt, [(requirement, module)] for the new runtime.in): the answers to
+    the problems a new runtime.in would meet (tools/known_problems.py, v0.16.0 S3). Each problem is a question;
+    without an answer it stays open and --apply refuses. A kept overrides.txt is never edited: python-ldap then
+    gets a WARN line and a conflicting pin no question."""
+    values, questions, lines = plan['values'], plan['questions'], plan['lines']
+    series, python = values['ODOO_VERSION'], values['PYTHON_VERSION']
+    target, runtime = requirements / locks.OVERRIDES, requirements / 'runtime.in'
+    kept = os.path.lexists(target)
+    found = known_problems.pins(
+        [*known_problems.lines(source / 'requirements.txt'), *(requirement for requirement, _reason in needed),
+         *(known_problems.lines(extra) if extra else [])], python, known_problems.lines(overrides) if overrides else [])
+    pins, additions = [], []
+    ldap = config.versions().capability(series, 'ldap_override')
+    system = known_problems.system_ldap() if ldap and known_problems.pinned(found, ldap[0]) else None
+    if system is not None:
+        text = (f"Odoo {series} pins {ldap[0]}, which does not build against this machine's OpenLDAP {system} (no "
+                f'libldap_r): pin {ldap[1]} in {target}?')
+        if kept:
+            lines.append(f"WARN: Odoo {series} pins {ldap[0]}, which does not build against this machine's OpenLDAP "
+                         f'{system} (no libldap_r): add {ldap[1]} to {target} yourself (setup keeps that file)')
+        elif questions.choose({'id': 'python_ldap', 'text': text, 'options': [
+                {'value': 'yes', 'label': f'pin {ldap[1]} (uv pip compile --override)'},
+                {'value': 'no', 'label': "keep Odoo's pin: its build may fail"}],
+                'recommended': 'yes', 'flag': '--answer python_ldap=<yes|no>'}) == 'yes':
+            pins.append((ldap[1], f"Odoo {series}'s {ldap[0]} does not build against OpenLDAP 2.6 (no libldap_r)."))
+    roots = [Path(root) for root in values['ADDON_ROOTS'].splitlines() if root]
+    for problem in known_problems.requirement_problems(known_problems.module_requirements(roots), found):
+        module, entry, question_id = problem['module'], problem['entry'], problem['id']
+        if problem['kind'] == 'missing':
+            question = {'id': question_id, 'text': (f'The module {module} requires {entry} (external_dependencies), '
+                                                    f'which no requirement of {runtime} lists: add it there?'),
+                        'options': [{'value': 'add', 'label': f'add {entry} to runtime.in'},
+                                    {'value': 'skip', 'label': 'leave it out: the module will not install without it'}],
+                        'recommended': 'add', 'flag': f'--answer {question_id}=<add|skip>'}
+            if questions.choose(question) == 'add':
+                additions.append((entry, module))
+        elif not kept:
+            proposal = problem['proposal']
+            question = {'id': question_id, 'text': (f'The module {module} requires {entry} (external_dependencies), but '
+                                                    f'the Odoo {series} requirements pin {problem["pin"]}: override it '
+                                                    f'with {proposal} in {target}?'),
+                        'options': [{'value': 'override', 'label': f'pin {proposal} (uv pip compile --override)'},
+                                    {'value': 'skip', 'label': "keep Odoo's pin: the module may not install"}],
+                        'recommended': 'override', 'flag': f'--answer {question_id}=<override|skip>'}
+            if questions.choose(question) == 'override':
+                pins.append((proposal, f'The module {module} requires {entry} (external_dependencies).'))
+    return pins, additions
 
 
 # -- apply -----------------------------------------------------------------------------------------
@@ -1569,7 +1813,7 @@ def after_steps(plan: dict, changes: Changes, rerun: str, undo_after: bool) -> i
         for command in (['uv', 'venv', '--python', python, str(environment)],
                         ['uv', 'pip', 'sync', '--python', str(environment / 'bin/python'), str(lock)]):
             try:
-                status = subprocess.run(command).returncode
+                status = subprocess.run(command, env=locks.uv_environment()).returncode
             except OSError:
                 status = 127
             if status == 0:
@@ -1601,6 +1845,11 @@ def main(arguments: list[str]) -> int:
     if options is None:
         print(usage(), file=sys.stderr)
         return 2
+    try:
+        answers = answered(options)
+    except Refused as exc:
+        print(f'ERROR: {exc}', file=sys.stderr)
+        return 2
     if '--python' in options and '--environment' in options:
         print('ERROR: --python cannot be combined with --environment: an adopted environment keeps the Python of '
               'its pyvenv.cfg.', file=sys.stderr)
@@ -1613,15 +1862,37 @@ def main(arguments: list[str]) -> int:
     if root is None:
         print(f'ERROR: {config.PROJECT_ROOT_REQUIRED}', file=sys.stderr)
         return 2
+    questions = Questions(answers, interactive=False if '--json' in options else None)
+    plan = None
     try:
-        plan = make_plan(root, options, Questions())
+        plan = make_plan(root, options, questions)
     except Refused as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 2
     except Interrupted:
         print('\nERROR: Interrupted at a question: nothing changed.', file=sys.stderr)
         return 130
-    print('\n'.join(plan['lines']), flush=True)
+    except Open as exc:
+        # A question setup cannot go on without (v0.16.0 S3): --apply refuses as before; the plan lists it.
+        if '--apply' in options:
+            print(f'ERROR: {exc}', file=sys.stderr)
+            return 2
+    still_open = questions.open()
+    if '--json' in options:
+        print(json.dumps(plan_document(root, questions, plan)))
+        return 0
+    if '--apply' in options and still_open:
+        for question in still_open:
+            print(f'ERROR: open question {question}: {questions.refusals[question]}', file=sys.stderr)
+        print(f'ERROR: nothing changed: answer the open questions, then run {config.program_name()} setup --apply '
+              'again.', file=sys.stderr)
+        return 2
+    print('\n'.join(questions.lines), flush=True)
+    if still_open:
+        for question in still_open:
+            print(f'open question {question}: {questions.refusals[question]}')
+        print(OPEN_PLAN)
+        return 0
     if not plan['actions'] and not plan['after']:
         print(f'nothing to set up: run {config.program_name()} --project {root} doctor')
         return 0
@@ -1629,6 +1900,38 @@ def main(arguments: list[str]) -> int:
         print(DRY_RUN)
         return 0
     return apply_plan(plan)
+
+
+def change_summary(path: Path, kind: str, lines: list[str]) -> str:
+    """The plan line of one change (its first line that names path as a word), else what the change is."""
+    for line in lines:
+        if line[:1].isspace() or line.startswith(('kept', 'WARN', 'checkout:', 'workspace:', 'series:')):
+            continue
+        if any(word.rstrip(':').rstrip('/') == str(path) for word in line.split()):
+            return line.rstrip(':')
+    return f'create the directory {path}/' if kind == 'mkdir' else f'{kind} {path}'
+
+
+def plan_document(root: Path, questions: Questions, plan: dict | None) -> dict:
+    """The plan as one JSON object (docs/setup.md#the-plan-as-json): what setup inferred and from where, the
+    changes it would make (never a value of the account), every question it met and the open ones. A plan
+    that stopped at an open question (plan None) is not complete and lists no change."""
+    changes = []
+    for action in (plan or {}).get('actions', []):
+        changes.append({'kind': action[0], 'path': str(action[1]),
+                        'summary': change_summary(action[1], action[0], questions.lines)})
+    for step in (plan or {}).get('after', []):
+        if step[0] == 'compile':
+            summary = (f'compile {step[1]}/runtime.txt, dev.txt and lock.sha256 with Python {step[2]} '
+                       '(uv pip compile)')
+        else:
+            summary = (f'create the environment {step[1]} with Python {step[2]} (uv venv) and sync {step[3].name} '
+                       '(uv pip sync)')
+        changes.append({'kind': step[0], 'path': str(step[1]), 'summary': summary})
+    still_open = questions.open()
+    return {'format': 'oasis-setup-plan', 'version': 1, 'checkout': str(root), 'complete': plan is not None,
+            'ready_to_apply': plan is not None and not still_open, 'inferred': questions.inferred,
+            'changes': changes, 'questions': questions.listed, 'open': still_open, 'lines': questions.lines}
 
 
 if __name__ == '__main__':

@@ -30,8 +30,10 @@ MARKER = 'setup-must-not-print-this'
 # A fake uv: records `uv <args> (in <cwd>)`, writes the lock `pip compile ... -o <lock>` names, and
 # makes `venv --python <v> <target>` an environment (pyvenv.cfg and bin/python). FAKE_COMPILE_FAIL,
 # FAKE_VENV_FAIL (exit 3) and FAKE_SYNC_FAIL (exit 4) make that step fail; FAKE_SYNC_BREAK=<file> makes
-# `pip sync` overwrite that file with invalid TOML (a file broken after the verification).
+# `pip sync` overwrite that file with invalid TOML (a file broken after the verification). `uv --version`
+# (tools/locks.py uv_version, v0.16.0 S3) prints a version before 0.13 and is not recorded.
 UV = '''#!/bin/sh
+if [ "$1" = --version ]; then echo 'uv 0.9.0 (fake)'; exit 0; fi
 printf 'uv %s (in %s)\\n' "$*" "$PWD" >> "$FAKE_LOG"
 case "$1 $2" in
   'pip compile')
@@ -79,6 +81,8 @@ ENV_FILE = re.compile(r'# Written by oasis setup: the PostgreSQL account of the 
                       r'\(docs/setup\.md#the-database-account\)\.\n# No oasis command needs it read, copied or '
                       r'typed\. Never commit this file\.\nODOO_DB_USER=oasis_shop\nODOO_DB_PASSWORD=[A-Za-z0-9_-]{32}\n')
 DRY_RUN = 'dry run: nothing changed; run with --apply to set up\n'
+OPEN_PLAN = ('nothing changed: answer the open questions above (docs/setup.md#questions-and-answers), then run '
+             'with --apply to set up\n')
 NOT_TTY_SERIES = ('ERROR: Cannot infer the Odoo series of {root}: no module manifest declares one and the '
                   'machine file has no single series; pass --series <x.y> (supported: 19.0, 15.0).\n')
 
@@ -210,7 +214,8 @@ class SetupTests(unittest.TestCase):
         before = self.tree()
         usage = (f'Usage: {CLI} setup [--series <x.y>] [--community <dir>] [--enterprise <dir> | --no-enterprise] '
                  '[--workspace <dir>] [--name <name>] [--exception <module>]... [--config-dir <dir>] '
-                 '[--environment <dir> | --python <x.y>] [--apply | --plan]\n')
+                 '[--environment <dir> | --python <x.y>] [--answer <id>=<value>]... [--answers <file.json>] '
+                 '[--apply | --plan [--json]]\n')
         for args in (('--apply', '--plan'), ('--plan', '--apply'), ('--enterprise', '/x', '--no-enterprise'),
                      ('--app',), ('--community',), ('--apply', '--apply'), ('extra',), ('--',), ('--a',),
                      ('--apply=x',), ('--apply=',), ('--appl',),
@@ -337,8 +342,14 @@ class SetupTests(unittest.TestCase):
         before = self.tree()
         (self.checkout / 'shop_sale' / '__manifest__.py').write_text("{'name': 'Shop', 'version': '1.0'}\n")
         before = self.tree()
-        self.assert_refused(self.setup_cmd('--community', str(self.source), '--no-enterprise'),
+        # v0.16.0 S3: without a terminal the plan lists the open question; --apply refuses as before.
+        self.assert_refused(self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise'),
                             NOT_TTY_SERIES.format(root=self.checkout)[len('ERROR: '):-1], before)
+        listed = self.setup_cmd('--community', str(self.source), '--no-enterprise')
+        self.assertEqual((listed.returncode, listed.stdout, listed.stderr), (
+            0, f'checkout: {self.checkout} (main)\nopen question series: '
+               f'{NOT_TTY_SERIES.format(root=self.checkout)[len("ERROR: "):]}{OPEN_PLAN}', ''))
+        self.assertEqual(self.tree(), before)
         flagged = self.setup_cmd('--series', '19.0', '--community', str(self.source), '--no-enterprise')
         self.assertEqual((flagged.returncode, flagged.stderr), (0, ''))
         self.assertIn('series: 19.0 (from --series)\n', flagged.stdout)
@@ -368,15 +379,16 @@ class SetupTests(unittest.TestCase):
 
     def test_without_a_terminal_a_missing_answer_names_its_flag_and_a_found_path_is_only_suggested(self):
         before = self.tree()
-        self.assert_refused(self.setup_cmd('--no-enterprise'),
+        # v0.16.0 S3: --apply refuses; the plan lists the open question (tests/test_setup_plan.py).
+        self.assert_refused(self.setup_cmd('--apply', '--no-enterprise'),
                             f'No Odoo Community source for 19.0 in the machine file {self.machine}: '
                             'pass --community <dir>.', before)
         found = self.odoo_source(self.scratch / 'work' / 'odoo')
         before = self.tree()
-        self.assert_refused(self.setup_cmd('--no-enterprise'),
+        self.assert_refused(self.setup_cmd('--apply', '--no-enterprise'),
                             f'No Odoo Community source for 19.0 in the machine file {self.machine}: '
                             f'pass --community <dir>; found {found}, a suggestion only: pass it to use it.', before)
-        self.assert_refused(self.setup_cmd('--community', str(self.source)),
+        self.assert_refused(self.setup_cmd('--apply', '--community', str(self.source)),
                             'Enterprise or not for 19.0: pass --enterprise <dir> or --no-enterprise.', before)
         self.assert_refused(self.setup_cmd('--community', str(self.scratch / 'work'), '--no-enterprise'),
                             f'--community {self.scratch / "work"} is not an Odoo 19.0 source '
