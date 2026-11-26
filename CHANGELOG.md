@@ -9,6 +9,8 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-25
+
 ### Added
 
 - `oasis setup --environment <dir>` adopts an existing Python environment (a `pyvenv.cfg` whose
@@ -1131,7 +1133,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/skhol3/oasis/releases/tag/v0.15.0
 [0.14.0]: https://github.com/skhol3/oasis/releases/tag/v0.14.0
 [0.13.0]: https://github.com/skhol3/oasis/releases/tag/v0.13.0
 [0.12.0]: https://github.com/skhol3/oasis/releases/tag/v0.12.0
