@@ -149,7 +149,9 @@ touched.
 
 Run `setup` again at any time: it prints `kept` for what exists and creates only what is missing
 (`nothing to set up` when nothing is). Every piece and its contents are in
-[What it creates and what it keeps](setup.md#what-it-creates-and-what-it-keeps).
+[What it creates and what it keeps](setup.md#what-it-creates-and-what-it-keeps). In a checkout of
+another Odoo series (a 15.0 branch of a 19.0 project), it adds that series' section to the same
+workspace file instead: see [Another Odoo series](setup.md#another-odoo-series).
 
 ## Where things go
 

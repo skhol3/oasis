@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 import random
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -88,7 +89,7 @@ def any_test_port(line):
 
     def replace(match):
         return f' --{match.group(1)}=<free>' if 1 <= int(match.group(2)) <= 65535 else match.group(0)
-    return re.sub(r' --(http-port|gevent-port)=(\d{1,5})(?= )', replace, line)
+    return re.sub(r' --(http-port|gevent-port|longpolling-port)=(\d{1,5})(?= )', replace, line)
 
 
 # The fixture's odoo.conf names an addons_path, as a project's did before oasis composed one,
@@ -102,6 +103,17 @@ def conf_text(options=''):
 
 
 RUN_DATABASE = r'_r[0-9a-f]{6}'
+
+
+def use_odoo_15(case):
+    """Turn a LifecycleTests fixture into an Odoo 15.0 checkout (v0.15.0 S2): the workspace's
+    odoo_version, the source release and what the fake environment reports (Python 3.9, the
+    15.0 python_default, and Odoo Server 15.0)."""
+    workspace = case.root / 'oasis-workspace.toml'
+    workspace.write_text(workspace.read_text().replace("odoo_version = '19.0'", "odoo_version = '15.0'", 1))
+    (case.source / 'odoo/release.py').write_text('version_info = (15, 0, 0, "final", 0)\n')
+    case.python.write_text(case.python.read_text().replace('echo 3.12', 'echo 3.9', 1)
+                           .replace('Odoo Server 19.0', 'Odoo Server 15.0', 1))
 
 
 def any_run_database(line):
@@ -674,6 +686,211 @@ exit 0
             self.assertEqual((result.returncode, result.stdout, result.stderr), (0, output, ''), command)
         self.assertIn(f' --http-port={port}\n', self.commands.read_text())
 
+
+
+class Odoo15CommandLineTests(unittest.TestCase):
+    """v0.15.0 S2: an Odoo 15.0 checkout gets the 15.0 options from tools/odoo_versions.py."""
+    setUp_fixture = LifecycleTests.setUp
+    invoke = LifecycleTests.invoke
+    unchanged = LifecycleTests.unchanged
+
+    def setUp(self):
+        self.setUp_fixture()
+        use_odoo_15(self)
+        self.odoo = 'odoo ' + str(self.source / 'odoo-bin')
+        self.conf = str(self.root / 'dev/odoo.conf')
+
+    def odoo_lines(self):
+        return [any_run_database(any_test_port(line)) for line in self.commands.read_text().splitlines()
+                if line.startswith('odoo ')]
+
+    def test_tests_stop_after_init_because_test_tags_does_not_imply_it(self):
+        # 15.0's --test-tags does not stop the server (test_tags_implies_stop false): the test run
+        # passes --stop-after-init; the second port is --longpolling-port, demo off --without-demo=all.
+        for args, tags in ((('coffee',), '/coffee'), (('--only', 'TestOrder.test_total', 'coffee'),
+                                                       '/coffee:TestOrder.test_total')):
+            with self.subTest(args=args):
+                self.commands.unlink(missing_ok=True)
+                result = self.invoke('test-module', *args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+                self.assertEqual(self.odoo_lines(), [
+                    f'{self.odoo} -c {self.conf} --http-port=<free> --longpolling-port=<free> -d cc_test_coffee_r<run> '
+                    f'-i coffee --without-demo=all --test-tags {tags} --stop-after-init'])
+
+    def test_reused_test_database_and_update_stop_after_init(self):
+        result = self.invoke('test-module', '--reuse', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        result = self.invoke('test-module', '--reuse', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.env['FAKE_EXISTS'] = '1'
+        result = self.invoke('update-module', 'coffee', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(self.odoo_lines(), [
+            f'{self.odoo} -c {self.conf} --http-port=<free> --longpolling-port=<free> -d cc_test_coffee '
+            '-i coffee --without-demo=all --test-tags /coffee --stop-after-init',
+            f'{self.odoo} -c {self.conf} --http-port=<free> --longpolling-port=<free> -d cc_test_coffee '
+            '-u coffee --test-tags /coffee --stop-after-init',
+            f'{self.odoo} -c {self.conf} -d cc_dev_coffee -u coffee --stop-after-init'])
+
+    def test_install_without_and_with_demo(self):
+        # Demo data is on by default in 15.0 (no --with-demo option): the opt-in passes nothing.
+        result = self.invoke('install-module', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        result = self.invoke('install-module', '--with-demo', 'coffee', 'cc_dev_other')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(self.odoo_lines(), [
+            f'{self.odoo} -c {self.conf} -d cc_dev_coffee -i coffee --without-demo=all --stop-after-init',
+            f'{self.odoo} -c {self.conf} -d cc_dev_other -i coffee --stop-after-init'])
+        result = self.invoke('install-module', '--help')
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.splitlines()[1], 'Default: --without-demo=all. The database must be managed '
+                                                        '(cc_dev_/cc_test_) and defaults to cc_dev_<module>.')
+
+    def test_a_batch_start_gets_a_free_longpolling_port(self):
+        # As on 19.0 (--gevent-port): a free ephemeral --http-port and a distinct free second port,
+        # here --longpolling-port; an explicit port of either kind is passed as given.
+        head = [str(self.python), str(self.source / 'odoo-bin'), '-c', self.conf]
+        for given in ((), ('--http-port', '9000'), ('--longpolling-port', '9001'), ('--longpolling-port=9001',)):
+            with self.subTest(given=given):
+                result = self.invoke('start', '--print-command', '--stop-after-init', '-u', 'coffee', *given)
+                self.assertEqual((result.returncode, result.stderr), (0, ''))
+                words = shlex.split(result.stdout)
+                self.assertEqual(result.stdout.count('\n'), 1)
+                added = words[4:-3 - len(given)]
+                self.assertEqual(words[:4] + words[4 + len(added):], [*head, '--stop-after-init', '-u', 'coffee', *given])
+                if not given:
+                    match = re.fullmatch(r'--http-port=(\d+) --longpolling-port=(\d+)', ' '.join(added))
+                    self.assertIsNotNone(match, added)
+                    self.assertNotEqual(match.group(1), match.group(2))
+                elif given[0] == '--http-port':
+                    self.assertRegex(' '.join(added), r'^--longpolling-port=\d+$')
+                    self.assertNotEqual(added[0], '--longpolling-port=9000')
+                else:
+                    self.assertRegex(' '.join(added), r'^--http-port=\d+$')
+                self.unchanged()
+        # The batch run execs that kind of line.
+        result = self.invoke('start', '--stop-after-init', '-u', 'coffee', '-d', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        lines = [line for line in self.commands.read_text().splitlines() if line.startswith('odoo ')]
+        self.assertEqual(len(lines), 1)
+        self.assertRegex(lines[0], '^' + re.escape(f'{self.odoo} -c {self.conf}') +
+                         r' --http-port=\d+ --longpolling-port=\d+ --stop-after-init -u coffee -d cc_dev_coffee$')
+
+    def test_verify_runs_every_phase_to_its_end(self):
+        result = self.invoke('verify-module', 'coffee')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.odoo_lines(), [
+            f'{self.odoo} -c {self.conf} --http-port=<free> --longpolling-port=<free> -d cc_test_coffee_r<run> '
+            '-i coffee --without-demo=all --test-tags /coffee --stop-after-init',
+            f'{self.odoo} -c {self.conf} -d cc_test_coffee_r<run>_update -i coffee --without-demo=all --stop-after-init',
+            f'{self.odoo} -c {self.conf} -d cc_test_coffee_r<run>_update -u coffee --stop-after-init'])
+
+
+
+class SecondPortConfTests(unittest.TestCase):
+    """v0.15.0 S2: a linked worktree's second port starts after the odoo.conf option of the series
+    (gevent_port on 19.0, longpolling_port on 15.0; odoo_versions.py second_port_conf_option)."""
+    setUp_fixture = LifecycleTests.setUp
+
+    def layout(self, series):
+        import test_shared_conf as shared  # it imports this module: load it once both exist
+        profile = shared.SHARED_PROFILE
+        if series == '15.0':
+            use_odoo_15(self)
+            profile = profile.replace("odoo_version = '19.0'", "odoo_version = '15.0'", 1)
+        shared.shared_layout(self, profile)
+        self.addons = f'{self.enterprise},{self.linked},{self.source / "addons"}'
+        # The conf sets both options, so only the series' own one can explain the chosen port.
+        self.other_port = quiet_ports(2, excluded=(self.http_port, self.http_port + 1,
+                                                   self.gevent_port, self.gevent_port + 1))
+        own, other = (('gevent_port', 'longpolling_port') if series == '19.0' else ('longpolling_port', 'gevent_port'))
+        self.conf.write_text(f'[options]\naddons_path = {self.enterprise},{self.main},{self.source / "addons"}\n'
+                             f'http_port = {self.http_port}\n{own} = {self.gevent_port}\n{other} = {self.other_port}\n')
+
+    def start(self, *args):
+        path = self.linked / 'dev/scripts/start'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes((STAGE / 'project-wrappers/start').read_bytes())
+        return subprocess.run(['bash', str(path), *args], text=True, cwd=self.linked, env=self.env,
+                              capture_output=True, stdin=subprocess.DEVNULL)
+
+    def assert_second_port(self, series, option):
+        self.setUp_fixture()
+        self.layout(series)
+        result = self.start('--print-command')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout, shlex.join([
+            str(self.python), str(self.source / 'odoo-bin'), '-c', str(self.conf), f'--addons-path={self.addons}',
+            f'--http-port={self.http_port + 1}', f'{option}={self.gevent_port + 1}']) + '\n')
+        self.unchanged()
+
+    def assert_busy_range(self, series, name, option):
+        self.setUp_fixture()
+        self.layout(series)
+        self.hold_range()
+        self.conf.write_text(self.conf.read_text().replace(f' = {self.gevent_port}\n', f' = {self.busy}\n', 1))
+        result = self.start('--print-command')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+            f'No free {name} port from {self.busy + 1} to {self.busy + 50}; pass {option} or stop another server.\n')))
+
+    unchanged = LifecycleTests.unchanged
+
+    def hold_range(self):
+        """Bind busy + 1 .. busy + 50 on 127.0.0.1 for the rest of the test, once the layout is
+        built: the range never holds a port of the layout (its HTTP port and the linked worktree's,
+        both second ports and the ports after them), and a range another process takes between
+        the choice and the binds is given up for another one."""
+        layout = {port + offset for port in (self.http_port, self.gevent_port, self.other_port) for offset in (0, 1)}
+        for _ in range(20):
+            self.busy = quiet_ports(51, excluded=layout)
+            listeners = []
+            try:
+                for port in range(self.busy + 1, self.busy + 51):
+                    listener = socket.socket()
+                    listeners.append(listener)
+                    listener.bind(('127.0.0.1', port))
+                    listener.listen()
+            except OSError:
+                for listener in listeners:
+                    listener.close()
+                continue
+            for listener in listeners:
+                self.addCleanup(listener.close)
+            return
+        raise AssertionError('no port range on 127.0.0.1 could be held')
+
+    def test_odoo_19_follows_gevent_port(self):
+        self.assert_second_port('19.0', '--gevent-port')
+
+    def test_odoo_15_follows_longpolling_port(self):
+        self.assert_second_port('15.0', '--longpolling-port')
+
+    def test_a_busy_range_names_the_series_port(self):
+        for series, name, option in (('19.0', 'gevent', '--gevent-port'), ('15.0', 'longpolling', '--longpolling-port')):
+            with self.subTest(series=series):
+                self.assert_busy_range(series, name, option)
+                self.doCleanups()
+
+    def test_an_explicit_longpolling_port_on_odoo_15_is_the_only_second_port(self):
+        # As --gevent-port on 19.0: the user's --longpolling-port (as a separate word or with =)
+        # suppresses the added one and reaches Odoo as given.
+        self.setUp_fixture()
+        self.layout('15.0')
+        head = [str(self.python), str(self.source / 'odoo-bin'), '-c', str(self.conf), f'--addons-path={self.addons}',
+                f'--http-port={self.http_port + 1}']
+        for given in (('--longpolling-port', '9001'), ('--longpolling-port=9001',), ('--workers=2', '--longpolling-port=9001')):
+            with self.subTest(given=given):
+                result = self.start('--print-command', *given)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, shlex.join([*head, *given]) + '\n', ''))
+        self.unchanged()
+
+    def test_an_invalid_longpolling_port_is_refused_naming_the_option(self):
+        self.setUp_fixture()
+        self.layout('15.0')
+        self.conf.write_text(self.conf.read_text().replace(f'longpolling_port = {self.gevent_port}', 'longpolling_port = x'))
+        result = self.start('--print-command')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', f'ERROR: Invalid longpolling_port in {self.conf}: it must be a port number.\n'))
 
 if __name__ == '__main__':
     unittest.main()

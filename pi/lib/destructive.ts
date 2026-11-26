@@ -1,13 +1,13 @@
 // The agent's bash gate (S3, S4): the deny tier as before, and the ask tier, which the user
 // confirms in a dialog unless the project's [tooling].agent_destructive says deny or allow. The
 // files that hold that setting are in the ask tier too, for bash writes and the agent's edit and
-// write tools (agentFileGate). The Pi effects are injected (dialogs, appendEntry, the configuration
+// write tools (agentFileGate), and so is a checkout's oasis-checkout.toml. The Pi effects are injected (dialogs, appendEntry, the configuration
 // read), so it is tested without Pi; pi/extensions/oasis.ts only adapts ctx and pi to these
 // interfaces. No Pi imports.
 import { posix } from "node:path";
 import { type AskAction, blockedEverywhere, blockReason, classifyBash } from "./bash-guard.ts";
 import { type MenuEntry, plainLine } from "./menu.ts";
-import { findWorkspaceFile, machineFile, PROFILE_NAME, WORKSPACE_NAME } from "./project.ts";
+import { CHECKOUT_NAME, findWorkspaceFile, machineFile, PROFILE_NAME, WORKSPACE_NAME } from "./project.ts";
 
 /** The custom session entry type of a decision: shown to the user, never sent to the model. */
 export const DECISION_ENTRY = "oasis-agent-decision";
@@ -23,12 +23,14 @@ const REFUSED = "Agent command refused";
 // above it, where tools/config.py finds it (an oasis-checkout.toml refuses the key), and a legacy
 // profile there, which config.py no longer reads but oasis migrate converts into the workspace file.
 // Also the workspace file a linked worktree reads through git (findWorkspaceFile), and the machine
-// file, which holds the Odoo source paths (see settingFiles).
+// file, which holds the Odoo source paths (see settingFiles). A checkout's oasis-checkout.toml
+// sets its checkout_slug, the database namespace, and its environment (see checkoutFiles).
 const SETTING_NAMES = new Set([WORKSPACE_NAME, PROFILE_NAME]);
 // How a write to the machine file is spelled when the text does not tell its directory.
 const MACHINE_TAIL = "oasis/config.toml";
 const NOTE = " (it holds [tooling].agent_destructive)";
 const MACHINE_NOTE = " (the machine file: it holds the Odoo source paths)";
+const CHECKOUT_NOTE = " (it sets checkout_slug, the database namespace, and the environment)";
 
 export interface GateUi {
   /** ctx.ui.input: undefined when cancelled, timed out or aborted. */
@@ -165,7 +167,8 @@ function machineFiles(effects: GateEffects): Set<string> {
  * checkout reads when it is elsewhere (a linked worktree outside the workspace directory reads its
  * main checkout's, found through git), or the machine file (machineFiles); as written or as its real
  * path (a link, or a linked directory, reaches the file it names; above the real cwd too). A path
- * the text does not tell counts by its name (`.../oasis/config.toml` for the machine file).
+ * the text does not tell counts by its name (`.../oasis/config.toml` for the machine file). Any path
+ * named oasis-checkout.toml is a candidate here; checkoutFiles keeps those at a checkout's root.
  */
 function settingFiles(effects: GateEffects, cwd: string): (path: string | null, word: string) => string | null {
   const real = realOf(effects);
@@ -181,15 +184,41 @@ function settingFiles(effects: GateEffects, cwd: string): (path: string | null, 
   }
   return (path, word) => {
     if (path === null) {
-      return SETTING_NAMES.has(posix.basename(word)) || word === MACHINE_TAIL || word.endsWith(`/${MACHINE_TAIL}`)
+      const name = posix.basename(word);
+      return SETTING_NAMES.has(name) || name === CHECKOUT_NAME || word === MACHINE_TAIL || word.endsWith(`/${MACHINE_TAIL}`)
         ? word : null;
     }
-    for (const candidate of [path, real(path)]) {
+    const candidates = [path, real(path)];
+    for (const candidate of candidates) {
       if (exact.has(candidate)) return candidate;
       if (SETTING_NAMES.has(posix.basename(candidate)) && governing.has(posix.dirname(candidate))) return candidate;
     }
-    return null;
+    return candidates.find((candidate) => posix.basename(candidate) === CHECKOUT_NAME) ?? null;
   };
+}
+
+/**
+ * The ask actions without the oasis-checkout.toml edits tools/config.py never reads: a file of that
+ * name counts at a checkout's root (projectRoot of its directory is that directory, as written or
+ * as its real path): the session's checkout, one a literal cd or --project target reaches, a linked
+ * worktree outside its workspace (found through git). A path the text does not tell counts by name.
+ */
+async function checkoutFiles(effects: GateEffects, asks: AskAction[]): Promise<AskAction[]> {
+  const real = realOf(effects);
+  const kept: AskAction[] = [];
+  for (const action of asks) {
+    if (action.command === "edit" && action.file.startsWith("/") && posix.basename(action.file) === CHECKOUT_NAME) {
+      const dirs = new Set([posix.dirname(action.file), posix.dirname(real(action.file))]);
+      let root = false;
+      for (const dir of dirs) {
+        const found = await effects.projectRoot(dir);
+        if (found !== null && (found === dir || found === real(dir))) root = true;
+      }
+      if (!root) continue;
+    }
+    kept.push(action);
+  }
+  return kept;
 }
 
 /** Where the agent's edit or write tool writes: Pi strips a leading `@`, expands `~` and resolves from cwd. */
@@ -249,7 +278,8 @@ function asker(effects: GateEffects) {
       const answer = expected(action);
       const why = action.command !== "edit" ? ""
         : machine.has(action.file) || (!action.file.startsWith("/") && action.file.endsWith(MACHINE_TAIL)) ? MACHINE_NOTE
-          : NOTE;
+          : posix.basename(action.file) === CHECKOUT_NAME ? CHECKOUT_NOTE
+            : NOTE;
       const title = `oasis: the agent wants to ${intro}\n\n${text}\n\n` +
         `Type ${answer} to allow ${label(action)}${why}. Esc, another answer or no answer within ${seconds} s refuses.`;
       const reply = await ctx.ui.input(title, undefined, { timeout, signal: ctx.signal });
@@ -279,7 +309,7 @@ export function agentGate(effects: GateEffects): (command: string, ctx: GateCont
   const ask = asker(effects);
   return async (command, ctx) => {
     // The menu's scripts and the ask tools are judged by the file they resolve to from the session's directory.
-    const { programs, asks } = classifyBash(command, {
+    const { programs, asks: found } = classifyBash(command, {
       cwd: ctx.cwd, home: effects.home, exists: effects.exists, settingFile: settingFiles(effects, ctx.cwd),
     });
     let root: string | null | undefined;
@@ -290,6 +320,7 @@ export function agentGate(effects: GateEffects): (command: string, ctx: GateCont
       const userRun = programs.find(blockedEverywhere);
       if (userRun) return { block: true, reason: blockReason(userRun, "") };
     }
+    const asks = await checkoutFiles(effects, found);
     if (asks.length === 0) return undefined;
     return ask(asks, "run", shown(command), ctx, root);
   };
@@ -297,7 +328,7 @@ export function agentGate(effects: GateEffects): (command: string, ctx: GateCont
 
 /**
  * The tool_call gate for the agent's edit and write tools: a path that reaches a setting file (see
- * settingFiles) goes through the ask tier, as `<tool> <path>`; any other path is allowed.
+ * settingFiles and checkoutFiles) goes through the ask tier, as `<tool> <path>`; any other path is allowed.
  */
 export function agentFileGate(effects: GateEffects): (tool: string, path: string, ctx: GateContext) => Promise<GateResult> {
   const ask = asker(effects);
@@ -305,7 +336,9 @@ export function agentFileGate(effects: GateEffects): (tool: string, path: string
     const target = toolPath(path, ctx.cwd, effects.home);
     const file = settingFiles(effects, ctx.cwd)(target, path);
     if (file === null) return undefined;
-    return ask([{ command: "edit", file }], "call", shown(`${tool} ${path}`), ctx);
+    const asks = await checkoutFiles(effects, [{ command: "edit", file }]);
+    if (asks.length === 0) return undefined;
+    return ask(asks, "call", shown(`${tool} ${path}`), ctx);
   };
 }
 

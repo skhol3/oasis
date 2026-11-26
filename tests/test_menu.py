@@ -354,6 +354,28 @@ class CatalogTests(MenuFixture):
         self.assertIsNone(catalog['last'])
         self.unchanged()
 
+    def test_catalog_dev_choices_and_tests_follow_the_odoo_15_table(self):
+        # v0.15.0 S2: the dev mode choices are 15.0's (tools/odoo_versions.py), the option the
+        # table's dev_option; --only is offered (15.0 takes a class filter); the menu's demo flag is
+        # still install-module's own option.
+        lifecycle.use_odoo_15(self)
+        actions = {action['id']: action for action in self.catalog()['actions']}
+        prefix = [ENTRY, '--project', self.project]
+        self.assertEqual(actions['server.run']['argv'], [
+            *prefix, 'start', '--detach', {'input': 'database', 'option': '-d'},
+            {'input': 'dev', 'option': '--dev'}, {'input': 'port', 'option': '--http-port'}])
+        self.assertEqual(actions['server.run']['inputs'][1], dev_input() | {'choices': [
+            {'value': '', 'label': 'off', 'warning': None},
+            {'value': 'all', 'label': 'all (pdb, reload, qweb, werkzeug, xml)', 'warning': None},
+            *({'value': name, 'label': name, 'warning': None}
+              for name in ('ipdb', 'pdb', 'pudb', 'wdb', 'qweb', 'reload', 'werkzeug', 'xml')),
+            {'value': 'reload,xml', 'label': 'reload,xml', 'warning': None}]})
+        self.assertEqual([key for key in actions if key.startswith('tests.')], ['tests.module', 'tests.class', 'tests.reuse'])
+        self.assertEqual(actions['modules.install']['argv'], [
+            *prefix, 'install-module', {'input': 'demo', 'flag': '--with-demo'}, {'input': 'module'},
+            {'input': 'database'}])
+        self.unchanged()
+
     def test_catalog_defaults_follow_the_checkout_and_its_odoo_conf(self):
         warning = self.without_reload_packages()
         conf = self.root / 'dev/odoo.conf'

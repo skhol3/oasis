@@ -246,6 +246,34 @@ class PrintCommandTests(menu.MenuFixture):
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertEqual(self.odoo_lines()[-1], self.logged(printed))
 
+    def test_restart_in_an_odoo_15_linked_worktree_keeps_its_longpolling_port(self):
+        # v0.15.0 S2: the running server's second port is read from its command line by the
+        # series' option (--longpolling-port on 15.0), as --gevent-port is on 19.0.
+        lifecycle.use_odoo_15(self)
+        shared.shared_layout(self, shared.SHARED_PROFILE.replace("odoo_version = '19.0'", "odoo_version = '15.0'", 1))
+        self.conf.write_text(self.conf.read_text().replace('gevent_port =', 'longpolling_port =', 1))
+        self.addons = f'--addons-path={self.enterprise},{self.linked},{self.odoo_addons}'
+        self.addCleanup(lambda: self.kill_recorded_of(self.linked))
+        self.env['FAKE_SERVE'] = '1'
+        self.detach(self.linked)
+        longpolling = self.gevent_port + 1
+        self.assertIn(f' --longpolling-port={longpolling}', self.odoo_lines()[-1])
+        before = self.log()
+        # The running server holds its longpolling port: restart frees it, so it is the one printed.
+        with socket.socket() as holder:
+            holder.bind(('127.0.0.1', longpolling))
+            holder.listen()
+            result = self.run_in(self.linked, 'restart', '--print-command')
+        printed = result.stdout
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(printed, self.line('-c', str(self.conf), self.addons,
+                                            f'--longpolling-port={longpolling}', f'--http-port={self.http_port + 1}'))
+        self.assertEqual(self.log(), before)
+        # PRESERVE: restart execs exactly that argv (the stopped server's port is free again).
+        result = self.run_in(self.linked, 'restart')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(self.odoo_lines()[-1], self.logged(printed))
+
     def test_restart_print_errors_keep_their_messages(self):
         self.env['FAKE_SERVE'] = '1'
         pid = self.detach(self.root)

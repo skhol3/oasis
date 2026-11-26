@@ -308,6 +308,49 @@ class XmlInfoTests(unittest.TestCase):
                           # Only the other field of the last record refers to it.
                           'referenced by (1):', '  core/views.xml:5'])
 
+    def test_a_tree_view_ranks_with_list_views(self):
+        # v0.15.0 S2: an Odoo 15.0 list view has the root tag tree; it ranks with list (19.0), after
+        # form and before kanban and search, not among the unknown types.
+        scratch = self.temp / 'tree'
+        project = scratch / 'project'
+        module = scratch / 'source/odoo/addons/core'
+        (scratch / 'source/odoo/odoo/addons').mkdir(parents=True)
+        (project / 'addons').mkdir(parents=True)
+        module.mkdir(parents=True)
+        (project / 'oasis-workspace.toml').write_text((PROJECT / 'oasis-workspace.toml').read_text())
+        (module / '__manifest__.py').write_text("{'name': 'x'}\n")
+        (module / 'views.xml').write_text(
+            '<odoo>\n'
+            '<record id="a_search" model="ir.ui.view"><field name="model">x.thing</field>'
+            '<field name="arch" type="xml"><search/></field></record>\n'
+            '<record id="b_kanban" model="ir.ui.view"><field name="model">x.thing</field>'
+            '<field name="arch" type="xml"><kanban/></field></record>\n'
+            '<record id="c_tree" model="ir.ui.view"><field name="model">x.thing</field>'
+            '<field name="arch" type="xml"><tree/></field></record>\n'
+            '<record id="d_list" model="ir.ui.view"><field name="model">x.thing</field>'
+            '<field name="arch" type="xml"><list/></field></record>\n'
+            '<record id="e_form" model="ir.ui.view"><field name="model">x.thing</field>'
+            '<field name="arch" type="xml"><form/></field></record>\n'
+            '<record id="f_graph" model="ir.ui.view"><field name="model">x.thing</field>'
+            '<field name="arch" type="xml"><graph/></field></record>\n'
+            '</odoo>\n')
+        result = subprocess.run([sys.executable, '-I', '-B', str(ROOT / 'oasis'), '--project', str(project),
+                                 'view-info', 'x.thing'], cwd=self.temp, env=self.env, text=True, capture_output=True)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
+            'model: x.thing — 6 views, 0 extensions\n'
+            'form core.e_form core/views.xml:6\n'
+            'list core.d_list core/views.xml:5\n'
+            'tree core.c_tree core/views.xml:4\n'
+            'kanban core.b_kanban core/views.xml:3\n'
+            'search core.a_search core/views.xml:2\n'
+            'graph core.f_graph core/views.xml:7\n'), ''))
+        result = subprocess.run([sys.executable, '-I', '-B', str(ROOT / 'oasis'), '--project', str(project),
+                                 'view-info', 'x.thing', '--type', 'tree'], cwd=self.temp, env=self.env, text=True,
+                                capture_output=True)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, 'model: x.thing — 1 view, 0 extensions\ntree core.c_tree core/views.xml:4\n', ''))
+        self.assertFalse(self.effects.exists(), 'Unexpected external service/install command')
+
     def test_unknown_ids_and_usage(self):
         self.assert_result('xmlid-info', ('coffee.no_such_record',), 1, '', 'xml id not found: coffee.no_such_record\n')
         # Records in static/ and in source test_ modules are not scanned.

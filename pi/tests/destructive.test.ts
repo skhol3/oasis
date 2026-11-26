@@ -535,8 +535,10 @@ test("a refused, unanswered or dialog-less edit of a setting file is blocked and
 test("other files, setting names below the session directory and symlinks are judged by the file they reach", async () => {
   const run = harness();
   for (const path of [
-    `${ROOT}/addons/coffee/models/sale.py`, `${ROOT}/dev/odoo.conf`, `${ROOT}/oasis-checkout.toml`,
+    `${ROOT}/addons/coffee/models/sale.py`, `${ROOT}/dev/odoo.conf`, `${ROOT}/oasis-checkout.toml.bak`,
     `${ROOT}/addons/coffee/oasis-workspace.toml`, "/tmp/oasis-workspace.toml", `${ROOT}/oasis-workspace.toml.bak`,
+    // An oasis-checkout.toml below the checkout root: tools/config.py never reads it.
+    `${ROOT}/addons/coffee/oasis-checkout.toml`,
   ]) {
     assert.equal(await run.file("write", path), undefined, path);
   }
@@ -711,6 +713,199 @@ test("the stricter-of-two rule reads the main checkout's workspace file for a wo
       assert.match(result.reason, new RegExp(`= "deny" in the configuration of ${run.linked}; nothing ran`), command);
     }
     assert.deepEqual(run.prompts, []);
+  } finally {
+    await run.cleanup();
+  }
+});
+
+// v0.15.0 S6: a checkout's oasis-checkout.toml sets checkout_slug (the database namespace) and the
+// environment, so the agent's changes to it always ask, like the workspace file's.
+const CHECKOUT_NOTE = "(it sets checkout_slug, the database namespace, and the environment)";
+const CHECKOUT = `${ROOT}/oasis-checkout.toml`;
+
+test("the agent's edit and write of a checkout's oasis-checkout.toml always ask, saying why", async () => {
+  const cases: [string, string, string][] = [
+    ["write", CHECKOUT, CHECKOUT],
+    ["edit", "../oasis-checkout.toml", CHECKOUT],
+    ["edit", "@../oasis-checkout.toml", CHECKOUT],
+    // The checkout a --project or cd target names.
+    ["write", `${OTHER}/oasis-checkout.toml`, `${OTHER}/oasis-checkout.toml`],
+    // A link that reaches it.
+    ["edit", "/tmp/checkout-link", CHECKOUT],
+  ];
+  for (const [tool, path, file] of cases) {
+    const run = harness({
+      roots, setting: "allow", answers: ["yes"],
+      realpath: (target) => (target === "/tmp/checkout-link" ? CHECKOUT : target),
+    });
+    assert.equal(await run.file(tool, path), undefined, path);
+    assert.deepEqual(run.prompts.map((prompt) => prompt.title), [
+      `oasis: the agent wants to call\n\n${tool} ${path}\n\n` +
+        `Type yes to allow editing ${file} ${CHECKOUT_NOTE}. Esc, another answer or no answer within ${SECONDS} s refuses.`,
+    ], path);
+    assert.deepEqual(run.entries, [{ label: "Agent command approved", command: `${tool} ${path}`, note: "typed yes", output: "" }]);
+  }
+  // allow never covers it: without a UI it is refused; deny blocks it; a wrong answer refuses.
+  const headless = harness({ roots, setting: "allow", hasUI: false });
+  assert.deepEqual(await headless.file("write", CHECKOUT), {
+    block: true,
+    reason: `editing ${CHECKOUT} needs the user's confirmation in a dialog, and this session has none (a subagent or a ` +
+      "headless run); nothing changed. Ask the user to make the change or to confirm it from an interactive session.",
+  });
+  assert.deepEqual(headless.entries.map((entry) => entry.note), ["no dialog"]);
+  const denied = harness({ roots, setting: "deny" });
+  assert.deepEqual(await denied.file("edit", "../oasis-checkout.toml"), {
+    block: true,
+    reason: `editing ${CHECKOUT} is denied to agents by [tooling].agent_destructive = "deny" in this project's ` +
+      "configuration; nothing changed. Ask the user to make the change.",
+  });
+  const wrong = harness({ roots, answers: ["no"] });
+  assert.deepEqual(await wrong.file("edit", CHECKOUT), {
+    block: true,
+    reason: `The user's answer did not confirm editing ${CHECKOUT}; nothing changed. Do not retry it: ask the user ` +
+      "whether to make the change.",
+  });
+});
+
+test("bash writes to a checkout's oasis-checkout.toml ask, in the session's checkout or after a literal cd", async () => {
+  const command = `echo "checkout_slug = 'x'" >> ../oasis-checkout.toml`;
+  const asked = harness({ roots, setting: "allow", answers: ["yes"] });
+  assert.equal(await asked.gate(command), undefined);
+  assert.deepEqual(asked.prompts.map((prompt) => prompt.title), [
+    `oasis: the agent wants to run\n\n${command}\n\n` +
+      `Type yes to allow editing ${CHECKOUT} ${CHECKOUT_NOTE}. Esc, another answer or no answer within ${SECONDS} s refuses.`,
+  ]);
+  assert.deepEqual(asked.entries, [{ label: "Agent command approved", command, note: "typed yes", output: "" }]);
+  for (const write of [
+    `echo x > ${CHECKOUT}`, `cd ${ROOT} && tee oasis-checkout.toml < x`, "cd /work/other && sed -i s/a/b/ oasis-checkout.toml",
+    "cp new/oasis-checkout.toml /work/other/", "mv new.toml /work/other/oasis-checkout.toml",
+    // A target the text does not tell counts by its name.
+    'echo x > "$ROOT"/oasis-checkout.toml',
+  ]) {
+    const run = harness({ roots, setting: "allow", hasUI: false });
+    assert.equal((await run.gate(write))?.block, true, write);
+    assert.deepEqual(run.entries.map((entry) => entry.note), ["no dialog"], write);
+  }
+  // Reads, another name, and an oasis-checkout.toml that is not at a checkout root do not ask.
+  const run = harness({ roots, setting: "allow" });
+  for (const command of [
+    `cat ../oasis-checkout.toml; grep checkout_slug ${CHECKOUT}`, `cp ${CHECKOUT} /tmp/copy.toml`,
+    `cp ${CHECKOUT} /tmp/`, "echo x > /tmp/oasis-checkout.toml", `echo x > ${ROOT}/addons/coffee/oasis-checkout.toml`,
+    `echo x > ${ROOT}/checkout.toml`,
+  ]) {
+    assert.equal(await run.gate(command), undefined, command);
+  }
+  for (const path of ["/tmp/oasis-checkout.toml", `${ROOT}/addons/oasis-checkout.toml`, `${OTHER}/oasis-checkout.toml.orig`]) {
+    assert.equal(await run.file("write", path), undefined, path);
+  }
+  assert.deepEqual([run.prompts, run.entries], [[], []]);
+});
+
+test("an oasis-checkout.toml reached through a linked directory asks only at a checkout root", async () => {
+  // /links/shop is a link to the checkout root, /links/below to a directory below it, /links/out to a
+  // directory outside any project; /links/held is a link to the root whose oasis-checkout.toml is itself
+  // a link to a file outside it (tools/config.py reads that file through the root).
+  const links: Record<string, string> = {
+    "/links/shop": ROOT, "/links/below": `${ROOT}/addons`, "/links/out": "/tmp/out", "/links/held": ROOT,
+    "/links/held/oasis-checkout.toml": "/tmp/held/oasis-checkout.toml",
+  };
+  const realpath = (path: string) => {
+    if (path in links) return links[path];
+    const dir = Object.keys(links).find((link) => path.startsWith(`${link}/`));
+    return dir ? links[dir] + path.slice(dir.length) : path;
+  };
+  // The root of a written path, as the resolver finds it: by its real path (projectRootResolver), or
+  // by the written path only (a resolver that does not follow links).
+  const resolving = (dir: string) => roots(realpath(dir));
+  const cases: [string, (dir: string) => string | null, string][] = [
+    // The real path's directory is the root (the written one has none).
+    ["/links/shop/oasis-checkout.toml", roots, "/links/shop/oasis-checkout.toml"],
+    // The written directory's root is its real path (the real file lies outside every project).
+    ["/links/held/oasis-checkout.toml", resolving, "/links/held/oasis-checkout.toml"],
+  ];
+  for (const [path, resolver, file] of cases) {
+    for (const tool of ["write", "edit"]) {
+      const run = harness({ roots: resolver, realpath, setting: "allow", answers: ["yes"] });
+      assert.equal(await run.file(tool, path), undefined, path);
+      assert.deepEqual(run.prompts.map((prompt) => prompt.title), [
+        `oasis: the agent wants to call\n\n${tool} ${path}\n\n` +
+          `Type yes to allow editing ${file} ${CHECKOUT_NOTE}. Esc, another answer or no answer within ${SECONDS} s refuses.`,
+      ], path);
+      assert.deepEqual(run.entries.map((entry) => entry.note), ["typed yes"], path);
+    }
+    const headless = harness({ roots: resolver, realpath, setting: "allow", hasUI: false });
+    assert.equal((await headless.gate(`echo "checkout_slug = 'x'" > ${path}`))?.block, true, path);
+    assert.deepEqual(headless.entries.map((entry) => entry.note), ["no dialog"], path);
+  }
+  // Below a checkout root or outside every project, through a link: never read, no dialog.
+  for (const resolver of [roots, resolving]) {
+    const run = harness({ roots: resolver, realpath, setting: "allow" });
+    for (const path of ["/links/below/oasis-checkout.toml", "/links/out/oasis-checkout.toml"]) {
+      assert.equal(await run.file("write", path), undefined, path);
+      assert.equal(await run.gate(`echo x > ${path}`), undefined, path);
+    }
+    assert.deepEqual([run.prompts, run.entries], [[], []]);
+  }
+});
+
+test("on disk, a linked directory reaches a checkout's oasis-checkout.toml only at its root", async () => {
+  const run = await worktreeOutside("allow");
+  try {
+    const { symlinkSync } = await import("node:fs");
+    for (const [link, target] of [["root-link", run.linked], ["below-link", run.cwd],
+      ["outside-link", `${run.base}/elsewhere`], ["main-link", run.main]]) {
+      symlinkSync(target, `${run.base}/${link}`);
+    }
+    for (const link of ["root-link", "main-link"]) {
+      const path = `${run.base}/${link}/oasis-checkout.toml`;
+      run.answers.push("yes");
+      assert.equal(await run.file("write", path), undefined, path);
+      assert.equal(run.prompts.at(-1),
+        `oasis: the agent wants to call\n\nwrite ${path}\n\n` +
+          `Type yes to allow editing ${path} ${CHECKOUT_NOTE}. Esc, another answer or no answer within ${SECONDS} s refuses.`,
+        path);
+      assert.equal((await run.gate(`echo x > ${path}`, false))?.block, true, path);
+      assert.equal(run.entries.at(-1)?.note, "no dialog");
+    }
+    const before = [run.prompts.length, run.entries.length];
+    for (const link of ["below-link", "outside-link"]) {
+      const path = `${run.base}/${link}/oasis-checkout.toml`;
+      assert.equal(await run.file("write", path), undefined, path);
+      assert.equal(await run.gate(`echo x > ${path}`, false), undefined, path);
+    }
+    assert.deepEqual([run.prompts.length, run.entries.length], before);
+  } finally {
+    await run.cleanup();
+  }
+});
+
+test("a linked worktree's oasis-checkout.toml, found through git, and the main checkout's always ask", async () => {
+  const run = await worktreeOutside("allow");
+  try {
+    const files: [string, string, string][] = [
+      ["write", `${run.linked}/oasis-checkout.toml`, `${run.linked}/oasis-checkout.toml`],
+      ["edit", "../oasis-checkout.toml", `${run.linked}/oasis-checkout.toml`],
+      ["write", `${run.main}/oasis-checkout.toml`, `${run.main}/oasis-checkout.toml`],
+    ];
+    for (const [tool, path, file] of files) {
+      run.answers.push("yes");
+      assert.equal(await run.file(tool, path), undefined, path);
+      assert.equal(run.prompts.at(-1),
+        `oasis: the agent wants to call\n\n${tool} ${path}\n\n` +
+          `Type yes to allow editing ${file} ${CHECKOUT_NOTE}. Esc, another answer or no answer within ${SECONDS} s refuses.`,
+        path);
+    }
+    run.answers.push("yes");
+    assert.equal(await run.gate("echo \"checkout_slug = 'feat'\" > ../oasis-checkout.toml"), undefined);
+    assert.match(run.prompts.at(-1)!, new RegExp(`Type yes to allow editing ${run.linked}/oasis-checkout\\.toml \\(it sets`));
+    assert.equal((await run.file("write", `${run.linked}/oasis-checkout.toml`, false))?.block, true);
+    assert.equal(run.entries.at(-1)?.note, "no dialog");
+    // Below the worktree's root, or outside any checkout: not read by tools/config.py, no dialog.
+    const before = run.prompts.length;
+    for (const path of [`${run.cwd}/oasis-checkout.toml`, `${run.base}/elsewhere/oasis-checkout.toml`]) {
+      assert.equal(await run.file("write", path), undefined, path);
+    }
+    assert.equal(run.prompts.length, before);
   } finally {
     await run.cleanup();
   }

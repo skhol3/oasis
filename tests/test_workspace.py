@@ -44,7 +44,7 @@ dev_prefix = 'acme_dev_'
 test_prefix = 'acme_test_'
 logs = 'logs'
 '''
-CHECKOUT_ONLY = 'oasis-checkout.toml may only set [tooling].checkout_slug and [tooling].environment: '
+CHECKOUT_ONLY = 'oasis-checkout.toml may only set odoo_version, [tooling].checkout_slug and [tooling].environment: '
 # The same workspace with named environments instead of [tooling].environment.
 NAMED = WORKSPACE.replace("environment = 'environments/acme'\n", '') + '''
 [environments.default]
@@ -346,7 +346,8 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_unsupported_workspace_version_is_refused(self):
         main = self.layout()
-        for line, shown in (('workspace_version = 2\n', '2'), ('workspace_version = "1"\n', '"1"'),
+        # 2 is a supported version (tests/test_workspace_v2.py); 3 is not.
+        for line, shown in (('workspace_version = 3\n', '3'), ('workspace_version = "1"\n', '"1"'),
                             ('workspace_version = true\n', 'true'), ('', '(missing)')):
             with self.subTest(shown=shown):
                 self.workspace.write_text(WORKSPACE.replace('workspace_version = 1\n', line))
@@ -359,7 +360,7 @@ class WorkspaceTests(unittest.TestCase):
             with self.subTest(shown=shown):
                 self.workspace.write_text(WORKSPACE.replace("odoo_version = '19.0'\n", line))
                 self.assert_rejected(main, f'Unsupported odoo_version {shown} in {self.workspace}; '
-                                           'supported: 19.0.')
+                                           'supported: 19.0, 15.0.')
 
     def test_derived_and_checkout_keys_are_refused_in_the_workspace(self):
         main = self.layout()

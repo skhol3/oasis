@@ -95,7 +95,7 @@ probe() {
 # Sets port (the HTTP port) and port_arguments (what start adds: --http-port=<port> unless one is
 # given, and a linked worktree's free second port unless one is given); refuses with exit 2.
 choose_server_ports() {
-  local conf_port gevent_port
+  local conf_port second_option second_port
   port_arguments=()
   if [[ -n "$explicit_port" ]]; then
     if ! valid_port "$explicit_port"; then
@@ -127,19 +127,22 @@ choose_server_ports() {
     port_arguments+=("--http-port=$port")
   fi
   if [[ "${CHECKOUT_KIND:-}" == linked ]] && ! "$explicit_gevent"; then
-    gevent_port=$(odoo_conf_option gevent_port)
-    gevent_port=${gevent_port:-8072}
-    if ! probe $(( gevent_port + 1 )) $(( gevent_port + 50 )) "$port"; then
-      printf 'No free gevent port from %s to %s; pass %s or stop another server.\n' \
-        $(( gevent_port + 1 )) $(( gevent_port + 50 )) "$ODOO_SECOND_PORT_OPTION" >&2
+    # The series' odoo.conf option of the second port (gevent_port, longpolling_port), named in
+    # the refusal by its first word; 8072 is the default of both.
+    second_option=$(python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/odoo_versions.py" "$ODOO_VERSION" second_port_conf_option)
+    second_port=$(odoo_conf_option "$second_option")
+    second_port=${second_port:-8072}
+    if ! probe $(( second_port + 1 )) $(( second_port + 50 )) "$port"; then
+      printf 'No free %s port from %s to %s; pass %s or stop another server.\n' "${second_option%_port}" \
+        $(( second_port + 1 )) $(( second_port + 50 )) "$ODOO_SECOND_PORT_OPTION" >&2
       exit 2
     fi
     port_arguments+=("$ODOO_SECOND_PORT_OPTION=$found")
   fi
 }
 
-# running_second_port <pid>: the second (gevent) port on the command line of a running server
-# ($ODOO_SECOND_PORT_OPTION=<port> or as a separate word, the last one), or nothing, silently,
+# running_second_port <pid>: the second (gevent or longpolling) port on the command line of a running
+# server ($ODOO_SECOND_PORT_OPTION=<port> or as a separate word, the last one), or nothing, silently,
 # when that command line cannot be read (the server ended after its record was read).
 running_second_port() {
   local words=() index value=''

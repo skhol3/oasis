@@ -16,14 +16,20 @@ the same code here (compile), which then writes lock.sha256.
       project root, like dependency_locks_current.
   locks.py fingerprint <requirements dir>
       Writes lock.sha256 exactly as `sha256sum runtime.in runtime.txt dev.in dev.txt >
-      lock.sha256` run in that directory would.
+      lock.sha256` run in that directory would (with overrides.txt last when it exists).
   locks.py compile <requirements dir> <python> <command to rerun>
       Runs `uv pip compile --python-version <python> <input> -o <lock>` in that directory for
       runtime.in, then dev.in (dev.in constrains itself with -c runtime.txt; uv's echo of the lock is
       dropped), then fingerprint. A failed compile stops before lock.sha256 (exit 2), naming the
       input and the command to run again.
+  locks.py recorded <requirements dir> <project root>
+      Exit 0 when overrides.txt does not exist or lock.sha256 records it, else 1: bootstrap and
+      check-environment add it to `sha256sum --check`, which cannot see a file lock.sha256 omits.
 
-Neither command ever writes an input (.in) file.
+overrides.txt (v0.15.0 S7) is an optional input next to runtime.in: when it exists, both compiles
+get `--override overrides.txt` (uv replaces the requirements it names, nested -r included), and
+lock.sha256 records it, so adding, changing or removing it makes the locks stale. Without it every
+command does exactly what it did before. No command ever writes an input (.in or overrides.txt) file.
 """
 import hashlib
 import os
@@ -35,6 +41,8 @@ from pathlib import Path
 INPUTS = ('runtime.in', 'dev.in')
 LOCKS = ('runtime.txt', 'dev.txt')
 FILES = ('runtime.in', 'runtime.txt', 'dev.in', 'dev.txt')
+# The optional input of uv's --override (S7): fingerprinted after FILES, only when it exists.
+OVERRIDES = 'overrides.txt'
 FINGERPRINT = 'lock.sha256'
 # sha256sum's line: the digest, a space, then a space (text) or '*' (binary), then the name.
 ENTRY = re.compile(r'([0-9a-fA-F]{64}) [ *](.+)')
@@ -67,7 +75,20 @@ def state(requirements, root):
     for name in INPUTS:
         if entries.get(os.path.realpath(requirements / name)) != digest(requirements / name):
             return 'stale'
+    # overrides.txt added, changed, or removed while lock.sha256 still records it.
+    overrides = os.path.realpath(requirements / OVERRIDES)
+    if (requirements / OVERRIDES).is_file():
+        if entries.get(overrides) != digest(requirements / OVERRIDES):
+            return 'stale'
+    elif overrides in entries:
+        return 'stale'
     return 'edited'
+
+
+def overrides_recorded(requirements, root):
+    """Whether overrides.txt is absent or lock.sha256 names it (from either base, as recorded reads it)."""
+    return (not (requirements / OVERRIDES).is_file()
+            or os.path.realpath(requirements / OVERRIDES) in recorded(requirements, root))
 
 
 def matches(line, base):
@@ -89,15 +110,17 @@ def current(requirements, root):
         lines = (requirements / FINGERPRINT).read_text().splitlines()
     except (OSError, UnicodeDecodeError):
         return False
-    return bool(lines) and any(all(matches(line, base) for line in lines) for base in (requirements, root))
+    return (bool(lines) and any(all(matches(line, base) for line in lines) for base in (requirements, root))
+            and overrides_recorded(requirements, root))
 
 
 def compile_locks(requirements, python, rerun):
     """Compile runtime.txt, then dev.txt, then fingerprint; 0, or 2 after a failed compile (the message
     names the input and rerun, the command to run again)."""
+    override = ['--override', OVERRIDES] if (requirements / OVERRIDES).is_file() else []
     for source, lock in zip(INPUTS, LOCKS):
         try:
-            status = subprocess.run(['uv', 'pip', 'compile', '--python-version', python, source, '-o', lock],
+            status = subprocess.run(['uv', 'pip', 'compile', '--python-version', python, *override, source, '-o', lock],
                                     cwd=requirements, stdout=subprocess.DEVNULL,
                                     env={**os.environ, 'PWD': str(requirements)}).returncode
         except OSError:
@@ -112,7 +135,8 @@ def compile_locks(requirements, python, rerun):
 
 
 def fingerprint(requirements):
-    text = ''.join(f'{digest(requirements / name)}  {name}\n' for name in FILES)
+    names = (*FILES, OVERRIDES) if (requirements / OVERRIDES).is_file() else FILES
+    text = ''.join(f'{digest(requirements / name)}  {name}\n' for name in names)
     (requirements / FINGERPRINT).write_text(text)
 
 
@@ -125,8 +149,11 @@ def main(argv):
         return 0
     if len(argv) == 4 and argv[0] == 'compile':
         return compile_locks(Path(argv[1]), argv[2], argv[3])
+    if len(argv) == 3 and argv[0] == 'recorded':
+        return 0 if overrides_recorded(Path(argv[1]), Path(argv[2])) else 1
     print('Usage: locks.py state <requirements dir> <project root> | fingerprint <requirements dir> | '
-          'compile <requirements dir> <python> <command to rerun>', file=sys.stderr)
+          'compile <requirements dir> <python> <command to rerun> | recorded <requirements dir> <project root>',
+          file=sys.stderr)
     return 2
 
 

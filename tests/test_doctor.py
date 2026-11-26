@@ -454,7 +454,8 @@ class DoctorTests(unittest.TestCase):
         self.assert_report(self.expected(after={'odoo_release': (
             'FAIL module_series=15.0 module=coffee expected=19.0\n'
             '  fix: run oasis in a checkout of an Odoo 19.0 branch, or set the version of coffee to 19.0.x.y.z if '
-            'it is an Odoo 19.0 module; oasis does not support Odoo 15.0 (supported: 19.0)')}))
+            f'it is an Odoo 19.0 module; for Odoo 15.0 here, run oasis setup to add a [series."15.0"] section to '
+            f'{self.workspace}')}))
         # Versions that are not series-style, or of the configured series, are ignored.
         for version in ('1.0', '19.0.1.0.0', '1.2.3.4.5', '2.0.1.0.0'):
             with self.subTest(version=version):

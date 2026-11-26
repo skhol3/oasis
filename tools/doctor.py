@@ -5,7 +5,9 @@ One `PASS|WARN|FAIL <check>[=<value>]` line per check on stdout, then `doctor_fa
 exit 1 when n > 0, else 0 (a WARN does not count). Every FAIL line is followed by
 `  fix: <command or action>`, what fixes it (v0.14.0 S1). After the configuration lines, one
 `PASS <value>_from=<origin>` line per layered value says where it came from (`machine:<file>`,
-`workspace:<file>`, `checkout:<file>` or `derived`; S2). Doctor never starts a service, never
+`workspace:<file>`, `checkout:<file>` or `derived`; S2). A workspace_version 2 checkout also gets
+`PASS series=<x.y> from=<origin>`, its series exceptions and the isolation of the workspace's
+series (v0.15.0 S3, S4). Doctor never starts a service, never
 connects to a database and never prints file contents: files are tested for existence or parsed
 for the one fact a check needs (the env file: which of the database account's variables are
 empty, never their values; module manifests: their series-style version, S11). The only external
@@ -39,6 +41,11 @@ EMPTY_VALUES = ('', '""', "''", '~', 'null')
 # one is assigned an empty value. An env file that does not assign them (other names) is not judged.
 ACCOUNT_VARIABLES = ('ODOO_DB_USER', 'ODOO_DB_PASSWORD')
 ENV_ASSIGNMENT = re.compile(r'\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)')
+# What two series of one workspace may not share (v0.15.0 S3), in report order, with the facts each
+# compares: the port the compose file publishes to PostgreSQL, the compose project (its top-level
+# name), the database prefixes and the env file (the database account).
+ISOLATION = (('db_port', ('db_port',)), ('compose_project', ('compose_project',)),
+             ('prefixes', ('dev_prefix', 'test_prefix')), ('env_file', ('env_file',)))
 
 
 def sibling(name: str):
@@ -162,7 +169,93 @@ def check_module_series(report: Report, values: dict, config):
         return True
     expected = values['ODOO_VERSION']
     return report.fail('module_series', f'{mismatch["series"]} module={mismatch["module"]} expected={expected}',
-                       config.series_fix(mismatch, expected))
+                       config.series_fix(mismatch, expected, values))
+
+
+def series_facts(config, document: dict, workspace: Path, series: str, published_port) -> dict:
+    """What ISOLATION compares for one series of the workspace (None when it cannot be read: a missing or
+    unreadable compose file leaves its project and port unknown, and the isolation check skips them)."""
+    tooling = config.series_tooling(document, workspace, series)
+
+    def path(key):
+        value = tooling.get(key)
+        return (workspace.parent / value).resolve() if isinstance(value, str) and value and '\x00' not in value else None
+
+    def text(key):
+        value = tooling.get(key)
+        return value if isinstance(value, str) else None
+    compose = path('compose')
+    project = port = None
+    if compose is not None:
+        try:
+            project = compose_project(compose)
+        except (OSError, UnicodeError):
+            pass
+        try:
+            port = published_port(compose)
+        except (OSError, UnicodeError):
+            pass
+    return {'compose': compose, 'config': path('config'), 'compose_project': project, 'db_port': port,
+            'dev_prefix': text('dev_prefix'), 'test_prefix': text('test_prefix'), 'env_file': path('env_file')}
+
+
+def isolation_fix(check: str, group: list[str], facts: dict, workspace: Path) -> str:
+    """How to give the series of group after the first their own value of check."""
+    others = group[1:]
+    sections = ' and '.join(f'[series."{series}"]' for series in others)
+    if check in ('db_port', 'compose_project') and len({facts[series]['compose'] for series in group}) == 1:
+        return f'set compose under {sections} in {workspace} to a compose file of its own'
+    composes = ' and '.join(str(facts[series]['compose']) for series in others)
+    if check == 'db_port':
+        confs = ' and '.join(str(facts[series]['config']) for series in others)
+        return f'publish another port to 5432 in {composes} and set db_port in {confs} to it'
+    if check == 'compose_project':
+        return f'set another top-level name: in {composes}'
+    if check == 'prefixes':
+        return f'set dev_prefix and test_prefix under {sections} in {workspace} to a pair of its own'
+    return f'set env_file under {sections} in {workspace} to a file of its own'
+
+
+def check_series_isolation(report: Report, values: dict, config):
+    """A version 2 workspace with several series: one FAIL per group of series that share what ISOLATION
+    names, else `PASS series_isolation=<series>`; no line for one series or version 1."""
+    if values.get('WORKSPACE_VERSION') != '2':
+        return True
+    workspace = Path(values['WORKSPACE_ROOT']) / config.WORKSPACE_NAME
+    try:
+        document = config.checked_workspace(workspace)
+    except ValueError:
+        return True
+    names = config.declared_series(document, workspace)
+    if len(names) < 2:
+        return True
+    published_port = sibling('setup').published_port
+    facts = {series: series_facts(config, document, workspace, series, published_port) for series in names}
+    passed = True
+    for check, keys in ISOLATION:
+        groups = []
+        for key in keys:
+            shared = {}
+            for series in names:
+                if facts[series][key] is not None:
+                    shared.setdefault(facts[series][key], []).append(series)
+            groups += [group for group in shared.values() if len(group) > 1 and group not in groups]
+        for group in groups:
+            passed = report.fail('series_isolation', f'{check} series={",".join(group)}',
+                                 isolation_fix(check, group, facts, workspace)) and passed
+    if passed:
+        report.check('series_isolation', ','.join(names))
+    return passed
+
+
+def show_series(report: Report, values: dict, found: dict, config):
+    """A version 2 checkout: its series and where it came from, its exceptions and the isolation."""
+    if values.get('WORKSPACE_VERSION') != '2':
+        return
+    report.check('series', f'{values["ODOO_VERSION"]} from={found.get("ODOO_VERSION_FROM", "")}')
+    if values['SERIES_EXCEPTIONS']:
+        report.check('series_exceptions', ','.join(values['SERIES_EXCEPTIONS'].splitlines()))
+    check_series_isolation(report, values, config)
 
 
 def check_conf(report: Report, values: dict, conf_reader, program: str):
@@ -181,19 +274,29 @@ def check_conf(report: Report, values: dict, conf_reader, program: str):
     return report.check('odoo_conf')
 
 
+def compose_project(path: Path) -> str | None:
+    """The top-level `name:` of a compose file (quotes removed), None without a non-empty one; raises
+    OSError or UnicodeError when it cannot be read."""
+    for line in path.read_text(encoding='utf-8').splitlines():
+        match = TOP_LEVEL_NAME.match(line)
+        if match:
+            value = re.sub(r'\s+#.*$', '', match.group(1)).strip()
+            if value not in EMPTY_VALUES:
+                return value.strip('\'"')
+    return None
+
+
 def check_compose(report: Report, values: dict, program: str):
     """The compose file declares a top-level `name:`, so every checkout shares one project name."""
     path = Path(values['COMPOSE_FILE'])
     if not path.exists():
         return report.fail('compose', 'missing', f'{program} setup --apply')
     try:
-        lines = path.read_text(encoding='utf-8').splitlines()
+        project = compose_project(path)
     except (OSError, UnicodeError):
         return report.fail('compose', 'unreadable', f'make {path} readable by you')
-    for line in lines:
-        match = TOP_LEVEL_NAME.match(line)
-        if match and re.sub(r'\s+#.*$', '', match.group(1)).strip() not in EMPTY_VALUES:
-            return report.check('compose')
+    if project is not None:
+        return report.check('compose')
     return report.fail('compose', 'missing_top_level_name', f'add a top-level name: to {path}')
 
 
@@ -296,20 +399,22 @@ its layered values came from (machine, workspace or checkout file, or derived), 
 docker and `docker compose version`, flock, /proc, the environment's Python, the Odoo source
 release, the series of the module manifests, odoo.conf, the compose file's top-level name, the env
 file (exists, and the database account's variables are not empty), the logs and data directories,
-and the HTTP port.
+and the HTTP port. With workspace_version 2: the checkout's series and where it came from, its
+series exceptions, and that the workspace's series share no database port, prefixes, compose
+project or env file.
 Prints PASS|WARN|FAIL <check>[=<value>] per check, `  fix: <command or action>` after each FAIL,
 and doctor_failures=<n>; exit 1 when n > 0.
 Never starts services, connects to a database or prints file contents or values.
 '''
 
 
-def configuration_fix(config, root: Path, message: str) -> str:
+def configuration_fix(config, root: Path, message: str, error: Exception | None = None) -> str:
     """What fixes a configuration that does not load: migrate for a legacy profile, setup for a
-    missing workspace file or source, else the setting the error names."""
+    missing workspace file, series section or source, else the setting the error names."""
     program = config.program_name()
     if (root / config.PROFILE_NAME).is_file():
         return f'{program} migrate --plan, then {program} migrate --apply'
-    if config.workspace_file(root) is None:
+    if config.workspace_file(root) is None or isinstance(error, config.MissingSeries):
         return f'{program} setup --apply'
     try:
         refusal = config.layered_configuration(root)[5]
@@ -320,11 +425,17 @@ def configuration_fix(config, root: Path, message: str) -> str:
     return f'correct the setting the error names, then run {program} doctor again'
 
 
-def show_origins(report: Report, config, root: Path, values: dict) -> dict:
-    """One PASS line per layered value with its origin (config.py --origins, S2); the origins."""
+def read_origins(config, root: Path) -> dict:
+    """config.py --origins of root (S2), {} when it cannot be read."""
     try:
-        found = config.origins(root)
+        return config.origins(root)
     except ValueError:
+        return {}
+
+
+def show_origins(report: Report, config, root: Path, values: dict, found: dict) -> dict:
+    """One PASS line per layered value with its origin (read_origins, S2); the origins."""
+    if not found:
         return {}
     places = {'machine': f'machine:{found["MACHINE_FILE"]}',
               'workspace': f'workspace:{Path(values["WORKSPACE_ROOT"]) / config.WORKSPACE_NAME}',
@@ -366,12 +477,14 @@ def main(arguments: list[str]) -> int:
     except ValueError as exc:
         values = None
         message = ' '.join(str(exc).split())
-        report.fail('configuration', message, configuration_fix(config, root, message))
+        report.fail('configuration', message, configuration_fix(config, root, message, exc))
     else:
         report.check('configuration', 'workspace')
         report.check('odoo_version', values['ODOO_VERSION'])
+        found = read_origins(config, root)
+        show_series(report, values, found, config)
         report.check('agent_destructive', values['AGENT_DESTRUCTIVE'])
-        found = show_origins(report, config, root, values)
+        found = show_origins(report, config, root, values, found)
     check_git(report)
     check_docker(report)
     if shutil.which('flock') is None:

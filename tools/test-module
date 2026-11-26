@@ -139,6 +139,8 @@ if "$reuse"; then
   fi
   if [[ -n ${OASIS_REUSE_RESULT:-} ]]; then printf '%s\n' "$mode" >"$OASIS_REUSE_RESULT"; fi
 fi
+# --stop-after-init in every series: where --test-tags does not imply it (odoo_versions.py
+# test_tags_implies_stop false, 15.0), Odoo would keep serving after the tests.
 odoo_command=("$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "--http-port=$http_port"
   "$ODOO_SECOND_PORT_OPTION=$second_port" -d "$database" "${module_arguments[@]}" --test-tags "/$module${only:+:$only}" --stop-after-init)
 if "$disposable"; then

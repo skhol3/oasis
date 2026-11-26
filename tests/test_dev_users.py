@@ -82,9 +82,11 @@ class Users:
         return domain[0][2] in self.env.cr.data['users']
     def create(self, values):
         uid = len(self.env.cr.data['users']) + 2
+        # The groups field of res.users is the series' (group_ids in 19.0, groups_id in 15.0).
+        [field] = [key for key in ('group_ids', 'groups_id') if key in values]
         self.env.cr.data['users'][values['login']] = {
             'id': uid, 'password': digest(values['password']),
-            'groups': values['group_ids'][0][2],
+            'groups': values[field][0][2], 'groups_field': field,
             'company': values['company_id'], 'companies': values['company_ids'][0][2]}
         return SimpleNamespace(id=uid)
 class Environment:
@@ -234,6 +236,7 @@ class DevelopmentUsersTests(unittest.TestCase):
         self.assertEqual(state['users']['manager']['groups'], [1, 4])
         self.assertEqual(state['users']['planner']['company'], 1)
         self.assertEqual(state['users']['planner']['companies'], [1])
+        self.assertEqual({user.get('groups_field') for user in state['users'].values()}, {None, 'group_ids'})
         before = self.state.read_bytes()
         code, output = self.terminal('coffee', 'cc_dev_coffee')
         self.assertEqual(code, 1)
@@ -300,6 +303,37 @@ class DevelopmentUsersTests(unittest.TestCase):
                 (2, '', 'ERROR: Invalid development user configuration.\n'))
             self.assertFalse(self.state.exists())
             self.assertFalse(self.commands.exists())
+
+    def use_odoo_15(self):
+        """An Odoo 15.0 checkout (v0.15.0 S2): workspace series, source release, Python 3.9."""
+        self.profile.write_text(self.profile.read_text().replace("odoo_version = '19.0'", "odoo_version = '15.0'", 1))
+        (self.source / 'odoo/release.py').write_text('version_info = (15, 0, 0, "final", 0)\n')
+        self.python.write_text(self.python.read_text().replace('print("3.12")', 'print("3.9")', 1)
+                               .replace('Odoo Server 19.0', 'Odoo Server 15.0', 1))
+
+    def test_odoo_15_uses_its_demo_options_and_groups_field(self):
+        # 15.0 loads demo data unless --without-demo=all is given and has no --with-demo option;
+        # its res.users groups field is groups_id.
+        self.use_odoo_15()
+        self.profile.write_text(self.profile.read_text().replace(
+            "administrator_login = 'local_admin'", "administrator_login = 'local_admin'\ndemo_modules = ['purchase_stock']"))
+        conf = str(self.root / 'dev/odoo.conf')
+        for demo, flags in ((False, ['--without-demo=all']), (True, [])):
+            with self.subTest(demo=demo):
+                self.state.unlink(missing_ok=True)
+                code, output = self.terminal(*(['--with-demo'] if demo else []), 'coffee', 'cc_dev_coffee')
+                self.assertEqual(code, 0, output)
+                self.assertTrue(output.endswith('Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'))
+                state = json.loads(self.state.read_text())
+                self.assertIs(state['demo'], demo)
+                self.assertEqual(json.loads(Path(str(self.state) + '.config').read_text()),
+                                 ['-c', conf, '--no-http', *flags, '--log-level=critical'])
+                self.assertEqual(state['installs'], [
+                    [str(self.source / 'odoo-bin'), '-c', conf, '-d', 'cc_dev_coffee', '-i', module, *flags,
+                     '--stop-after-init', '--no-http', '--log-level=critical']
+                    for module in (['purchase_stock', 'coffee'] if demo else ['coffee'])])
+                self.assertEqual(state['users']['planner']['groups'], [1, 3])
+                self.assertEqual({user.get('groups_field') for user in state['users'].values()}, {None, 'groups_id'})
 
     # Workspace mode: the checkout has no profile; [development] lives in the workspace file.
     WORKSPACE = '''workspace_version = 1

@@ -82,11 +82,14 @@ class SeriesGuardTests(unittest.TestCase):
                               capture_output=True, text=True, env=self.env, stdin=subprocess.DEVNULL)
 
     def refusal(self, module, found, version, addons='addons'):
+        # A supported series (15.0) is told to add its section (v0.15.0 S3); another one is not supported.
+        workspace = self.root / 'oasis-workspace.toml'
+        tail = (f'for Odoo {found} here, run oasis setup to add a [series."{found}"] section to {workspace}'
+                if found == '15.0' else f'oasis does not support Odoo {found} (supported: 19.0, 15.0)')
         return (f'The module {module} declares Odoo {found} (version {version} in '
                 f'{self.root / addons / module / "__manifest__.py"}), but {self.root} is configured for Odoo 19.0 by '
-                f'{self.root / "oasis-workspace.toml"}: run oasis in a checkout of an Odoo 19.0 branch, or set the '
-                f'version of {module} to 19.0.x.y.z if it is an Odoo 19.0 module; oasis does not support Odoo '
-                f'{found} (supported: 19.0).')
+                f'{workspace}: run oasis in a checkout of an Odoo 19.0 branch, or set the '
+                f'version of {module} to 19.0.x.y.z if it is an Odoo 19.0 module; {tail}.')
 
     def test_a_module_of_another_series_is_refused_by_every_reader(self):
         self.assertEqual(self.reader().returncode, 0, self.reader().stderr)
@@ -210,22 +213,19 @@ class SeriesGuardTests(unittest.TestCase):
         result = self.reader()
         self.assertEqual((result.returncode, result.stderr), (0, ''))
 
-    def test_a_supported_series_is_told_to_use_its_own_workspace_file(self):
-        spec = importlib.util.spec_from_file_location('oasis_series_guard_config', READER)
-        config = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(config)
+    def test_a_supported_series_is_told_to_add_its_section(self):
+        # 15.0 is supported (tools/odoo_versions.py): the fix points to the series model (v0.15.0 S3).
+        config = self.guard_config()
         self.module('addons', 'old_sale', '15.0.1.0.0')
         values = config.load(self.root, series_guard=False)
-        table = config.versions().CAPABILITIES
-        table['15.0'] = table['19.0']
-        self.addCleanup(table.pop, '15.0')
         mismatch = config.series_mismatch(values)
         self.assertEqual((mismatch['module'], mismatch['series'], mismatch['version']),
                          ('old_sale', '15.0', '15.0.1.0.0'))
-        self.assertEqual(config.series_fix(mismatch, '19.0'),
-                         'run oasis in a checkout of an Odoo 19.0 branch, or set the version of old_sale to 19.0.x.y.z '
-                         "if it is an Odoo 19.0 module; for Odoo 15.0 here, give this checkout its own "
-                         "oasis-workspace.toml with odoo_version = '15.0'")
+        fix = ('run oasis in a checkout of an Odoo 19.0 branch, or set the version of old_sale to 19.0.x.y.z '
+               'if it is an Odoo 19.0 module; for Odoo 15.0 here, run oasis setup to add a [series."15.0"] section to ')
+        self.assertEqual(config.series_fix(mismatch, '19.0', values), fix + str(self.root / 'oasis-workspace.toml'))
+        # Without the assignments (no workspace path known) the file is named by its name.
+        self.assertEqual(config.series_fix(mismatch, '19.0'), fix + 'oasis-workspace.toml')
 
 
 if __name__ == '__main__':

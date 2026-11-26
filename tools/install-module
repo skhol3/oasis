@@ -29,7 +29,9 @@ require_working_database_name "$database"
 require_runtime
 ensure_database "$database" </dev/null
 if [[ "$with_demo" == true ]]; then
-  run_odoo -d "$database" -i "$module" --with-demo --stop-after-init
+  # The series' demo-on options (odoo_versions.py demo_on_args; none where demo data is the default).
+  eval "demo_on=($(python3 -I -B "$(dirname "$0")/odoo_versions.py" "$ODOO_VERSION" demo_on_args))"
+  run_odoo -d "$database" -i "$module" "${demo_on[@]}" --stop-after-init
 else
   run_odoo -d "$database" -i "$module" "${ODOO_DEMO_OFF_ARGUMENTS[@]}" --stop-after-init
 fi

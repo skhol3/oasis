@@ -9,6 +9,90 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-25
+
+### Added
+
+- `oasis setup --environment <dir>` adopts an existing Python environment (a `pyvenv.cfg` whose
+  `version` is a Python the series supports, read and never run) for a new workspace or a new
+  `[series."x.y"]` section; setup never creates, syncs or deletes it, and the next steps say that
+  `bootstrap --apply` syncs it to the locks. `[series."x.y"]` sections accept `python`
+  (`'3.<minor>'`, within the series' range) for the environment the section or `[tooling]` gives.
+- `overrides.txt` in a requirements directory is an optional lock input: `uv pip compile` gets
+  `--override overrides.txt`, `lock.sha256` records it, and adding, changing or removing it makes
+  the locks stale. Without it, the locks, the compile commands and the messages are unchanged.
+  When setup adopts a series folder with `requirements-extra.txt` or `requirements-overrides.txt`,
+  a new `runtime.in` includes the first and a new `overrides.txt` the second; those files are never
+  copied or edited.
+- `oasis setup` in a checkout of an Odoo series the workspace file has no section for (a 15.0
+  branch of a 19.0 project) adds a `[series."x.y"]` section to that file (a `workspace_version = 1`
+  file becomes version 2, that line only) and the machine file entry of the series, and creates
+  only that series' missing files: `config/<x.y>/` by default, `logs/<x.y>` and `data/<x.y>`,
+  prefixes `<name><major>_dev_` and `<name><major>_test_`, PostgreSQL of the series on a port no
+  other series uses, the series' Python. A folder that already holds the series' files
+  (`config/odoo-15/`, or `--config-dir <dir>`) is adopted; `--exception <module>` (repeatable)
+  writes `series_exceptions`. A file that cannot be extended without changing another series is
+  refused (docs/setup.md#another-odoo-series).
+  A kept `odoo.conf` or compose file whose PostgreSQL port another series uses is refused, naming
+  both series, the port and the fix. A failed verification, `uv pip compile` or `uv venv` undoes
+  every change, including the workspace file edit, the machine entry and rewritten locks.
+  The adopted folder keeps that series' data and logs where they are: the `data_dir` of its kept
+  `odoo.conf` (only that option is read) becomes the section's `data_dir`, and an existing
+  `logs/<folder name>` inside the workspace (`logs/odoo-15` for `config/odoo-15`) becomes its `logs`.
+- Odoo 15.0 in the series table (`tools/odoo_versions.py`), read from the 15.0 source: Python
+  3.7-3.12 (default 3.10), PostgreSQL 12 minimum and 14 by default, `--longpolling-port` as the
+  second port (after the odoo.conf `longpolling_port` in a linked worktree), no demo data with
+  `--without-demo=all` (the 15.0 option takes a value), demo data by default (no `--with-demo`),
+  the `--test-tags` class filter, and the `--dev` features ipdb, pdb, pudb, wdb, qweb, reload,
+  werkzeug and xml (`all` = pdb, reload, qweb, werkzeug, xml).
+- Series keys `demo_on_args`, `user_groups_field` and `second_port_conf_option`:
+  `install-module --with-demo`, `init-dev-database` (demo options, the `res.users` groups field:
+  `group_ids` on 19.0, `groups_id` on 15.0) and a linked worktree's second port take them from the
+  table. `view-info` ranks `tree` views (15.0) with list views.
+- `workspace_version = 2`: one `oasis-workspace.toml` for several Odoo series. `[tooling]` holds the
+  shared keys and its paths may use `{series}`; `[series."<x.y>"]` sections override what differs
+  (source, environment, odoo.conf, env file, compose file, requirements, db service, prefixes,
+  test database, logs, data). A checkout's series comes from `odoo_version` in its
+  `oasis-checkout.toml`, else its module manifests, else the workspace `odoo_version`; a series
+  without a section is refused, naming `oasis setup`. Every value `tools/config.py` emits follows
+  the checkout's series, so all tools do too.
+- `series_exceptions` in a series section: modules the series guard and series detection ignore
+  (e.g. `report_xlsx` declaring 16.0 in a 15.0 branch).
+- `doctor` (version 2): `PASS series=<x.y> from=<checkout|manifests|workspace>`,
+  `PASS series_exceptions=<modules>`, and `PASS|FAIL series_isolation` when two series share a
+  database port, compose project, prefixes or env file, each with a fix.
+
+- `oasis setup` asks for the Python environment it would create (a new workspace, or a new
+  `[series."x.y"]` section) on a terminal, in the plan and with `--apply`: Enter creates it, or the
+  absolute path of an existing environment adopts that one exactly as `--environment` does. For a
+  new one it asks its Python among those the series supports, the default marked (`[Enter: 3.10]`).
+  Without a terminal nothing is asked and the plan is unchanged. End of input at a question refuses
+  (exit 2), Ctrl-C stops with `ERROR: Interrupted at a question: nothing changed.` (exit 130).
+- `oasis setup --python <x.y>`: the Python of the environment setup creates, without asking.
+  Refused when the series does not support it, with `--environment`, when the environment already
+  exists, and in an already configured checkout.
+
+### Changed
+
+- Odoo 15.0's default Python is 3.9, the Python of Odoo's official 15.0 Debian package
+  (`setup/package.dfdebian`: `debian:bullseye`; 19.0 stays 3.12, `ubuntu:noble`). A 15.0 workspace
+  that declares no `python` now expects 3.9; declare `python` to keep another one.
+- The `runtime.in` that `oasis setup` writes for 15.0 also requires `setuptools<81`: Odoo 15 imports
+  `pkg_resources` without listing setuptools, so a uv environment could not start it and `uv pip
+  sync` removed setuptools from an adopted one. docs/setup.md "Odoo 15.0 requirements" also covers
+  `python-ldap==3.4.4` for OpenLDAP 2.6.
+- An `oasis-checkout.toml` with a key it may not set is refused with `oasis-checkout.toml may only
+  set odoo_version, [tooling].checkout_slug and [tooling].environment: <key>`.
+- The menu's start / restart flow takes the dev mode option and choices from the series table.
+- Unsupported-series messages list every supported series (`supported: 19.0, 15.0`); the series
+  guard's fix for a module of a supported series points to the series model (`run oasis setup to
+  add a [series."<x.y>"] section to <workspace file>`, or `odoo_version` in oasis-checkout.toml
+  when the section exists). `oasis-checkout.toml` accepts a top-level `odoo_version`.
+- The agent's changes to a checkout's `oasis-checkout.toml` ask the user in the same dialog as the
+  workspace file, whatever `[tooling].agent_destructive` says; its dialog says it sets
+  `checkout_slug`, the database namespace, and the environment.
+- 19.0 command lines, the 19.0 menu catalog and version 1 workspace output are unchanged.
+
 ## [0.14.0] - 2026-11-25
 
 ### Added
@@ -1049,7 +1133,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/skhol3/oasis/releases/tag/v0.15.0
 [0.14.0]: https://github.com/skhol3/oasis/releases/tag/v0.14.0
 [0.13.0]: https://github.com/skhol3/oasis/releases/tag/v0.13.0
 [0.12.0]: https://github.com/skhol3/oasis/releases/tag/v0.12.0

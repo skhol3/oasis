@@ -15,24 +15,39 @@ SPEC.loader.exec_module(odoo_versions)
 
 
 class CapabilityTableTests(unittest.TestCase):
-    def test_only_odoo_19_is_supported_with_its_capabilities(self):
-        self.assertEqual(odoo_versions.CAPABILITIES, {'19.0': {
-            'python': ('3.10', '3.14'), 'python_default': '3.12', 'postgres_min': 13,
-            'postgres_default': 17, 'second_port_option': '--gevent-port',
-            'demo_off_args': ['--without-demo'], 'test_tags_implies_stop': True, 'test_class_filter': True,
-            'dev_option': '--dev', 'dev_features': ['access', 'qweb', 'reload', 'replica', 'xml'],
-            'dev_all': ['access', 'qweb', 'reload', 'xml'], 'dev_reload_packages': ['inotify', 'watchdog']}})
-        self.assertEqual(odoo_versions.supported(), ['19.0'])
+    ODOO_19 = {
+        'python': ('3.10', '3.14'), 'python_default': '3.12', 'postgres_min': 13,
+        'postgres_default': 17, 'second_port_option': '--gevent-port',
+        'demo_off_args': ['--without-demo'], 'demo_on_args': ['--with-demo'],
+        'second_port_conf_option': 'gevent_port',
+        'test_tags_implies_stop': True, 'test_class_filter': True,
+        'dev_option': '--dev', 'dev_features': ['access', 'qweb', 'reload', 'replica', 'xml'],
+        'dev_all': ['access', 'qweb', 'reload', 'xml'], 'dev_reload_packages': ['inotify', 'watchdog'],
+        'user_groups_field': 'group_ids', 'runtime_requirements': []}
+    # v0.15.0 S2, read from the local 15.0 source (tools/odoo_versions.py cites the lines).
+    ODOO_15 = {
+        'python': ('3.7', '3.12'), 'python_default': '3.9', 'postgres_min': 12,
+        'postgres_default': 14, 'second_port_option': '--longpolling-port', 'second_port_conf_option': 'longpolling_port',
+        'demo_off_args': ['--without-demo=all'], 'demo_on_args': [],
+        'test_tags_implies_stop': False, 'test_class_filter': True,
+        'dev_option': '--dev',
+        'dev_features': ['ipdb', 'pdb', 'pudb', 'wdb', 'qweb', 'reload', 'werkzeug', 'xml'],
+        'dev_all': ['pdb', 'reload', 'qweb', 'werkzeug', 'xml'], 'dev_reload_packages': ['inotify', 'watchdog'],
+        'user_groups_field': 'groups_id',
+        'runtime_requirements': [('setuptools<81', 'Odoo 15.0 imports pkg_resources without listing setuptools, '
+                                  'which provides it: an environment uv creates has none and uv pip sync would '
+                                  'remove it; setuptools advises <81 to keep pkg_resources.')]}
+
+    def test_odoo_19_and_15_are_supported_with_their_capabilities(self):
+        self.assertEqual(odoo_versions.CAPABILITIES, {'19.0': self.ODOO_19, '15.0': self.ODOO_15})
+        # 19.0 stays first: the series a tool takes when it has to pick one (setup's machine file check).
+        self.assertEqual(odoo_versions.supported(), ['19.0', '15.0'])
 
     def test_capability_reads_one_key(self):
-        for key, value in (('python', ('3.10', '3.14')), ('python_default', '3.12'), ('postgres_min', 13),
-                           ('postgres_default', 17), ('second_port_option', '--gevent-port'), ('demo_off_args', ['--without-demo']),
-                           ('test_tags_implies_stop', True), ('dev_option', '--dev'),
-                           ('dev_features', ['access', 'qweb', 'reload', 'replica', 'xml']),
-                           ('dev_all', ['access', 'qweb', 'reload', 'xml']),
-                           ('dev_reload_packages', ['inotify', 'watchdog'])):
-            with self.subTest(key=key):
-                self.assertEqual(odoo_versions.capability('19.0', key), value)
+        for version, table in (('19.0', self.ODOO_19), ('15.0', self.ODOO_15)):
+            for key, value in table.items():
+                with self.subTest(version=version, key=key):
+                    self.assertEqual(odoo_versions.capability(version, key), value)
 
     def test_capability_returns_a_copy_of_lists(self):
         odoo_versions.capability('19.0', 'demo_off_args').append('--with-demo')
@@ -72,12 +87,12 @@ class CapabilityTableTests(unittest.TestCase):
                 self.assertGreaterEqual(default, odoo_versions.capability(version, 'postgres_min'))
 
     def test_unknown_version_is_a_clear_error(self):
-        for version, shown in (('12.0', '"12.0"'), ('15.0', '"15.0"'), ('19', '"19"'), (19.0, '19.0'),
-                               (None, 'null')):
+        for version, shown in (('12.0', '"12.0"'), ('16.0', '"16.0"'), ('15', '"15"'), ('19', '"19"'),
+                               (19.0, '19.0'), (15.0, '15.0'), (None, 'null')):
             with self.subTest(version=version):
                 with self.assertRaises(odoo_versions.UnsupportedVersion) as caught:
                     odoo_versions.capability(version, 'python')
-                self.assertEqual(str(caught.exception), f'Unsupported Odoo version {shown}; supported: 19.0.')
+                self.assertEqual(str(caught.exception), f'Unsupported Odoo version {shown}; supported: 19.0, 15.0.')
         self.assertTrue(issubclass(odoo_versions.UnsupportedVersion, ValueError))
 
     def test_unknown_key_is_a_programming_error(self):
@@ -89,6 +104,9 @@ class CapabilityTableTests(unittest.TestCase):
                                  ('3.15', False), ('2.7', False), ('4.0', False), ('3.100', False)):
             with self.subTest(python=python):
                 self.assertIs(odoo_versions.python_supported('19.0', python), expected)
+        for python, expected in (('3.7', True), ('3.10', True), ('3.12', True), ('3.6', False), ('3.13', False)):
+            with self.subTest(series='15.0', python=python):
+                self.assertIs(odoo_versions.python_supported('15.0', python), expected)
         for python in ('3', '3.12.1', '3.x', ' 3.12', '', 3.12, None, '03.12'):
             with self.subTest(python=python):
                 self.assertIs(odoo_versions.python_supported('19.0', python), False)
@@ -96,8 +114,19 @@ class CapabilityTableTests(unittest.TestCase):
 
 class VersionNeutralToolsTests(unittest.TestCase):
     # Version-specific Odoo options are rendered from the table through config.py's
-    # ODOO_SECOND_PORT_OPTION and ODOO_DEMO_OFF_ARGS, never written in a tool.
-    FLAGS = re.compile(r'--(gevent-port|longpolling-port|without-demo)')
+    # ODOO_SECOND_PORT_OPTION and ODOO_DEMO_OFF_ARGS (and odoo_versions.py demo_on_args), never
+    # written in a tool. --with-demo is also the oasis option of install-module and
+    # init-dev-database (and the menu's flag for them): only those lines may name it.
+    FLAGS = re.compile(r'--(gevent-port|longpolling-port|without-demo|with-demo)(?![\w-])')
+    OASIS_OPTIONS = {
+        ('tools/actions.py', "[flag('demo', '--with-demo'), value('module'), value('database')],"),
+        ('tools/init-dev-database', "printf '%s\\n' 'Usage: init-dev-database [--with-demo] <module> <database>' \\"),
+        ('tools/init-dev-database', "'--with-demo opts in to the native Odoo demo loader and project development.demo_modules.'"),
+        ('tools/init-dev-database', 'if [[ ${1:-} == --with-demo ]]; then'),
+        ('tools/init-dev-database', "printf 'Usage: init-dev-database [--with-demo] <module> <database>\\n' >&2"),
+        ('tools/install-module', "usage='Usage: install-module [--with-demo] <module> [database]'"),
+        ('tools/install-module', 'if [[ ${1:-} == --with-demo ]]; then'),
+    }
 
     def test_no_tool_writes_a_version_specific_odoo_option(self):
         found = []
@@ -105,9 +134,16 @@ class VersionNeutralToolsTests(unittest.TestCase):
             if not path.is_file() or path.name == 'odoo_versions.py' or '__pycache__' in path.parts:
                 continue
             for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
-                if self.FLAGS.search(line):
+                if self.FLAGS.search(line) and (str(path.relative_to(ROOT)), line.strip()) not in self.OASIS_OPTIONS:
                     found.append(f'{path.relative_to(ROOT)}:{number}: {line.strip()}')
         self.assertEqual(found, [])
+
+    def test_the_guard_sees_every_series_option(self):
+        for line in ('run_odoo -i x --with-demo --stop-after-init', "'--longpolling-port=8073'",
+                     '--gevent-port 1', 'args=(--without-demo=all)'):
+            with self.subTest(line=line):
+                self.assertRegex(line, self.FLAGS)
+        self.assertNotRegex('--with-demos --without-demo-data', self.FLAGS)
 
     # The series itself is read from the configuration (ODOO_VERSION) or the table: besides
     # odoo_versions.py, only the legacy profile contract that migrate converts may name it.
@@ -134,6 +170,17 @@ class VersionNeutralToolsTests(unittest.TestCase):
                               ('dev_all', 'access qweb reload xml\n'), ('dev_reload_packages', 'inotify watchdog\n')):
             with self.subTest(key=key):
                 result = read('19.0', key)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected, ''))
+        for version, key, expected in (('19.0', 'demo_on_args', '--with-demo\n'), ('15.0', 'demo_on_args', '\n'),
+                                       ('15.0', 'demo_off_args', '--without-demo=all\n'),
+                                       ('15.0', 'second_port_option', '--longpolling-port\n'),
+                                       ('19.0', 'second_port_conf_option', 'gevent_port\n'),
+                                       ('15.0', 'second_port_conf_option', 'longpolling_port\n'),
+                                       ('15.0', 'test_tags_implies_stop', 'false\n'), ('15.0', 'test_class_filter', 'true\n'),
+                                       ('15.0', 'python', '3.7 3.12\n'), ('15.0', 'postgres_default', '14\n'),
+                                       ('15.0', 'dev_all', 'pdb reload qweb werkzeug xml\n')):
+            with self.subTest(version=version, key=key):
+                result = read(version, key)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected, ''))
         for args in (('12.0', 'test_class_filter'), ('19.0', 'no_such_key'), ('19.0',), ()):
             with self.subTest(args=args):

@@ -149,8 +149,9 @@ def action(id, label, command, template=(), inputs=(), *, confirm=None, user_run
             'superseded_by': superseded_by}
 
 
-def run_action(running: bool, default_database, dev: list[dict], port) -> dict:
-    """The start / restart flow: restart when this checkout's server runs, else start --detach."""
+def run_action(running: bool, default_database, dev: list[dict], port, dev_option: str) -> dict:
+    """The start / restart flow: restart when this checkout's server runs, else start --detach;
+    dev_option is the series' developer mode option (odoo_versions.py)."""
     inputs = [
         field('database', 'Database', 'choice', source='databases', required=False, allow_new=True,
               pattern=DATABASE_PATTERN, error=DATABASE_ERROR, default=default_database,
@@ -160,7 +161,7 @@ def run_action(running: bool, default_database, dev: list[dict], port) -> dict:
               default=str(port) if port else None,
               hint=f'Enter for {port}' if port else 'Enter to let start choose'),
     ]
-    template = [option('database', '-d'), option('dev', '--dev'), option('port', '--http-port')]
+    template = [option('database', '-d'), option('dev', dev_option), option('port', '--http-port')]
     if running:
         return action(RUN_ACTION, 'Start / restart the server', 'restart', template, inputs)
     return action(RUN_ACTION, 'Start / restart the server', 'start', ['--detach', *template], inputs)
@@ -391,7 +392,7 @@ def catalog(config, log_dirs, root: Path) -> dict:
     modules = addon_modules(values.get('ADDON_ROOTS', ''))
     checkout, record, memory = checkout_state(values, root, modules)
     run = run_action(record is not None, checkout['default_database'], dev_choices(config, values),
-                     start_port(values, record))
+                     start_port(values, record), config.versions().capability(values['ODOO_VERSION'], 'dev_option'))
     listed = []
     for item in actions(values, class_filter, run):
         if item['kind'] == 'log':
