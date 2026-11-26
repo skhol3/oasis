@@ -29,3 +29,4 @@ copy) and a scratch install (`./install.sh --target <dir>/oasis`):
 |---|---|---|---|---|
 | 0.15.0 | openalliance-odoo (Odoo 15.0) | about 7 | 2 | credentials typed, `.env`, PyPDF2 wheel, python-ldap and cryptography overrides, requirements-extra edit, prunable worktree |
 | 0.16.0 | openalliance-odoo (Odoo 15.0) | 1 | 1 | the `worktree-init` confirmation; a first run found two more (a `docker compose` command naming the env file, a manual `[development]` edit), fixed by `start-database` and the `development` question before the release |
+| 0.17.0 | openalliance-odoo (Odoo 15.0) | 1 | 1 | the `worktree-init` confirmation; run with the `oasis` install directory and the `odoo-*` skills |
