@@ -63,7 +63,7 @@ Prompt context naming the `oasis_*` tools the session has (a session with none, 
 
 ### Bash guard
 
-A bash guard blocks the agent from running some commands directly and asks the user, in a dialog, before the agent's `drop-database`, `stop --database` or `gc --apply --trash` run, and before the agent changes the workspace file that holds `[tooling].agent_destructive` (which can make them deny or allow); see [Bash guard](bash-guard.md).
+A bash guard blocks the agent from running some commands directly and asks the user, in a dialog, before the agent's `drop-database`, `stop --database` or `gc --apply --trash` run, and before the agent changes the workspace file that holds `[tooling].agent_destructive` (which can make them deny or allow); see [Bash guard](bash-guard.md). It is a Pi `tool_call` handler: it checks the command of every shell tool (`bash`, and Gentle Shell's `bash_background` and `monitor`) the same way, calls nested in `codemode` scripts included, and the `edit` and `write` calls on the setting files (see [Guarded tools](bash-guard.md#guarded-tools)).
 
 ### The /oasis command
 

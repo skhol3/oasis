@@ -9,6 +9,13 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Fixed
+
+- The bash guard now checks every Gentle Shell tool that runs shell text: `bash_background` and
+  `monitor` get the same decision as `bash` for the same command (deny, the ask dialog with
+  `[tooling].agent_destructive`, or allow), also when a `codemode` script calls them. Before, a
+  denied command such as `oasis setup --apply` ran unchecked through `bash_background`.
+
 ## [0.15.0] - 2026-11-25
 
 ### Added

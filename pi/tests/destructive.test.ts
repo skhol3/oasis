@@ -425,6 +425,86 @@ test("toolCallRouter leaves other tools and malformed inputs alone, and reads no
     { block: true, reason: blockReason("psql", ROOT) });
 });
 
+// S1 (v0.15.1): every tool that runs shell text gets the decision of bash for the same command text.
+const SHELL = ["bash", "bash_background", "monitor"];
+
+/** The tool's input around a command, as Gentle Shell's bash_background and monitor take it. */
+function shellInput(tool: string, command: unknown): Record<string, unknown> {
+  return tool === "monitor" ? { command, timeout_seconds: 60 } : { command };
+}
+
+test("SHELL_TOOLS lists every tool that runs shell text, in one place", async () => {
+  const destructive = await import("../lib/destructive.ts") as Record<string, unknown>;
+  assert.deepEqual(destructive.SHELL_TOOLS, SHELL);
+});
+
+test("toolCallRouter denies the same command text in bash, bash_background and monitor", async () => {
+  for (const tool of SHELL) {
+    const { route, entries } = router();
+    const pi = piContext();
+    for (const [command, reason] of [
+      ["psql -l", blockReason("psql", ROOT)],
+      ["oasis setup --apply", blockReason("setup", "")],
+      ["oasis --project /p migrate --apply", blockReason("migrate", "")],
+    ]) {
+      assert.deepEqual(await route({ toolName: tool, input: shellInput(tool, command) }, pi.ctx),
+        { block: true, reason }, `${tool}: ${command}`);
+    }
+    assert.deepEqual([pi.prompts, entries], [[], []], tool);
+  }
+});
+
+test("toolCallRouter asks for the same command text in bash, bash_background and monitor, honoring agent_destructive", async () => {
+  for (const tool of SHELL) {
+    const asked = router();
+    const pi = piContext({ answers: ["yes", "no"] });
+    assert.equal(await asked.route({ toolName: tool, input: shellInput(tool, STOP) }, pi.ctx), undefined, tool);
+    assert.deepEqual(pi.prompts[0].options, { timeout: ASK_TIMEOUT_MS, signal: pi.signal });
+    assert.ok(pi.prompts[0].title.includes(`the agent wants to run\n\n${STOP}\n\n`), pi.prompts[0].title);
+    const refused = await asked.route({ toolName: tool, input: shellInput(tool, STOP) }, pi.ctx);
+    assert.equal(refused?.block, true, tool);
+    assert.deepEqual(asked.entries.map((entry) => [entry.label, entry.command, entry.note]), [
+      ["Agent command approved", STOP, "typed yes"], ["Agent command refused", STOP, "wrong answer"],
+    ], tool);
+
+    const headless = router();
+    const none = piContext({ hasUI: false });
+    assert.equal((await headless.route({ toolName: tool, input: shellInput(tool, STOP) }, none.ctx))?.block, true, tool);
+    assert.deepEqual(headless.entries.map((entry) => [entry.label, entry.note]), [["Agent command refused", "no dialog"]]);
+
+    const allowed = router("allow");
+    const quiet = piContext();
+    assert.equal(await allowed.route({ toolName: tool, input: shellInput(tool, DROP) }, quiet.ctx), undefined, tool);
+    assert.deepEqual(quiet.prompts, []);
+    assert.deepEqual(allowed.entries, [{ label: "Agent command approved", command: DROP, note: "agent_destructive = allow", output: "" }]);
+
+    // The same decision as bash, reason included, for the deny setting.
+    const denied = router("deny");
+    const bash = router("deny");
+    assert.deepEqual(await denied.route({ toolName: tool, input: shellInput(tool, STOP) }, piContext().ctx),
+      await bash.route({ toolName: "bash", input: { command: STOP } }, piContext().ctx), tool);
+    assert.equal(denied.entries.at(-1)?.note, "agent_destructive = deny");
+  }
+});
+
+test("toolCallRouter allows other command text in every shell tool, and leaves inputs without one and other tools alone", async () => {
+  const { route, entries } = router();
+  const pi = piContext();
+  for (const tool of SHELL) {
+    for (const input of [shellInput(tool, "git status"), shellInput(tool, 42), shellInput(tool, undefined), {}]) {
+      assert.equal(await route({ toolName: tool, input }, pi.ctx), undefined, `${tool} ${JSON.stringify(input)}`);
+    }
+    assert.equal(await route({ toolName: tool, input: undefined }, pi.ctx), undefined, tool);
+  }
+  for (const event of [
+    { toolName: "job_stop", input: { id: "1" } }, { toolName: "job_list", input: {} },
+    { toolName: "codemode", input: { command: "psql -l" } }, { toolName: "shell", input: { command: STOP } },
+  ]) {
+    assert.equal(await route(event, pi.ctx), undefined, JSON.stringify(event));
+  }
+  assert.deepEqual([pi.prompts, entries], [[], []]);
+});
+
 test("settingReader returns AGENT_DESTRUCTIVE of config.py, and undefined (ask) when it cannot be read", async () => {
   const read = settingReader(async (root) => {
     if (root === "/fails") throw new Error("spawn failed");
