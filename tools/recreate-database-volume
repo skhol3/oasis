@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Recreates the PostgreSQL volume of this checkout's compose project (v0.16.0 S2): prints the plan,
+# then runs `docker compose down -v` for that compose project only (its containers, networks and
+# volumes, so every database of its PostgreSQL, the trash included), and starts the database service
+# again, which initializes a new volume with the account of the env file. It is the fix doctor and
+# check-environment name when PostgreSQL refuses the account Odoo uses because the volume was
+# initialized with other credentials. Tier B in the agent policy (tools/policy.py): it runs only with
+# --confirm <compose project>; without it, after the plan, it refuses naming the exact command and
+# changes nothing.
+set -Eeuo pipefail
+source "$(dirname "$0")/oasis_env.sh"
+usage() {
+  printf 'Usage: %s [--confirm <compose project>]\n' "$(usage_name)"
+}
+if [[ $# == 1 && ${1:-} == --help ]]; then
+  usage
+  printf '%s\n' 'Deletes the PostgreSQL volume of the compose project and every database in it, then starts the' \
+    'database service again with the account of the env file. Tier B: it runs only with --confirm and the' \
+    'compose project (the top-level name: of the compose file); without it, it prints the plan and changes nothing.'
+  exit 0
+fi
+source "$(dirname "$0")/common.sh"
+confirm=
+confirmed=false
+usage_error=false
+arguments=("$@")
+for (( index = 0; index < ${#arguments[@]}; index++ )); do
+  argument=${arguments[index]}
+  case $argument in
+    --confirm|--confirm=*)
+      "$confirmed" && usage_error=true
+      confirmed=true
+      if [[ "$argument" == --confirm ]]; then
+        index=$(( index + 1 ))
+        confirm=${arguments[index]:-}
+      else
+        confirm=${argument#--confirm=}
+      fi
+      [[ -n "$confirm" && "$confirm" != -* ]] || usage_error=true ;;
+    *) usage_error=true ;;
+  esac
+done
+if "$usage_error"; then
+  usage >&2
+  exit 2
+fi
+for path in "$COMPOSE_FILE" "$ENV_FILE"; do
+  if [[ ! -e "$path" ]]; then
+    printf 'Missing required local path: %s\n' "$path" >&2
+    exit 1
+  fi
+done
+project=$(python3 -I -B "$(dirname "$0")/db_account.py" compose-project "$COMPOSE_FILE")
+if [[ -z "$project" ]]; then
+  printf 'ERROR: %s has no top-level name: add one (%s doctor checks it), then run recreate-database-volume again.\n' \
+    "$COMPOSE_FILE" "$(program_name)" >&2
+  exit 2
+fi
+printf 'compose_project=%s\ncompose_file=%s\nservice=%s\naccount=%s\n' "$project" "$COMPOSE_FILE" "$DB_SERVICE" "$ENV_FILE"
+printf 'deletes=the volumes of compose project %s: every database of its PostgreSQL, the trash included\n' "$project"
+if [[ "$confirm" != "$project" ]]; then
+  command=$(confirm_command recreate-database-volume --confirm "$project")
+  if "$confirmed"; then
+    printf 'ERROR: --confirm %s does not name the compose project %s; nothing changed. Run: %s\n' \
+      "$confirm" "$project" "$command" >&2
+  else
+    printf 'ERROR: recreate-database-volume deletes the PostgreSQL volume of compose project %s and every database in it, then starts the service again with the account of %s (Tier B: it needs explicit confirmation); nothing changed. Run: %s\n' \
+      "$project" "$ENV_FILE" "$command" >&2
+  fi
+  exit 2
+fi
+compose down -v
+wait_for_database >/dev/null
+printf 'Recreated the database volume of %s; service %s runs with the account of %s.\n' "$project" "$DB_SERVICE" "$ENV_FILE"

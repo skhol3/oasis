@@ -23,8 +23,8 @@ Changing a tier is a contract change: a decision, a note in the README and in th
 
 ## Tier B in the CLI: `--confirm <exact name>`
 
-`drop-database`, `gc --apply --trash`, `migrate --apply` and `worktree-init` run only with
-`--confirm` naming exactly what they change:
+`drop-database`, `gc --apply --trash`, `migrate --apply`, `worktree-init` and
+`recreate-database-volume` run only with `--confirm` naming exactly what they change:
 
 | Command | `--confirm` |
 | --- | --- |
@@ -32,6 +32,7 @@ Changing a tier is a contract change: a decision, a note in the README and in th
 | `gc --apply --trash [--older-than <days>]` | the project root (`--project`) |
 | `migrate [--workspace <dir>] --apply` | the workspace file the plan writes (`write <dir>/oasis-workspace.toml`) |
 | `worktree-init <feature> <branch> [--path <dir>]` | the worktree path the plan names (`worktree: <path>`) |
+| `recreate-database-volume` | the compose project (the top-level `name:` of the compose file, `compose_project=<name>` in the plan); see [The database account](setup.md#the-database-account) |
 
 Without it, or with another value, the command changes nothing, exits 2 and names the exact
 command to run, for example:
@@ -85,6 +86,7 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `gc --trash` | A | lists the expired trash entries; changes nothing |  |
 | `gc --apply --trash` | B | drops the expired trash entries for good | project root |
 | `drop-database` | B | takes a database (and its filestore) out of use; only trash restore brings it back | database name |
+| `recreate-database-volume` | B | deletes the PostgreSQL volume of the compose project and every database in it, then starts the service again | compose project |
 | `trash` | A | lists the trash; trash restore brings an entry back |  |
 | `migrate` | A | without --apply it prints the migration plan; changes nothing |  |
 | `migrate --plan` | A | prints the migration plan; changes nothing |  |

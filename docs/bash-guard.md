@@ -45,7 +45,7 @@ flowchart TD
 | Tier | Agent bash command | What happens |
 | --- | --- | --- |
 | A (allow) | `setup`, `setup --apply`, `bootstrap`, `create-database`, `init-dev-database`, `start`, `restart`, `stop`, `status`, `install-module`, `update-module`, `test-module`, `verify-module`, `lint-module`, `odoo-shell`, `list-databases`, `module-status`, `model-info`, `module-info`, `view-info`, `xmlid-info`, `audit-dependencies`, `doctor`, `check-environment`, `policy`, `gc`, `gc --apply`, `gc --trash`, `trash`, `migrate`, `migrate --plan`, `worktree-init --dry-run` | Runs |
-| B (ask) | `stop --database`, `gc --apply --trash`, `drop-database`, `migrate --apply`, `worktree-init` | Runs after the user confirms it in a dialog (see [The dialog](#the-dialog)), unless `[tooling].agent_destructive` says `deny` or `allow`; so do changes to the setting files (see [The setting files](#the-setting-files)), which `allow` never skips |
+| B (ask) | `stop --database`, `gc --apply --trash`, `drop-database`, `recreate-database-volume`, `migrate --apply`, `worktree-init` | Runs after the user confirms it in a dialog (see [The dialog](#the-dialog)), unless `[tooling].agent_destructive` says `deny` or `allow`; so do changes to the setting files (see [The setting files](#the-setting-files)), which `allow` never skips |
 | C (deny) | `menu`, `odoo-bin`, `dropdb`, `psql` | Blocked; only the user runs it (`odoo-bin`, `dropdb` and `psql` only in Odoo projects) |
 
 An oasis command's operation is the table row whose words all appear in its arguments, the most

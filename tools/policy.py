@@ -82,6 +82,9 @@ OPERATIONS = (
      'oasis --project /p gc --apply --trash'),
     ('drop-database', 'B', 'oasis', 'takes a database (and its filestore) out of use; only trash restore brings it back',
      'oasis --project /p drop-database cc_dev_x'),
+    ('recreate-database-volume', 'B', 'oasis',
+     'deletes the PostgreSQL volume of the compose project and every database in it, then starts the service '
+     'again', 'oasis --project /p recreate-database-volume'),
     ('trash', 'A', 'oasis', 'lists the trash; trash restore brings an entry back', 'oasis --project /p trash'),
     ('migrate', 'A', 'oasis', 'without --apply it prints the migration plan; changes nothing',
      'oasis --project /p migrate'),
@@ -112,7 +115,8 @@ KEYS = ('operation', 'tier', 'kind', 'reason', 'example')
 # What `--confirm` takes for a Tier B oasis command (its refusal names the exact command); a Tier B
 # operation without one is confirmed only by a person or a harness dialog (stop --database).
 CONFIRM = {'drop-database': 'database name', 'gc --apply --trash': 'project root',
-           'migrate --apply': 'workspace file', 'worktree-init': 'worktree path'}
+           'migrate --apply': 'workspace file', 'worktree-init': 'worktree path',
+           'recreate-database-volume': 'compose project'}
 
 
 def operations() -> list[dict]:
