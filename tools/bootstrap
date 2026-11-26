@@ -111,7 +111,9 @@ mkdir -p "$ENVIRONMENTS_DIR"
 # this explicit --apply is the one command that changes it, and a drift is a WARN.
 if [[ ! -x "$PYTHON" ]]; then
   uv venv --python "$PYTHON_VERSION" "$PROJECT_ENVIRONMENT"
-  python3 -I -B "$(dirname "$0")/environment_origin.py" mark "$PROJECT_ENVIRONMENT" "$(program_name) bootstrap --apply"
+  # A mark that cannot be written is a warning on stderr (exit 1), not a failure: the environment is then adopted.
+  python3 -I -B "$(dirname "$0")/environment_origin.py" mark "$PROJECT_ENVIRONMENT" "$(program_name) bootstrap --apply" \
+    || true
   require_python_version
 fi
 uv pip freeze --python "$PYTHON" > "$snapshot_dir/bootstrap-before.txt"

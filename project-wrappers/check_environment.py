@@ -4,8 +4,7 @@ import os
 from pathlib import Path
 import sys
 
-tools = Path(os.environ.get('OASIS_TOOLS_DIR') or os.environ.get('ODOO19_TOOLS_DIR') or str(
-    Path.home() / '.agents/skills/oasis/tools'))
+tools = Path(os.environ.get('OASIS_TOOLS_DIR') or str(Path.home() / '.agents/skills/oasis/tools'))
 helper = tools / 'check_environment.py'
 if not helper.is_file():
     print(f'oasis tools are not installed: {helper}', file=sys.stderr)

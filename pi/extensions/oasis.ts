@@ -419,7 +419,8 @@ export default function oasisLayer(pi: ExtensionAPI) {
     description:
       "Run one Odoo module's tests on a new disposable test database dropped afterwards (a given or configured " +
       "database is reset first instead). Returns the result line and " +
-      "failures with the end of each traceback; full logs stay in the configured logs directory (default dev/logs/odoo19).",
+      "failures with the end of each traceback; full logs stay in the configured logs directory (default: logs next " +
+      "to oasis-workspace.toml).",
     promptSnippet: "Run an Odoo module's tests and get only the result and failures",
     promptGuidelines: [
       "Use oasis_test_module instead of running odoo-bin --test-tags through bash.",
@@ -479,7 +480,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const root = await requireRoot(ctx.cwd);
-      // The named logs must lie in this checkout's log locations ([tooling].logs or dev/logs/odoo19).
+      // The named logs must lie in this checkout's logs directory ([tooling].logs, else logs next to the workspace file).
       const { config, error } = await projectConfig(root);
       if (!config) throw new Error(`Cannot read the project configuration: ${error}`);
       const options = { maxFailures: params.maxFailures ?? 10, traceLines: params.traceLines ?? 6 };

@@ -75,13 +75,14 @@ if [[ "$mode" == "--full" ]]; then
   if uv pip check --python "$PYTHON"; then pass "package_compatibility=valid"
   else fail "package_compatibility=invalid"
   fi
-  # A drift (exit 1) of an adopted environment, one oasis did not create (tools/environment_origin.py), is a
-  # WARN naming the command that would sync it, never a failure (v0.17.0 S1): oasis does not change it.
-  # An environment oasis created, or a lock it cannot read (exit 2), stays a FAIL.
+  # A drift (exit 3, tools/check_environment.py DRIFT_EXIT) of an adopted environment, one oasis did not create
+  # (tools/environment_origin.py), is a WARN naming the command that would sync it, never a failure (v0.17.0 S1):
+  # oasis does not change it. An environment oasis created, a lock it cannot read (exit 2) or a crash of the
+  # comparison (a traceback, exit 1) stays a FAIL.
   locked=0
   "$PYTHON" "$(dirname "$0")/check_environment.py" "$requirements_dir/dev.txt" || locked=$?
   if (( locked == 0 )); then pass "locked_environment=exact"
-  elif (( locked == 1 )) && ! python3 -I -B "$(dirname "$0")/environment_origin.py" created "$PROJECT_ENVIRONMENT"; then
+  elif (( locked == 3 )) && ! python3 -I -B "$(dirname "$0")/environment_origin.py" created "$PROJECT_ENVIRONMENT"; then
     printf 'WARN locked_environment=drifted\n'
     printf '  fix: %s (syncs the adopted environment %s to the locks: it changes the packages installed there)\n' \
       "$(confirm_command bootstrap --apply)" "$PROJECT_ENVIRONMENT"

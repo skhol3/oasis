@@ -62,7 +62,7 @@ class SeriesGuardTests(unittest.TestCase):
         self.log = self.scratch / 'calls.log'
         (bindir / 'docker').write_text('#!/bin/sh\nprintf "docker %s\\n" "$*" >> "$FAKE_LOG"\nexit 0\n')
         (bindir / 'docker').chmod(0o755)
-        self.env = {key: value for key, value in os.environ.items() if not key.startswith(('GIT_', 'OASIS_', 'ODOO19_'))}
+        self.env = {key: value for key, value in os.environ.items() if not key.startswith(('GIT_', 'OASIS_'))}
         self.env.update({'PATH': f'{bindir}:{os.environ["PATH"]}', 'FAKE_LOG': str(self.log),
                          'GIT_CEILING_DIRECTORIES': str(self.scratch), 'PYTHONDONTWRITEBYTECODE': '1',
                          'XDG_RUNTIME_DIR': str(self.scratch)})

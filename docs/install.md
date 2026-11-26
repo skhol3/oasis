@@ -50,6 +50,12 @@ it is never touched. Then:
   `~/.agents/skills/odoo19/tools`. `oasis doctor` reports them as `FAIL project_wrappers=old_install_dir`;
   its fix line lists them: replace `.agents/skills/odoo19/` with `.agents/skills/oasis/` in each (or copy
   them again from `~/.agents/skills/oasis/project-wrappers/`).
+- Only the `OASIS_*` variables are read: `ODOO19_PROJECT_ROOT`, `ODOO19_ENTRYPOINT`, `ODOO19_TOOLS_DIR` and
+  `ODOO19_COMPOSE_LOCK_TIMEOUT` are ignored, and neither the entry point nor the wrapper templates set them.
+  A script that sets one needs the `OASIS_*` name.
+- A workspace without `[tooling].logs` keeps its logs in `logs` next to `oasis-workspace.toml` (`logs/<x.y>`
+  with `workspace_version = 2`), no longer in each checkout's `dev/logs/odoo19/`; runs already there stay where
+  they are and `oasis_test_summary` no longer reads them.
 
 ## Running the CLI
 

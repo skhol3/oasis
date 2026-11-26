@@ -984,9 +984,12 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                 else:
                     actions += [*directories(exclude.parent, planned), ('create', exclude, addition, 0o644)]
     guarded(values)
+    # setup creates the logs directory only when the workspace file sets logs (a new one always does); without the
+    # key the tools create the default one, logs next to the workspace file, when they first write to it.
     plan = {'root': root, 'workspace': workspace, 'values': values, 'lines': lines, 'actions': actions,
             'after': [], 'created': set(), 'new': new, 'questions': questions,
-            'python_origin': python_origin if new else 'from the workspace file'}
+            'python_origin': python_origin if new else 'from the workspace file',
+            'logs_set': new or 'logs' in document['tooling']}
     if new and adopted is not None:
         plan['adopted_environment'] = adopted[1]
         plan['adopted_origin'] = origin_environment
@@ -1915,7 +1918,7 @@ def gaps(plan: dict, directory: Path, planned: set):
     elif os.path.lexists(target):
         lines.append(f'kept {target}')
     for key in ('LOGS_DIR', 'DATA_DIR'):
-        if values[key]:
+        if values[key] and (key != 'LOGS_DIR' or plan.get('logs_set', True)):
             path = Path(values[key])
             if path.exists():
                 lines.append(f'kept {path}/')
@@ -2216,7 +2219,8 @@ def after_steps(plan: dict, changes: Changes, rerun: str, undo_after: bool) -> i
             if status == 0:
                 if command[1] == 'venv':
                     # oasis' mark (v0.17.0 S1): its drift from the locks is a FAIL, an adopted one's a WARN.
-                    environment_origin.mark(environment, f'{program} setup --apply')
+                    # A mark that cannot be written is a warning (try_mark prints it): setup goes on.
+                    environment_origin.try_mark(environment, f'{program} setup --apply')
                 continue
             if command[1] == 'venv' and undo_after:
                 # What uv venv left of an environment that did not exist: removed when empty, else reported.

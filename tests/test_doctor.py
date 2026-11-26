@@ -353,9 +353,9 @@ class DoctorTests(unittest.TestCase):
                                          f'  fix: set [tooling].community in {self.workspace} to an Odoo 19.0 source'))
 
     def test_unwritable_logs_and_data_directories_fail_naming_the_path_to_fix(self):
-        # The default logs directory dev/logs/odoo19 does not exist; its nearest existing parent is
-        # a file, so that file is named.
-        blocker = self.root / 'dev/logs'
+        # The default logs directory, logs next to the workspace file (v0.17.0), is a file here, so that file is
+        # named.
+        blocker = self.workspace.parent / 'logs'
         blocker.write_text('')
         self.assert_report(self.expected(f'FAIL logs_dir=not_writable\n  fix: make {blocker} a directory you can write'))
         blocker.unlink()

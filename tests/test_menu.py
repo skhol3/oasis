@@ -205,7 +205,7 @@ class CatalogTests(MenuFixture):
                                            'project', 'server_log', 'sources'])
         self.assertEqual((catalog['catalog_version'], catalog['project'], catalog['entrypoint']),
                          (1, self.project, ENTRY))
-        self.assertEqual(catalog['server_log'], str(self.root.resolve() / 'dev/logs/odoo19/server.log'))
+        self.assertEqual(catalog['server_log'], str(self.root.resolve() / 'logs/main/server.log'))
         self.assertEqual(catalog['groups'], [
             {'id': 'server', 'label': 'Server'}, {'id': 'modules', 'label': 'Modules'},
             {'id': 'tests', 'label': 'Tests'}, {'id': 'maintenance', 'label': 'Databases and maintenance'}])
@@ -245,7 +245,7 @@ class CatalogTests(MenuFixture):
                     self.assertEqual((action['kind'], action['command'], action['argv']),
                                      ('log', None, ['tail', '-n', '200', *follow, catalog['server_log']]))
         self.unchanged()
-        self.assertFalse((self.root / 'dev/logs').exists())
+        self.assertFalse((self.root / 'logs').exists())
 
     def test_catalog_entries_declare_their_command_inputs_and_flags(self):
         actions = {action['id']: action for action in self.catalog()['actions']}
@@ -275,7 +275,7 @@ class CatalogTests(MenuFixture):
             'superseded_by': 'server.run'})
         self.assertEqual(actions['server.follow'], {
             'id': 'server.follow', 'group': 'server', 'label': 'Follow the server log', 'kind': 'log',
-            'command': None, 'argv': ['tail', '-n', '200', '-f', str(self.root.resolve() / 'dev/logs/odoo19/server.log')],
+            'command': None, 'argv': ['tail', '-n', '200', '-f', str(self.root.resolve() / 'logs/main/server.log')],
             'inputs': [], 'destructive': False, 'confirm': None, 'user_run': False, 'terminal_only': False,
             'follow': True, 'superseded_by': None})
         self.assertEqual(actions['modules.install']['argv'], [
@@ -713,11 +713,11 @@ class TerminalMenuTests(MenuFixture):
                 result = self.terminal(answers)
                 self.assertEqual((result.returncode, result.stderr), (1, ''))
                 self.assertTrue(result.stdout.endswith(
-                    f'No server log yet: {self.root.resolve() / "dev/logs/odoo19/server.log"}\n'), result.stdout)
+                    f'No server log yet: {self.root.resolve() / "logs/main/server.log"}\n'), result.stdout)
                 self.unchanged()
 
     def test_follow_the_server_log_until_ctrl_c(self):
-        log = self.root.resolve() / 'dev/logs/odoo19/server.log'
+        log = self.root.resolve() / 'logs/main/server.log'
         log.parent.mkdir(parents=True)
         log.write_text(''.join(f'line {number}\n' for number in range(1, 251)))
         master, slave = os.openpty()
@@ -773,7 +773,7 @@ class DetachTests(MenuFixture):
         self.port = lifecycle.quiet_ports(2)
         (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text(f'http_port = {self.port}\n'))
         self.env.update(OASIS_DETACH_WAIT='0.5')
-        self.server_log = self.root.resolve() / 'dev/logs/odoo19/server.log'
+        self.server_log = self.root.resolve() / 'logs/main/server.log'
         self.addCleanup(self.kill_recorded)
 
     def record(self):
@@ -952,7 +952,7 @@ class DetachTests(MenuFixture):
         result = self.start('--detach')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.detached(result, self.root.resolve().parent / 'logs/main/server.log')
-        self.assertFalse((self.root / 'dev/logs').exists())
+        self.assertFalse((self.root / 'logs').exists())
 
     def assert_refused_before_anything(self, result, message):
         self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', message))
@@ -963,10 +963,12 @@ class DetachTests(MenuFixture):
     def test_detach_refuses_a_log_directory_outside_the_project(self):
         outside = Path(self.scratch.name) / 'elsewhere'
         outside.mkdir()
-        (self.root / 'dev/logs').symlink_to(outside, target_is_directory=True)
+        # Without [tooling].logs: logs next to the workspace file, whose checkout directory may not lead out of it.
+        (self.root / 'logs').mkdir()
+        (self.root / 'logs/main').symlink_to(outside, target_is_directory=True)
         self.env['FAKE_SERVE'] = '1'
         self.assert_refused_before_anything(self.start('--detach'),
-                                            'Compact logs must remain inside the project.\n')
+                                            'Compact logs must remain inside the configured logs directory.\n')
         self.assertEqual(list(outside.iterdir()), [])
 
     def test_detach_refuses_a_checkout_directory_escaping_the_logs_directory(self):
@@ -1117,7 +1119,7 @@ class DetachTests(MenuFixture):
             '    sys.exit(int(status))\n'
             f'os.execv(sys.executable, [sys.executable, "-I", "-B", {str(ROOT / "tools/runtime_state.py")!r}, '
             '*sys.argv[1:]])\n')
-        env = {**self.env, 'OASIS_PROJECT_ROOT': str(self.root), 'ODOO19_PROJECT_ROOT': str(self.root)}
+        env = {**self.env, 'OASIS_PROJECT_ROOT': str(self.root)}
         for status, message in ((2, f'ERROR: Cannot read runtime state: {self.root}/server.json'),
                                 (1, 'Traceback (most recent call last):\nPermissionError: [Errno 13] Permission denied')):
             with self.subTest(status=status):
@@ -1264,7 +1266,7 @@ class DetachTests(MenuFixture):
         self.assertEqual([line for line in self.log().splitlines() if line.startswith('odoo ')],
                          [f'odoo {self.source / "odoo-bin"} -c {self.root / "dev/odoo.conf"} '
                           f'--http-port={self.port} --workers=0'])
-        self.assertFalse((self.root / 'dev/logs').exists())
+        self.assertFalse((self.root / 'logs').exists())
 
 
 if __name__ == '__main__':

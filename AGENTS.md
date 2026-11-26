@@ -26,8 +26,9 @@ Several Odoo projects depend on the installed bundle. Treat as a contract: the o
 `/oasis`), the `oasis-workspace.toml` keys (with `oasis-checkout.toml`), database prefix guards and
 the skill names. Changing or removing any of them needs an explicit decision and a note in the
 README. v0.17.0 removed the `odoo19` names without a transition (the `odoo19` entry point, the
-`~/.agents/skills/odoo19` install directory, the `odoo19_*` tool aliases and `/odoo19`); the README
-note says what a user runs to update a project whose wrappers call the old path.
+`~/.agents/skills/odoo19` install directory, the `odoo19_*` tool aliases, `/odoo19`, the legacy `ODOO19_*`
+environment variables and the `dev/logs/odoo19` default log directory); the README note says what a user runs
+to update a project whose wrappers call the old path.
 
 ## Verification
 

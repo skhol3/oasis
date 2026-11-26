@@ -176,12 +176,14 @@ class ConfigCliTests(unittest.TestCase):
                          "LOGS_DIR='" + str((self.root / '../shared logs').resolve()) + "'")
         self.assertEqual(result.stdout.count('LOGS_DIR='), 1)
 
-    def test_absent_logs_key_emits_an_empty_logs_dir_before_the_workspace(self):
+    def test_absent_logs_key_emits_the_logs_next_to_the_workspace_file(self):
+        # v0.17.0: without [tooling].logs, `logs` next to oasis-workspace.toml, as setup writes it (no dev/logs/odoo19).
         self.workspace.write_text(WORKSPACE)
         result = self.run_reader()
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertEqual(result.stdout.splitlines()[-9:],
-                         ["LOGS_DIR=''", f'WORKSPACE_ROOT={shlex.quote(str(self.root))}', *APPENDED])
+                         [f'LOGS_DIR={shlex.quote(str(self.root / "logs"))}', f'WORKSPACE_ROOT={shlex.quote(str(self.root))}',
+                          *APPENDED])
 
     def test_output_keeps_every_previous_assignment_and_appends_the_series_options(self):
         self.workspace.write_text(WORKSPACE)

@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/oasis_env.sh"
-# Only the entry point and project wrappers set the explicit root (OASIS_PROJECT_ROOT, or the
-# legacy ODOO19_PROJECT_ROOT). Never infer it from installed tools.
+# Only the entry point and project wrappers set the explicit root (OASIS_PROJECT_ROOT). Never infer
+# it from installed tools.
 _project_root=$(oasis_variable PROJECT_ROOT)
 if [[ -z "$_project_root" || ! -d "$_project_root" ]]; then
   printf 'OASIS_PROJECT_ROOT must name an existing project directory.\n' >&2
@@ -17,9 +17,8 @@ eval "$_config_output"
 unset _config_output
 # The Odoo series' demo-off options (tools/odoo_versions.py) as words; config.py shell-quoted them.
 eval "ODOO_DEMO_OFF_ARGUMENTS=($ODOO_DEMO_OFF_ARGS)"
-# Child helpers (test_temp.py -> compact_log_directory) need the checkout to apply the
-# linked-worktree log rule and the [tooling].logs directory; test_temp.py (also through gc.py)
-# removes filestores under DATA_DIR when [tooling].data_dir is set.
+# Child helpers (test_temp.py -> compact_log_directory) need the logs directory and the checkout slug;
+# test_temp.py (also through gc.py) removes filestores under DATA_DIR when [tooling].data_dir is set.
 export CHECKOUT_KIND CHECKOUT_SLUG CHECKOUT_MAIN_ROOT LOGS_DIR DATA_DIR
 
 # The single derivation of a checkout's managed database name: the checkout slug goes right
@@ -262,8 +261,7 @@ require_existing_database() {
 # that compose file's lock in the user's runtime root (tools/runtime_state.py compose-lock),
 # waiting at most 120 s. Once the first caller finished, the next `up` finds the service
 # running. The lock descriptor is closed before returning, so Odoo never inherits it.
-# OASIS_COMPOSE_LOCK_TIMEOUT (seconds; the legacy ODOO19_COMPOSE_LOCK_TIMEOUT when unset)
-# exists for the tests only. Every step checks its own status and returns it (never errexit), so a
+# OASIS_COMPOSE_LOCK_TIMEOUT (seconds) exists for the tests only. Every step checks its own status and returns it (never errexit), so a
 # caller may run it in a condition or a `||` list, where errexit is off, and still get a non-zero
 # status on any failure (recreate-database-volume does; tests/test_credentials.py covers each one).
 wait_for_database() {

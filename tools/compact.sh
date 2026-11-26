@@ -2,11 +2,10 @@
 # Sourced by commands opting into compact output and by start --detach; no database operations.
 # The location rules live in log_dirs.py (one place for run directories and server.log).
 _log_dirs() {
-  python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/log_dirs.py" "$1" "$PROJECT_ROOT" "${CHECKOUT_KIND:-}" \
-    "${CHECKOUT_MAIN_ROOT:-}" "${LOGS_DIR:-}" "${CHECKOUT_SLUG:-}"
+  python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/log_dirs.py" "$1" "${LOGS_DIR:-}" "${CHECKOUT_SLUG:-}"
 }
 
-# A new run-* directory: <logs>/<slug or main>/ with [tooling].logs, else dev/logs/odoo19/.
+# A new run-* directory: <logs>/<slug or main>/ ([tooling].logs, else logs next to the workspace file).
 compact_log_directory() {
   _log_dirs run
 }

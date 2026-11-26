@@ -61,14 +61,14 @@ exit "$FAKE_EXIT"
                          'test artifacts must not leak into caller scratch')
 
     def assert_evidence_retained(self):
-        logs = self.root / 'dev/logs/odoo19'
+        logs = self.root / 'logs/main'
         files = [p for p in logs.rglob('*') if p.is_file()] if logs.exists() else []
         self.assertTrue(any(p.name == 'browser.log' and
                             p.read_text() == 'fake browser diagnostic\n' for p in files),
-                        'browser diagnostics must survive cleanup under project dev/logs/odoo19')
+                        'browser diagnostics must survive cleanup under the logs directory')
         self.assertTrue(any(p.name == 'screenshot.png' and
                             p.read_text() == 'fake screenshot\n' for p in files),
-                        'browser screenshot must survive cleanup under project dev/logs/odoo19')
+                        'browser screenshot must survive cleanup under the logs directory')
 
     def test_long_inherited_tmpdir_success_is_unique_private_and_quiet(self):
         self.caller_tmpdir = os.environ.get('TMPDIR')
@@ -104,7 +104,7 @@ exit "$FAKE_EXIT"
         self.assertEqual(set(logs), {'stdout_log', 'stderr_log'})
         for key, stream in (('stdout_log', 'test stdout\n'), ('stderr_log', 'test stderr\n')):
             path = Path(logs[key])
-            self.assertTrue(path.is_relative_to(self.root / 'dev/logs/odoo19'))
+            self.assertTrue(path.is_relative_to(self.root / 'logs/main'))
             self.assertEqual(path.read_text(), stream)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         self.assert_caller_intact()
@@ -118,7 +118,7 @@ exit "$FAKE_EXIT"
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, 'test stdout\n', 'test stderr\n'))
         self.assert_evidence_retained()
-        logs = self.root / 'dev/logs/odoo19'
+        logs = self.root / 'logs/main'
         retained = [p for p in logs.rglob('*') if p.is_dir() and 'odoo_tests' in p.parts]
         self.assertTrue(retained, 'retained evidence directories expected')
         for path in retained:
@@ -134,7 +134,7 @@ exit "$FAKE_EXIT"
         for signum, status in ((signal.SIGINT, 130), (signal.SIGTERM, 143)):
             with self.subTest(signal=signum.name):
                 self.observation.write_text('')
-                shutil.rmtree(self.root / 'dev/logs', ignore_errors=True)
+                shutil.rmtree(self.root / 'logs', ignore_errors=True)
                 self.env['FAKE_WAIT_SIGNAL'] = '1'
                 path = self.root / 'dev/scripts/test-module'
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -167,7 +167,8 @@ exit "$FAKE_EXIT"
         self.prepare_probe()
         outside = self.root.parent / 'outside-logs'
         outside.mkdir()
-        (self.root / 'dev/logs').symlink_to(outside, target_is_directory=True)
+        (self.root / 'logs').mkdir()
+        (self.root / 'logs/main').symlink_to(outside, target_is_directory=True)
         result = self.invoke('test-module', 'coffee')
         scratch = Path(self.observation.read_text().splitlines()[0])
         self.assertEqual(scratch.parent, Path('/tmp'))
@@ -198,7 +199,7 @@ exit "$FAKE_EXIT"
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, 'test stdout\n', 'test stderr\n'))
         self.assert_evidence_retained()
-        logs = self.root / 'dev/logs/odoo19'
+        logs = self.root / 'logs/main'
         self.assertEqual({p.name for p in logs.rglob('*') if p.is_file()},
                          {'browser.log', 'screenshot.png'})
         self.assert_caller_intact()
@@ -224,7 +225,7 @@ exit "$FAKE_EXIT"
 
 
 class LinkedWorktreeEvidenceTests(unittest.TestCase):
-    """Browser evidence follows a linked worktree's dev/logs link to the main checkout."""
+    """Without [tooling].logs, a linked worktree's browser evidence goes to logs/<slug> next to its workspace file."""
     setUp = compact_guards.LinkedWorktreeCompactTests.setUp
     setUp_fixture = lifecycle.LifecycleTests.setUp
     git = compact_guards.LinkedWorktreeCompactTests.git
@@ -233,17 +234,15 @@ class LinkedWorktreeEvidenceTests(unittest.TestCase):
     assert_caller_intact = TestTemporaryTests.assert_caller_intact
     assert_short_private_cleaned = TestTemporaryTests.assert_short_private_cleaned
 
-    def test_evidence_is_copied_under_the_main_checkout_logs(self):
+    def test_evidence_is_copied_under_the_worktree_logs(self):
         self.caller_tmpdir = os.environ.get('TMPDIR')
         self.prepare_probe()
-        (self.main / 'dev/logs').mkdir()
-        (self.linked / 'dev/logs').symlink_to(self.main / 'dev/logs', target_is_directory=True)
         result = self.invoke(self.linked, 'coffee')
         scratch = Path(self.observation.read_text().splitlines()[0])
         self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, 'test stdout\n', 'test stderr\n'))
-        runs = list((self.main / 'dev/logs/odoo19').iterdir())
+        runs = list((self.linked / 'logs/wt').iterdir())
         self.assertEqual(len(runs), 1)
         files = {p.relative_to(runs[0]): p.read_text() for p in runs[0].rglob('*') if p.is_file()}
         self.assertEqual(files, {

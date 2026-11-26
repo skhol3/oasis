@@ -16,9 +16,9 @@ flowchart TD
     M --> MP["Port: http_port of odoo.conf (8069 when absent)"]
     N --> MP
     L --> LP["Port: first free from http_port + 1 to http_port + 50,<br/>and a free --gevent-port"]
-    M --> ML["Logs: dev/logs/odoo19, or [tooling].logs/main"]
+    M --> ML["Logs: [tooling].logs/main (logs next to the workspace file by default)"]
     N --> ML
-    L --> LL["Logs: its dev/logs/odoo19 (may link to the main checkout's),<br/>or [tooling].logs/slug"]
+    L --> LL["Logs: [tooling].logs/slug (logs next to the workspace file by default)"]
     D --> REC["Server record: runtime directory / sha256 of the checkout path / server.json"]
 ```
 
@@ -80,7 +80,7 @@ Every checkout reads one workspace file (see [Workspace file](workspace-file.md)
 <project>/codigo/<main checkout>-<feature> linked worktrees, siblings at the same depth
 <project>/config/                          odoo.conf, environment file, compose file, requirements/
 <project>/data/                            Odoo data directory ([tooling].data_dir)
-<project>/logs/                            compact runs and browser evidence ([tooling].logs)
+<project>/logs/                            compact runs, browser evidence, server.log ([tooling].logs)
 ```
 
 ```toml
@@ -92,7 +92,7 @@ requirements = 'config/requirements'
 logs = 'logs'
 ```
 
-With `logs`, compact runs (`--compact`) and the browser evidence of `test-module` go to `<project>/logs/<checkout>/run-*`, where `<checkout>` is `main` for the main checkout and the slug for a linked worktree (`<project>/logs/shop_feature/`), so the checkouts need no `dev/` directory at all. Missing directories are created private (0700). `logs` resolves from the workspace file's directory like the other paths, and a run directory that resolves outside it (for example `<checkout>` as a symlink elsewhere) is refused with `Compact logs must remain inside the configured logs directory.` before anything is created. Runs written before 0.8.0 under `<logs>/odoo19/<checkout>/` are never moved or deleted, and `oasis_test_summary` still reads them. Without `logs`, runs stay under each checkout's `dev/logs/odoo19/` (see the end of this section).
+With `logs`, compact runs (`--compact`) and the browser evidence of `test-module` go to `<project>/logs/<checkout>/run-*`, where `<checkout>` is `main` for the main checkout and the slug for a linked worktree (`<project>/logs/shop_feature/`), so the checkouts need no `dev/` directory at all. Missing directories are created private (0700). `logs` resolves from the workspace file's directory like the other paths, and a run directory that resolves outside it (for example `<checkout>` as a symlink elsewhere) is refused with `Compact logs must remain inside the configured logs directory.` before anything is created. Runs written before 0.8.0 under `<logs>/odoo19/<checkout>/` are never moved or deleted, and `oasis_test_summary` still reads them. Without `logs`, the logs directory is `logs` next to the workspace file, as `oasis setup` writes the key (`logs/<x.y>` with `workspace_version = 2`); see the end of this section.
 
 ### Addons path in a linked worktree
 
@@ -121,4 +121,4 @@ A shared `odoo.conf` may name the main checkout in its `addons_path`. In a linke
 
 ### Logs without [tooling].logs
 
-Without `[tooling].logs`, a linked worktree's `dev/logs` may be a link you make to the main checkout's `dev/logs`: in a linked worktree, `--compact` runs accept a log directory that resolves inside the main checkout's `dev/logs/odoo19` (`CHECKOUT_MAIN_ROOT` from `tools/config.py`); any other location outside the project is still refused with `Compact logs must remain inside the project.`
+Without `[tooling].logs` (v0.17.0), every checkout uses `logs` next to the workspace file it reads, resolved like the other paths: `<workspace dir>/logs/<main|slug>/`, so a linked worktree that reads the main checkout's workspace file shares its logs directory, in a folder of its own (`logs/<x.y>/<main|slug>/` with `workspace_version = 2`, one per series). The rules are those of `logs` above, refusal included (`Compact logs must remain inside the configured logs directory.`). Before 0.17.0 the default was each checkout's `dev/logs/odoo19/`, which a linked worktree could link to the main checkout's: that directory is no log location any more. Runs already there are left as they are, and `oasis_test_summary` no longer reads them.

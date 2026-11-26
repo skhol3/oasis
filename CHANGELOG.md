@@ -11,6 +11,13 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- Contract change: only the `OASIS_*` variables are read; `ODOO19_PROJECT_ROOT`, `ODOO19_ENTRYPOINT`,
+  `ODOO19_TOOLS_DIR` and `ODOO19_COMPOSE_LOCK_TIMEOUT` are ignored and nothing sets them.
+- Contract change: a workspace without `[tooling].logs` keeps its logs in `logs` next to
+  `oasis-workspace.toml` (`logs/<x.y>` with `workspace_version = 2`), as `oasis setup` writes the key;
+  the `dev/logs/odoo19/` fallback is gone (runs already there are left in place and no longer read).
+- `tools/check_environment.py` (and `dev/scripts/check_environment.py`) exits 3 for a drift, no longer 1,
+  so a crash is told apart from a drift.
 - Contract change: one name. `./install.sh` installs into `~/.agents/skills/oasis` and moves a previous
   `~/.agents/skills/odoo19` install to the backups; the `odoo19` entry point, the inactive `odoo19_*` Gentle
   Shell tools and `/odoo19` are removed (only `oasis`, `oasis_*` and `/oasis` remain). The project wrapper
@@ -35,6 +42,12 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Fixed
 
+- A crash of the lock comparison in an adopted environment is a `FAIL`, no longer a `WARN` with exit 0.
+- The lock comparison leaves out a dist-info or egg-info without usable metadata instead of crashing.
+- `setup --apply` and `bootstrap --apply` warn and go on when `<environment>/.oasis-created` cannot be
+  written after `uv venv`.
+- CI: the `odoo15-python` job installs Python 3.8 and 3.9 together, also runs the lock comparison tests,
+  and fails when one of its tests skips; both jobs have `timeout-minutes`.
 - The lock comparison normalizes distribution names on both sides (PEP 503), so `zope.event-5.0.dist-info`
   satisfies `zope-event==5.0` on Python 3.8 and 3.9 too; it was reported as `missing_package=zope-event==5.0`.
 

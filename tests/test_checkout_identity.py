@@ -124,6 +124,10 @@ class CheckoutIdentityTests(unittest.TestCase):
     def workspace_root(self, root):
         return 'WORKSPACE_ROOT=' + shlex.quote(str(root.resolve()))
 
+    def logs_dir(self, root):
+        # v0.17.0: without [tooling].logs, logs next to the workspace file (each checkout's own here).
+        return 'LOGS_DIR=' + shlex.quote(str(root.resolve() / 'logs'))
+
     def assert_rejected(self, root, message):
         result = self.run_reader(root)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', f'ERROR: {message}\n'))
@@ -189,14 +193,14 @@ class CheckoutIdentityTests(unittest.TestCase):
         linked = self.worktree(main, 'proj-07.1')
         outside = self.project('outside')
         main_line = 'CHECKOUT_MAIN_ROOT=' + shlex.quote(str(main.resolve()))
-        # Only LOGS_DIR (empty without [tooling].logs), WORKSPACE_ROOT (each checkout's own here) and
+        # Only LOGS_DIR (<workspace directory>/logs without [tooling].logs), WORKSPACE_ROOT (each checkout's own here) and
         # the Odoo series options, environment and DATA_DIR (APPENDED) follow the identity.
         for root, identity in ((main, ["CHECKOUT_KIND=main", "CHECKOUT_SLUG=''", main_line,
-                                       "LOGS_DIR=''", self.workspace_root(main), *APPENDED]),
+                                       self.logs_dir(main), self.workspace_root(main), *APPENDED]),
                                (linked, ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=07_1', main_line,
-                                         "LOGS_DIR=''", self.workspace_root(linked), *APPENDED]),
+                                         self.logs_dir(linked), self.workspace_root(linked), *APPENDED]),
                                (outside, ["CHECKOUT_KIND=none", "CHECKOUT_SLUG=''", "CHECKOUT_MAIN_ROOT=''",
-                                          "LOGS_DIR=''", self.workspace_root(outside), *APPENDED])):
+                                          self.logs_dir(outside), self.workspace_root(outside), *APPENDED])):
             with self.subTest(root=root.name):
                 self.assertEqual(self.assignments(root), self.previous_assignments(root) + identity)
 
@@ -240,7 +244,7 @@ class CheckoutIdentityTests(unittest.TestCase):
                 lines = result.stdout.splitlines()
                 # The main checkout is unknown without git: CHECKOUT_MAIN_ROOT stays empty.
                 self.assertEqual(lines[-12:], ['CHECKOUT_KIND=linked', 'CHECKOUT_SLUG=mrp_2', "CHECKOUT_MAIN_ROOT=''",
-                                               "LOGS_DIR=''", self.workspace_root(linked), *APPENDED])
+                                               self.logs_dir(linked), self.workspace_root(linked), *APPENDED])
                 self.assertEqual(lines[:-12], self.previous_assignments(linked))
 
     def test_git_failure_in_a_main_checkout_fails_closed(self):
@@ -264,7 +268,7 @@ class CheckoutIdentityTests(unittest.TestCase):
                 result = self.run_reader(root, env)
                 self.assertEqual((result.returncode, result.stderr), (0, ''))
                 self.assertEqual(result.stdout.splitlines(), self.previous_assignments(root) + [
-                    "CHECKOUT_KIND=none", "CHECKOUT_SLUG=''", "CHECKOUT_MAIN_ROOT=''", "LOGS_DIR=''",
+                    "CHECKOUT_KIND=none", "CHECKOUT_SLUG=''", "CHECKOUT_MAIN_ROOT=''", self.logs_dir(root),
                     self.workspace_root(root), *APPENDED])
 
     def test_a_repository_above_the_git_ceiling_is_not_searched(self):

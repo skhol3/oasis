@@ -134,8 +134,8 @@ agent_destructive = 'ask'    # default: the dialog; 'deny' blocks them; 'allow' 
 
 - The layer reads it through `tools/config.py` (`AGENT_DESTRUCTIVE=...`) at each ask command, so
   a change applies to the next command, for the session's project and for the project the command
-  targets: the entry point's `--project <dir>`, or the `OASIS_PROJECT_ROOT` (else
-  `ODOO19_PROJECT_ROOT`) assigned before a tool script (`OASIS_PROJECT_ROOT=<dir> <tool>`, `env
+  targets: the entry point's `--project <dir>`, or the `OASIS_PROJECT_ROOT` (else the legacy
+  `ODOO19_PROJECT_ROOT`, which no tool reads since 0.17.0 but the guard still weighs) assigned before a tool script (`OASIS_PROJECT_ROOT=<dir> <tool>`, `env
   OASIS_PROJECT_ROOT=<dir> <tool>`). The stricter of the two decides (`deny` over `ask` over
   `allow`), so `oasis --project <other> drop-database <name>` from an `allow` project still asks
   or is denied when the other project says so; a refusal by the target names it (`... = "deny" in

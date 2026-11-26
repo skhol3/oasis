@@ -6,5 +6,5 @@
 - Verification uses a separate `_update` target, not a historical migration baseline.
 - One class or method: `test-module --only <Class[.method]>` (Gentle Shell: `only` of `oasis_test_module`) while fixing a single test; run the whole module before reporting.
 - Faster iteration: add `--reuse` (Gentle Shell: `reuse: true`) to keep the test database between runs; the module is then updated instead of installed. Report only results of a run without `--reuse`.
-- Compact runs: `test-module --compact` and `verify-module --compact` print each phase, its exit code and the log paths. Full streams remain in the logs directory: `[tooling].logs` when set, otherwise the project's `dev/logs/odoo19/`.
+- Compact runs: `test-module --compact` and `verify-module --compact` print each phase, its exit code and the log paths. Full streams remain in the logs directory: `[tooling].logs` when set, otherwise `logs` next to the workspace file (`<logs>/<main|slug>/run-*`).
 - In Gentle Shell, `oasis_test_module` returns the result line, failures and grouped warnings, and ends with `log: <lines> lines, <errors> errors, <warnings> warnings`, counted over the full logs. Open the logs only when the summary is not enough.

@@ -124,12 +124,10 @@ def main() -> int:
         print(f'oasis tools are not installed: {tool}', file=sys.stderr)
         return 2
     env = os.environ.copy()
-    # Both names of each variable, with the same value: the tools read OASIS_* first and the
-    # legacy ODOO19_* when it is unset (tools/oasis_env.sh, tools/config.py variable()).
-    for prefix in ('OASIS', 'ODOO19'):
-        env[f'{prefix}_PROJECT_ROOT'] = str(root)
-        env[f'{prefix}_ENTRYPOINT'] = str(Path(__file__).resolve())
-        env.pop(f'{prefix}_TOOLS_DIR', None)
+    # The tools read only the OASIS_* names (tools/oasis_env.sh, tools/config.py variable()).
+    env['OASIS_PROJECT_ROOT'] = str(root)
+    env['OASIS_ENTRYPOINT'] = str(Path(__file__).resolve())
+    env.pop('OASIS_TOOLS_DIR', None)
     os.execve('/bin/bash', ['bash', str(tool), *arguments], env)
     return 0  # pragma: no cover - execve replaces this process
 

@@ -26,8 +26,9 @@ LEGACY_MENTIONS = {'README.md', 'docs/migrating.md', 'docs/bash-guard.md'}
 # install.sh moves the old install directory away, doctor reports a wrapper that calls it, the bash guard
 # keeps guarding the old entry point and directory, and the docs say so (the README and AGENTS.md
 # contract notes, the upgrade section, the doctor and guard references, an incident note of that time).
-# Not counted: the legacy profile .odoo19-agent.toml, the default log directory dev/logs/odoo19 and the
-# runs before 0.8.0 under <logs>/odoo19/, which keep their names, and the incident note's file name.
+# Not counted: the legacy profile .odoo19-agent.toml, the default log directory before 0.17.0 dev/logs/odoo19 (only
+# named where its removal is explained) and the runs before 0.8.0 under <logs>/odoo19/, which keep their names, and
+# the incident note's file name.
 ODOO19_KEPT = re.compile(r'\.odoo19-agent|logs/odoo19|logs>/odoo19|\^odoo19\\/|odoo19-chromium-socket-path-too-long')
 ODOO19_MENTIONS = {'AGENTS.md', 'README.md', 'docs/bash-guard.md', 'docs/checking-environment.md',
                    'docs/gentle-shell-layer.md', 'docs/install.md', 'docs/odoo19-chromium-socket-path-too-long.md',

@@ -10,6 +10,7 @@ import fcntl
 import hashlib
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
@@ -107,7 +108,7 @@ class ComposeLockTests(unittest.TestCase):
         self.addCleanup(os.close, descriptor)
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         result = self.run_in(self.root, 'list-databases',
-                             env={**self.env, 'ODOO19_COMPOSE_LOCK_TIMEOUT': '0.3'})
+                             env={**self.env, 'OASIS_COMPOSE_LOCK_TIMEOUT': '0.3'})
         self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', TIMEOUT_MESSAGE))
         self.unchanged()
         fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -116,16 +117,38 @@ class ComposeLockTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertIn(' up -d --wait --wait-timeout 60 db\n', self.commands.read_text())
 
-    def test_lock_timeout_is_read_as_oasis_compose_lock_timeout_first(self):
+    def test_lock_timeout_is_read_as_oasis_compose_lock_timeout(self):
         self.lock.parent.mkdir(mode=0o700)
         descriptor = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
         self.addCleanup(os.close, descriptor)
         fcntl.flock(descriptor, fcntl.LOCK_EX)
-        # The legacy name would wait 60 s; the default 120 s. The OASIS_ name wins when set.
-        env = {**self.env, 'OASIS_COMPOSE_LOCK_TIMEOUT': '0.3', 'ODOO19_COMPOSE_LOCK_TIMEOUT': '60'}
+        # The default would wait 120 s; OASIS_COMPOSE_LOCK_TIMEOUT sets the wait.
+        env = {**self.env, 'OASIS_COMPOSE_LOCK_TIMEOUT': '0.3'}
         result = subprocess.run(['bash', str(self.wrapper(self.root, 'list-databases'))], text=True,
                                 cwd=self.root, env=env, capture_output=True, timeout=30)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', TIMEOUT_MESSAGE))
+        self.unchanged()
+
+    def test_the_legacy_compose_lock_timeout_is_not_read(self):
+        # v0.17.0 S3: ODOO19_COMPOSE_LOCK_TIMEOUT is ignored, so the wait is the default 120 s: the run
+        # still waits after 3 s while the legacy name asks for 0.3 s.
+        self.lock.parent.mkdir(mode=0o700)
+        descriptor = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, descriptor)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        env = {**self.env, 'ODOO19_COMPOSE_LOCK_TIMEOUT': '0.3'}
+        env.pop('OASIS_COMPOSE_LOCK_TIMEOUT', None)
+        process = subprocess.Popen(['bash', str(self.wrapper(self.root, 'list-databases'))], cwd=self.root, env=env,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        try:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                process.wait(timeout=3)
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
         self.unchanged()
 
     def test_without_flock_warns_and_still_starts_the_service(self):

@@ -38,6 +38,8 @@ Then `/reload` open sessions. To move the package to another release, remove the
 and install the new one ([Install or update](docs/install.md#moving-the-package-to-another-release)).
 Releases are listed in the [changelog](CHANGELOG.md).
 
+CI: `.github/workflows/tests.yml` runs `node --test pi/tests/*.test.ts` and `python3 -B -m unittest discover -s tests` on Python 3.12 for every pull request and push to `main`, plus a short job that runs the tests of what executes inside Odoo 15 environments (`tools/audit_dependencies.py`, `tools/dev_users_runtime.py`, `tools/check_environment.py`) with Python 3.8 and 3.9, both installed in that job, which fails when one of those tests skips.
+
 [Docs →](docs/install.md) · [Gentle Shell package →](docs/gentle-shell-layer.md#installing-the-package)
 
 ## Five-minute start
@@ -176,9 +178,13 @@ removed: run `~/.agents/skills/oasis/oasis`, `/oasis` and the `oasis_*` tools. A
 doctor` reports it as `FAIL project_wrappers=old_install_dir`, and its fix line names the edit: replace
 `.agents/skills/odoo19/` with `.agents/skills/oasis/` in each wrapper it lists (or copy them again from
 `~/.agents/skills/oasis/project-wrappers/`). An overlay or allowlist that names an `odoo19_*` tool needs
-the `oasis_*` name; `/oasis setup` updates an outdated overlay. The `ODOO19_*` variables are still read
-after the `OASIS_*` ones, the legacy `.odoo19-agent.toml` is still refused naming `oasis migrate`, and the
-default log directory stays `dev/logs/odoo19/`.
+the `oasis_*` name; `/oasis setup` updates an outdated overlay. Only the `OASIS_*` variables are read: a
+legacy `ODOO19_*` one (`ODOO19_PROJECT_ROOT`, `ODOO19_ENTRYPOINT`, `ODOO19_TOOLS_DIR`,
+`ODOO19_COMPOSE_LOCK_TIMEOUT`) is ignored, and neither the entry point nor a project wrapper sets one. A workspace
+without `[tooling].logs` keeps its logs in `logs` next to `oasis-workspace.toml`, as `oasis setup` writes the key
+(`logs/<x.y>` with `workspace_version = 2`), no longer in each checkout's `dev/logs/odoo19/`: runs already there
+stay where they are and are no longer read by `oasis_test_summary` (the runs before 0.8.0 under
+`<logs>/odoo19/` still are). The legacy `.odoo19-agent.toml` is still refused naming `oasis migrate`.
 
 ## Documentation
 

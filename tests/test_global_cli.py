@@ -52,7 +52,7 @@ class GlobalCliTests(unittest.TestCase):
         self.fake = ('#!/bin/bash\nFAKE_TOOL="$0" exec python3 -c '\
                      "'import json, os, sys; "
                      "open(os.environ[\"FAKE_LOG\"], \"a\").write(json.dumps({"
-                     "\"argv\": sys.argv[1:], \"root\": os.environ.get(\"ODOO19_PROJECT_ROOT\"), "
+                     "\"argv\": sys.argv[1:], \"root\": os.environ.get(\"OASIS_PROJECT_ROOT\"), "
                      "\"stdin\": sys.stdin.read(), \"tool\": os.path.basename(os.environ[\"FAKE_TOOL\"])"
                      "}) + \"\\n\"); print(\"delegated\"); "
                      "print(\"delegated error\", file=sys.stderr); sys.exit(17)' "
@@ -148,8 +148,9 @@ class GlobalCliTests(unittest.TestCase):
                 self.assertEqual(json.loads(self.log.read_text()), {
                     'argv': ['--help'], 'root': str(self.project), 'stdin': '', 'tool': name})
 
-    def test_entry_point_sets_both_variable_names(self):
-        # OASIS_* and the legacy ODOO19_* carry the same values; neither tools directory is inherited.
+    def test_entry_point_sets_only_the_oasis_variable_names(self):
+        # v0.17.0 S3: OASIS_PROJECT_ROOT and OASIS_ENTRYPOINT are set, OASIS_TOOLS_DIR is not inherited; the
+        # legacy ODOO19_* the caller set pass through unchanged, since no tool reads them.
         names = [f'{prefix}_{name}' for name in ('PROJECT_ROOT', 'ENTRYPOINT', 'TOOLS_DIR')
                  for prefix in ('OASIS', 'ODOO19')]
         (self.bundle / 'tools/status').write_text(
@@ -163,9 +164,9 @@ class GlobalCliTests(unittest.TestCase):
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
                 entrypoint = str((self.bundle / program).resolve())
                 self.assertEqual(json.loads(self.log.read_text()), {
-                    'OASIS_PROJECT_ROOT': str(self.project), 'ODOO19_PROJECT_ROOT': str(self.project),
-                    'OASIS_ENTRYPOINT': entrypoint, 'ODOO19_ENTRYPOINT': entrypoint,
-                    'OASIS_TOOLS_DIR': None, 'ODOO19_TOOLS_DIR': None})
+                    'OASIS_PROJECT_ROOT': str(self.project), 'ODOO19_PROJECT_ROOT': str(self.temp / 'wrong'),
+                    'OASIS_ENTRYPOINT': entrypoint, 'ODOO19_ENTRYPOINT': None,
+                    'OASIS_TOOLS_DIR': None, 'ODOO19_TOOLS_DIR': str(self.temp / 'wrong')})
 
     def test_existing_start_option_passes_through(self):
         result = self.invoke('--project', str(self.project), 'start', '--stop-after-init')

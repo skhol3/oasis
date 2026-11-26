@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Sourced by the tools (common.sh sources it too); defines functions only.
-# A variable a user, a project wrapper or a test may set is read as OASIS_<NAME> first and as
-# the legacy ODOO19_<NAME> when that is unset or empty (tools/config.py variable() in Python).
+# A variable a user, a project wrapper or a test may set is read as OASIS_<NAME> only (tools/config.py
+# variable() in Python); since 0.17.0 the legacy ODOO19_<NAME> is not read.
 
-# oasis_variable <NAME>: the value of OASIS_<NAME>, else of ODOO19_<NAME>, else nothing.
+# oasis_variable <NAME>: the value of OASIS_<NAME>, else nothing.
 oasis_variable() {
-  local name="OASIS_$1" legacy="ODOO19_$1"
-  printf '%s' "${!name:-${!legacy:-}}"
+  local name="OASIS_$1"
+  printf '%s' "${!name:-}"
 }
 
 # What a usage line names: the entry point or project wrapper that ran the tool, else the tool.

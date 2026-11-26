@@ -15,7 +15,7 @@ Python 3.13 is required; found 3.12.
 Move /home/you/odoo/19.0/environments/acme-next away and run oasis bootstrap --apply to recreate it with Python 3.13.
 ```
 
-`bootstrap --apply` saves the packages it found before the sync as `bootstrap-before.txt` in the checkout's log directory: `<logs>/<slug, or main>/` with `[tooling].logs`, else `dev/logs/odoo19/` (before 0.12.0 it went to `dev/runtime/`, which a workspace checkout does not have).
+`bootstrap --apply` saves the packages it found before the sync as `bootstrap-before.txt` in the checkout's log directory, `<logs>/<slug, or main>/`: `[tooling].logs`, else `logs` next to the workspace file (before 0.17.0 that default was `dev/logs/odoo19/`; before 0.12.0 it went to `dev/runtime/`, which a workspace checkout does not have). When the mark of an environment it just created cannot be written, it prints `WARNING: cannot mark <environment> as created by oasis (<environment>/.oasis-created: <reason>): its drift from the locks is reported as a WARN, as for an adopted environment; create that file to have it reported as a FAIL.` to stderr and goes on (`setup --apply` too).
 
 ## Dependency locks
 
@@ -65,8 +65,12 @@ every pin of `dev.txt` with the distributions installed in the environment, with
 installs it, satisfies `zope-event==5.0` in the lock on every Python (before 0.17.0 an Odoo 15 environment
 reported it as `missing_package=zope-event==5.0`). It prints `locked_packages=<n>`, one
 `missing_package=<name>==<version>` or `version_mismatch=<name>: expected=<x> actual=<y>` per difference,
-then `missing_packages=<n>` and `version_mismatches=<n>`, and the result depends on who created the
-environment:
+then `missing_packages=<n>` and `version_mismatches=<n>`. A dist-info or egg-info without usable metadata (none, no
+name or version, or not readable as text) is left out, so the package it would be is reported missing instead of
+the comparison failing. The comparison (`tools/check_environment.py`, also the project wrapper
+`dev/scripts/check_environment.py <lockfile>`) exits 0 when the environment matches, 3 when it drifted (1 before
+0.17.0), 2 for a lock it cannot read, and 1 for a crash (a traceback), which is therefore never reported as a drift.
+The result depends on who created the environment:
 
 | Environment | Matches the locks | Does not match them |
 | --- | --- | --- |
@@ -75,7 +79,8 @@ environment:
 
 An adopted environment belongs to you: no oasis command writes into it, marks it or syncs it, except an
 explicit `bootstrap --apply` (read `bootstrap --preview`, its `uv pip sync --dry-run`, first). A lock that
-cannot be read (malformed, unpinned, no pins) is a `FAIL locked_environment=drifted` for every environment.
+cannot be read (malformed, unpinned, no pins) and a comparison that crashed are a `FAIL locked_environment=drifted`
+for every environment.
 An environment oasis created before 0.17.0 has no mark and is reported as adopted; to have its drift fail
 again, create the mark yourself (`touch <environment>/.oasis-created`), or move the environment away and
 run `bootstrap --apply`, which creates and marks it.

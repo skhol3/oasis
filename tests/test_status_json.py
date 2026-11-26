@@ -75,7 +75,7 @@ class StatusJsonTests(unittest.TestCase):
         planted.mkdir()
         (planted / 'json.py').write_text('raise ImportError("planted json")\n')
         env = {**self.env, 'PYTHONPATH': str(planted), 'OASIS_PROJECT_ROOT': str(self.checkout),
-               'ODOO19_PROJECT_ROOT': str(self.checkout), 'OASIS_ENTRYPOINT': str(CLI), 'ODOO19_ENTRYPOINT': str(CLI)}
+               'OASIS_ENTRYPOINT': str(CLI)}
         result = subprocess.run(['/bin/bash', str(ROOT / 'tools/status'), '--json'], capture_output=True, text=True,
                                 env=env, stdin=subprocess.DEVNULL)
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)

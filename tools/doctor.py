@@ -635,8 +635,7 @@ def main(arguments: list[str]) -> int:
             check_conf_password(report, values, program)
         check_compose(report, values, program)
         env_ok = check_env_file(report, values, program)
-        logs = Path(values['LOGS_DIR']) if values['LOGS_DIR'] else root / 'dev' / 'logs' / 'odoo19'
-        check_writable(report, 'logs_dir', logs)
+        check_writable(report, 'logs_dir', Path(values['LOGS_DIR']))
         if values['DATA_DIR']:
             check_writable(report, 'data_dir', Path(values['DATA_DIR']))
         if conf_ok:

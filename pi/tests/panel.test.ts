@@ -176,7 +176,7 @@ test("the server log action says when there is no log yet", async () => {
   const { open, context, events, entries } = harness({ pick: "server.logs", exists: false });
   await open(context());
   assert.deepEqual(events.slice(1), [
-    "pick", "warning: oasis menu: no server log yet: /work/a project/dev/logs/odoo19/server.log", "status -",
+    "pick", "warning: oasis menu: no server log yet: /work/a project/logs/main/server.log", "status -",
   ]);
   assert.deepEqual(entries, []);
 });
@@ -333,13 +333,13 @@ test("following the server log opens the live view of server.log and runs nothin
   const { open, context, events, entries } = harness({ pick: "server.follow" });
   await open(context());
   assert.deepEqual(events.slice(1), [
-    "pick", "follow /work/a project/dev/logs/odoo19/server.log (Follow the server log)", "status -",
+    "pick", "follow /work/a project/logs/main/server.log (Follow the server log)", "status -",
   ]);
   assert.deepEqual(entries, []);
   const missing = harness({ pick: "server.follow", exists: false });
   await missing.open(missing.context());
   assert.deepEqual(missing.events.slice(1), [
-    "pick", "warning: oasis menu: no server log yet: /work/a project/dev/logs/odoo19/server.log", "status -",
+    "pick", "warning: oasis menu: no server log yet: /work/a project/logs/main/server.log", "status -",
   ]);
 });
 
