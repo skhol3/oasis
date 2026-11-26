@@ -28,7 +28,7 @@ test("Tier A operations an agent was denied before now run", () => {
   for (const command of [
     "oasis setup --apply",
     "oasis --project /p setup --community $SRC --apply",
-    "~/.agents/skills/odoo19/tools/setup --apply",
+    "~/.agents/skills/oasis/tools/setup --apply",
     "oasis --project /p worktree-init feat feature/x --dry-run",
     "oasis --project /p migrate",
     "oasis --project /p migrate --plan",
@@ -44,7 +44,7 @@ test("Tier B worktree-init and migrate --apply ask instead of being denied", () 
     ["python3 -I -B tools/worktree_init.py feat x --dry-run $MORE", [{ command: "worktree-init" }]],
     ["oasis --project /p migrate --apply", [{ command: "migrate --apply", project: "/p" }]],
     ["oasis --project /p migrate $ARGS", [{ command: "migrate --apply", project: "/p" }]],
-    ["python3 -I -B ~/.agents/skills/odoo19/tools/migrate.py --apply", [{ command: "migrate --apply" }]],
+    ["python3 -I -B ~/.agents/skills/oasis/tools/migrate.py --apply", [{ command: "migrate --apply" }]],
   ];
   for (const [command, asks] of cases) {
     assert.deepEqual(classifyBash(command), { program: null, programs: [], asks }, command);

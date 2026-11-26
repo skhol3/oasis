@@ -7,6 +7,6 @@ Before diagnostics, account for executable shims managed by tools such as mise. 
 ## Headless Chromium aborts in browser tests
 
 When the browser tests of a module fail because headless Chromium aborts at startup, the path of
-its socket is too long; see [Odoo19: headless Chromium aborts because of its socket path](odoo19-chromium-socket-path-too-long.md).
+its socket is too long; see [Headless Chromium aborts because of its socket path](odoo19-chromium-socket-path-too-long.md).
 Test runs now give the Odoo test process a short private `TMPDIR` (see
 [Ports, temporary directory and browser evidence](testing.md#ports-temporary-directory-and-browser-evidence)).

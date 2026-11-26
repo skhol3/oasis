@@ -42,19 +42,18 @@ test("parseCommand dispatches from the same table as completion and usage", () =
 
 // S3: typing the command name suggests its subcommands before the space.
 const OASIS_ITEMS = SUBCOMMANDS.map((item) => `oasis ${item.name}`);
-const ODOO19_ITEMS = SUBCOMMANDS.map((item) => `odoo19 ${item.name}`);
 
-test("commandNameCompletions offers /oasis and /odoo19 subcommands from two typed letters, before any space", () => {
+test("commandNameCompletions offers the /oasis subcommands from two typed letters, before any space", () => {
   const oa = commandNameCompletions("/oa");
   assert.equal(oa?.prefix, "/oa");
   assert.deepEqual(oa?.items.map((item) => item.value), OASIS_ITEMS);
   assert.deepEqual(oa?.items.map((item) => item.label), OASIS_ITEMS);
   assert.deepEqual(oa?.items.map((item) => item.description), SUBCOMMANDS.map((item) => item.description));
   assert.deepEqual(commandNameCompletions("/oasis")?.items.map((item) => item.value), OASIS_ITEMS);
-  assert.deepEqual(commandNameCompletions("  /odoo")?.items.map((item) => item.value), ODOO19_ITEMS);
-  assert.equal(commandNameCompletions("  /odoo")?.prefix, "/odoo");
-  assert.deepEqual(commandNameCompletions("/odoo19")?.items.map((item) => item.value), ODOO19_ITEMS);
-  for (const text of ["/o", "/", "oa", "/oasis ", "/oasis m", "/oax", "/odoo2", "/model", "say /oa"]) {
+  assert.deepEqual(commandNameCompletions("  /oas")?.items.map((item) => item.value), OASIS_ITEMS);
+  assert.equal(commandNameCompletions("  /oas")?.prefix, "/oas");
+  // v0.17.0 S3: /odoo19 is gone, so `/od` suggests nothing of ours.
+  for (const text of ["/o", "/", "oa", "/oasis ", "/oasis m", "/oax", "/od", "/odoo", "/odoo19", "/model", "say /oa"]) {
     assert.equal(commandNameCompletions(text), null, text);
   }
 });
@@ -70,8 +69,10 @@ test("withSubcommandSuggestions adds the subcommands after their command and kee
     ...OASIS_ITEMS]);
   assert.deepEqual(withSubcommandSuggestions("/oasis", null)?.items.map((item) => item.value), OASIS_ITEMS);
   // Without the command item, the subcommands go last; other text is returned unchanged.
-  assert.deepEqual(withSubcommandSuggestions("/od", { prefix: "/od", items: [{ value: "model", label: "model" }] })
-    ?.items.map((item) => item.value), ["model", ...ODOO19_ITEMS]);
+  assert.deepEqual(withSubcommandSuggestions("/oas", { prefix: "/oas", items: [{ value: "model", label: "model" }] })
+    ?.items.map((item) => item.value), ["model", ...OASIS_ITEMS]);
+  const odoo = { prefix: "/od", items: [{ value: "model", label: "model" }] };
+  assert.equal(withSubcommandSuggestions("/od", odoo), odoo);
   const files = { prefix: "src/", items: [{ value: "src/a.ts", label: "a.ts" }] };
   assert.equal(withSubcommandSuggestions("see src/", files), files);
   assert.equal(withSubcommandSuggestions("/model", null), null);

@@ -107,7 +107,7 @@ A shared `odoo.conf` may name the main checkout in its `addons_path`. In a linke
 ```
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/project worktree-init <feature> <branch> [--path <dir>] [--dry-run] [--resume] [--confirm <worktree path>]
+~/.agents/skills/oasis/oasis --project /absolute/project worktree-init <feature> <branch> [--path <dir>] [--dry-run] [--resume] [--confirm <worktree path>]
 ```
 
 - The folder is `<main folder>-<feature>` next to the main checkout, so the feature becomes the checkout slug (`acme` with `shop feature` gives `acme-shop-feature`, slug `shop_feature`). An existing folder is refused, unless you pass `--resume` (below).

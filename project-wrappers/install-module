@@ -2,6 +2,6 @@
 set -Eeuo pipefail
 export OASIS_PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 export ODOO19_PROJECT_ROOT="$OASIS_PROJECT_ROOT"
-tools=${OASIS_TOOLS_DIR:-${ODOO19_TOOLS_DIR:-$HOME/.agents/skills/odoo19/tools}}
+tools=${OASIS_TOOLS_DIR:-${ODOO19_TOOLS_DIR:-$HOME/.agents/skills/oasis/tools}}
 if [[ ! -f "$tools/install-module" ]]; then printf 'oasis tools are not installed: %s\n' "$tools/install-module" >&2; exit 2; fi
 exec bash "$tools/install-module" "$@"

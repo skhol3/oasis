@@ -203,7 +203,7 @@ def main():
         return 2
     root, command = args[0], args[1:]
     try:
-        scratch = Path(tempfile.mkdtemp(prefix='odoo19-test-', dir='/tmp'))
+        scratch = Path(tempfile.mkdtemp(prefix='oasis-test-', dir='/tmp'))
     except OSError:
         print('Cannot create private test scratch under /tmp.', file=sys.stderr)
         return 1

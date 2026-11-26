@@ -171,7 +171,7 @@ exit "$FAKE_EXIT"
         result = self.invoke('test-module', 'coffee')
         scratch = Path(self.observation.read_text().splitlines()[0])
         self.assertEqual(scratch.parent, Path('/tmp'))
-        self.assertTrue(scratch.name.startswith('odoo19-test-'))
+        self.assertTrue(scratch.name.startswith('oasis-test-'))
         self.addCleanup(shutil.rmtree, scratch)
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, 'test stdout\n')

@@ -8,7 +8,7 @@ import sys
 
 root = Path(__file__).resolve().parents[2]
 tools = Path(os.environ.get('OASIS_TOOLS_DIR') or os.environ.get('ODOO19_TOOLS_DIR') or str(
-    Path.home() / '.agents/skills/odoo19/tools'))
+    Path.home() / '.agents/skills/oasis/tools'))
 helper = tools / 'audit_dependencies.py'
 config = tools / 'config.py'
 if not helper.is_file() or not config.is_file():

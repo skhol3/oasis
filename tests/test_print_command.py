@@ -89,7 +89,7 @@ class PrintCommandTests(menu.MenuFixture):
     def test_start_prints_the_command_of_the_main_checkout_without_side_effects(self):
         expected = self.line('-c', str(self.conf), f'--http-port={self.port}', '-d', 'cc_dev_coffee',
                              '--dev', 'xml')
-        for program in ('oasis', 'odoo19'):
+        for program in ('oasis',):
             for leading in (('--print-command',), ('--print-command', '--detach')):
                 with self.subTest(program=program, leading=leading):
                     result = self.run_in(self.root, 'start', *leading, '-d', 'cc_dev_coffee', '--dev', 'xml',

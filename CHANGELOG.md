@@ -11,6 +11,12 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- Contract change: one name. `./install.sh` installs into `~/.agents/skills/oasis` and moves a previous
+  `~/.agents/skills/odoo19` install to the backups; the `odoo19` entry point, the inactive `odoo19_*` Gentle
+  Shell tools and `/odoo19` are removed (only `oasis`, `oasis_*` and `/oasis` remain). The project wrapper
+  templates call `~/.agents/skills/oasis/tools`; `doctor` FAILs `project_wrappers=old_install_dir` for a
+  project wrapper that still calls the old directory and names the edit. Update a project: replace
+  `.agents/skills/odoo19/` with `.agents/skills/oasis/` in its `dev/scripts` wrappers.
 - Skills per series (contract change): the six skills are named `odoo-<topic>` (`odoo-backend`,
   `odoo-environment`, `odoo-module-lifecycle`, `odoo-security`, `odoo-testing`, `odoo-views-frontend`). Each
   SKILL.md is common to every series and points to `references/15.0.md` and `references/19.0.md` for what

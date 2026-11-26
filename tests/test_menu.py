@@ -588,7 +588,7 @@ class TerminalMenuTests(MenuFixture):
         self.assertNotIn('Repeat', result.stdout)
 
     def test_menu_refuses_without_a_terminal(self):
-        for program in ('oasis', 'odoo19'):
+        for program in ('oasis',):
             with self.subTest(program=program):
                 result = self.oasis('menu', program=program)
                 self.assertEqual((result.returncode, result.stdout, result.stderr),
@@ -1085,7 +1085,7 @@ class DetachTests(MenuFixture):
         self.assertIn(pid, self.fake_servers())
         self.assertEqual(self.odoo_lines(), lines)
         # Plain stop suggests --force with the program that ran it; the exit code stays 1.
-        for program in ('oasis', 'odoo19'):
+        for program in ('oasis',):
             with self.subTest(program=program):
                 result = self.oasis('stop', program=program)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', (

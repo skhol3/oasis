@@ -17,7 +17,7 @@ Use the standalone global `lint-module` command for Python/manifest changes. It 
 2. With authorization for the project, interpreter, rcfile and plugins, run:
 
    ```bash
-   ~/.agents/skills/odoo19/odoo19 --project /absolute/project lint-module your_module
+   ~/.agents/skills/oasis/oasis --project /absolute/project lint-module your_module
    ```
 
 3. Preserve the exact diagnostics and exit code. A nonzero result is not a clean check, even when the score exceeds the configured threshold. Separate existing baseline findings from new findings; do not suppress, change rules, install dependencies or automatically fix code without authorization.

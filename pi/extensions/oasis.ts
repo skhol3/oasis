@@ -1,7 +1,6 @@
 // Gentle Shell (Pi) layer for the Odoo bundle. It wraps the agent-agnostic
 // `oasis` entry point shipped in this repository; it changes nothing in Pi or
-// Gentle Shell and keeps every guard inside the core tools. The pre-0.4.0 names stay as
-// aliases: `/odoo19` and the inactive odoo19_* tools.
+// Gentle Shell and keeps every guard inside the core tools.
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
@@ -18,7 +17,7 @@ import {
   worktreeFlow,
 } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
-import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
+import { nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { overlayReminder, runSetup, setupCommand, type SetupInput } from "../lib/setup.ts";
 import { type Answers, menuShortcut, type PickerChoice, RunForm } from "../lib/menu.ts";
 import { actionPanel, type ExecPurpose } from "../lib/panel.ts";
@@ -47,7 +46,6 @@ const MENU_STATUS = "oasis-menu";
 const MENU_TIMEOUT_MS = TEST_TIMEOUT_MS;
 
 type Result = { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
-type ToolDefinition = Parameters<ExtensionAPI["registerTool"]>[0];
 
 function text(body: string, details: Record<string, unknown> = {}): Result {
   return { content: [{ type: "text", text: body }], details };
@@ -311,7 +309,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     menu: (ctx) => menu(ctx),
   };
 
-  // `/oasis`, and `/odoo19` as its alias: one handler, the same subcommands.
+  // `/oasis`: one handler for the status and every subcommand.
   const command: Parameters<ExtensionAPI["registerCommand"]>[1] = {
     description: COMMAND_DESCRIPTION,
     getArgumentCompletions: (prefix: string) => subcommandCompletions(prefix),
@@ -335,10 +333,9 @@ export default function oasisLayer(pi: ExtensionAPI) {
     },
   };
   pi.registerCommand("oasis", command);
-  pi.registerCommand("odoo19", { ...command, description: `Alias of /oasis. ${COMMAND_DESCRIPTION}` });
 
-  // Typing `/oa` or `/odoo` (no space yet) also suggests `/oasis <subcommand>` and `/odoo19
-  // <subcommand>` (lib/commands.ts subcommandAutocomplete); everything else goes to the provider it
+  // Typing `/oa` (no space yet) also suggests `/oasis <subcommand>` (lib/commands.ts
+  // subcommandAutocomplete); everything else goes to the provider it
   // wraps. Pi drops extension providers when it rebinds a session, so each session registers it once,
   // in the TUI only (registerSubcommandAutocomplete).
   pi.on("session_start", async (_event, ctx) => {
@@ -346,8 +343,8 @@ export default function oasisLayer(pi: ExtensionAPI) {
   });
 
   // The oasis_* tools are registered inactive; activate them only in sessions inside an Odoo
-  // project so other projects pay no tokens for their schemas and guidelines. Other tools, the
-  // odoo19_* aliases included, are untouched.
+  // project so other projects pay no tokens for their schemas and guidelines. Other tools are
+  // untouched.
   pi.on("session_start", async (_event, ctx) => {
     const inProject = (await projectRoot(ctx.cwd)) !== null;
     // Read after the await: another handler may change the active tools meanwhile.
@@ -413,25 +410,9 @@ export default function oasisLayer(pi: ExtensionAPI) {
   const routeToolCall = toolCallRouter(gateEffects);
   pi.on("tool_call", (event, ctx) => routeToolCall(event, ctx));
 
-  // Each tool is registered under its oasis_* name and, always inactive, under its odoo19_* alias
-  // with the same parameters and implementation, for overlays and allowlists that name the old
-  // tools; the layer activates only the oasis_* names (OASIS_TOOLS).
-  function registerWithAlias(tool: ToolDefinition): void {
-    pi.registerTool(tool);
-    const alias = aliasOf(tool.name);
-    pi.registerTool({
-      ...tool,
-      name: alias,
-      defaultActive: false,
-      label: `${tool.label} (alias of ${tool.name})`,
-      description: `Alias of ${tool.name}. ${tool.description}`,
-      ...(tool.promptGuidelines
-        ? { promptGuidelines: tool.promptGuidelines.map((line) => line.replaceAll(tool.name, alias)) }
-        : {}),
-    });
-  }
-
-  registerWithAlias({
+  // Each tool is registered inactive under its oasis_* name; the layer activates them in Odoo
+  // projects (OASIS_TOOLS).
+  pi.registerTool({
     name: "oasis_test_module",
     defaultActive: false,
     label: "Odoo test module",
@@ -481,7 +462,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     },
   });
 
-  registerWithAlias({
+  pi.registerTool({
     name: "oasis_test_summary",
     defaultActive: false,
     label: "Odoo test summary",
@@ -508,7 +489,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     },
   });
 
-  registerWithAlias({
+  pi.registerTool({
     name: "oasis_update_module",
     defaultActive: false,
     label: "Odoo update module",
@@ -539,7 +520,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     },
   });
 
-  registerWithAlias({
+  pi.registerTool({
     name: "oasis_find_module",
     defaultActive: false,
     label: "Odoo find module",
@@ -563,7 +544,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     },
   });
 
-  registerWithAlias({
+  pi.registerTool({
     name: "oasis_model_info",
     defaultActive: false,
     label: "Odoo model info",
@@ -591,7 +572,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     },
   });
 
-  registerWithAlias({
+  pi.registerTool({
     name: "oasis_view_info",
     defaultActive: false,
     label: "Odoo view info",
@@ -612,7 +593,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     },
   });
 
-  registerWithAlias({
+  pi.registerTool({
     name: "oasis_xmlid_info",
     defaultActive: false,
     label: "Odoo XML id info",
@@ -631,7 +612,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     },
   });
 
-  registerWithAlias({
+  pi.registerTool({
     name: "oasis_module_info",
     defaultActive: false,
     label: "Odoo module info",
@@ -653,7 +634,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     },
   });
 
-  registerWithAlias({
+  pi.registerTool({
     name: "oasis_module_status",
     defaultActive: false,
     label: "Odoo module status",
@@ -667,7 +648,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     },
   });
 
-  registerWithAlias({
+  pi.registerTool({
     name: "oasis_check_environment",
     defaultActive: false,
     label: "Odoo check environment",
@@ -681,7 +662,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
     },
   });
 
-  registerWithAlias({
+  pi.registerTool({
     name: "oasis_lint_module",
     defaultActive: false,
     label: "Odoo lint module",

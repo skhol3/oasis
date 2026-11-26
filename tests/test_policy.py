@@ -86,7 +86,7 @@ class PolicyTableTests(unittest.TestCase):
     def test_oasis_policy_json_through_both_entry_points(self):
         env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'GIT_CEILING_DIRECTORIES': tempfile.gettempdir()}
         with tempfile.TemporaryDirectory() as scratch:
-            for program in ('oasis', 'odoo19'):
+            for program in ('oasis',):
                 with self.subTest(program=program):
                     result = subprocess.run([sys.executable, '-B', str(ROOT / program), '--project', scratch,
                                              'policy', '--json'], capture_output=True, text=True, env=env, timeout=30)

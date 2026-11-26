@@ -3,12 +3,14 @@
 #
 # Copies the files of HEAD (never uncommitted edits) into the target, removes
 # repository-only files, records the installed commit and keeps the previous
-# install as a backup outside any skill discovery directory.
+# install as a backup outside any skill discovery directory. Installing into the
+# default target also moves a pre-0.17.0 install out of $HOME/.agents/skills/odoo19
+# (only when it holds .oasis-install.json; anything else there is left untouched).
 set -euo pipefail
 
 usage() {
   echo 'usage: install.sh [--target /absolute/path]' >&2
-  echo 'default target: $HOME/.agents/skills/odoo19' >&2
+  echo 'default target: $HOME/.agents/skills/oasis' >&2
 }
 
 die() {
@@ -17,7 +19,10 @@ die() {
 }
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
-target="$HOME/.agents/skills/odoo19"
+default_target="$HOME/.agents/skills/oasis"
+# The install directory before 0.17.0, replaced by the default target.
+previous_target="$HOME/.agents/skills/odoo19"
+target=$default_target
 state=${OASIS_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/oasis}
 repo_only=(AGENTS.md .gitignore install.sh)
 
@@ -45,6 +50,12 @@ parent=$(dirname "$target")
 [[ -d $parent ]] || die "target parent does not exist: $parent"
 parent=$(cd "$parent" && pwd -P)
 target="$parent/$(basename "$target")"
+default_parent=$(dirname "$default_target")
+if [[ -d $default_parent ]] && [[ $target == "$(cd "$default_parent" && pwd -P)/$(basename "$default_target")" ]]; then
+  into_default=1
+else
+  into_default=
+fi
 case "$target/" in
   "$repo"/*) die "target overlaps the repository: $target" ;;
 esac
@@ -100,3 +111,15 @@ trap - EXIT
 
 echo "oasis $version (${commit:0:12}) installed in $target"
 [[ -z $backup ]] || echo "previous install kept in $backup"
+
+# The pre-0.17.0 install directory: moved to the backups only when it is an oasis install
+# (a real directory holding .oasis-install.json); a symlink, a file or another directory stays.
+if [[ -n $into_default ]] && [[ -e $previous_target || -L $previous_target ]]; then
+  if [[ -d $previous_target && ! -L $previous_target && -f $previous_target/.oasis-install.json ]]; then
+    previous_backup="$state/backups/$(basename "$previous_target")-$stamp"
+    mv "$previous_target" "$previous_backup"
+    echo "previous odoo19 install removed from $previous_target; kept in $previous_backup"
+  else
+    echo "install.sh: warning: $previous_target is not an oasis install (no .oasis-install.json); not removed" >&2
+  fi
+fi

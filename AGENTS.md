@@ -2,17 +2,17 @@
 
 ## Project
 
-- This repository is the source of the global Odoo agent bundle: the `oasis` entry point
-  (with its `odoo19` alias), its guarded `tools/`, the `odoo-<topic>` skills (a reference per
-  series), the Gentle Shell layer (`pi/`), project wrapper templates and docs.
+- This repository is the source of the global Odoo agent bundle: the `oasis` entry point, its
+  guarded `tools/`, the `odoo-<topic>` skills (a reference per series), the Gentle Shell layer
+  (`pi/`), project wrapper templates and docs.
 - Agents never read this repository directly. `install.sh` copies the committed HEAD to
-  `~/.agents/skills/odoo19`; uncommitted edits are never installed.
+  `~/.agents/skills/oasis`; uncommitted edits are never installed.
 - Code, comments, commit messages and documentation are in English.
 
 ## Boundaries
 
 - Editable: everything in this repository.
-- Read-only unless the user explicitly authorizes the exact path: `~/.agents/skills/odoo19`
+- Read-only unless the user explicitly authorizes the exact path: `~/.agents/skills/oasis`
   (install target, changed only through `install.sh`), Odoo projects that use the bundle,
   Odoo source trees, environments and databases.
 - Never print or copy credentials: project `.env` files and `odoo.conf` passwords stay where they are.
@@ -20,12 +20,14 @@
 
 ## Compatibility
 
-Several Odoo projects depend on the installed bundle. Treat as a contract: both entry point
-names, `oasis` and its alias `odoo19` (same dispatcher, identical command names, options,
-exit codes and output), the Gentle Shell names (`oasis_*` tools with their inactive
-`odoo19_*` aliases, `/oasis` with its alias `/odoo19`), the `oasis-workspace.toml` keys
-(with `oasis-checkout.toml`), database prefix guards and the skill names. Changing or removing any of them needs an
-explicit decision and a note in the README.
+Several Odoo projects depend on the installed bundle. Treat as a contract: the one entry point
+`oasis` (its command names, options, exit codes and output), the install directory
+`~/.agents/skills/oasis` that project wrappers call, the Gentle Shell names (the `oasis_*` tools and
+`/oasis`), the `oasis-workspace.toml` keys (with `oasis-checkout.toml`), database prefix guards and
+the skill names. Changing or removing any of them needs an explicit decision and a note in the
+README. v0.17.0 removed the `odoo19` names without a transition (the `odoo19` entry point, the
+`~/.agents/skills/odoo19` install directory, the `odoo19_*` tool aliases and `/odoo19`); the README
+note says what a user runs to update a project whose wrappers call the old path.
 
 ## Verification
 
@@ -39,7 +41,7 @@ Tests use synthetic fixtures; they must never touch a real project, database or 
 target. Install only after the suite passes and the change is committed:
 
 ```bash
-./install.sh            # or ./install.sh --target /absolute/scratch/odoo19 to try it
+./install.sh            # or ./install.sh --target /absolute/scratch/oasis to try it
 ```
 
 ## Releases

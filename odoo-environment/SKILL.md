@@ -17,7 +17,7 @@ Common to every series. Also read [15.0](references/15.0.md) or [19.0](reference
 
 ## Hard Rules
 
-- Treat `[odoo]`, `[environment]`, `[database]`, `[commands]` in `oasis-workspace.toml` as advisory. Only installed `~/.agents/skills/odoo19/tools` consume optional `[tooling]`; it is path/guard input, never access consent or automatic setup.
+- Treat `[odoo]`, `[environment]`, `[database]`, `[commands]` in `oasis-workspace.toml` as advisory. Only installed `~/.agents/skills/oasis/tools` consume optional `[tooling]`; it is path/guard input, never access consent or automatic setup.
 - Use only an isolated project environment; never modify shared virtualenvs or global packages.
 - No oasis workflow requires reading, copying or typing a password. Never print, log or template secrets.
 - Paths outside the workspace require exact per-target human consent before access, even when configured.
@@ -31,14 +31,14 @@ Common to every series. Also read [15.0](references/15.0.md) or [19.0](reference
 | Choosing an operation | Consult installed help and the project's declarations; prefer supported end-to-end capabilities |
 | Precondition unmet (target, namespace, existing resource, human interaction) | Never delete or replace resources without explicit authorization; explain the gap first |
 | Before module lifecycle work | Confirm the series with matching `release.py` and permitted runtime checks |
-| Project wrapper missing | Use the installed `~/.agents/skills/odoo19/oasis` entry point (alias `odoo19`); with no guarded interface, report unavailable |
+| Project wrapper missing | Use the installed `~/.agents/skills/oasis/oasis` entry point; with no guarded interface, report unavailable |
 | Environment mutation | Preview first, then seek explicit authorization for the exact isolated target and operation |
 
 Apply the full [operation selection rules](references/operation-selection.md).
 
 ## Execution Steps
 
-1. Read project instructions and the capability contract; identify authorized paths, wrappers or the explicit global entry point (`~/.agents/skills/odoo19/oasis --project /absolute/project doctor --environment --quick`). Run the read-only `doctor` first. A quick check is not strictly read-only: a shimmed uv version probe can trigger mise installation.
+1. Read project instructions and the capability contract; identify authorized paths, wrappers or the explicit global entry point (`~/.agents/skills/oasis/oasis --project /absolute/project doctor --environment --quick`). Run the read-only `doctor` first. A quick check is not strictly read-only: a shimmed uv version probe can trigger mise installation.
 2. Inspect permitted dependency declarations without printing credentials or runtime configuration.
 3. Run only authorized diagnostics; report drift, missing capabilities, and actions not taken.
 

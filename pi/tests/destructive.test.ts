@@ -10,7 +10,7 @@ import {
 const ROOT = "/work/shop";
 const DROP = "oasis --project /work/shop drop-database shop_dev_old";
 const STOP = "oasis --project /work/shop stop --database";
-const PURGE = "odoo19 --project /work/shop gc --apply --trash --older-than 0";
+const PURGE = "oasis --project /work/shop gc --apply --trash --older-than 0";
 const SECONDS = ASK_TIMEOUT_MS / 1000;
 // v0.16.0 S1: Tier B in the policy table, so they ask like drop-database (before: denied).
 const WORKTREE = "oasis --project /work/shop worktree-init feat feature/x";
@@ -95,12 +95,12 @@ test("allowed commands run without a dialog, an entry or reading the setting", a
     // S6: restart, stop --force and status act on the checkout's own server.
     "oasis --project /work/shop restart", "oasis --project /work/shop restart -d shop_dev_x --workers=0",
     "oasis --project /work/shop restart --database shop_dev_x", "oasis --project /work/shop stop --force",
-    "oasis --project /work/shop status", "~/.agents/skills/odoo19/tools/stop --force",
-    "~/.agents/skills/odoo19/tools/restart",
+    "oasis --project /work/shop status", "~/.agents/skills/oasis/tools/stop --force",
+    "~/.agents/skills/oasis/tools/restart",
     "oasis --project /work/shop drop-database --help", "git status",
     // v0.12.1 S5: the native odoo-bin line only prints.
-    "oasis --project /work/shop start --print-command -d shop_dev_x", "odoo19 --project /work/shop restart --print-command",
-    "~/.agents/skills/odoo19/tools/restart --print-command --http-port 8070",
+    "oasis --project /work/shop start --print-command -d shop_dev_x", "oasis --project /work/shop restart --print-command",
+    "~/.agents/skills/oasis/tools/restart --print-command --http-port 8070",
   ]) {
     assert.equal(await run.gate(command), undefined, command);
   }
@@ -304,10 +304,10 @@ test("a target whose setting cannot be read, outside a project or not literal co
     ["oasis --project /tmp/elsewhere stop --database", { settings: { [ROOT]: "allow" } }],
     ["oasis --project $TARGET stop --database", { settings: { [ROOT]: "allow" } }],
     ["oasis --proj /work/other gc --apply --trash", { settings: { [ROOT]: "allow", [OTHER]: "ask" } }],
-    ["ODOO19_PROJECT_ROOT=/work/other ~/.agents/skills/odoo19/tools/stop --database", { settings: { [ROOT]: "allow" } }],
-    ["OASIS_PROJECT_ROOT=$P ~/.agents/skills/odoo19/tools/stop --database", { settings: { [ROOT]: "allow" } }],
+    ["ODOO19_PROJECT_ROOT=/work/other ~/.agents/skills/oasis/tools/stop --database", { settings: { [ROOT]: "allow" } }],
+    ["OASIS_PROJECT_ROOT=$P ~/.agents/skills/oasis/tools/stop --database", { settings: { [ROOT]: "allow" } }],
     // Set elsewhere on the line: the tool reads a root the text does not tell.
-    ["export OASIS_PROJECT_ROOT=/work/other; ~/.agents/skills/odoo19/tools/stop --database", { settings: { [ROOT]: "allow" } }],
+    ["export OASIS_PROJECT_ROOT=/work/other; ~/.agents/skills/oasis/tools/stop --database", { settings: { [ROOT]: "allow" } }],
   ] as const) {
     const run = harness({ roots, hasUI: false, ...setup });
     assert.deepEqual(await run.gate(command), {
@@ -321,10 +321,10 @@ test("a target whose setting cannot be read, outside a project or not literal co
   }
   // A literal tool-script root that is allowed there, as here, runs.
   const allowed = harness({ roots, settings: { [ROOT]: "allow", [OTHER]: "allow" }, hasUI: false });
-  assert.equal(await allowed.gate("env OASIS_PROJECT_ROOT=/work/other ~/.agents/skills/odoo19/tools/stop --database"), undefined);
+  assert.equal(await allowed.gate("env OASIS_PROJECT_ROOT=/work/other ~/.agents/skills/oasis/tools/stop --database"), undefined);
   // deny there blocks a tool script too.
   const denied = harness({ roots, settings: { [ROOT]: "ask", [OTHER]: "deny" } });
-  assert.match((await denied.gate("ODOO19_PROJECT_ROOT=/work/other ~/.agents/skills/odoo19/tools/stop --database") as
+  assert.match((await denied.gate("ODOO19_PROJECT_ROOT=/work/other ~/.agents/skills/oasis/tools/stop --database") as
     { reason: string }).reason, /in the configuration of \/work\/other;/);
 });
 
@@ -342,7 +342,7 @@ test("an entry point without --project still asks, judged against the session's 
   assert.equal((await headless.gate(command))?.block, true);
   assert.deepEqual(headless.entries.map((entry) => entry.note), ["no dialog"]);
   const denied = harness({ setting: "deny" });
-  assert.match((await denied.gate("odoo19 stop --database") as { reason: string }).reason,
+  assert.match((await denied.gate("oasis stop --database") as { reason: string }).reason,
     /^stop --database is denied to agents by \[tooling\]\.agent_destructive = "deny" in this project's configuration;/);
   // A literal cd inside the session's own project reads the session's setting once.
   const inside = harness({ roots, settings: { [ROOT]: "ask" }, hasUI: false });

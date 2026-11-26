@@ -6,12 +6,10 @@ output. It runs tests, databases and servers per checkout without letting an age
 database prefix guards.
 
 Odoo 19.0 and 15.0 are supported; [`tools/odoo_versions.py`](tools/odoo_versions.py) is the one
-table of what differs between them for the tools. The skills are named `odoo-<topic>` (since 0.17.0;
-the `odoo19-*` skills are removed): each SKILL.md is common to every series and points to its
-`references/15.0.md` and `references/19.0.md`. The other `odoo19` names (the install directory
-`~/.agents/skills/odoo19` and the `odoo19` alias of `oasis`) keep their names for now.
+table of what differs between them for the tools. The skills are named `odoo-<topic>`: each SKILL.md
+is common to every series and points to its `references/15.0.md` and `references/19.0.md`.
 
-*Odoo Agent Skills & Infrastructure Scripts.* This repository is the source of the reusable global package installed at `~/.agents/skills/odoo19`, **not a seventh skill** and not a project staging directory. Contributor rules are in `AGENTS.md` in the source repository (not installed).
+*Odoo Agent Skills & Infrastructure Scripts.* This repository is the source of the reusable global package installed at `~/.agents/skills/oasis`, **not a seventh skill** and not a project staging directory. Contributor rules are in `AGENTS.md` in the source repository (not installed).
 
 Built with Gentle Shell (`github.com/Gentleman-Programming/gentle-shell`).
 
@@ -21,7 +19,7 @@ Two installs, each with its own job. Install both to get everything.
 
 | Install | What you get | Where it works |
 | --- | --- | --- |
-| `./install.sh` from this repository | The six `odoo-<topic>` skills and the `oasis` CLI (with its `odoo19` alias) in `~/.agents/skills/odoo19` | Any agent (Claude Code, Codex, Gentle Shell) and the terminal |
+| `./install.sh` from this repository | The six `odoo-<topic>` skills and the `oasis` CLI in `~/.agents/skills/oasis` | Any agent (Claude Code, Codex, Gentle Shell) and the terminal |
 | The package from a release tag | The `oasis_*` agent tools, `/oasis`, the `alt+o` panel and the bash guard | Gentle Shell |
 
 The package does not bring the skills; `install.sh` does not add the tools, `/oasis` or the panel
@@ -51,8 +49,8 @@ Releases are listed in the [changelog](CHANGELOG.md).
 
    ```bash
    cd /absolute/checkout
-   ~/.agents/skills/odoo19/oasis setup            # the plan; nothing changes
-   ~/.agents/skills/odoo19/oasis setup --apply    # creates only what is missing
+   ~/.agents/skills/oasis/oasis setup            # the plan; nothing changes
+   ~/.agents/skills/oasis/oasis setup --apply    # creates only what is missing
    ```
 
 2. Start the database service and run `doctor` until `doctor_failures=0` (each `FAIL` says how to
@@ -63,14 +61,14 @@ Releases are listed in the [changelog](CHANGELOG.md).
    that refuses commands naming one runs it too:
 
    ```bash
-   ~/.agents/skills/odoo19/oasis start-database
-   ~/.agents/skills/odoo19/oasis doctor
+   ~/.agents/skills/oasis/oasis start-database
+   ~/.agents/skills/oasis/oasis doctor
    ```
 
 3. Run a module's tests on a disposable database, with a compact summary:
 
    ```bash
-   ~/.agents/skills/odoo19/oasis test-module --compact your_module
+   ~/.agents/skills/oasis/oasis test-module --compact your_module
    ```
 
 4. With the package, run `/oasis` for the checkout's status and `alt+o` for the action menu; in
@@ -162,12 +160,25 @@ read. A checkout that still has one is refused (exit 2) with
 command that still reads it, converts the profiles of every checkout into one workspace file.
 
 Contract note in v0.16.0 (S5): `check-environment [--quick|--full]` is a deprecated alias of
-`doctor --environment [--quick|--full]`. Both names keep working through `oasis` and `odoo19`, the
+`doctor --environment [--quick|--full]`. Both names keep working through `oasis`, the
 project wrappers and the tool script, with the same lines, exit codes and usage line as before; the help of
 `oasis`, `doctor --help` and the policy table (both Tier A) say so, and the `oasis_check_environment` tool runs
 `doctor --environment`. `doctor`'s usage line now names the option: `Usage: <program> doctor
 [--environment [--quick|--full]]`. setup, bootstrap and migrate stay three commands (none would be an
 identical alias): [which one when](docs/setup.md#setup-bootstrap-or-migrate).
+
+Contract change in v0.17.0: the `odoo19` name is gone, with no transition. `./install.sh` installs into
+`~/.agents/skills/oasis` and moves a previous install out of `~/.agents/skills/odoo19` into its backups
+(only when it holds `.oasis-install.json`; anything else there is left and named in a warning). The
+`odoo19` entry point, the `odoo19-*` skills, the inactive `odoo19_*` Gentle Shell tools and `/odoo19` are
+removed: run `~/.agents/skills/oasis/oasis`, `/oasis` and the `oasis_*` tools. A project whose wrappers in
+`dev/scripts/` were copied from an earlier version still calls `~/.agents/skills/odoo19/tools`; `oasis
+doctor` reports it as `FAIL project_wrappers=old_install_dir`, and its fix line names the edit: replace
+`.agents/skills/odoo19/` with `.agents/skills/oasis/` in each wrapper it lists (or copy them again from
+`~/.agents/skills/oasis/project-wrappers/`). An overlay or allowlist that names an `odoo19_*` tool needs
+the `oasis_*` name; `/oasis setup` updates an outdated overlay. The `ODOO19_*` variables are still read
+after the `OASIS_*` ones, the legacy `.odoo19-agent.toml` is still refused naming `oasis migrate`, and the
+default log directory stays `dev/logs/odoo19/`.
 
 ## Documentation
 
@@ -175,7 +186,7 @@ identical alias): [which one when](docs/setup.md#setup-bootstrap-or-migrate).
 | --- | --- |
 | [docs/README.md](docs/README.md) | Index of the documentation by reader |
 | [Install or update](docs/install.md) | Which install does what: `install.sh` (skills and CLI) and the package (tools, `/oasis`, panel) |
-| [Gentle Shell layer](docs/gentle-shell-layer.md) | The agent tools, prompt context, `/oasis` and aliases |
+| [Gentle Shell layer](docs/gentle-shell-layer.md) | The agent tools, prompt context and `/oasis` |
 | [Agent contract](docs/agent-contract.md) | The policy table: each operation's tier (A, B, C) and why, as JSON for any agent |
 | [Bash guard](docs/bash-guard.md) | Which agent bash commands run, wait for the user's confirmation or are blocked; `agent_destructive` |
 | [Subagents](docs/subagents.md) | The overlay that gives Gentle Shell subagents the `oasis_*` tools |

@@ -21,7 +21,7 @@ import unittest
 os.umask(0o022)
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / 'odoo19'
+CLI = ROOT / 'oasis'
 READER = ROOT / 'tools' / 'config.py'
 # A legacy profile: no longer read, only refused (and converted by oasis migrate).
 LEGACY_PROFILE = "[tooling]\nversion = '19.0'\npython_version = '3.12'\n"
@@ -755,13 +755,13 @@ class WorkspaceTests(unittest.TestCase):
                     checked += 1
         self.assertGreaterEqual(checked, 6, rows)
 
-    # -- odoo19 entry point -----------------------------------------------------------------
+    # -- the entry point -----------------------------------------------------------------------
 
     def invoke(self, project, *args):
         return subprocess.run([sys.executable, '-B', str(CLI), '--project', str(project), *args],
                               capture_output=True, text=True, env=self.env, cwd=self.scratch)
 
-    def invoke_in(self, cwd, *args, program='odoo19'):
+    def invoke_in(self, cwd, *args, program='oasis'):
         """The entry point without --project, run from cwd (v0.14.0 S8)."""
         return subprocess.run([sys.executable, '-B', str(ROOT / program), *args],
                               capture_output=True, text=True, env=self.env, cwd=cwd)
@@ -776,7 +776,7 @@ class WorkspaceTests(unittest.TestCase):
             explicit = self.invoke(checkout, 'model-info', 'coffee.order')
             self.assertEqual((explicit.returncode, explicit.stderr), (0, ''))
             for cwd in (checkout, checkout / 'addons' / 'coffee_shop'):
-                for program in ('oasis', 'odoo19'):
+                for program in ('oasis',):
                     with self.subTest(cwd=str(cwd), program=program):
                         result = self.invoke_in(cwd, 'model-info', 'coffee.order', program=program)
                         self.assertEqual((result.returncode, result.stdout, result.stderr),

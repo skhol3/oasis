@@ -77,7 +77,7 @@ export function subcommandCompletions(prefix: string): Completion[] | null {
 }
 
 /** The command names whose subcommands are suggested while the name is typed (S3, v0.12.1). */
-const COMMAND_NAMES = ["oasis", "odoo19"] as const;
+const COMMAND_NAMES = ["oasis"] as const;
 // From two typed letters: `/o` alone matches too many commands.
 const MIN_TYPED = 2;
 
@@ -104,7 +104,7 @@ export interface AutocompleteSource {
 }
 
 /**
- * `/oasis <subcommand>` (and `/odoo19 <subcommand>`) suggestions while the command name is typed:
+ * `/oasis <subcommand>` suggestions while the command name is typed:
  * a slash, at least two letters of the name and no space yet. The prefix is the typed command as
  * Pi's slash-command completion uses it, so its applyCompletion inserts `/<value> `.
  */
@@ -141,7 +141,7 @@ export function withSubcommandSuggestions(textBeforeCursor: string, base: Sugges
 
 /**
  * The editor's autocomplete provider wrapped for S3 (ctx.ui.addAutocompleteProvider): the current
- * provider answers first, then the /oasis and /odoo19 subcommands are added while their name is
+ * provider answers first, then the /oasis subcommands are added while its name is
  * typed. Forced completion, completion itself, file completion and trigger characters delegate
  * unchanged.
  */

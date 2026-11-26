@@ -283,7 +283,7 @@ test("projectContext names the root and routes the agent to the oasis tools", ()
   ]) {
     assert.ok(text.includes(tool), tool);
   }
-  // The inactive odoo19_* aliases are not advertised.
+  // No tool name before 0.17.0 (odoo19_*) is advertised.
   assert.ok(!text.includes("odoo19_"), text);
   assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
 });

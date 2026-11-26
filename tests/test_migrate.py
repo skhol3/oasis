@@ -28,7 +28,6 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'oasis'
-ALIAS = ROOT / 'odoo19'
 READER = ROOT / 'tools' / 'config.py'
 GIT = ['git', '-c', 'user.name=oasis tests', '-c', 'user.email=tests@example.invalid',
        '-c', 'init.defaultBranch=main', '-c', 'commit.gpgsign=false']
@@ -251,7 +250,7 @@ class MigrateTests(unittest.TestCase):
 
     def test_dry_run_prints_the_exact_plan_and_changes_nothing(self):
         before = self.tree()
-        for program in (CLI, ALIAS):
+        for program in (CLI,):
             with self.subTest(program=program.name):
                 result = self.migrate(program=program)
                 self.assertEqual((result.returncode, result.stderr), (0, ''))

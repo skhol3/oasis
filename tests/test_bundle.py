@@ -22,6 +22,16 @@ LEGACY_PROFILE = '.odoo19-agent.toml'
 LEGACY_MENTIONS = {'README.md', 'docs/migrating.md', 'docs/bash-guard.md'}
 
 
+# v0.17.0 S3: the `odoo19` name is gone. These files still name it, each for what an earlier version left:
+# install.sh moves the old install directory away, doctor reports a wrapper that calls it, the bash guard
+# keeps guarding the old entry point and directory, and the docs say so (the README and AGENTS.md
+# contract notes, the upgrade section, the doctor and guard references, an incident note of that time).
+# Not counted: the legacy profile .odoo19-agent.toml, the default log directory dev/logs/odoo19 and the
+# runs before 0.8.0 under <logs>/odoo19/, which keep their names, and the incident note's file name.
+ODOO19_KEPT = re.compile(r'\.odoo19-agent|logs/odoo19|logs>/odoo19|\^odoo19\\/|odoo19-chromium-socket-path-too-long')
+ODOO19_MENTIONS = {'AGENTS.md', 'README.md', 'docs/bash-guard.md', 'docs/checking-environment.md',
+                   'docs/gentle-shell-layer.md', 'docs/install.md', 'docs/odoo19-chromium-socket-path-too-long.md',
+                   'install.sh', 'pi/lib/bash-guard.ts', 'tools/doctor.py'}
 # Repository-only paths: install.sh does not install them, so no installed document may link to them.
 NOT_INSTALLED = ('AGENTS.md', '.gitignore', 'install.sh', 'odd')
 
@@ -164,6 +174,28 @@ class BundleTests(unittest.TestCase):
         named = [path.relative_to(ROOT).as_posix() for path in shipped
                  if OLD_NAMES.search(path.read_text(encoding='utf-8'))]
         self.assertEqual(named, [])
+
+    def test_the_odoo19_name_is_gone_from_every_shipped_file_but_the_ones_that_handle_it(self):
+        self.assertFalse((ROOT / 'odoo19').exists())
+        skipped = {'.git', 'odd', 'tests', 'node_modules', 'fixturesroot', '.atl'}
+        named = set()
+        for path in ROOT.rglob('*'):
+            relative = path.relative_to(ROOT)
+            if (not path.is_file() or skipped & set(relative.parts) or relative.as_posix() == 'CHANGELOG.md'
+                    or relative.parts[:2] == ('pi', 'tests')):
+                continue
+            text = path.read_text(encoding='utf-8', errors='replace')
+            if 'odoo19' in ODOO19_KEPT.sub('', text):
+                named.add(relative.as_posix())
+        self.assertEqual(sorted(named), sorted(ODOO19_MENTIONS))
+
+    def test_the_project_wrapper_templates_call_the_oasis_install_directory(self):
+        # v0.17.0 S3: `oasis doctor` reports a project wrapper that still calls the old one.
+        for path in sorted((ROOT / 'project-wrappers').iterdir()):
+            with self.subTest(wrapper=path.name):
+                text = path.read_text(encoding='utf-8')
+                self.assertIn('.agents/skills/oasis/tools', text)
+                self.assertNotIn('.agents/skills/odoo19', text)
 
     def test_the_legacy_profile_example_is_gone_and_only_migrating_describes_the_format(self):
         self.assertFalse((ROOT / 'odoo-environment/assets/odoo19-agent.example.toml').exists())

@@ -16,14 +16,8 @@ usage_name() {
   printf '%s' "${entrypoint:-$0}"
 }
 
-# The program a help or message tells the user to run (`oasis gc`): the invoked entry point,
-# `odoo19` through its alias, else `oasis` (also through a project wrapper).
+# The program a help or message tells the user to run (`oasis gc`): `oasis`, also through a
+# project wrapper or an entry point under another file name.
 program_name() {
-  local entrypoint
-  entrypoint=$(oasis_variable ENTRYPOINT)
-  if [[ "${entrypoint##*/}" == odoo19 ]]; then
-    printf 'odoo19'
-  else
-    printf 'oasis'
-  fi
+  printf 'oasis'
 }

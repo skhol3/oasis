@@ -52,9 +52,9 @@ def selected_root() -> Path | None:
 
 
 def program_name() -> str:
-    """The program a help or message tells the user to run (`oasis gc`): the invoked entry
-    point, `odoo19` through its alias, else `oasis` (also through a project wrapper)."""
-    return 'odoo19' if Path(variable('ENTRYPOINT')).name == 'odoo19' else 'oasis'
+    """The program a help or message tells the user to run (`oasis gc`): `oasis`, also through a
+    project wrapper or an entry point under another file name."""
+    return 'oasis'
 
 
 def usage_name() -> str:

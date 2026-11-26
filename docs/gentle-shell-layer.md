@@ -73,13 +73,13 @@ A bash guard blocks the agent from running some commands directly and asks the u
 - `/oasis worktree <feature> <branch>` creates a linked worktree below the workspace file after confirmation (see [Preparing a linked worktree](checkouts-and-worktrees.md#preparing-a-linked-worktree)).
 - `/oasis migrate` shows the `oasis migrate` plan and applies it after confirmation (see [Migrating to the workspace file](migrating.md)).
 - `/oasis menu` (or `alt+o`) opens the action panel (see [Gentle Shell panel](action-menu.md#gentle-shell-panel) under [Action menu](action-menu.md)).
-- Typing `/oasis ` offers its subcommands (`setup`, `doctor`, `migrate`, `worktree`, `menu`). Before the space, from two letters of the name (`/oa`, `/oasis`, `/od`, `/odoo`), the suggestions also list `/oasis <subcommand>` (and `/odoo19 <subcommand>`) with the same descriptions, right after the command itself; Tab inserts `/oasis <subcommand> `, Enter runs it at once (`/oasis worktree` still needs its two arguments). The layer adds them with `ctx.ui.addAutocompleteProvider` on top of the existing provider, once per session; every other completion is that provider's, unchanged.
+- Typing `/oasis ` offers its subcommands (`setup`, `doctor`, `migrate`, `worktree`, `menu`). Before the space, from two letters of the name (`/oa`, `/oas`, `/oasis`), the suggestions also list `/oasis <subcommand>` with the same descriptions, right after the command itself; Tab inserts `/oasis <subcommand> `, Enter runs it at once (`/oasis worktree` still needs its two arguments). The layer adds them with `ctx.ui.addAutocompleteProvider` on top of the existing provider, once per session; every other completion is that provider's, unchanged.
 
-## Activation and aliases
+## Activation
 
 The `oasis_*` tools are active only in sessions started inside an Odoo project (a directory with `oasis-workspace.toml` at or above it), so other projects pay no tokens for them; `/oasis` is available everywhere.
 
-Aliases from before 0.4.0: `/odoo19` runs the same command as `/oasis` (same subcommands), and each `oasis_*` tool is also registered as an `odoo19_*` alias with the same parameters and implementation. The aliases are never activated by the layer, so they cost no tokens; an overlay or allowlist that still names them keeps working, and `/oasis setup` updates such an outdated overlay.
+Since 0.17.0 there are no aliases: `/odoo19` and the inactive `odoo19_*` tools of earlier versions are gone. An overlay or allowlist that still names an `odoo19_*` tool needs its `oasis_*` name; `/oasis setup` updates such an outdated overlay.
 
 Other agents keep using the core (`oasis` CLI and skills) unchanged.
 

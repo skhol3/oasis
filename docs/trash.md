@@ -5,11 +5,11 @@ stays until you restore it or `gc --apply --trash` drops it after the retention 
 default).
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/project drop-database <name> [--terminate] --confirm <name>
-~/.agents/skills/odoo19/oasis --project /absolute/project trash                        # list, change nothing
-~/.agents/skills/odoo19/oasis --project /absolute/project trash restore <trash name>
-~/.agents/skills/odoo19/oasis --project /absolute/project gc --trash [--older-than <days>]          # list
-~/.agents/skills/odoo19/oasis --project /absolute/project gc --apply --trash [--older-than <days>] --confirm /absolute/project  # drop
+~/.agents/skills/oasis/oasis --project /absolute/project drop-database <name> [--terminate] --confirm <name>
+~/.agents/skills/oasis/oasis --project /absolute/project trash                        # list, change nothing
+~/.agents/skills/oasis/oasis --project /absolute/project trash restore <trash name>
+~/.agents/skills/oasis/oasis --project /absolute/project gc --trash [--older-than <days>]          # list
+~/.agents/skills/oasis/oasis --project /absolute/project gc --apply --trash [--older-than <days>] --confirm /absolute/project  # drop
 ```
 
 Both are Tier B in the [agent contract](agent-contract.md): without `--confirm` (the database name for

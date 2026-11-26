@@ -20,6 +20,10 @@ probe); tools are found on PATH, like `command -v`, never through a tool manager
 A check that needs another one is left out when that one failed: every configuration check
 when the configuration does not load, `docker_compose` without docker, `http_port` when the
 odoo.conf cannot be read, `postgres_connection` when python, odoo_conf or env_file failed.
+
+The last check, `project_wrappers`, reads the project wrappers copied into <checkout>/dev/scripts
+(docs/project-setup.md) for one fact: whether one still calls the install directory oasis used before
+0.17.0 (v0.17.0 S3). It prints a line only for such a wrapper: a FAIL whose fix names the edit.
 """
 import ast
 import importlib.util
@@ -49,6 +53,12 @@ ENV_ASSIGNMENT = re.compile(r'\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)'
 # name), the database prefixes and the env file (the database account).
 ISOLATION = (('db_port', ('db_port',)), ('compose_project', ('compose_project',)),
              ('prefixes', ('dev_prefix', 'test_prefix')), ('env_file', ('env_file',)))
+# Where the project wrappers live in a checkout, and the install directory before 0.17.0 that a wrapper
+# copied from an earlier version still calls (v0.17.0 S3), with the one that replaces it.
+WRAPPER_DIRECTORY = Path('dev') / 'scripts'
+OLD_INSTALL = '.agents/skills/odoo19/'
+NEW_INSTALL = '.agents/skills/oasis/'
+WRAPPER_READ_LIMIT = 1 << 20
 
 
 def sibling(name: str):
@@ -450,6 +460,37 @@ def check_port(report: Report, values: dict, conf_reader, state):
     return report.check('http_port', str(configured))
 
 
+def spoken_list(items: list[str]) -> str:
+    """`a`, `a and b`, `a, b and c`."""
+    return items[0] if len(items) == 1 else ', '.join(items[:-1]) + ' and ' + items[-1]
+
+
+def check_wrappers(report: Report, root: Path):
+    """One FAIL when a file of <root>/dev/scripts still names OLD_INSTALL (v0.17.0 S3), with the edit that
+    fixes it; no line otherwise, nor for a directory that is missing or cannot be read. Only that fact is read
+    from each file, never printed."""
+    directory = root / WRAPPER_DIRECTORY
+    try:
+        entries = sorted(directory.iterdir())
+    except OSError:
+        return True
+    stale = []
+    for path in entries:
+        try:
+            if not path.is_file():
+                continue
+            with open(path, 'rb') as handle:
+                if OLD_INSTALL.encode() in handle.read(WRAPPER_READ_LIMIT):
+                    stale.append(str(path))
+        except OSError:
+            continue
+    if not stale:
+        return True
+    return report.fail('project_wrappers', 'old_install_dir',
+                       f'replace {OLD_INSTALL} with {NEW_INSTALL} in {spoken_list(stale)} (the oasis install '
+                       'directory since 0.17.0)')
+
+
 def usage() -> str:
     return f'Usage: {sibling("config").usage_name()} doctor [--environment [--quick|--full]]'
 
@@ -466,7 +507,8 @@ logs and data directories,
 and the HTTP port, and that Odoo's database account logs in to the PostgreSQL odoo.conf names (a refused
 account names its fix; a service that does not answer is a WARN whose fix is start-database). With workspace_version 2: the checkout's series and where it came from, its
 series exceptions, and that the workspace's series share no database port, prefixes, compose
-project or env file.
+project or env file. Last, project_wrappers: a FAIL when a project wrapper in dev/scripts still calls
+~/.agents/skills/odoo19, the install directory before 0.17.0 (now ~/.agents/skills/oasis).
 Prints PASS|WARN|FAIL <check>[=<value>] per check, `  fix: <command or action>` after each FAIL,
 and doctor_failures=<n>; exit 1 when n > 0. A module of another series names first, when setup would
 propose it, `setup --answer series_exceptions=add --apply`.
@@ -601,6 +643,7 @@ def main(arguments: list[str]) -> int:
             check_port(report, values, conf_reader, sibling('runtime_state'))
         if python_ok and conf_ok and env_ok:
             check_connection(report, values, program)
+    check_wrappers(report, root)
     print(f'doctor_failures={report.failures}')
     return 1 if report.failures else 0
 

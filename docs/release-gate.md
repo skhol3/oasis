@@ -10,7 +10,7 @@ over the previous release.
 ## The run
 
 In a scratch directory (`mktemp -d`), with a copy of the machine file (`XDG_CONFIG_HOME` pointing to the
-copy) and a scratch install (`./install.sh --target <dir>/odoo19`):
+copy) and a scratch install (`./install.sh --target <dir>/oasis`):
 
 1. Clone a project into `<dir>/proj/code/<repo>`.
 2. `oasis setup --plan --json`, answer every open question with its recommended answer, then

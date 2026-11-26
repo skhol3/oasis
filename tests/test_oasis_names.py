@@ -58,13 +58,13 @@ class OasisVariableTests(unittest.TestCase):
     def test_shell_tools_read_oasis_names_first(self):
         result = self.tool('check-environment', '--bogus', OASIS_PROJECT_ROOT=str(self.root),
                            OASIS_ENTRYPOINT='/opt/bin/oasis', ODOO19_PROJECT_ROOT=self.wrong,
-                           ODOO19_ENTRYPOINT='/opt/bin/odoo19')
+                           ODOO19_ENTRYPOINT='/opt/old/oasis')
         self.assertEqual(self.observed(result), (2, '', 'Usage: /opt/bin/oasis [--quick|--full]\n'))
 
-    def test_shell_tools_still_read_the_odoo19_names(self):
+    def test_shell_tools_still_read_the_legacy_variable_names(self):
         result = self.tool('check-environment', '--bogus', ODOO19_PROJECT_ROOT=str(self.root),
-                           ODOO19_ENTRYPOINT='/opt/bin/odoo19')
-        self.assertEqual(self.observed(result), (2, '', 'Usage: /opt/bin/odoo19 [--quick|--full]\n'))
+                           ODOO19_ENTRYPOINT='/opt/old/oasis')
+        self.assertEqual(self.observed(result), (2, '', 'Usage: /opt/old/oasis [--quick|--full]\n'))
 
     def test_a_set_oasis_project_root_wins_over_the_legacy_one(self):
         result = self.tool('check-environment', '--bogus', OASIS_PROJECT_ROOT=self.wrong,
@@ -100,8 +100,8 @@ class OasisVariableTests(unittest.TestCase):
     def test_python_usage_names_the_oasis_entry_point_first(self):
         for command in ('doctor', 'migrate'):
             for variables, program in (
-                    ({'OASIS_ENTRYPOINT': '/opt/bin/oasis', 'ODOO19_ENTRYPOINT': '/opt/bin/odoo19'}, '/opt/bin/oasis'),
-                    ({'ODOO19_ENTRYPOINT': '/opt/bin/odoo19'}, '/opt/bin/odoo19'),
+                    ({'OASIS_ENTRYPOINT': '/opt/bin/oasis', 'ODOO19_ENTRYPOINT': '/opt/old/oasis'}, '/opt/bin/oasis'),
+                    ({'ODOO19_ENTRYPOINT': '/opt/old/oasis'}, '/opt/old/oasis'),
                     ({}, 'oasis')):
                 with self.subTest(command=command, variables=variables):
                     result = self.tool(command, '--bogus', **variables)
@@ -238,7 +238,7 @@ class EntryPointHelpTests(unittest.TestCase):
                               capture_output=True)
 
     def test_gc_hints_name_the_invoked_entry_point(self):
-        for program in ('oasis', 'odoo19'):
+        for program in ('oasis',):
             for command, hint in (
                     ('test-module', f'behind: {program} gc lists such databases and {program} gc --apply drops them.\n'),
                     ('verify-module', f'Ctrl+C; {program} gc drops what a killed run left behind.')):
@@ -246,6 +246,23 @@ class EntryPointHelpTests(unittest.TestCase):
                     result = self.run_help(program, '--project', str(self.project), command, '--help')
                     self.assertEqual((result.returncode, result.stderr), (0, ''))
                     self.assertIn(hint, result.stdout)
+
+    def test_an_entry_point_file_named_odoo19_still_makes_hints_name_oasis(self):
+        # v0.17.0 S3: the program a hint names is `oasis`, whatever the entry point's file name.
+        for variables in ({'OASIS_ENTRYPOINT': '/opt/old/odoo19'}, {'ODOO19_ENTRYPOINT': '/opt/old/odoo19'}):
+            for command, hint in (
+                    ('test-module', 'behind: oasis gc lists such databases and oasis gc --apply drops them.\n'),
+                    ('verify-module', 'Ctrl+C; oasis gc drops what a killed run left behind.')):
+                with self.subTest(variables=variables, command=command):
+                    env = {key: value for key, value in os.environ.items()
+                           if not key.startswith(('OASIS_', 'ODOO19_'))}
+                    result = subprocess.run(['bash', str(TOOLS / command), '--help'], text=True,
+                                            cwd=self.project, capture_output=True,
+                                            env={**env, 'PYTHONDONTWRITEBYTECODE': '1',
+                                                 'OASIS_PROJECT_ROOT': str(self.project), **variables})
+                    self.assertEqual((result.returncode, result.stderr), (0, ''))
+                    self.assertIn(hint, result.stdout)
+                    self.assertNotIn('odoo19 gc', result.stdout)
 
     def test_no_help_names_odoo_19_or_a_fixed_odoo19_command(self):
         commands = ('test-module', 'verify-module', 'update-module', 'odoo-shell', 'gc', 'stop',

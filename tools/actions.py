@@ -9,7 +9,7 @@ refuses to run without a terminal on stdin, so an agent cannot drive it.
 Catalog (JSON, stable keys):
   catalog_version  1
   project          the checkout root
-  entrypoint       the invoked entry point (`oasis`, or `odoo19` through its alias)
+  entrypoint       the invoked entry point (`oasis`)
   server_log       the checkout's server.log (start --detach), whether or not it exists yet
   sources          modules: {choices: [addon modules of the checkout]};
                    databases: {argv: the list-databases command, waiting: a message to show while

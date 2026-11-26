@@ -108,7 +108,7 @@ class ModuleInfoTests(unittest.TestCase):
         # Python with ast, XML with expat, CSV with csv: the venv, config and services do not exist.
         self.assertFalse((PROJECT / '.venv').exists())
         self.assertFalse((PROJECT / 'dev').exists())
-        for program in ('oasis', 'odoo19'):
+        for program in ('oasis',):
             with self.subTest(program=program):
                 self.assert_result(('coffee_planner',), 0, PLANNER, program=program)
 

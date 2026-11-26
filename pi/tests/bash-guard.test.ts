@@ -28,8 +28,8 @@ test("blocks odoo-bin, dropdb and psql in command position", () => {
 
 test("allows guarded tools, reading and searching that only mention the names", () => {
   const allowed = [
-    "~/.agents/skills/odoo19/odoo19 --project /p test-module coffee",
-    "~/.agents/skills/odoo19/oasis --project /p test-module coffee",
+    "~/.agents/skills/oasis/oasis --project /p test-module coffee",
+    "~/.agents/skills/oasis/oasis --project /p test-module coffee",
     "dev/scripts/test-module coffee",
     "grep -rn psql tools/",
     "rg odoo-bin README.md",
@@ -69,7 +69,7 @@ test("an abbreviation or `=` form of a Tier B option gets that option's row; one
     ["oasis --project /p migrate --appl", "migrate --apply"],
     ["oasis --project /p migrate --apply=x", "migrate --apply"],
     ["oasis --project /p migrate --plan --ap", "migrate --apply"],
-    ["python3 -I -B ~/.agents/skills/odoo19/tools/migrate.py --appl", "migrate --apply"],
+    ["python3 -I -B ~/.agents/skills/oasis/tools/migrate.py --appl", "migrate --apply"],
     ["oasis --project /p gc --apply --tr", "gc --apply --trash"],
     ["oasis --project /p gc --ap --trash", "gc --apply --trash"],
     ["oasis --project /p gc --apply=1 --trash=1", "gc --apply --trash"],
@@ -97,7 +97,7 @@ test("an entry point whose command word cannot be determined gets the strictest 
     // Even a known command word after an option the entry point does not have: argparse refuses that line,
     // and the guard does not guess which word it would run.
     ["oasis --foo status worktree-init feat feature/x", [{ command: "worktree-init" }]],
-    ["odoo19 --foo bar drop-database cc_dev_x", [{ command: "drop-database", database: null }]],
+    ["oasis --foo bar drop-database cc_dev_x", [{ command: "drop-database", database: null }]],
   ];
   for (const [command, expected] of asks) {
     assert.deepEqual(classifyBash(command), { program: null, programs: [], asks: expected }, command);
@@ -136,16 +136,16 @@ const asked = (command: string, context?: Parameters<typeof classifyBash>[1]) =>
 
 test("worktree-init asks through any launcher; its literal dry run runs", () => {
   const blocked = [
-    "~/.agents/skills/odoo19/odoo19 --project /p worktree-init feat feature/x",
-    "python3 -B /opt/oasis/odoo19 --project /p worktree-init feat feature/x --dry-run",
-    "cd /p && odoo19 --project /p worktree-init feat x",
-    "env A=1 python3 odoo19 --project /p worktree-init feat x",
+    "~/.agents/skills/oasis/oasis --project /p worktree-init feat feature/x",
+    "python3 -B /opt/oasis/oasis --project /p worktree-init feat feature/x --dry-run",
+    "cd /p && oasis --project /p worktree-init feat x",
+    "env A=1 python3 oasis --project /p worktree-init feat x",
     "tools/worktree-init feat x",
-    "bash ~/.agents/skills/odoo19/tools/worktree-init feat x",
+    "bash ~/.agents/skills/oasis/tools/worktree-init feat x",
     "python3 -I -B tools/worktree_init.py feat x",
-    "bash -c 'odoo19 --project /p worktree-init feat x'",
-    "echo $(odoo19 --project /p worktree-init feat x --dry-run)",
-    "~/.agents/skills/odoo19/oasis --project /p worktree-init feat feature/x",
+    "bash -c 'oasis --project /p worktree-init feat x'",
+    "echo $(oasis --project /p worktree-init feat x --dry-run)",
+    "~/.agents/skills/oasis/oasis --project /p worktree-init feat feature/x",
     "python3 -B /opt/oasis/oasis --project /p worktree-init feat feature/x --dry-run",
     "cd /p && oasis --project /p worktree-init feat x",
     "env A=1 python3 oasis --project /p worktree-init feat x",
@@ -159,10 +159,10 @@ test("worktree-init asks through any launcher; its literal dry run runs", () => 
   }
 });
 
-test("allows other oasis and odoo19 commands and reading or testing worktree-init", () => {
+test("allows other oasis commands and reading or testing worktree-init", () => {
   const allowed = [
-    "odoo19 --project /p status",
-    "python3 -B odoo19 --project /p test-module coffee",
+    "oasis --project /p status",
+    "python3 -B oasis --project /p test-module coffee",
     "oasis --project /p status",
     "python3 -B oasis --project /p test-module coffee",
     "grep -n worktree-init oasis",
@@ -182,18 +182,18 @@ test("migrate --apply asks through the entry points or its tool; its dry run run
     "oasis --project /p migrate",
     "oasis --project /p migrate --apply",
     "oasis --project=/p migrate --workspace /w",
-    "~/.agents/skills/odoo19/oasis --project /p migrate --apply",
-    "~/.agents/skills/odoo19/odoo19 --project /p migrate",
+    "~/.agents/skills/oasis/oasis --project /p migrate --apply",
+    "~/.agents/skills/oasis/oasis --project /p migrate",
     "python3 -B /opt/oasis/oasis --project /p migrate --apply",
-    "python3 -B /opt/oasis/odoo19 --project /p migrate",
-    "cd /p && odoo19 --project /p migrate --apply",
+    "python3 -B /opt/oasis/oasis --project /p migrate",
+    "cd /p && oasis --project /p migrate --apply",
     "env A=1 python3 oasis --project /p migrate",
     "bash -c 'oasis --project /p migrate --apply'",
-    "echo $(odoo19 --project /p migrate)",
+    "echo $(oasis --project /p migrate)",
     "timeout 60 oasis --project /p migrate --apply",
     "tools/migrate --apply",
-    "bash ~/.agents/skills/odoo19/tools/migrate --apply",
-    "python3 -I -B ~/.agents/skills/odoo19/tools/migrate.py --apply",
+    "bash ~/.agents/skills/oasis/tools/migrate --apply",
+    "python3 -I -B ~/.agents/skills/oasis/tools/migrate.py --apply",
   ];
   for (const command of blocked) {
     assert.equal(blockedProgram(command), null, command);
@@ -205,7 +205,7 @@ test("allows other commands that only mention migrate", () => {
   const allowed = [
     "oasis --project /p test-module migrate_tools",
     "oasis --project /p model-info x.y --field migrate",
-    "odoo19 --project /p status",
+    "oasis --project /p status",
     "python3 manage.py migrate",
     "npx prisma migrate dev",
     "./migrate.sh",
@@ -238,7 +238,7 @@ test("text that bash would not run is not a command", () => {
     "gh pr create --title su --body-file - <<'EOF'\npsql -l\nEOF",
     "oasis --project /p migrate --help",
     "oasis --project /p migrate --plan",
-    "odoo19 --project /p migrate --plan --workspace /work/coffee",
+    "oasis --project /p migrate --plan --workspace /work/coffee",
     "oasis --project /p migrate --workspace=/work/coffee --plan 2>&1 | tail -40",
     "python3 tools/migrate.py --plan",
     "oasis migrate -h 2>&1 | head -20",
@@ -335,10 +335,10 @@ test("blocks agents from running the menu through the entry points or its tool, 
     "oasis --project /p menu",
     "oasis --project /p menu --catalog",
     "oasis --project=/p menu",
-    "~/.agents/skills/odoo19/oasis --project /p menu",
-    "~/.agents/skills/odoo19/odoo19 --project /p menu --catalog",
+    "~/.agents/skills/oasis/oasis --project /p menu",
+    "~/.agents/skills/oasis/oasis --project /p menu --catalog",
     "python3 -B /opt/oasis/oasis --project /p menu",
-    "cd /p && odoo19 --project /p menu",
+    "cd /p && oasis --project /p menu",
     "env A=1 python3 oasis --project /p menu",
     "bash -c 'oasis --project /p menu'",
     "echo $(oasis --project /p menu --catalog)",
@@ -346,10 +346,10 @@ test("blocks agents from running the menu through the entry points or its tool, 
     "setsid oasis --project /p menu",
     "oasis --project /p menu --help --catalog",
     "oasis --project /p menu --catalog > catalog.json",
-    "~/.agents/skills/odoo19/tools/menu",
-    "/home/u/.agents/skills/odoo19/tools/actions.py --catalog",
-    "bash ~/.agents/skills/odoo19/tools/menu --catalog",
-    "python3 -I -B ~/.agents/skills/odoo19/tools/actions.py",
+    "~/.agents/skills/oasis/tools/menu",
+    "/home/u/.agents/skills/oasis/tools/actions.py --catalog",
+    "bash ~/.agents/skills/oasis/tools/menu --catalog",
+    "python3 -I -B ~/.agents/skills/oasis/tools/actions.py",
   ];
   for (const command of blocked) {
     assert.equal(blockedProgram(command), "menu", command);
@@ -359,7 +359,7 @@ test("blocks agents from running the menu through the entry points or its tool, 
 test("allows the menu's help and commands that only mention menu", () => {
   const allowed = [
     "oasis --project /p menu --help",
-    "odoo19 --project /p menu -h 2>&1 | head -20",
+    "oasis --project /p menu -h 2>&1 | head -20",
     "./tools/menu --help",
     "oasis --project /p test-module menu",
     "oasis --project /p model-info menu.item",
@@ -388,6 +388,25 @@ test("user-run programs are blocked in every session, the others only in Odoo pr
   for (const program of ["psql", "dropdb", "odoo-bin"]) assert.equal(blockedEverywhere(program), false, program);
 });
 
+// v0.17.0 S3: the entry point and its directory before 0.17.0 (`odoo19`, ~/.agents/skills/odoo19) stay
+// guarded, so an old install still on disk is never a way around the guard.
+test("the pre-0.17.0 odoo19 entry point and install directory stay guarded", () => {
+  for (const command of [
+    "odoo19 menu",
+    "~/.agents/skills/odoo19/odoo19 --project /p menu --catalog",
+    "~/.agents/skills/odoo19/oasis --project /p menu",
+    "~/.agents/skills/odoo19/tools/menu",
+    "$HOME/.agents/skills/odoo19/tools/actions.py --catalog",
+  ]) {
+    assert.equal(blockedProgram(command), "menu", command);
+    assert.equal(blockedProgram(command, at("/work/shop")), "menu", command);
+  }
+  assert.deepEqual(asked("odoo19 --project /p migrate --apply"), ["migrate --apply"]);
+  assert.deepEqual(asked("odoo19 --project /p worktree-init feat x"), ["worktree-init"]);
+  assert.deepEqual(asked("odoo19 --project /p drop-database cc_dev_x"), ["drop-database"]);
+  assert.equal(blockedProgram("odoo19 --project /p menu --help"), null);
+});
+
 test("menu's script forms are blocked only in the installed bundle, not in unrelated projects", () => {
   const allowed = [
     "./tools/menu",
@@ -402,11 +421,11 @@ test("menu's script forms are blocked only in the installed bundle, not in unrel
   }
   const blocked = [
     "oasis menu",
-    "odoo19 menu",
-    "~/.agents/skills/odoo19/oasis --project /p menu",
-    "~/.agents/skills/odoo19/tools/menu",
-    "sh /home/u/.agents/skills/odoo19/tools/menu",
-    "python3 -I -B ~/.agents/skills/odoo19/tools/actions.py --catalog",
+    "oasis menu",
+    "~/.agents/skills/oasis/oasis --project /p menu",
+    "~/.agents/skills/oasis/tools/menu",
+    "sh /home/u/.agents/skills/oasis/tools/menu",
+    "python3 -I -B ~/.agents/skills/oasis/tools/actions.py --catalog",
   ];
   for (const command of blocked) {
     assert.equal(blockedProgram(command), "menu", command);
@@ -432,7 +451,7 @@ test("migrate and worktree-init script forms count in any tools directory (uncha
 // A fake file system for the menu script checks: the installed bundle, an oasis source checkout and
 // an unrelated project that happens to have tools/menu and tools/actions.py.
 const HOME = "/home/u";
-const BUNDLE = `${HOME}/.agents/skills/odoo19`;
+const BUNDLE = `${HOME}/.agents/skills/oasis`;
 const SOURCE = "/work/oasis";
 const FILES = new Set([
   ...[BUNDLE, SOURCE].flatMap((root) => [`${root}/oasis`, `${root}/tools/actions.py`, `${root}/tools/menu`]),
@@ -443,9 +462,9 @@ const at = (cwd: string) => ({ cwd, home: HOME, exists: (path: string) => FILES.
 
 test("menu scripts are blocked by what they resolve to, also relative or after a literal cd", () => {
   const blocked: [string, string][] = [
-    ["/work/shop", "cd ~/.agents/skills/odoo19 && tools/menu"],
-    ["/work/shop", "cd ~/.agents/skills/odoo19/tools && ./menu --catalog"],
-    ["/work/shop", "cd ~/.agents/skills/odoo19/tools; python3 actions.py"],
+    ["/work/shop", "cd ~/.agents/skills/oasis && tools/menu"],
+    ["/work/shop", "cd ~/.agents/skills/oasis/tools && ./menu --catalog"],
+    ["/work/shop", "cd ~/.agents/skills/oasis/tools; python3 actions.py"],
     [BUNDLE, "python3 tools/actions.py"],
     [BUNDLE, "python3 -I -B tools/actions.py --catalog"],
     [`${BUNDLE}/tools`, "./menu"],
@@ -455,9 +474,9 @@ test("menu scripts are blocked by what they resolve to, also relative or after a
     ["/work/shop", "cd /work && cd oasis && tools/menu"],
     ["/work/shop", "cd ../oasis && ./tools/menu"],
     ["/work/shop", "/work/oasis/tools/menu"],
-    ["/work/shop", "~/.agents/skills/odoo19/tools/menu"],
-    ["/work/shop", "cd ~ && .agents/skills/odoo19/tools/menu"],
-    ["/work/shop", "cd && .agents/skills/odoo19/tools/menu"],
+    ["/work/shop", "~/.agents/skills/oasis/tools/menu"],
+    ["/work/shop", "cd ~ && .agents/skills/oasis/tools/menu"],
+    ["/work/shop", "cd && .agents/skills/oasis/tools/menu"],
     ["/work/shop", "pushd /work/oasis && tools/menu"],
     [BUNDLE, "bash -c 'tools/menu'"],
     [BUNDLE, "echo $(tools/menu --catalog)"],
@@ -475,10 +494,10 @@ test("menu scripts are blocked by what they resolve to, also relative or after a
 
 test("an unresolved path spelled like the installed bundle stays blocked from any directory", () => {
   for (const command of [
-    "$HOME/.agents/skills/odoo19/tools/menu",
-    "${HOME}/.agents/skills/odoo19/tools/menu --catalog",
-    "python3 $HOME/.agents/skills/odoo19/tools/actions.py",
-    "~other/.agents/skills/odoo19/tools/menu",
+    "$HOME/.agents/skills/oasis/tools/menu",
+    "${HOME}/.agents/skills/oasis/tools/menu --catalog",
+    "python3 $HOME/.agents/skills/oasis/tools/actions.py",
+    "~other/.agents/skills/oasis/tools/menu",
   ]) {
     assert.equal(blockedProgram(command, at("/work/shop")), "menu", command);
   }
@@ -494,7 +513,7 @@ test("unrelated tools/menu scripts stay allowed with the session context", () =>
     [BUNDLE, "cd /work/shop && tools/menu"],
     ["/work/shop", "cd $DIR && tools/menu"],
     [SOURCE, "cd $DIR && ./menu"],
-    ["/work/shop", "cd ~/.agents/skills/odoo19 && ./menu"],
+    ["/work/shop", "cd ~/.agents/skills/oasis && ./menu"],
     [BUNDLE, "tools/menu --help"],
     [BUNDLE, "cat tools/menu"],
     [BUNDLE, "grep -n menu tools/actions.py"],
@@ -508,8 +527,8 @@ test("unrelated tools/menu scripts stay allowed with the session context", () =>
 test("with the session context the entry points, migrate and worktree-init are unchanged", () => {
   const cases: [string, string | null][] = [
     ["oasis menu", "menu"],
-    ["odoo19 --project /p menu --catalog", "menu"],
-    ["~/.agents/skills/odoo19/oasis --project /p menu", "menu"],
+    ["oasis --project /p menu --catalog", "menu"],
+    ["~/.agents/skills/oasis/oasis --project /p menu", "menu"],
     ["oasis --project /p menu --help", null],
     ["oasis --project /p migrate --plan", null],
     ["psql -l", "psql"],
@@ -552,22 +571,22 @@ const AT = (action: object, project: string | null) => ({ ...action, project });
 test("classifyBash finds the ask commands through the entry points and their launchers", () => {
   const cases: [string, object[]][] = [
     ["oasis --project /p drop-database cc_dev_x", [AT(DROP("cc_dev_x"), "/p")]],
-    ["odoo19 --project /p drop-database cc_test_x --terminate", [AT(DROP("cc_test_x"), "/p")]],
+    ["oasis --project /p drop-database cc_test_x --terminate", [AT(DROP("cc_test_x"), "/p")]],
     ["oasis --project=/p drop-database 'cc_dev_x'", [AT(DROP("cc_dev_x"), "/p")]],
-    ["~/.agents/skills/odoo19/oasis --project /p drop-database cc_dev_x 2>&1 | tail -5", [AT(DROP("cc_dev_x"), "/p")]],
+    ["~/.agents/skills/oasis/oasis --project /p drop-database cc_dev_x 2>&1 | tail -5", [AT(DROP("cc_dev_x"), "/p")]],
     ["python3 -B /opt/oasis/oasis --project /p drop-database cc_dev_x", [AT(DROP("cc_dev_x"), "/p")]],
     ["cd /p && timeout 60 oasis --project /p drop-database cc_dev_x", [AT(DROP("cc_dev_x"), "/p")]],
-    ["bash -c 'odoo19 --project /p drop-database cc_dev_x'", [AT(DROP("cc_dev_x"), "/p")]],
+    ["bash -c 'oasis --project /p drop-database cc_dev_x'", [AT(DROP("cc_dev_x"), "/p")]],
     ["echo $(oasis --project /p drop-database cc_dev_x)", [AT(DROP("cc_dev_x"), "/p")]],
     ["oasis --project /p drop-database $DB", [AT(DROP(null), "/p")]],
     ["oasis --project /p drop-database \"$(cat name)\"", [AT(DROP(null), "/p")]],
     ["oasis --project /p drop-database", [AT(DROP(null), "/p")]],
     ["oasis --project /p drop-database --terminate", [AT(DROP(null), "/p")]],
     ["oasis --project /p stop --database", [AT(STOP, "/p")]],
-    ["env A=1 python3 odoo19 --project /p stop --database", [AT(STOP, "/p")]],
+    ["env A=1 python3 oasis --project /p stop --database", [AT(STOP, "/p")]],
     ["oasis --project /p gc --apply --trash", [AT(PURGE, "/p")]],
     ["oasis --project /p gc --trash --older-than 0 --apply", [AT(PURGE, "/p")]],
-    ["sudo -u me odoo19 --project /p gc --apply --trash --older-than 3", [AT(PURGE, "/p")]],
+    ["sudo -u me oasis --project /p gc --apply --trash --older-than 3", [AT(PURGE, "/p")]],
     ["oasis --project /p drop-database a_dev_x && oasis --project /p stop --database", [AT(DROP("a_dev_x"), "/p"), AT(STOP, "/p")]],
   ];
   for (const [command, asks] of cases) {
@@ -579,7 +598,7 @@ test("classifyBash names the project an ask command targets, as the entry point 
   const OTHER = "/work/other";
   const cases: [string, object[]][] = [
     ["oasis --project /work/other drop-database cc_dev_x", [AT(DROP("cc_dev_x"), OTHER)]],
-    ["odoo19 --project=/work/other stop --database", [AT(STOP, OTHER)]],
+    ["oasis --project=/work/other stop --database", [AT(STOP, OTHER)]],
     // argparse takes an unambiguous prefix of --project, and the last one given.
     ["oasis --proj /work/other gc --apply --trash", [AT(PURGE, OTHER)]],
     ["oasis --p=/work/other drop-database cc_dev_x", [AT(DROP("cc_dev_x"), OTHER)]],
@@ -591,15 +610,15 @@ test("classifyBash names the project an ask command targets, as the entry point 
     ["oasis --project=~/shop stop --database", [AT(STOP, null)]],
     ["oasis --project", []],
     ["oasis stop --database", [STOP]],
-    ["ODOO19_PROJECT_ROOT=/work/other ~/.agents/skills/odoo19/tools/drop-database cc_dev_x", [AT(DROP("cc_dev_x"), OTHER)]],
-    ["env OASIS_PROJECT_ROOT=/work/other ~/.agents/skills/odoo19/tools/stop --database", [AT(STOP, OTHER)]],
-    ["OASIS_PROJECT_ROOT= ODOO19_PROJECT_ROOT=/work/other bash ~/.agents/skills/odoo19/tools/gc --apply --trash",
+    ["ODOO19_PROJECT_ROOT=/work/other ~/.agents/skills/oasis/tools/drop-database cc_dev_x", [AT(DROP("cc_dev_x"), OTHER)]],
+    ["env OASIS_PROJECT_ROOT=/work/other ~/.agents/skills/oasis/tools/stop --database", [AT(STOP, OTHER)]],
+    ["OASIS_PROJECT_ROOT= ODOO19_PROJECT_ROOT=/work/other bash ~/.agents/skills/oasis/tools/gc --apply --trash",
       [AT(PURGE, OTHER)]],
-    ["ODOO19_PROJECT_ROOT=/work/shop OASIS_PROJECT_ROOT=/work/other ~/.agents/skills/odoo19/tools/stop --database",
+    ["ODOO19_PROJECT_ROOT=/work/shop OASIS_PROJECT_ROOT=/work/other ~/.agents/skills/oasis/tools/stop --database",
       [AT(STOP, OTHER)]],
-    ["OASIS_PROJECT_ROOT=\"$P\" ~/.agents/skills/odoo19/tools/stop --database", [AT(STOP, null)]],
-    ["OASIS_PROJECT_ROOT=../other ~/.agents/skills/odoo19/tools/stop --database", [AT(STOP, OTHER)]],
-    ["~/.agents/skills/odoo19/tools/drop-database cc_dev_x", [DROP("cc_dev_x")]],
+    ["OASIS_PROJECT_ROOT=\"$P\" ~/.agents/skills/oasis/tools/stop --database", [AT(STOP, null)]],
+    ["OASIS_PROJECT_ROOT=../other ~/.agents/skills/oasis/tools/stop --database", [AT(STOP, OTHER)]],
+    ["~/.agents/skills/oasis/tools/drop-database cc_dev_x", [DROP("cc_dev_x")]],
   ];
   for (const [command, asks] of cases) {
     assert.deepEqual(classifyBash(command, at("/work/shop")), { program: null, programs: [], asks }, command);
@@ -612,10 +631,10 @@ test("without --project an entry point targets the directory it runs in: the ses
   const OTHER = "/work/other";
   const cases: [string, object[]][] = [
     ["oasis drop-database cc_dev_x", [DROP("cc_dev_x")]],
-    ["odoo19 stop --database", [STOP]],
+    ["oasis stop --database", [STOP]],
     ["cd /work/shop && oasis gc --apply --trash", [PURGE]],
     ["cd /work/other && oasis drop-database cc_dev_x", [AT(DROP("cc_dev_x"), OTHER)]],
-    ["cd ../other; odoo19 stop --database", [AT(STOP, OTHER)]],
+    ["cd ../other; oasis stop --database", [AT(STOP, OTHER)]],
     ["pushd /work/other && oasis gc --apply --trash", [AT(PURGE, OTHER)]],
     ["cd addons && oasis stop --database", [AT(STOP, "/work/shop/addons")]],
     ["cd && oasis stop --database", [AT(STOP, "/home/u")]],
@@ -627,7 +646,7 @@ test("without --project an entry point targets the directory it runs in: the ses
     ["env --chdir=/work/other oasis stop --database", [AT(STOP, OTHER)]],
     ["env --chdir /work/other A=1 oasis stop --database", [AT(STOP, OTHER)]],
     ["sudo -D /work/other oasis stop --database", [AT(STOP, OTHER)]],
-    ["sudo --chdir=/work/other odoo19 stop --database", [AT(STOP, OTHER)]],
+    ["sudo --chdir=/work/other oasis stop --database", [AT(STOP, OTHER)]],
     ["env -C $D oasis stop --database", [AT(STOP, null)]],
     // A shell command starts where the line is; a substitution on a line that changes directory is unknown.
     ["cd /work/other && bash -c 'oasis stop --database'", [AT(STOP, OTHER)]],
@@ -638,7 +657,7 @@ test("without --project an entry point targets the directory it runs in: the ses
     ["cd /work/other && oasis --project /work/shop stop --database", [AT(STOP, "/work/shop")]],
     ["env -C /work/shop oasis --project /work/other stop --database", [AT(STOP, OTHER)]],
     // A tool script reads its root variable, not the directory: unchanged.
-    ["cd /work/other && ~/.agents/skills/odoo19/tools/stop --database", [STOP]],
+    ["cd /work/other && ~/.agents/skills/oasis/tools/stop --database", [STOP]],
   ];
   for (const [command, asks] of cases) {
     assert.deepEqual(classifyBash(command, at("/work/shop")), { program: null, programs: [], asks }, command);
@@ -651,7 +670,7 @@ test("a directory change the guard cannot follow makes the target of an entry po
   const unknown: string[] = [
     "builtin cd /work/other && oasis stop --database",
     "command cd /work/other && oasis stop --database",
-    "command -p cd /work/other; odoo19 stop --database",
+    "command -p cd /work/other; oasis stop --database",
     // L10 R3-001: `--` ends the runner's options; the forms with it change the directory too.
     "command -- cd /work/other && oasis stop --database",
     "builtin -- cd /work/other && oasis stop --database",
@@ -703,7 +722,7 @@ test("a directory change the guard cannot follow makes the target of an entry po
 
 test("the entry point's --project abbreviations do not hide its command from either tier", () => {
   for (const [command, programs] of [
-    ["odoo19 --pro=/p menu", ["menu"]],
+    ["oasis --pro=/p menu", ["menu"]],
     ["oasis --p /p menu --catalog", ["menu"]],
     // The plan of migrate stays readable, as with --project.
     ["oasis --proj /p migrate --plan", []],
@@ -718,10 +737,10 @@ test("the entry point's --project abbreviations do not hide its command from eit
 
 test("classifyBash finds the ask commands through the oasis tool scripts, judged like the menu's", () => {
   const cases: [string, string, object[]][] = [
-    ["/work/shop", "~/.agents/skills/odoo19/tools/drop-database cc_dev_x", [DROP("cc_dev_x")]],
-    ["/work/shop", "bash ~/.agents/skills/odoo19/tools/stop --database", [STOP]],
-    ["/work/shop", "$HOME/.agents/skills/odoo19/tools/gc --apply --trash", [PURGE]],
-    ["/work/shop", "cd ~/.agents/skills/odoo19 && tools/drop-database cc_dev_x", [DROP("cc_dev_x")]],
+    ["/work/shop", "~/.agents/skills/oasis/tools/drop-database cc_dev_x", [DROP("cc_dev_x")]],
+    ["/work/shop", "bash ~/.agents/skills/oasis/tools/stop --database", [STOP]],
+    ["/work/shop", "$HOME/.agents/skills/oasis/tools/gc --apply --trash", [PURGE]],
+    ["/work/shop", "cd ~/.agents/skills/oasis && tools/drop-database cc_dev_x", [DROP("cc_dev_x")]],
     [BUNDLE, "./tools/stop --database", [STOP]],
     [SOURCE, "bash tools/gc --apply --trash", [PURGE]],
     [`${SOURCE}/tools`, "./drop-database cc_dev_x", [DROP("cc_dev_x")]],
@@ -730,7 +749,7 @@ test("classifyBash finds the ask commands through the oasis tool scripts, judged
     assert.deepEqual(classifyBash(command, at(cwd)), { program: null, programs: [], asks }, `${cwd}: ${command}`);
   }
   // Without the session context only the installed bundle's spelling counts, as for the menu.
-  assert.deepEqual(classifyBash("~/.agents/skills/odoo19/tools/stop --database"), { program: null, programs: [], asks: [STOP] });
+  assert.deepEqual(classifyBash("~/.agents/skills/oasis/tools/stop --database"), { program: null, programs: [], asks: [STOP] });
   assert.deepEqual(classifyBash("./tools/stop --database"), { program: null, programs: [], asks: [] });
 });
 
@@ -747,11 +766,11 @@ test("classifyBash allows every other oasis command, help alone and unrelated sc
     // S6: the checkout's own server, in the allow tier.
     ["/work/shop", "oasis --project /p stop --force"],
     ["/work/shop", "oasis --project /p restart"],
-    ["/work/shop", "odoo19 --project /p restart -d cc_dev_x --workers=0"],
+    ["/work/shop", "oasis --project /p restart -d cc_dev_x --workers=0"],
     ["/work/shop", "oasis --project /p restart --database cc_dev_x"],
     ["/work/shop", "oasis --project /p status"],
-    ["/work/shop", "~/.agents/skills/odoo19/tools/stop --force"],
-    ["/work/shop", "~/.agents/skills/odoo19/tools/restart --http-port=8070"],
+    ["/work/shop", "~/.agents/skills/oasis/tools/stop --force"],
+    ["/work/shop", "~/.agents/skills/oasis/tools/restart --http-port=8070"],
     ["/work/shop", "oasis --project /p install-module coffee cc_dev_x"],
     ["/work/shop", "oasis --project /p update-module coffee cc_dev_x"],
     ["/work/shop", "oasis --project /p create-database cc_dev_x"],
@@ -760,16 +779,16 @@ test("classifyBash allows every other oasis command, help alone and unrelated sc
     ["/work/shop", "oasis --project /p start --detach"],
     ["/work/shop", "oasis --project /p drop-database --help"],
     ["/work/shop", "oasis --project /p stop -h"],
-    ["/work/shop", "odoo19 --project /p gc --help 2>&1 | head"],
+    ["/work/shop", "oasis --project /p gc --help 2>&1 | head"],
     ["/work/shop", "oasis --project /p test-module drop-database"],
     ["/work/shop", "oasis --project /p model-info stop.database --field gc"],
     ["/work/shop", "grep -n drop-database tools/drop-database"],
-    ["/work/shop", "cat ~/.agents/skills/odoo19/tools/gc"],
+    ["/work/shop", "cat ~/.agents/skills/oasis/tools/gc"],
     ["/work/shop", "git commit -m 'oasis drop-database cc_dev_x'"],
     ["/work/shop", "tools/stop --database"],
     ["/work/shop", "./tools/gc --apply --trash"],
     ["/work/shop", "docker compose stop db"],
-    ["/work/shop", "~/.agents/skills/odoo19/tools/drop-database --help"],
+    ["/work/shop", "~/.agents/skills/oasis/tools/drop-database --help"],
   ];
   for (const [cwd, command] of allowed) {
     assert.deepEqual(classifyBash(command, at(cwd)), { program: null, programs: [], asks: [] }, `${cwd}: ${command}`);
@@ -780,11 +799,11 @@ test("agents may run start and restart --print-command: neither tier blocks or a
   for (const command of [
     "oasis --project /p start --print-command",
     "oasis --project /p start --print-command --detach -d cc_dev_x --dev xml",
-    "odoo19 --project /p start --print-command --stop-after-init -u coffee",
+    "oasis --project /p start --print-command --stop-after-init -u coffee",
     "oasis --project /p restart --print-command",
-    "odoo19 --project /p restart --print-command -d cc_dev_x --http-port 8070",
-    "~/.agents/skills/odoo19/tools/start --print-command --workers=0",
-    "~/.agents/skills/odoo19/tools/restart --print-command",
+    "oasis --project /p restart --print-command -d cc_dev_x --http-port 8070",
+    "~/.agents/skills/oasis/tools/start --print-command --workers=0",
+    "~/.agents/skills/oasis/tools/restart --print-command",
     "oasis --project /p start --print-command -w secret 2>&1 | head -1",
   ]) {
     for (const context of [undefined, at("/work/shop")]) {
@@ -799,7 +818,7 @@ test("the deny tier is unchanged: blockedProgram ignores the ask commands and st
     "oasis --project /p drop-database cc_dev_x",
     "oasis --project /p stop --database",
     "oasis --project /p gc --apply --trash",
-    "~/.agents/skills/odoo19/tools/drop-database cc_dev_x",
+    "~/.agents/skills/oasis/tools/drop-database cc_dev_x",
   ]) {
     assert.equal(blockedProgram(command), null, command);
     assert.equal(blockedProgram(command, at("/work/shop")), null, command);
@@ -893,12 +912,12 @@ test("setup runs through the entry points and its scripts, --apply included", ()
   for (const command of [
     "oasis setup",
     "oasis setup --plan",
-    "odoo19 --project /p setup --community /src/odoo --no-enterprise --apply",
+    "oasis --project /p setup --community /src/odoo --no-enterprise --apply",
     "oasis setup --apply",
     "oasis setup $ARGS",
     "oasis setup --a",
-    "~/.agents/skills/odoo19/tools/setup --apply",
-    "python3 -I -B ~/.agents/skills/odoo19/tools/setup.py --apply",
+    "~/.agents/skills/oasis/tools/setup --apply",
+    "python3 -I -B ~/.agents/skills/oasis/tools/setup.py --apply",
     "python setup.py --apply",
   ]) {
     assert.deepEqual(classifyBash(command), { program: null, programs: [], asks: [] }, command);

@@ -70,7 +70,7 @@ command word on the line applies: `oasis --x y worktree-init feat feature/x` and
 worktree-init feat feature/x` ask, `oasis --x y menu` is blocked, and a line with no oasis command
 word (`oasis $CMD`) runs, as before.
 
-The ask commands are recognized through `oasis` and `odoo19` (also as `python3 -B <path>/oasis`,
+The ask commands are recognized through `oasis` (also as `python3 -B <path>/oasis`,
 behind `sudo`, `env`, `timeout` and the other wrappers, inside `bash -c`, `eval` or `$(...)`) and
 through oasis's own tool scripts (`tools/drop-database`, `tools/stop`, `tools/gc`, ...), recognized
 like the menu's scripts (see [Action menu](action-menu.md)): the installed bundle's from anywhere, an
@@ -224,7 +224,10 @@ nothing changed and to ask the user to make the change.
 
 A bash guard that blocks the agent's direct `odoo-bin`, `dropdb` and `psql` in Odoo projects and points to the guarded commands.
 
-In every session it also blocks the Tier C oasis commands: `menu` (through `oasis` or `odoo19`, or its scripts `tools/menu` and `tools/actions.py` when they are oasis's, `--catalog` included; see [Action menu](action-menu.md) for how a script is recognized), which only the user runs; asking only for its help (`--help` or `-h` as the single argument) is allowed.
+In every session it also blocks the Tier C oasis commands: `menu` (through `oasis`, or its scripts `tools/menu` and `tools/actions.py` when they are oasis's, `--catalog` included; see [Action menu](action-menu.md) for how a script is recognized), which only the user runs; asking only for its help (`--help` or `-h` as the single argument) is allowed.
+
+The entry point's name and install directory before 0.17.0 stay guarded the same way (`odoo19`,
+`~/.agents/skills/odoo19/tools/...`), so an old install still on disk is no way around the guard.
 
 Contract change in v0.16.0 (S1): `setup --apply` (Tier A) runs; `worktree-init` (except a literal `--dry-run`, Tier A) and `migrate --apply` (Tier B) ask like `drop-database`, honoring `agent_destructive`; `migrate` without `--apply`, a literal `migrate --plan` and `worktree-init --dry-run` run. Before, the guard blocked `setup --apply`, `migrate` (except `--plan`) and `worktree-init` (`--dry-run` included) in every session.
 

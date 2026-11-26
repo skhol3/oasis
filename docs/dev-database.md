@@ -19,13 +19,13 @@ Replace the example group with an actual installed `res.groups` XML ID. Addition
 Run the full executable path with the actual module and a fresh database name under the project's `[tooling].dev_prefix`, from a terminal or not (an agent runs it too: Tier A in the [agent contract](agent-contract.md)):
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/project init-dev-database your_module project_dev_manual
+~/.agents/skills/oasis/oasis --project /absolute/project init-dev-database your_module project_dev_manual
 ```
 
 ## Listing this checkout's databases
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/project list-databases
+~/.agents/skills/oasis/oasis --project /absolute/project list-databases
 ```
 
 `list-databases` prints the databases of the current checkout, one name per line in name order, and nothing when there are none; it takes no arguments (exit 2 with its usage). It starts the database service like the other database commands. The menu's database choices (terminal and Gentle Shell panel) come from it. The namespace is the one `gc` uses (see [Disposable test databases](disposable-test-databases.md#cleaning-up-after-interrupted-runs)): in a checkout with a slug (a linked worktree, or a configured `checkout_slug`) only `<dev_prefix><slug>_<name>` and `<test_prefix><slug>_<name>`; in the main checkout (or a project outside git) every name under both prefixes except the namespaces of its existing linked worktrees, from `git worktree list`. The databases of a removed worktree are listed again by the checkout whose namespace holds them, usually the main checkout. PostgreSQL is asked only for the names under the two prefixes (their `_` escaped in `LIKE`); the slugs are compared outside SQL. [Trash](trash.md) entries are listed like any other name of the namespace, as before; a bare prefix (`<dev_prefix>` alone) is not a managed name and is not listed.
@@ -33,7 +33,7 @@ Run the full executable path with the actual module and a fresh database name un
 ## Optional native demo loading
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/project init-dev-database --with-demo your_module project_dev_training
+~/.agents/skills/oasis/oasis --project /absolute/project init-dev-database --with-demo your_module project_dev_training
 ```
 
 This opts in to native Odoo demo loading for base, installed dependencies, and the selected module's manifest `demo` files. It does not generate product records or import custom scenario scripts. Demo data is module-owned; the global tool contains no customer catalog. Without the flag, no demo is loaded and optional demo environment modules are not installed.

@@ -8,9 +8,9 @@ database, where each value lives and what setup does for you by hand are in
 
 ```bash
 cd /absolute/checkout
-~/.agents/skills/odoo19/oasis setup            # the plan; nothing changes
-~/.agents/skills/odoo19/oasis setup --apply    # creates the missing pieces
-~/.agents/skills/odoo19/oasis doctor
+~/.agents/skills/oasis/oasis setup            # the plan; nothing changes
+~/.agents/skills/oasis/oasis setup --apply    # creates the missing pieces
+~/.agents/skills/oasis/oasis doctor
 ```
 
 ```text
@@ -457,8 +457,8 @@ data_dir = 'data'
 
 ```bash
 cd corpus-cafe/codigo/facturacion
-~/.agents/skills/odoo19/oasis setup --exception report_xlsx            # the plan
-~/.agents/skills/odoo19/oasis setup --exception report_xlsx --apply
+~/.agents/skills/oasis/oasis setup --exception report_xlsx            # the plan
+~/.agents/skills/oasis/oasis setup --exception report_xlsx --apply
 ```
 
 ```text
@@ -544,8 +544,8 @@ entry:
 
 ```bash
 cd corpus-cafe/codigo/facturacion
-~/.agents/skills/odoo19/oasis setup --exception report_xlsx --environment <environments>/billing-o15
-~/.agents/skills/odoo19/oasis setup --exception report_xlsx --environment <environments>/billing-o15 --apply
+~/.agents/skills/oasis/oasis setup --exception report_xlsx --environment <environments>/billing-o15
+~/.agents/skills/oasis/oasis setup --exception report_xlsx --environment <environments>/billing-o15 --apply
 ```
 
 ```text

@@ -82,11 +82,14 @@ class ConfigCliTests(unittest.TestCase):
                 result = self.run_reader()
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', refusal(profile)))
                 workspace.unlink()
-        # An unreadable profile is refused the same way; the odoo19 alias names itself in the fix.
+        # An unreadable profile is refused the same way; the fix names oasis whatever file the entry point is
+        # (v0.17.0 S3: no odoo19 alias; an old copy under that name still says oasis).
         profile.write_text('[tooling\n')
-        result = subprocess.run([sys.executable, '-B', str(READER), str(self.root)], capture_output=True, text=True,
-                                env={**self.env, 'OASIS_ENTRYPOINT': '/x/odoo19'})
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', refusal(profile, 'odoo19')))
+        for entrypoint in ('/x/odoo19', '/x/oasis'):
+            with self.subTest(entrypoint=entrypoint):
+                result = subprocess.run([sys.executable, '-B', str(READER), str(self.root)], capture_output=True,
+                                        text=True, env={**self.env, 'OASIS_ENTRYPOINT': entrypoint})
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', refusal(profile, 'oasis')))
 
     def test_release_check_needs_the_file_and_the_series(self):
         # Its only caller, common.sh require_source, always passes the series.

@@ -1,4 +1,4 @@
-"""Disposable test databases per run and `odoo19 gc` (S5), through the public interfaces.
+"""Disposable test databases per run and `oasis gc` (S5), through the public interfaces.
 
 The lifecycle fixture (fake docker/python recording every argv) with a private
 XDG_RUNTIME_DIR per test. The fake docker below also records `createdb` and
@@ -24,7 +24,7 @@ import test_shared_conf as shared
 os.umask(0o022)
 
 STATE = lifecycle.STAGE / 'tools' / 'runtime_state.py'
-CLI = lifecycle.STAGE / 'odoo19'
+CLI = lifecycle.STAGE / 'oasis'
 RUN = r'_r[0-9a-f]{6}'
 RESERVED = 'Database names ending in _r<6 hex> are reserved for disposable runs: {}\n'
 # Inserted first in the fake docker's case: single-database create/drop and the listing.

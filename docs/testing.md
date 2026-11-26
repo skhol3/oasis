@@ -40,9 +40,9 @@ The name must be longer than `test_prefix`, contain only letters/digits/undersco
 After obtaining authorization to reset the exact destinations:
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/project test-module --compact your_module
-~/.agents/skills/odoo19/oasis --project /absolute/project verify-module --compact your_module
-~/.agents/skills/odoo19/oasis --project /absolute/project test-module --compact --only TestOrder.test_total your_module
+~/.agents/skills/oasis/oasis --project /absolute/project test-module --compact your_module
+~/.agents/skills/oasis/oasis --project /absolute/project verify-module --compact your_module
+~/.agents/skills/oasis/oasis --project /absolute/project test-module --compact --only TestOrder.test_total your_module
 ```
 
 ### Running one test class or method
@@ -63,7 +63,7 @@ The Odoo test process also gets `--http-port=<free port>` and the Odoo series' s
 
 The test command line always ends with `--stop-after-init`: 19.0's `--test-tags` implies it, 15.0's does not (`test_tags_implies_stop` in the capability table), so without it a 15.0 test run would keep serving after its tests. Installing without demo data passes the series' option: `--without-demo` on 19.0, `--without-demo=all` on 15.0 (its option takes a value; alone it would take the next word of the command line).
 
-The Odoo **test process only** receives a fresh private (0700) short `/tmp/odoo19-test-*` directory as `TMPDIR`, independent of inherited nesting. The caller's environment, runtime probes, database guards, install and update invocations are unchanged. After the child exits, browser `chrome_logs` files and screenshots/videos remaining under its `odoo_tests` tree are copied privately (directories 0700, files 0600) into a unique directory under project `dev/logs/odoo19/` (or the `[tooling].logs` directory of the checkout), then only that invocation's scratch is removed. Browser profiles/cookies and evidence symlinks are not collected. No extra normal output is emitted; child stdout/stderr and exit status (including signal-derived status) are preserved, including through `--compact`. Retention or cleanup failure reports the owned scratch path for inspection and returns failure rather than claiming success; failed retention leaves scratch intact. SIGINT/SIGTERM are forwarded to the child before collection; uncatchable termination cannot guarantee collection or cleanup.
+The Odoo **test process only** receives a fresh private (0700) short `/tmp/oasis-test-*` directory as `TMPDIR`, independent of inherited nesting. The caller's environment, runtime probes, database guards, install and update invocations are unchanged. After the child exits, browser `chrome_logs` files and screenshots/videos remaining under its `odoo_tests` tree are copied privately (directories 0700, files 0600) into a unique directory under project `dev/logs/odoo19/` (or the `[tooling].logs` directory of the checkout), then only that invocation's scratch is removed. Browser profiles/cookies and evidence symlinks are not collected. No extra normal output is emitted; child stdout/stderr and exit status (including signal-derived status) are preserved, including through `--compact`. Retention or cleanup failure reports the owned scratch path for inspection and returns failure rather than claiming success; failed retention leaves scratch intact. SIGINT/SIGTERM are forwarded to the child before collection; uncatchable termination cannot guarantee collection or cleanup.
 
 This does not change Odoo's skip classification: a successful exit can still include skipped browser tests. Inspect test results and retained diagnostics; the wrapper does not count tests or reinterpret skips. Retained diagnostics can contain application data and require deliberate owner-managed retention; no previous temporary directories or evidence are cleaned automatically.
 
@@ -76,7 +76,7 @@ The setting is **not reset consent** and does not create a database when read. N
 ## Reusing the test database while iterating
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/project test-module --compact --reuse --only TestOrder.test_total your_module
+~/.agents/skills/oasis/oasis --project /absolute/project test-module --compact --reuse --only TestOrder.test_total your_module
 ```
 
 Installing a module in a new database usually takes far longer than its tests. `test-module --reuse` keeps a working test database between runs:

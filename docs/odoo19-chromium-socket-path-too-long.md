@@ -2,7 +2,7 @@
 
 Date: 2026-11-10
 
-The browser tests of the global `odoo19` bundle fail because headless Chromium aborts at startup: the path of its socket is 110 bytes long and the maximum is 107. The fix is to run the tests with a short `TMPDIR`.
+The browser tests of the global oasis bundle (then installed as `~/.agents/skills/odoo19`) fail because headless Chromium aborts at startup: the path of its socket is 110 bytes long and the maximum is 107. The fix is to run the tests with a short `TMPDIR`.
 
 ## What happened
 
@@ -10,7 +10,7 @@ On 10 November 2026, between 21:40:47 and 21:43:46, systemd-coredump recorded 18
 
 | Item | Value |
 | --- | --- |
-| Process chain | `verify-module` → `install-module` → `odoo-bin` (bundle `~/.agents/skills/odoo19/tools/`) |
+| Process chain | `verify-module` → `install-module` → `odoo-bin` (bundle `~/.agents/skills/oasis/tools/`) |
 | Database | `acme_test_acme_update` |
 | Chromium | 155.0.8059.84-1 |
 | Example PID | 2574356 |
@@ -42,7 +42,7 @@ No change has been applied yet. Suggested steps:
 
 - [ ] Run the tests again with a short temp directory: `TMPDIR=/tmp verify-module --compact <modules>`
 - [ ] Confirm that no new Chromium cores appear with `coredumpctl list --since "10 min ago"`
-- [ ] To keep it from happening again, export `TMPDIR=/tmp` in `~/.agents/skills/odoo19/tools/common.sh` (or shorten the `TMPDIR` of the agent that launches the tests)
+- [ ] To keep it from happening again, export `TMPDIR=/tmp` in `~/.agents/skills/oasis/tools/common.sh` (or shorten the `TMPDIR` of the agent that launches the tests)
 - [ ] Save this finding in Engram, project `odoo19`, topic `odoo19/browser-tests/chromium-socket-path-too-long`
 
 Quick diagnosis if it happens again: `coredumpctl dump <pid> --output=<file>`, then `strings <file> | grep FATAL`, and delete the core when done.
