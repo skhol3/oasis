@@ -57,8 +57,11 @@ interface Where {
   dir: string | null;
   unsure?: boolean;
 }
-// The entry point and its alias: worktree-init, migrate, setup --apply and menu are blocked through either.
+// The entry point, and its name before 0.17.0 so an old install still on disk is guarded too (v0.17.0 S3):
+// worktree-init, migrate, setup --apply and menu are blocked through either.
 const ENTRY_POINTS = new Set(["oasis", "odoo19"]);
+// The installed bundle's tools directory, and the one before 0.17.0.
+const BUNDLE_TOOLS = ["skills/oasis/tools", "skills/odoo19/tools"];
 const SHELLS = new Set(["bash", "sh", "zsh", "dash"]);
 // Programs that run what they read from a heredoc; its body is then classified as commands.
 const HEREDOC_SHELLS = new Set([...SHELLS, "ksh", "mksh", "ash", "fish", "csh", "tcsh"]);
@@ -139,14 +142,15 @@ function spelledIn(word: string, directory: string): boolean {
  * Whether a word names one of oasis's tool scripts `names` (the menu's `menu` or `actions.py`, or
  * an ask command's). Resolved to a file, it must sit in a `tools` directory whose parent is an
  * oasis tree. When its path is unknown (expansion, an unknown `cd` target), it counts when spelled
- * like the installed bundle (`.../skills/odoo19/tools/menu`) or, spelled `tools/<name>`, when the
+ * like the installed bundle (`.../skills/oasis/tools/menu`, or `skills/odoo19` before 0.17.0) or, spelled
+ * `tools/<name>`, when the
  * session works inside an oasis tree. Without a context, only the installed bundle's spelling counts.
  */
 function oasisScript(word: string, names: Set<string>, where: Where | undefined): boolean {
   if (!names.has(basename(word))) return false;
   // The installed bundle's spelling counts from anywhere, as before the session context,
   // also when the rest of the path is an expansion (`$HOME/...`, `${HOME}/...`).
-  const bundled = spelledIn(word, "skills/odoo19/tools");
+  const bundled = BUNDLE_TOOLS.some((directory) => spelledIn(word, directory));
   if (bundled || !where) return bundled;
   const path = literalPath(word, where);
   if (path === null) return spelledIn(word, "tools") && insideOasisTree(where.context.cwd, where.context);

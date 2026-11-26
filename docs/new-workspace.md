@@ -20,7 +20,7 @@ key is [Workspace file](workspace-file.md).
 
 | You need | Why |
 | --- | --- |
-| The `oasis` CLI, from [Install or update](install.md) | `~/.agents/skills/odoo19/oasis` below |
+| The `oasis` CLI, from [Install or update](install.md) | `~/.agents/skills/oasis/oasis` below |
 | git 2.31 or newer, Docker with its compose plugin, [uv](https://docs.astral.sh/uv/) | `doctor` checks git and Docker; `setup` and `bootstrap` run uv |
 | The Odoo 19.0 source, and Enterprise if the project uses it | `setup` asks where it is once per machine |
 
@@ -49,7 +49,7 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
 2. Read the plan; nothing changes.
 
    ```bash
-   ~/.agents/skills/odoo19/oasis setup
+   ~/.agents/skills/oasis/oasis setup
    ```
 
    It infers the series from the module manifests (`19.0.1.0.0` gives `19.0`) and the source
@@ -75,7 +75,7 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
 3. Apply it.
 
    ```bash
-   ~/.agents/skills/odoo19/oasis setup --apply
+   ~/.agents/skills/oasis/oasis setup --apply
    ```
 
    It creates only the `create` pieces (an existing file is never replaced), checks that the
@@ -91,7 +91,7 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
    command that names one).
 
    ```bash
-   ~/.agents/skills/odoo19/oasis start-database
+   ~/.agents/skills/oasis/oasis start-database
    ```
 
 5. Run `doctor` until it prints `doctor_failures=0`. Each `FAIL` line is followed by a `fix:`
@@ -99,7 +99,7 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
    shows where a value came from (see [The doctor report](checking-environment.md#the-doctor-report)).
 
    ```bash
-   ~/.agents/skills/odoo19/oasis doctor
+   ~/.agents/skills/oasis/oasis doctor
    ```
 
 6. Create a development database. It needs a `[development]` table with an
@@ -114,14 +114,14 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
    locks.
 
    ```bash
-   ~/.agents/skills/odoo19/oasis init-dev-database acme_sale acme_dev_manual
-   ~/.agents/skills/odoo19/oasis doctor --environment --full
+   ~/.agents/skills/oasis/oasis init-dev-database acme_sale acme_dev_manual
+   ~/.agents/skills/oasis/oasis doctor --environment --full
    ```
 
 Next, run a module's tests on a disposable database ([Tests and test databases](testing.md)):
 
 ```bash
-~/.agents/skills/odoo19/oasis test-module --compact acme_sale
+~/.agents/skills/oasis/oasis test-module --compact acme_sale
 ```
 
 ## What setup writes
@@ -212,8 +212,8 @@ environments = '/home/you/odoo/19.0/environments'
 
 ```bash
 cd ~/odoo/19.0/projects/acme/codigo/acme
-~/.agents/skills/odoo19/oasis setup --workspace ~/odoo/19.0/projects/acme
-~/.agents/skills/odoo19/oasis setup --workspace ~/odoo/19.0/projects/acme --apply
+~/.agents/skills/oasis/oasis setup --workspace ~/odoo/19.0/projects/acme
+~/.agents/skills/oasis/oasis setup --workspace ~/odoo/19.0/projects/acme --apply
 ```
 
 With `--workspace`, `config/`, `data/` and `logs/` go directly under that directory, and nothing
@@ -467,9 +467,9 @@ it, or through git), gets the slug `shop_feature` and its own databases, port an
 `--dry-run` prints the plan first.
 
 ```bash
-~/.agents/skills/odoo19/oasis worktree-init shop-feature shop-feature --dry-run
-~/.agents/skills/odoo19/oasis worktree-init shop-feature shop-feature
-~/.agents/skills/odoo19/oasis --project ~/src/acme-shop-feature doctor
+~/.agents/skills/oasis/oasis worktree-init shop-feature shop-feature --dry-run
+~/.agents/skills/oasis/oasis worktree-init shop-feature shop-feature
+~/.agents/skills/oasis/oasis --project ~/src/acme-shop-feature doctor
 ```
 
 In Gentle Shell, `/oasis worktree shop-feature shop-feature` shows the same plan and asks before

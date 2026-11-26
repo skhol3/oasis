@@ -1,5 +1,6 @@
-"""oasis names in what the harness reads, sets and prints (v0.8.0 S2, S4), with the legacy
-ODOO19_* names still read.
+"""oasis names in what the harness reads, sets and prints (v0.8.0 S2, S4). Since v0.17.0 (S3) only the
+OASIS_* names are read: a legacy ODOO19_* variable is ignored, and neither the entry point nor a project
+wrapper sets one.
 
 The lifecycle fixture (fake docker/python, private runtime directory) and the public tools,
 run directly with the variables the entry point or a project wrapper sets.
@@ -58,15 +59,17 @@ class OasisVariableTests(unittest.TestCase):
     def test_shell_tools_read_oasis_names_first(self):
         result = self.tool('check-environment', '--bogus', OASIS_PROJECT_ROOT=str(self.root),
                            OASIS_ENTRYPOINT='/opt/bin/oasis', ODOO19_PROJECT_ROOT=self.wrong,
-                           ODOO19_ENTRYPOINT='/opt/bin/odoo19')
+                           ODOO19_ENTRYPOINT='/opt/old/oasis')
         self.assertEqual(self.observed(result), (2, '', 'Usage: /opt/bin/oasis [--quick|--full]\n'))
 
-    def test_shell_tools_still_read_the_odoo19_names(self):
+    def test_shell_tools_ignore_the_legacy_variable_names(self):
+        # v0.17.0 S3: ODOO19_PROJECT_ROOT, ODOO19_ENTRYPOINT and ODOO19_COMPOSE_LOCK_TIMEOUT are not read.
         result = self.tool('check-environment', '--bogus', ODOO19_PROJECT_ROOT=str(self.root),
-                           ODOO19_ENTRYPOINT='/opt/bin/odoo19')
-        self.assertEqual(self.observed(result), (2, '', 'Usage: /opt/bin/odoo19 [--quick|--full]\n'))
-
-    def test_a_set_oasis_project_root_wins_over_the_legacy_one(self):
+                           ODOO19_ENTRYPOINT='/opt/old/oasis')
+        self.assertEqual(self.observed(result), (2, '', ROOT_ERROR_SHELL))
+        result = self.tool('check-environment', '--bogus', OASIS_PROJECT_ROOT=str(self.root),
+                           ODOO19_ENTRYPOINT='/opt/old/oasis')
+        self.assertEqual(self.observed(result), (2, '', f'Usage: {TOOLS / "check-environment"} [--quick|--full]\n'))
         result = self.tool('check-environment', '--bogus', OASIS_PROJECT_ROOT=self.wrong,
                            ODOO19_PROJECT_ROOT=str(self.root))
         self.assertEqual(self.observed(result), (2, '', ROOT_ERROR_SHELL))
@@ -79,29 +82,28 @@ class OasisVariableTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.observed(self.tool(command, *args)), (2, '', ROOT_ERROR))
 
-    def test_python_tools_read_either_name_alike(self):
+    def test_python_tools_read_only_oasis_project_root(self):
         for command, args in PYTHON_TOOLS:
             with self.subTest(command=command):
                 oasis = self.tool(command, *args, OASIS_PROJECT_ROOT=str(self.root),
                                   ODOO19_PROJECT_ROOT=self.wrong)
-                legacy = self.tool(command, *args, ODOO19_PROJECT_ROOT=str(self.root))
                 self.assertNotIn('PROJECT_ROOT', oasis.stderr)
-                self.assertEqual(self.observed(oasis), self.observed(legacy))
+                legacy = self.tool(command, *args, ODOO19_PROJECT_ROOT=str(self.root))
+                self.assertEqual(self.observed(legacy), (2, '', ROOT_ERROR))
                 wins = self.tool(command, *args, OASIS_PROJECT_ROOT=self.wrong,
                                  ODOO19_PROJECT_ROOT=str(self.root))
                 self.assertEqual(self.observed(wins), (2, '', ROOT_ERROR))
 
-    def test_doctor_reads_the_project_of_either_name(self):
-        for variables in ({'OASIS_PROJECT_ROOT': str(self.root)}, {'ODOO19_PROJECT_ROOT': str(self.root)}):
-            with self.subTest(variables=variables):
-                result = self.tool('doctor', **variables)
-                self.assertEqual(result.stdout.splitlines()[0], 'PASS configuration=workspace')
+    def test_doctor_reads_the_project_of_oasis_project_root_only(self):
+        result = self.tool('doctor', OASIS_PROJECT_ROOT=str(self.root))
+        self.assertEqual(result.stdout.splitlines()[0], 'PASS configuration=workspace')
+        self.assertEqual(self.observed(self.tool('doctor', ODOO19_PROJECT_ROOT=str(self.root))), (2, '', ROOT_ERROR))
 
     def test_python_usage_names_the_oasis_entry_point_first(self):
         for command in ('doctor', 'migrate'):
             for variables, program in (
-                    ({'OASIS_ENTRYPOINT': '/opt/bin/oasis', 'ODOO19_ENTRYPOINT': '/opt/bin/odoo19'}, '/opt/bin/oasis'),
-                    ({'ODOO19_ENTRYPOINT': '/opt/bin/odoo19'}, '/opt/bin/odoo19'),
+                    ({'OASIS_ENTRYPOINT': '/opt/bin/oasis', 'ODOO19_ENTRYPOINT': '/opt/old/oasis'}, '/opt/bin/oasis'),
+                    ({'ODOO19_ENTRYPOINT': '/opt/old/oasis'}, 'oasis'),
                     ({}, 'oasis')):
                 with self.subTest(command=command, variables=variables):
                     result = self.tool(command, '--bogus', **variables)
@@ -120,7 +122,7 @@ class OasisVariableTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(written.read_text(), 'yes\n' if name == 'RUN_RESULT' else 'install\n')
                 stale = self.root / f'stale-{name}'
-                result = self.tool('test-module', *args, ODOO19_PROJECT_ROOT=str(self.root),
+                result = self.tool('test-module', *args, OASIS_PROJECT_ROOT=str(self.root),
                                    **{f'ODOO19_{name}': str(stale)})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertFalse(stale.exists())
@@ -151,12 +153,14 @@ class WrapperVariableTests(unittest.TestCase):
         (tools / 'audit_dependencies.py').touch()
         return tools
 
-    def test_every_wrapper_sets_both_names_and_reads_the_legacy_tools_dir(self):
+    def test_every_wrapper_sets_only_the_oasis_names(self):
+        # v0.17.0 S3: no wrapper sets an ODOO19_* variable; a caller's legacy one passes through unread.
         for prefix in ('OASIS_', 'ODOO19_'):
             for name in VARIABLES:
                 self.env.pop(prefix + name, None)
         tools = self.fake_tools()
-        self.env['ODOO19_TOOLS_DIR'] = str(tools)
+        self.env['OASIS_TOOLS_DIR'] = str(tools)
+        self.env['ODOO19_TOOLS_DIR'] = str(self.root / 'legacy tools')
         scripts = self.root / 'dev/scripts'
         scripts.mkdir(parents=True)
         self.assertEqual(len(WRAPPERS), 18)
@@ -183,24 +187,44 @@ class WrapperVariableTests(unittest.TestCase):
                 seen = json.loads(out.read_text())
                 if wrapper.name == 'check_environment.py':
                     # The lockfile CLI takes paths as arguments and sets no variable.
-                    self.assertEqual(seen, {**dict.fromkeys(WRAPPER_VARIABLES), 'ODOO19_TOOLS_DIR': str(tools)})
+                    self.assertEqual(seen, {**dict.fromkeys(WRAPPER_VARIABLES), 'OASIS_TOOLS_DIR': str(tools),
+                                            'ODOO19_TOOLS_DIR': str(self.root / 'legacy tools')})
                     continue
                 entrypoint = None if wrapper.name in NO_ENTRYPOINT else str(path)
                 self.assertEqual(seen, {
-                    'OASIS_PROJECT_ROOT': str(self.root), 'ODOO19_PROJECT_ROOT': str(self.root),
-                    'OASIS_ENTRYPOINT': entrypoint, 'ODOO19_ENTRYPOINT': entrypoint,
-                    'OASIS_TOOLS_DIR': None, 'ODOO19_TOOLS_DIR': str(tools)})
+                    'OASIS_PROJECT_ROOT': str(self.root), 'ODOO19_PROJECT_ROOT': None,
+                    'OASIS_ENTRYPOINT': entrypoint, 'ODOO19_ENTRYPOINT': None,
+                    'OASIS_TOOLS_DIR': str(tools), 'ODOO19_TOOLS_DIR': str(self.root / 'legacy tools')})
         self.unchanged()
 
     def test_wrappers_override_stale_oasis_names(self):
-        # A wrapper sets both names, so a stale OASIS_* value of the caller is never read.
+        # A wrapper sets OASIS_PROJECT_ROOT and OASIS_ENTRYPOINT, so a stale value of the caller is never read.
         self.env.update(OASIS_PROJECT_ROOT=str(self.root / 'absent'), OASIS_ENTRYPOINT='/stale/oasis')
         result = self.invoke('update-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (2, '', 'Usage: ' + str(self.root / 'dev/scripts/update-module') + ' <module> <database>\n'))
         self.unchanged()
 
-    def test_wrappers_read_oasis_tools_dir_first(self):
+    def test_wrappers_ignore_the_legacy_tools_dir(self):
+        # v0.17.0 S3: ODOO19_TOOLS_DIR is not read; without OASIS_TOOLS_DIR a wrapper uses the install directory.
+        home = self.root / 'home'
+        self.env.pop('OASIS_TOOLS_DIR', None)
+        self.env.update(HOME=str(home), ODOO19_TOOLS_DIR=str(TOOLS))
+        installed = home / '.agents/skills/oasis/tools'
+        result = self.invoke('status')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', f'oasis tools are not installed: {installed / "status"}\n'))
+        for name in ('check_environment.py', 'audit_dependencies.py'):
+            with self.subTest(wrapper=name):
+                path = self.root / 'dev/scripts' / name
+                path.write_bytes((ROOT / 'project-wrappers' / name).read_bytes())
+                result = subprocess.run([sys.executable, '-B', str(path)], text=True, cwd=self.root,
+                                        env=self.env, capture_output=True)
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (2, '', f'oasis tools are not installed: {installed / name}\n'))
+        self.unchanged()
+
+    def test_wrappers_read_oasis_tools_dir(self):
         self.env['OASIS_TOOLS_DIR'] = str(self.root / 'not installed')
         result = self.invoke('status')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
@@ -238,7 +262,7 @@ class EntryPointHelpTests(unittest.TestCase):
                               capture_output=True)
 
     def test_gc_hints_name_the_invoked_entry_point(self):
-        for program in ('oasis', 'odoo19'):
+        for program in ('oasis',):
             for command, hint in (
                     ('test-module', f'behind: {program} gc lists such databases and {program} gc --apply drops them.\n'),
                     ('verify-module', f'Ctrl+C; {program} gc drops what a killed run left behind.')):
@@ -246,6 +270,23 @@ class EntryPointHelpTests(unittest.TestCase):
                     result = self.run_help(program, '--project', str(self.project), command, '--help')
                     self.assertEqual((result.returncode, result.stderr), (0, ''))
                     self.assertIn(hint, result.stdout)
+
+    def test_an_entry_point_file_named_odoo19_still_makes_hints_name_oasis(self):
+        # v0.17.0 S3: the program a hint names is `oasis`, whatever the entry point's file name.
+        for variables in ({'OASIS_ENTRYPOINT': '/opt/old/odoo19'},):
+            for command, hint in (
+                    ('test-module', 'behind: oasis gc lists such databases and oasis gc --apply drops them.\n'),
+                    ('verify-module', 'Ctrl+C; oasis gc drops what a killed run left behind.')):
+                with self.subTest(variables=variables, command=command):
+                    env = {key: value for key, value in os.environ.items()
+                           if not key.startswith(('OASIS_', 'ODOO19_'))}
+                    result = subprocess.run(['bash', str(TOOLS / command), '--help'], text=True,
+                                            cwd=self.project, capture_output=True,
+                                            env={**env, 'PYTHONDONTWRITEBYTECODE': '1',
+                                                 'OASIS_PROJECT_ROOT': str(self.project), **variables})
+                    self.assertEqual((result.returncode, result.stderr), (0, ''))
+                    self.assertIn(hint, result.stdout)
+                    self.assertNotIn('odoo19 gc', result.stdout)
 
     def test_no_help_names_odoo_19_or_a_fixed_odoo19_command(self):
         commands = ('test-module', 'verify-module', 'update-module', 'odoo-shell', 'gc', 'stop',

@@ -13,7 +13,7 @@ import unittest
 import test_lifecycle as lifecycle
 
 ROOT = lifecycle.STAGE
-PROGRAMS = ('oasis', 'odoo19')
+PROGRAMS = ('oasis',)
 
 
 class StartDatabaseTests(unittest.TestCase):

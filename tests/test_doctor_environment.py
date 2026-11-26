@@ -16,7 +16,7 @@ import test_environment
 import test_lifecycle as lifecycle
 
 ROOT = lifecycle.STAGE
-PROGRAMS = ('oasis', 'odoo19')
+PROGRAMS = ('oasis',)
 MODES = ((), ('--quick',), ('--full',))
 
 
@@ -61,9 +61,9 @@ class DoctorEnvironmentTests(unittest.TestCase):
         self.env['FAKE_LOCK_STATUS'] = '0'
         self.python.write_text(self.python.read_text().replace('echo 3.12', 'echo 3.11'))
         observed = self.assert_same(*MODES)
-        self.assertEqual(observed['odoo19', ()][:3], (2, '', (
+        self.assertEqual(observed['oasis', ()][:3], (2, '', (
             'Python 3.12 is required; found 3.11.\n'
-            f'Move {self.python.parent.parent} away and run odoo19 bootstrap --apply to recreate it with Python 3.12.\n')))
+            f'Move {self.python.parent.parent} away and run oasis bootstrap --apply to recreate it with Python 3.12.\n')))
 
     def test_full_checks_are_the_same_lines_as_check_environment(self):
         self.prepare()
@@ -79,9 +79,9 @@ class DoctorEnvironmentTests(unittest.TestCase):
         self.assertIn('uv pip check', log)
         self.env['FAKE_CONNECTION'] = 'authentication_failed'
         observed = self.assert_same(('--full',))
-        code, _stdout, stderr, _log = observed['odoo19', ('--full',)]
+        code, _stdout, stderr, _log = observed['oasis', ('--full',)]
         self.assertEqual(code, 1)
-        command = shlex.join(['odoo19', '--project', str(self.root), 'recreate-database-volume', '--confirm', 'cc-shop'])
+        command = shlex.join(['oasis', '--project', str(self.root), 'recreate-database-volume', '--confirm', 'cc-shop'])
         self.assertIn(command, stderr)
 
     def test_a_stopped_database_service_names_start_database(self):

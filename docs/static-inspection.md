@@ -13,8 +13,8 @@ To lint a module without starting Odoo, see [Lint one module](lint-module.md).
 ## Summarize a model without starting Odoo
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/project model-info mrp.production
-~/.agents/skills/odoo19/oasis --project /absolute/project model-info mrp.production --field state
+~/.agents/skills/oasis/oasis --project /absolute/project model-info mrp.production
+~/.agents/skills/oasis/oasis --project /absolute/project model-info mrp.production --field state
 ```
 
 `model-info <model> [--field <name>] [--module <technical>] [--methods] [--all-fields]` prints a compact summary of one model: where it is defined (with `_inherit` mixins and `_inherits` delegations), the modules that extend it, its fields with type, comodel, label and literal flags, field overrides in extensions and methods per module. It scans the configured Odoo source (`odoo/addons`, `addons`), optional Enterprise source and `[tooling].addons_paths`, prefilters files by the quoted model name and parses them with `ast`: no Odoo or project code is imported or executed, and no environment, service or database is used. Odoo/Enterprise `test_*` modules and `tests/`, `migrations/`, `upgrades/`, `static/` directories are skipped; mixin fields are not expanded. By default the field list stops at 40 (`--all-fields` lifts it) and methods list public names with a count of private ones; `--module` restricts the details to one module and lists all its methods, `--methods` adds decorators and `super()` calls, `--field` shows one field's definition and overrides with `file:line`. An unknown model exits 1 with `model not found: <model>`; invalid arguments exit 2. `model-info --help` describes the format.
@@ -22,9 +22,9 @@ To lint a module without starting Odoo, see [Lint one module](lint-module.md).
 ## Views and XML ids without starting Odoo
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/project view-info sale.order
-~/.agents/skills/odoo19/oasis --project /absolute/project view-info sale.order --type form
-~/.agents/skills/odoo19/oasis --project /absolute/project xmlid-info sale.view_order_form
+~/.agents/skills/oasis/oasis --project /absolute/project view-info sale.order
+~/.agents/skills/oasis/oasis --project /absolute/project view-info sale.order --type form
+~/.agents/skills/oasis/oasis --project /absolute/project xmlid-info sale.view_order_form
 ```
 
 Both read XML data files from the same roots as `model-info` (Odoo source, optional Enterprise source, the workspace's addon roots; first module with a name wins) and skip the same directories (`tests/`, `migrations/`, `upgrades/`, `static/`, `i18n/`, source `test_*` modules). XML is parsed with expat; Python and CSV files are only searched as text. Nothing is imported or executed and no environment, service or database is used.
@@ -78,8 +78,8 @@ referenced by (3):
 ## Module overview without starting Odoo
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/project module-info sale_mrp
-~/.agents/skills/odoo19/oasis --project /absolute/project module-info sale_mrp --section security
+~/.agents/skills/oasis/oasis --project /absolute/project module-info sale_mrp
+~/.agents/skills/oasis/oasis --project /absolute/project module-info sale_mrp --section security
 ```
 
 `module-info <module> [--section <name>]` maps one module from its source in about one screen. It finds the module in the same roots as `model-info` (Odoo source, optional Enterprise source, the workspace's addon roots; the first module with a name wins, and source `test_*` modules are not modules) and reads only that module's directory: Python with `ast`, XML with expat, CSV with `csv`. Nothing is imported or executed and no environment, service or database is used. `static/`, `i18n/`, `migrations/` and `upgrades/` are skipped, and `tests/` is read only for the tests section.

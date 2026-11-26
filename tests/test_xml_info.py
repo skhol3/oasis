@@ -65,7 +65,7 @@ class XmlInfoTests(unittest.TestCase):
     def test_views_of_a_model_with_their_extension_tree(self):
         # Views in static/ and in source test_ modules are not listed; a view without a model
         # field takes the model of the view it inherits.
-        for program in ('oasis', 'odoo19'):
+        for program in ('oasis',):
             with self.subTest(program=program):
                 self.assert_result('view-info', ('coffee.order',), 0, ORDER_VIEWS, program=program)
 

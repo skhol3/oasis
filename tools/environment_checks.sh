@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The environment checks (v0.16.0 S5): `doctor --environment [--quick|--full]` runs this file with bash,
 # and tools/check-environment, its deprecated alias, sources it, so both print the same lines and exit
-# codes. Its helpers sit next to it: $(dirname "$0") is the tools directory either way.
+# codes; bootstrap --apply ends with `check-environment --full`. Its helpers sit next to it: $(dirname "$0") is the tools directory either way.
 set -Eeuo pipefail
 source "$(dirname "$0")/common.sh"
 mode=${1:---quick}
@@ -75,7 +75,17 @@ if [[ "$mode" == "--full" ]]; then
   if uv pip check --python "$PYTHON"; then pass "package_compatibility=valid"
   else fail "package_compatibility=invalid"
   fi
-  if "$PYTHON" "$(dirname "$0")/check_environment.py" "$requirements_dir/dev.txt"; then pass "locked_environment=exact"
+  # A drift (exit 3, tools/check_environment.py DRIFT_EXIT) of an adopted environment, one oasis did not create
+  # (tools/environment_origin.py), is a WARN naming the command that would sync it, never a failure (v0.17.0 S1):
+  # oasis does not change it. An environment oasis created, a lock it cannot read (exit 2) or a crash of the
+  # comparison (a traceback, exit 1) stays a FAIL.
+  locked=0
+  "$PYTHON" "$(dirname "$0")/check_environment.py" "$requirements_dir/dev.txt" || locked=$?
+  if (( locked == 0 )); then pass "locked_environment=exact"
+  elif (( locked == 3 )) && ! python3 -I -B "$(dirname "$0")/environment_origin.py" created "$PROJECT_ENVIRONMENT"; then
+    printf 'WARN locked_environment=drifted\n'
+    printf '  fix: %s (syncs the adopted environment %s to the locks: it changes the packages installed there)\n' \
+      "$(confirm_command bootstrap --apply)" "$PROJECT_ENVIRONMENT"
   else fail "locked_environment=drifted"
   fi
   if "$(dirname "$0")/audit-dependencies"; then pass "dependency_audit=clean"

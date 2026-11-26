@@ -38,7 +38,7 @@ class PrintCommandTests(menu.MenuFixture):
         self.conf = self.root / 'dev/odoo.conf'
         self.conf.write_text(lifecycle.conf_text(f'http_port = {self.port}\n'))
         self.env.update(OASIS_DETACH_WAIT='5')
-        self.server_log = self.root.resolve() / 'dev/logs/odoo19/server.log'
+        self.server_log = self.root.resolve() / 'logs/main/server.log'
         self.checkout = self.root
         self.addCleanup(self.kill_recorded)
 
@@ -59,8 +59,8 @@ class PrintCommandTests(menu.MenuFixture):
         root = root or self.root
         self.assertEqual(self.log(), '')
         self.assertEqual(self.record_of(root), '')
-        self.assertFalse((root / 'dev/logs').exists())
-        self.assertFalse((self.root / 'dev/logs').exists())
+        self.assertFalse((root / 'logs').exists())
+        self.assertFalse((self.root / 'logs').exists())
 
     def record_of(self, root):
         result = subprocess.run([sys.executable, '-B', str(ROOT / 'tools/runtime_state.py'), 'show', str(root)],
@@ -89,7 +89,7 @@ class PrintCommandTests(menu.MenuFixture):
     def test_start_prints_the_command_of_the_main_checkout_without_side_effects(self):
         expected = self.line('-c', str(self.conf), f'--http-port={self.port}', '-d', 'cc_dev_coffee',
                              '--dev', 'xml')
-        for program in ('oasis', 'odoo19'):
+        for program in ('oasis',):
             for leading in (('--print-command',), ('--print-command', '--detach')):
                 with self.subTest(program=program, leading=leading):
                     result = self.run_in(self.root, 'start', *leading, '-d', 'cc_dev_coffee', '--dev', 'xml',

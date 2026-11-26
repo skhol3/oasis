@@ -353,9 +353,9 @@ class DoctorTests(unittest.TestCase):
                                          f'  fix: set [tooling].community in {self.workspace} to an Odoo 19.0 source'))
 
     def test_unwritable_logs_and_data_directories_fail_naming_the_path_to_fix(self):
-        # The default logs directory dev/logs/odoo19 does not exist; its nearest existing parent is
-        # a file, so that file is named.
-        blocker = self.root / 'dev/logs'
+        # The default logs directory, logs next to the workspace file (v0.17.0), is a file here, so that file is
+        # named.
+        blocker = self.workspace.parent / 'logs'
         blocker.write_text('')
         self.assert_report(self.expected(f'FAIL logs_dir=not_writable\n  fix: make {blocker} a directory you can write'))
         blocker.unlink()
@@ -642,6 +642,42 @@ class DoctorTests(unittest.TestCase):
             'the exception), or run oasis in a checkout of an Odoo 19.0 branch, or set the version of tea to '
             '19.0.x.y.z if it is an Odoo 19.0 module; for Odoo 15.0 here, run oasis setup to add a [series."15.0"] '
             f'section to {self.workspace}')}))
+
+    # -- project wrappers (v0.17.0 S3) ----------------------------------------------------------
+
+    def test_a_project_wrapper_that_calls_the_install_directory_before_0_17_0_fails(self):
+        scripts = self.root / 'dev/scripts'
+        scripts.mkdir(parents=True)
+        (scripts / 'start').write_text(
+            f'#!/usr/bin/env bash\n# {MARKER}\ntools=${{OASIS_TOOLS_DIR:-$HOME/.agents/skills/odoo19/tools}}\n')
+        (scripts / 'check_environment.py').write_text("tools = Path.home() / '.agents/skills/odoo19/tools'\n")
+        (scripts / 'stop').write_text('#!/usr/bin/env bash\ntools=$HOME/.agents/skills/oasis/tools\n')
+        (scripts / 'notes').mkdir()
+        fix = (f'replace .agents/skills/odoo19/ with .agents/skills/oasis/ in {scripts / "check_environment.py"} and '
+               f'{scripts / "start"} (the oasis install directory since 0.17.0)')
+        self.assert_report(self.expected(after={
+            'postgres_connection': f'FAIL project_wrappers=old_install_dir\n  fix: {fix}'}))
+        # Three wrappers are listed with commas, then `and`.
+        (scripts / 'stop').write_text('tools=$HOME/.agents/skills/odoo19/tools\n')
+        fix = (f'replace .agents/skills/odoo19/ with .agents/skills/oasis/ in {scripts / "check_environment.py"}, '
+               f'{scripts / "start"} and {scripts / "stop"} (the oasis install directory since 0.17.0)')
+        self.assert_report(self.expected(after={
+            'postgres_connection': f'FAIL project_wrappers=old_install_dir\n  fix: {fix}'}), docker_calls=2)
+
+    def test_project_wrappers_that_call_the_oasis_install_directory_add_no_line(self):
+        scripts = self.root / 'dev/scripts'
+        scripts.mkdir(parents=True)
+        (scripts / 'start').write_text('#!/usr/bin/env bash\ntools=$HOME/.agents/skills/oasis/tools\n')
+        self.assert_report(self.expected())
+        # A legacy profile: the configuration FAIL, and the wrappers are still checked.
+        (scripts / 'start').write_text('tools=$HOME/.agents/skills/odoo19/tools\n')
+        (self.root / '.odoo19-agent.toml').write_text('[tooling]\n')
+        result = self.doctor()
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(result.stdout.endswith(
+            'PASS proc\nFAIL project_wrappers=old_install_dir\n'
+            f'  fix: replace .agents/skills/odoo19/ with .agents/skills/oasis/ in {scripts / "start"} (the oasis '
+            'install directory since 0.17.0)\ndoctor_failures=2\n'), result.stdout)
 
 
 class DoctorSurfaceTests(unittest.TestCase):

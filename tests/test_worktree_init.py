@@ -1,4 +1,4 @@
-"""`odoo19 --project <checkout> worktree-init <feature> <branch> [--dry-run] [--resume]` on synthetic repos.
+"""`oasis --project <checkout> worktree-init <feature> <branch> [--dry-run] [--resume]` on synthetic repos.
 
 Every repository lives in a fresh system temp directory, below an oasis-workspace.toml in that
 directory; git runs with explicit -c identity flags, an empty global configuration and a ceiling
@@ -15,7 +15,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / 'odoo19'
+CLI = ROOT / 'oasis'
 READER = ROOT / 'tools' / 'config.py'
 GIT = ['git', '-c', 'user.name=oasis tests', '-c', 'user.email=tests@example.invalid',
        '-c', 'init.defaultBranch=main', '-c', 'commit.gpgsign=false']
@@ -381,7 +381,7 @@ class WorktreeInitTests(unittest.TestCase):
     def test_without_confirm_it_refuses_naming_the_exact_command(self):
         main = self.repository()
         new = self.scratch / 'proj-feat-x'
-        command = f'odoo19 --project {main} worktree-init \'Feat X\' feature/x --confirm {new}'
+        command = f'oasis --project {main} worktree-init \'Feat X\' feature/x --confirm {new}'
         self.assert_refused(main, ('Feat X', 'feature/x'),
                             f'ERROR: worktree-init adds the git worktree {new} and its branch feature/x '
                             f'(Tier B: it needs explicit confirmation); nothing changed. Run: {command}\n')
@@ -392,7 +392,7 @@ class WorktreeInitTests(unittest.TestCase):
         target = other / 'proj-feat'
         self.assert_refused(main, ('feat', 'feat', f'--path={target}', '--confirm=relative'),
                             f'ERROR: --confirm relative does not name the worktree {target}; nothing changed. '
-                            f'Run: odoo19 --project {main} worktree-init feat feat --path={target} --confirm {target}\n')
+                            f'Run: oasis --project {main} worktree-init feat feat --path={target} --confirm {target}\n')
         result = self.invoke(main, 'Feat X', 'feature/x', f'--confirm={new}')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assert_prepared(new)

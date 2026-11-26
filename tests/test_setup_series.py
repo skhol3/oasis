@@ -132,7 +132,7 @@ class SeriesSetupTests(unittest.TestCase):
         self.log = self.scratch / 'uv.log'
         (self.scratch / 'home').mkdir()
         self.env = {key: value for key, value in os.environ.items()
-                    if not key.startswith(('GIT_', 'OASIS_', 'ODOO19_'))}
+                    if not key.startswith(('GIT_', 'OASIS_'))}
         self.env.update({'GIT_CEILING_DIRECTORIES': str(self.scratch), 'GIT_CONFIG_GLOBAL': os.devnull,
                          'GIT_CONFIG_NOSYSTEM': '1', 'PYTHONDONTWRITEBYTECODE': '1',
                          'XDG_CONFIG_HOME': str(self.scratch / 'xdg'), 'HOME': str(self.scratch / 'home'),

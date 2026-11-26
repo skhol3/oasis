@@ -170,7 +170,7 @@ class DevelopmentUsersTests(unittest.TestCase):
         self.python.chmod(0o755)
 
     def command(self, *args):
-        return [sys.executable, '-B', str(ROOT / 'odoo19'), '--project', str(self.root),
+        return [sys.executable, '-B', str(ROOT / 'oasis'), '--project', str(self.root),
                 'init-dev-database', *args]
 
     def invoke(self, *args):
@@ -492,7 +492,7 @@ test_prefix = 'cc_test_'
         self.profile.write_text(self.profile.read_text().replace("env_file = 'dev/.env'", "env_file = 'gone/.env'"))
         result = self.invoke('coffee', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
-            f'ERROR: {self.root / "gone"} does not exist: run odoo19 setup --apply; no database was created.\n')))
+            f'ERROR: {self.root / "gone"} does not exist: run oasis setup --apply; no database was created.\n')))
         self.assertFalse(self.state.exists())
         self.assertFalse(self.commands.exists())
 
@@ -539,7 +539,7 @@ test_prefix = 'cc_test_'
                 [pending] = self.staged_files()
                 self.assertEqual((result.returncode, result.stderr), (1, (
                     f'ERROR: Development setup stopped unexpectedly (exit {code}); cc_dev_coffee may exist: '
-                    'odoo19 list-databases shows it.\n')))
+                    'oasis list-databases shows it.\n')))
                 self.assertEqual(result.stdout, (
                     f'Generated passwords: {pending} (mode 0600; rename it to {self.logins_file()} if cc_dev_coffee '
                     'exists): local_admin, planner, manager\n'))
@@ -579,7 +579,7 @@ test_prefix = 'cc_test_'
                 process.communicate()
         [pending] = self.staged_files()
         self.assertEqual((process.returncode, stderr), (130, (
-            'ERROR: Interrupted while creating cc_dev_coffee; it may exist: odoo19 list-databases shows it.\n')))
+            'ERROR: Interrupted while creating cc_dev_coffee; it may exist: oasis list-databases shows it.\n')))
         self.assertEqual(stdout, (
             f'Generated passwords: {pending} (mode 0600; rename it to {self.logins_file()} if cc_dev_coffee exists): '
             'local_admin, planner, manager\n'))

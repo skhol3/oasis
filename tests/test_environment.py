@@ -236,7 +236,7 @@ esac
         # Bootstrap, full check, explicit version report, and dependency audit.
         self.assertEqual(events.count('python odoo-version'), 4)
         # The snapshot goes to the checkout's log directory, no longer to dev/runtime.
-        self.assertTrue((self.root / 'dev/logs/odoo19/bootstrap-before.txt').is_file())
+        self.assertTrue((self.root / 'logs/main/bootstrap-before.txt').is_file())
         self.assertFalse((self.root / 'dev/runtime/bootstrap-before.txt').exists())
 
     def test_apply_with_uv_0_13_gives_every_uv_command_the_legacy_tar_backend(self):
@@ -300,8 +300,9 @@ esac
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, self.expected_apply_output(environment), ''))
         self.assertEqual(self.commands.read_text().splitlines()[0], f'uv venv --python 3.12 {environment}')
-        # Without [tooling].logs: the checkout's dev/logs/odoo19.
-        self.assertTrue((self.root / 'dev/logs/odoo19/bootstrap-before.txt').is_file())
+        # Without [tooling].logs: logs next to the workspace file (v0.17.0), <workspace dir>/logs/main.
+        self.assertTrue((self.root.parent.parent / 'logs/main/bootstrap-before.txt').is_file())
+        self.assertFalse((self.root / 'dev/logs').exists())
         self.assertFalse((self.root / 'dev/runtime').exists())
 
     def test_existing_incomplete_venv_can_preview_and_explicitly_repair(self):
@@ -356,7 +357,7 @@ esac
         self.assertIn('uv pip sync --python ' + str(self.python), log)
         self.assertNotIn('uv venv ', log)
         self.assertNotIn('uv pip sync --dry-run', log)
-        self.assertTrue((self.root / 'dev/logs/odoo19/bootstrap-before.txt').is_file())
+        self.assertTrue((self.root / 'logs/main/bootstrap-before.txt').is_file())
 
     def test_preview_is_default_and_never_syncs(self):
         requirements = self.prepare()

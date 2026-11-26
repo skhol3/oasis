@@ -185,7 +185,7 @@ def main(argv: list[str]) -> int:
     outputs = {'--json': as_json, '--typescript': as_typescript, '--markdown': as_markdown, '--guard': as_guard}
     # Through the entry point (`oasis policy`) the agent contract is its JSON; the other outputs are
     # this repository's generators.
-    entrypoint = os.environ.get('OASIS_ENTRYPOINT') or os.environ.get('ODOO19_ENTRYPOINT')
+    entrypoint = os.environ.get('OASIS_ENTRYPOINT')
     usage = f'Usage: {entrypoint} policy --json' if entrypoint else \
         'Usage: policy.py --json | --typescript | --markdown | --guard'
     if argv in (['--help'], ['-h']):

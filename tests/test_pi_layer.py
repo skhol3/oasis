@@ -40,9 +40,11 @@ class PiLayerTests(unittest.TestCase):
         self.assertIn('customType: "oasis-status"', source)
         for legacy in ('sections.odoo19', '<odoo19>', '"odoo19-status"', 'odoo19Layer'):
             self.assertNotIn(legacy, source)
-        # The aliases stay (S6): /odoo19 and the inactive odoo19_* tools.
-        self.assertIn('pi.registerCommand("odoo19", ', source)
-        self.assertIn('const alias = aliasOf(tool.name);', source)
+        # v0.17.0 S3: `/oasis` is the one command and the oasis_* tools have no aliases.
+        self.assertEqual(re.findall(r'pi\.registerCommand\("([^"]+)"', source), ['oasis'])
+        self.assertNotIn('aliasOf', source)
+        self.assertNotIn('odoo19_', source)
+        self.assertNotIn('odoo19', (ROOT / 'pi/lib/activation.ts').read_text())
 
     def test_agent_overlay_template_lists_only_registered_tools(self):
         overlay = json.loads((ROOT / 'pi/agent-overlays/oasis.json').read_text())
@@ -63,15 +65,14 @@ class PiLayerTests(unittest.TestCase):
         listed = {name for entry in overlay.values() for names in entry.values() for name in names}
         self.assertTrue(listed)
         self.assertLessEqual(listed, registered, 'overlay names a tool the extension does not register')
-        # Active-capable: the layer activates only the names of its activation table, never the
-        # inactive odoo19_* aliases.
+        # Active-capable: every registered tool is in the activation table, which the layer activates.
         activation = (ROOT / 'pi/lib/activation.ts').read_text()
         [table] = re.findall(r'OASIS_TOOLS: readonly string\[\] = \[(.*?)\];', activation, re.S)
         active_capable = set(re.findall(r'"([A-Za-z0-9_]+)"', table))
         self.assertEqual(active_capable, registered)
         self.assertLessEqual(listed, active_capable, 'overlay names a tool the layer never activates')
-        self.assertIn('registerWithAlias(', source)
-        self.assertEqual(len(re.findall(r'\bregisterWithAlias\(\{', source)), len(registered))
+        self.assertNotIn('registerWithAlias', source)
+        self.assertEqual(len(re.findall(r'\bpi\.registerTool\(\{\n    name: "oasis_', source)), len(registered))
 
     def test_action_panel_wiring(self):
         # The panel's decisions are tested with fakes in pi/tests/panel.test.ts (and menu.test.ts); the
@@ -102,7 +103,7 @@ class PiLayerTests(unittest.TestCase):
         # alt+o unless OASIS_MENU_KEY says otherwise, and /oasis menu; no agent tool opens the panel.
         self.assertIn('const shortcut = menuShortcut(process.env.OASIS_MENU_KEY);', flat)
         self.assertIn('menu: (ctx) => menu(ctx),', source)
-        tools = re.findall(r'registerWithAlias\(\{.*?\n  \}\);', source, re.S)
+        tools = re.findall(r'pi\.registerTool\(\{.*?\n  \}\);', source, re.S)
         self.assertTrue(tools)
         self.assertFalse([tool for tool in tools if 'menu(' in tool or 'openPanel' in tool])
         # The overlay is the layer's own component on the public Pi API; the logic has no Pi imports.

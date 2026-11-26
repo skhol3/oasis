@@ -12,8 +12,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'oasis'
-# Entry points sharing one dispatcher: `oasis`, and `odoo19` kept as an alias.
-PROGRAMS = ('oasis', 'odoo19')
+# The one entry point (v0.17.0 S3: the `odoo19` alias is gone).
+PROGRAMS = ('oasis',)
 
 
 def legacy_refusal(profile, program='oasis'):
@@ -52,7 +52,7 @@ class GlobalCliTests(unittest.TestCase):
         self.fake = ('#!/bin/bash\nFAKE_TOOL="$0" exec python3 -c '\
                      "'import json, os, sys; "
                      "open(os.environ[\"FAKE_LOG\"], \"a\").write(json.dumps({"
-                     "\"argv\": sys.argv[1:], \"root\": os.environ.get(\"ODOO19_PROJECT_ROOT\"), "
+                     "\"argv\": sys.argv[1:], \"root\": os.environ.get(\"OASIS_PROJECT_ROOT\"), "
                      "\"stdin\": sys.stdin.read(), \"tool\": os.path.basename(os.environ[\"FAKE_TOOL\"])"
                      "}) + \"\\n\"); print(\"delegated\"); "
                      "print(\"delegated error\", file=sys.stderr); sys.exit(17)' "
@@ -95,32 +95,34 @@ class GlobalCliTests(unittest.TestCase):
         self.assertEqual(listed.removeprefix('Commands: ').split(', '), list(PUBLIC))
         self.assertFalse(self.log.exists())
 
-    def test_both_entry_points_dispatch_identically(self):
-        # Every command, option, exit code and output is the same; help names the invoked program.
+    def test_the_entry_point_under_any_file_name_dispatches_identically_and_names_oasis(self):
+        # v0.17.0 S3: a copy of the entry point under another name (an `odoo19` left from an earlier
+        # version, a link of the user's) runs every command alike, and help and usage name `oasis`.
+        for name in ('odoo19', 'my-oasis'):
+            shutil.copyfile(ROOT / 'oasis', self.bundle / name)
         observed = {}
-        for program in PROGRAMS:
+        for program in ('oasis', 'odoo19', 'my-oasis'):
             with self.subTest(program=program):
                 self.log.unlink(missing_ok=True)
                 help_text = self.invoke('--help', program=program)
                 self.assertEqual((help_text.returncode, help_text.stderr), (0, ''))
-                self.assertTrue(help_text.stdout.startswith(f'usage: {program} [-h] [--project /absolute/project]'),
+                self.assertTrue(help_text.stdout.startswith('usage: oasis [-h] [--project /absolute/project]'),
                                 help_text.stdout)
-                self.assertIn(f'Example: {program} --project /absolute/project doctor --environment --quick',
+                self.assertIn('Example: oasis --project /absolute/project doctor --environment --quick',
                               help_text.stdout)
+                self.assertNotIn(program, help_text.stdout.replace('oasis', ''))
                 usage = self.invoke('--bogus', program=program)
                 self.assertEqual(usage.returncode, 2)
-                self.assertTrue(usage.stderr.startswith(f'usage: {program} '), usage.stderr)
+                self.assertTrue(usage.stderr.startswith('usage: oasis '), usage.stderr)
                 runs = [self.invoke('--project', str(self.project), 'odoo-shell', '--', 'two words',
                                     input='print(42)\n', program=program),
                         self.invoke('--project', str(self.project), 'unknown', program=program),
                         self.invoke('status', program=program)]
-                observed[program] = (
-                    help_text.stdout.replace(f'usage: {program} ', 'usage: PROG ', 1)
-                    .replace(f'Example: {program} ', 'Example: PROG ').replace(f'&& {program} ', '&& PROG '),
-                    usage.stderr.replace(program, 'PROG'),
-                    [(run.returncode, run.stdout, run.stderr) for run in runs],
-                    json.loads(self.log.read_text()))
-        self.assertEqual(observed['oasis'], observed['odoo19'])
+                observed[program] = (help_text.stdout, usage.stderr,
+                                     [(run.returncode, run.stdout, run.stderr) for run in runs],
+                                     json.loads(self.log.read_text()))
+        self.assertEqual(observed['odoo19'], observed['oasis'])
+        self.assertEqual(observed['my-oasis'], observed['oasis'])
         # Without --project the current directory (here outside git, with no workspace file) is the project.
         self.assertEqual(observed['oasis'][2], [
             (17, 'delegated\n', 'delegated error\n'),
@@ -146,8 +148,9 @@ class GlobalCliTests(unittest.TestCase):
                 self.assertEqual(json.loads(self.log.read_text()), {
                     'argv': ['--help'], 'root': str(self.project), 'stdin': '', 'tool': name})
 
-    def test_entry_point_sets_both_variable_names(self):
-        # OASIS_* and the legacy ODOO19_* carry the same values; neither tools directory is inherited.
+    def test_entry_point_sets_only_the_oasis_variable_names(self):
+        # v0.17.0 S3: OASIS_PROJECT_ROOT and OASIS_ENTRYPOINT are set, OASIS_TOOLS_DIR is not inherited; the
+        # legacy ODOO19_* the caller set pass through unchanged, since no tool reads them.
         names = [f'{prefix}_{name}' for name in ('PROJECT_ROOT', 'ENTRYPOINT', 'TOOLS_DIR')
                  for prefix in ('OASIS', 'ODOO19')]
         (self.bundle / 'tools/status').write_text(
@@ -161,9 +164,9 @@ class GlobalCliTests(unittest.TestCase):
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
                 entrypoint = str((self.bundle / program).resolve())
                 self.assertEqual(json.loads(self.log.read_text()), {
-                    'OASIS_PROJECT_ROOT': str(self.project), 'ODOO19_PROJECT_ROOT': str(self.project),
-                    'OASIS_ENTRYPOINT': entrypoint, 'ODOO19_ENTRYPOINT': entrypoint,
-                    'OASIS_TOOLS_DIR': None, 'ODOO19_TOOLS_DIR': None})
+                    'OASIS_PROJECT_ROOT': str(self.project), 'ODOO19_PROJECT_ROOT': str(self.temp / 'wrong'),
+                    'OASIS_ENTRYPOINT': entrypoint, 'ODOO19_ENTRYPOINT': None,
+                    'OASIS_TOOLS_DIR': None, 'ODOO19_TOOLS_DIR': str(self.temp / 'wrong')})
 
     def test_existing_start_option_passes_through(self):
         result = self.invoke('--project', str(self.project), 'start', '--stop-after-init')
@@ -330,9 +333,9 @@ class GlobalCliTests(unittest.TestCase):
         # The setup and tool-manager sections moved from the README to their topic files.
         setup = (ROOT / 'docs/project-setup.md').read_text()
         troubleshooting = (ROOT / 'docs/troubleshooting.md').read_text()
-        environment = (ROOT / 'odoo19-environment/SKILL.md').read_text()
-        lifecycle = (ROOT / 'odoo19-module-lifecycle/SKILL.md').read_text()
-        example = ('~/.agents/skills/odoo19/oasis --project /absolute/project '
+        environment = (ROOT / 'odoo-environment/SKILL.md').read_text()
+        lifecycle = (ROOT / 'odoo-module-lifecycle/SKILL.md').read_text()
+        example = ('~/.agents/skills/oasis/oasis --project /absolute/project '
                    'doctor --environment --quick')
         self.assertIn(example, setup)
         self.assertIn(example, environment)

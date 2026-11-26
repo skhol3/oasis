@@ -1,12 +1,25 @@
 #!/usr/bin/env python3
+"""Compare the installed distributions with a lock (run with the environment's Python, 3.8 and later).
+
+Distribution names are normalized on both sides (PEP 503, v0.17.0 S1): lowercase, runs of `-`, `_` and `.`
+become `-`. The installed names come from each distribution's metadata, not from importlib.metadata's own
+name lookup, which before Python 3.10 does not find `zope.event-5.0.dist-info` for `zope-event`. A dist-info or
+egg-info without usable metadata (none, no name or version, or not readable as text) is left out: a locked package
+it would be is then reported missing.
+
+Exit status: 0 when the environment matches the lock, DRIFT_EXIT (3) when it does not (missing packages or other
+versions), 2 for a usage error or a lock that cannot be read; an uncaught exception exits 1, so a crash is never
+taken for a drift (tools/environment_checks.sh reports only DRIFT_EXIT of an adopted environment as a WARN).
+"""
 from __future__ import annotations
 
 import re
 import sys
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import distributions
 from pathlib import Path
 
 NAME_PATTERN = re.compile(r"^([A-Za-z0-9_.-]+)==([^\s;]+)$")
+DRIFT_EXIT = 3
 
 
 class LockfileError(ValueError):
@@ -37,6 +50,24 @@ def locked_packages(path: Path) -> dict[str, tuple[str, str]]:
     return packages
 
 
+def installed_versions() -> dict[str, str]:
+    """{normalized name: version} of every installed distribution; the first one on sys.path wins, as
+    importlib.metadata.version would find it. A distribution without usable metadata is left out: none (some
+    Pythons give None, others raise TypeError reading it), no name or version, or metadata that cannot be read."""
+    found: dict[str, str] = {}
+    for dist in distributions():
+        try:
+            metadata = dist.metadata
+            # get(), not [], as Distribution.version reads it: a missing key is None, without the
+            # DeprecationWarning of Python 3.12 and later.
+            name, version = (metadata.get('Name'), metadata.get('Version')) if metadata is not None else (None, None)
+        except (TypeError, ValueError, KeyError, OSError):
+            continue
+        if name and version:
+            found.setdefault(normalize(name), version)
+    return found
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(f"Usage: {Path(sys.argv[0]).name} <lockfile>", file=sys.stderr)
@@ -52,10 +83,10 @@ def main() -> int:
     except LockfileError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
-    for _normalized, (name, expected) in sorted(packages.items()):
-        try:
-            actual = version(name)
-        except PackageNotFoundError:
+    installed = installed_versions()
+    for normalized, (name, expected) in sorted(packages.items()):
+        actual = installed.get(normalized)
+        if actual is None:
             missing.append(f"{name}=={expected}")
             continue
         if actual != expected:
@@ -65,7 +96,7 @@ def main() -> int:
     for item in mismatched: print(f"version_mismatch={item}")
     print(f"missing_packages={len(missing)}")
     print(f"version_mismatches={len(mismatched)}")
-    return 1 if missing or mismatched else 0
+    return DRIFT_EXIT if missing or mismatched else 0
 
 
 if __name__ == "__main__":

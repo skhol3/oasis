@@ -12,7 +12,7 @@ if [[ ${1:-} == --help ]]; then
   printf 'use the checkout namespace and may not end in _r<6 hex> (reserved for disposable runs).\n'
   printf 'A test database with an _update sibling is limited to 56 bytes.\n'
   printf 'Run shared targets sequentially. --compact retains per-phase stdout/stderr under\n'
-  printf 'dev/logs/odoo19/; with [tooling].logs, under <logs>/<slug or main>/.\n'
+  printf '<logs>/<slug or main>/: [tooling].logs, else logs next to the workspace file.\n'
   printf 'The tests phase runs on its own free --http-port, so it never collides with a running server.\n'
   exit 0
 fi

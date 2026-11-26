@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 export OASIS_PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-export ODOO19_PROJECT_ROOT="$OASIS_PROJECT_ROOT"
-export OASIS_ENTRYPOINT="$0" ODOO19_ENTRYPOINT="$0"
-tools=${OASIS_TOOLS_DIR:-${ODOO19_TOOLS_DIR:-$HOME/.agents/skills/odoo19/tools}}
+export OASIS_ENTRYPOINT="$0"
+tools=${OASIS_TOOLS_DIR:-$HOME/.agents/skills/oasis/tools}
 if [[ ! -f "$tools/list-databases" ]]; then printf 'oasis tools are not installed: %s\n' "$tools/list-databases" >&2; exit 2; fi
 exec bash "$tools/list-databases" "$@"

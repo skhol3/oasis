@@ -12,7 +12,7 @@ Usage:
                                              stderr appended to <log> (0600), record it, and
                                              print pid=<pid> port=<port> log=<log> once it
                                              listens on <interface> (see below)
-  runtime_state.py stop <project_root> [--force] [--program oasis|odoo19]
+  runtime_state.py stop <project_root> [--force] [--program oasis]
                                              SIGTERM this checkout's server, wait up to 20 s;
                                              with --force, then SIGKILL its session (see below);
                                              the program the timeout message names (oasis)
@@ -1056,7 +1056,7 @@ def main(argv):
             return 0
         if command == 'stop' and args:
             rest, program = args[1:], 'oasis'
-            if len(rest) >= 2 and rest[-2] == '--program' and rest[-1] in ('oasis', 'odoo19'):
+            if len(rest) >= 2 and rest[-2] == '--program' and rest[-1] == 'oasis':
                 rest, program = rest[:-2], rest[-1]
             if rest in ([], ['--force']):
                 return stop(args[0], force=bool(rest), program=program)

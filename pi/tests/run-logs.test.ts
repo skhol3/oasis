@@ -8,9 +8,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { formatBackgroundRun, isRunLog, runLogLocations } from "../lib/tools.ts";
 
-// tools/config.py values of a checkout with [tooling].logs, and of a linked worktree without it.
+// tools/config.py values of a main checkout and of a linked worktree. LOGS_DIR is [tooling].logs, else (v0.17.0)
+// the logs directory next to the workspace file: tools/config.py always sets it.
 const WITH_LOGS = { PROJECT_ROOT: "/p/shop", LOGS_DIR: "/p/logs", CHECKOUT_KIND: "main", CHECKOUT_MAIN_ROOT: "/p/shop" };
-const LINKED = { PROJECT_ROOT: "/p/shop-wt", LOGS_DIR: "", CHECKOUT_KIND: "linked", CHECKOUT_MAIN_ROOT: "/p/shop" };
+const LINKED = { PROJECT_ROOT: "/p/shop-wt", LOGS_DIR: "/p/logs", CHECKOUT_KIND: "linked", CHECKOUT_MAIN_ROOT: "/p/shop" };
+// Without LOGS_DIR (no tools/config.py of 0.17.0 gives that) no path is a run log.
+const WITHOUT_LOGS = { ...LINKED, LOGS_DIR: "" };
 // Lexical cases: every path resolves to itself.
 const SAME = (path: string) => path;
 const OPTIONS = { maxFailures: 10, traceLines: 6 };
@@ -25,22 +28,10 @@ function compactOutput(stdoutLog: string, stderrLog: string): string {
 const REFUSED = /test-module --compact/;
 
 test("runLogLocations follows the compact log rules of tools/compact.sh", () => {
-  // [tooling].logs: only that directory, whatever the checkout.
-  assert.deepEqual(runLogLocations(WITH_LOGS), { logs: "/p/logs", devLogs: [], devContainers: [] });
-  assert.deepEqual(runLogLocations({ ...LINKED, LOGS_DIR: "/p/logs/" }), { logs: "/p/logs", devLogs: [], devContainers: [] });
-  // Without it: the checkout's dev/logs/odoo19, which must resolve inside the checkout, and for a
-  // linked worktree also the main checkout's dev/logs/odoo19, where its own may resolve.
-  assert.deepEqual(runLogLocations({ ...WITH_LOGS, LOGS_DIR: "" }),
-    { devLogs: ["/p/shop/dev/logs/odoo19"], devContainers: ["/p/shop"] });
-  assert.deepEqual(runLogLocations(LINKED), {
-    devLogs: ["/p/shop-wt/dev/logs/odoo19", "/p/shop/dev/logs/odoo19"],
-    devContainers: ["/p/shop-wt", "/p/shop/dev/logs/odoo19"],
-  });
-  // A linked worktree whose main checkout is unknown (git failed, profile slug) has only its own.
-  assert.deepEqual(runLogLocations({ ...LINKED, CHECKOUT_MAIN_ROOT: "" }),
-    { devLogs: ["/p/shop-wt/dev/logs/odoo19"], devContainers: ["/p/shop-wt"] });
-  assert.deepEqual(runLogLocations({ ...LINKED, CHECKOUT_KIND: "none", CHECKOUT_MAIN_ROOT: "" }),
-    { devLogs: ["/p/shop-wt/dev/logs/odoo19"], devContainers: ["/p/shop-wt"] });
+  // The logs directory only, whatever the checkout; no dev/logs/odoo19 since 0.17.0.
+  assert.deepEqual(runLogLocations(WITH_LOGS), { logs: "/p/logs" });
+  assert.deepEqual(runLogLocations({ ...LINKED, LOGS_DIR: "/p/logs/" }), { logs: "/p/logs" });
+  assert.deepEqual(runLogLocations(WITHOUT_LOGS), {});
 });
 
 test("isRunLog accepts the run logs of each layout inside the project's log locations", () => {
@@ -53,11 +44,6 @@ test("isRunLog accepts the run logs of each layout inside the project's log loca
     "/p/logs/odoo19/main/run-1/stdout.log",
     "/p/logs/odoo19/shop_feature/run-x9/stderr.log",
   ]) assert.equal(isRunLog(path, withLogs, SAME), true, path);
-  const linked = runLogLocations(LINKED);
-  for (const path of [
-    "/p/shop-wt/dev/logs/odoo19/run-ab_1/stdout.log",
-    "/p/shop/dev/logs/odoo19/run-ab_1/stderr.log",
-  ]) assert.equal(isRunLog(path, linked, SAME), true, path);
 });
 
 test("isRunLog rejects paths outside the project's log locations, even with a run log's shape", () => {
@@ -67,7 +53,7 @@ test("isRunLog rejects paths outside the project's log locations, even with a ru
     "/tmp/odoo19/main/run-1/stdout.log",
     "/p/logs-other/main/run-1/stdout.log",
     "/p/logsmain/run-1/stdout.log",
-    // dev/logs/odoo19 is not read when [tooling].logs is set.
+    // dev/logs/odoo19 is not read.
     "/p/shop/dev/logs/odoo19/run-1/stdout.log",
     "/p/logs/run-1/stdout.log",
     "/p/logs/a/b/run-1/stdout.log",
@@ -79,17 +65,15 @@ test("isRunLog rejects paths outside the project's log locations, even with a ru
     "p/logs/main/run-1/stdout.log",
     "/etc/passwd",
   ]) assert.equal(isRunLog(path, withLogs, SAME), false, path);
-  const linked = runLogLocations(LINKED);
-  for (const path of [
-    "/tmp/x/dev/logs/odoo19/run-1/stdout.log",
-    "/p/other/dev/logs/odoo19/run-1/stdout.log",
-    "/p/shop-wt/dev/logs/odoo19/main/run-1/stdout.log",
-    "/p/shop-wt/dev/logs/odoo19/run-1/../../../../.env",
-    "/p/logs/main/run-1/stdout.log",
-  ]) assert.equal(isRunLog(path, linked, SAME), false, path);
-  // The main checkout's dev/logs only counts for a linked worktree.
-  assert.equal(isRunLog("/p/shop/dev/logs/odoo19/run-1/stdout.log",
-    runLogLocations({ ...WITH_LOGS, PROJECT_ROOT: "/p/other", LOGS_DIR: "" }), SAME), false);
+  // The dev/logs/odoo19 of the checkout or of the main checkout (the default before 0.17.0) is no log location,
+  // and without LOGS_DIR nothing is.
+  for (const config of [LINKED, WITHOUT_LOGS]) {
+    for (const path of [
+      "/p/shop-wt/dev/logs/odoo19/run-ab_1/stdout.log",
+      "/p/shop/dev/logs/odoo19/run-ab_1/stderr.log",
+      ...(config === WITHOUT_LOGS ? ["/p/logs/main/run-1/stdout.log"] : []),
+    ]) assert.equal(isRunLog(path, runLogLocations(config), SAME), false, path);
+  }
 });
 
 test("isRunLog refuses a path that cannot be resolved", () => {
@@ -104,7 +88,7 @@ test("formatBackgroundRun summarizes a run of each layout", () => {
   for (const [config, stdoutLog, stderrLog] of [
     [WITH_LOGS, "/p/logs/shop_feature/run-1/stdout.log", "/p/logs/shop_feature/run-1/stderr.log"],
     [WITH_LOGS, "/p/logs/odoo19/main/run-1/stdout.log", "/p/logs/odoo19/main/run-1/stderr.log"],
-    [LINKED, "/p/shop-wt/dev/logs/odoo19/run-1/stdout.log", "/p/shop-wt/dev/logs/odoo19/run-1/stderr.log"],
+    [LINKED, "/p/logs/shop_wt/run-1/stdout.log", "/p/logs/shop_wt/run-1/stderr.log"],
   ] as const) {
     const logs: Record<string, string> = { [stdoutLog]: RESULT, [stderrLog]: "" };
     assert.equal(
@@ -180,35 +164,23 @@ test("formatBackgroundRun refuses a symlinked run directory or log file that poi
   assert.throws(() => formatBackgroundRun("coffee", missing, config, files, OPTIONS), REFUSED);
 });
 
-test("formatBackgroundRun follows a linked worktree's dev/logs link to the main checkout's", (t) => {
+test("formatBackgroundRun refuses the dev/logs/odoo19 runs of a checkout, linked or not (before 0.17.0)", (t) => {
   const root = scratch(t);
   const main = join(root, "projects/shop");
   const linked = join(root, "projects/shop-wt");
   writeLog(join(main, "dev/logs/odoo19/run-1/stdout.log"), RESULT);
   writeLog(join(main, "dev/logs/odoo19/run-1/stderr.log"), "");
   mkdirSync(join(linked, "dev"), { recursive: true });
-  // compact.sh prints the worktree's unresolved <root>/dev/logs/odoo19/run-<id>/ paths.
   symlinkSync(join(main, "dev/logs"), join(linked, "dev/logs"));
-  const output = compactOutput(join(linked, "dev/logs/odoo19/run-1/stdout.log"),
-    join(linked, "dev/logs/odoo19/run-1/stderr.log"));
-  const config = { ...LINKED, PROJECT_ROOT: linked, CHECKOUT_MAIN_ROOT: main };
-  assert.match(formatBackgroundRun("coffee", output, config, DISK, OPTIONS), /^result: 0 failed, 0 error\(s\) of 2 tests$/m);
-  // The same link in a main checkout (not linked) escapes the checkout: compact.sh refuses it.
-  const other = join(root, "projects/other");
-  mkdirSync(join(other, "dev"), { recursive: true });
-  symlinkSync(join(main, "dev/logs"), join(other, "dev/logs"));
-  const otherOutput = compactOutput(join(other, "dev/logs/odoo19/run-1/stdout.log"),
-    join(other, "dev/logs/odoo19/run-1/stderr.log"));
-  const otherConfig = { ...WITH_LOGS, PROJECT_ROOT: other, LOGS_DIR: "", CHECKOUT_MAIN_ROOT: other };
-  assert.throws(() => formatBackgroundRun("coffee", otherOutput, otherConfig, DISK, OPTIONS), REFUSED);
-});
-
-test("formatBackgroundRun reads a real dev/logs directory of the main checkout", (t) => {
-  const root = scratch(t);
-  const main = join(root, "projects/shop");
-  writeLog(join(main, "dev/logs/odoo19/run-1/stdout.log"), RESULT);
-  writeLog(join(main, "dev/logs/odoo19/run-1/stderr.log"), "");
-  const output = compactOutput(join(main, "dev/logs/odoo19/run-1/stdout.log"), join(main, "dev/logs/odoo19/run-1/stderr.log"));
-  const config = { ...WITH_LOGS, PROJECT_ROOT: main, LOGS_DIR: "", CHECKOUT_MAIN_ROOT: main };
-  assert.match(formatBackgroundRun("coffee", output, config, DISK, OPTIONS), /^result: 0 failed, 0 error\(s\) of 2 tests$/m);
+  const files = { realpath: realpathSync, readLog: (): string => { throw new Error("must not read"); } };
+  const logs = join(root, "projects/logs");
+  for (const [checkout, config] of [
+    [linked, { ...LINKED, PROJECT_ROOT: linked, CHECKOUT_MAIN_ROOT: main, LOGS_DIR: logs }],
+    [main, { ...WITH_LOGS, PROJECT_ROOT: main, CHECKOUT_MAIN_ROOT: main, LOGS_DIR: logs }],
+    [main, { ...WITH_LOGS, PROJECT_ROOT: main, CHECKOUT_MAIN_ROOT: main, LOGS_DIR: "" }],
+  ] as const) {
+    const output = compactOutput(join(checkout, "dev/logs/odoo19/run-1/stdout.log"),
+      join(checkout, "dev/logs/odoo19/run-1/stderr.log"));
+    assert.throws(() => formatBackgroundRun("coffee", output, config, files, OPTIONS), REFUSED, checkout);
+  }
 });

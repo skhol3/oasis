@@ -10,7 +10,7 @@ import {
   overlayTarget, runSetup, setupCommand,
 } from "../lib/setup.ts";
 
-const TEMPLATE_BODY = '{\n  "gentle-ai-worker": { "add": ["odoo19_test_module"] }\n}\n';
+const TEMPLATE_BODY = '{\n  "gentle-ai-worker": { "add": ["oasis_test_module"] }\n}\n';
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), "oasis-setup-"));
@@ -53,7 +53,7 @@ test("overlayState: missing, outdated, current, formatting-only difference and i
     assert.equal(overlayState(template, target), "outdated");
     writeFileSync(target, TEMPLATE_BODY);
     assert.equal(overlayState(template, target), "current");
-    writeFileSync(target, '{"gentle-ai-worker":{"add":["odoo19_test_module"]}}');
+    writeFileSync(target, '{"gentle-ai-worker":{"add":["oasis_test_module"]}}');
     assert.equal(overlayState(template, target), "current");
     writeFileSync(target, "{not json");
     assert.equal(overlayState(template, target), "outdated");
@@ -92,7 +92,7 @@ test("installOverlay leaves a current target's bytes and mtime unchanged", () =>
     const overlays = join(dir, "cfg", "agent-overlays.d");
     mkdirSync(overlays, { recursive: true });
     const target = join(overlays, "oasis.json");
-    const formatted = '{"gentle-ai-worker":{"add":["odoo19_test_module"]}}';
+    const formatted = '{"gentle-ai-worker":{"add":["oasis_test_module"]}}';
     writeFileSync(target, formatted);
     const past = new Date("2020-01-01T00:00:00Z");
     utimesSync(target, past, past);

@@ -113,17 +113,13 @@ export function formatUpdateRun(
 }
 
 /**
- * Where a checkout's compact runs write their logs (the rules of tools/compact.sh), from its
- * tools/config.py values. `logs` is [tooling].logs (LOGS_DIR, already resolved) when set.
- * Otherwise `devLogs` holds the checkout's dev/logs/odoo19 and, for a linked worktree, the main
- * checkout's; a dev logs directory counts only when its real path lies in one of
- * `devContainers`: the checkout, or (a linked worktree whose dev/logs links there) the main
- * checkout's dev/logs/odoo19.
+ * Where a checkout's compact runs write their logs (the rules of tools/log_dirs.py), from its
+ * tools/config.py values: `logs` is LOGS_DIR, already resolved: [tooling].logs, else (v0.17.0) logs next
+ * to the workspace file. Without it no path is a run log. Before 0.17.0 a workspace without
+ * [tooling].logs used each checkout's dev/logs/odoo19, which is no log location any more.
  */
 export interface RunLogLocations {
   logs?: string;
-  devLogs: string[];
-  devContainers: string[];
 }
 
 /** The real path of an existing path (node:fs realpathSync); throws when it cannot resolve. */
@@ -140,19 +136,9 @@ function withoutTrailingSlash(path: string): string {
 }
 
 export function runLogLocations(config: Record<string, string>): RunLogLocations {
-  if (config.LOGS_DIR) return { logs: withoutTrailingSlash(config.LOGS_DIR), devLogs: [], devContainers: [] };
-  const root = withoutTrailingSlash(config.PROJECT_ROOT ?? "");
-  const devLogs = [`${root}/dev/logs/odoo19`];
-  const devContainers = [root];
-  if (config.CHECKOUT_KIND === "linked" && config.CHECKOUT_MAIN_ROOT) {
-    const main = `${withoutTrailingSlash(config.CHECKOUT_MAIN_ROOT)}/dev/logs/odoo19`;
-    devLogs.push(main);
-    devContainers.push(main);
-  }
-  return { devLogs, devContainers };
+  return config.LOGS_DIR ? { logs: withoutTrailingSlash(config.LOGS_DIR) } : {};
 }
 
-const RUN_FILE = /^run-[A-Za-z0-9_]+\/(?:stdout|stderr)\.log$/;
 // <logs>/<checkout>/run-<id>/ (since 0.8.0); <checkout> is `main` or a checkout slug.
 const CHECKOUT_RUN = /^[a-z0-9][a-z0-9_]{0,19}\/run-[A-Za-z0-9_]+\/(?:stdout|stderr)\.log$/;
 // <logs>/odoo19/<checkout>/run-<id>/ (before 0.8.0).
@@ -160,10 +146,6 @@ const LEGACY_CHECKOUT_RUN = /^odoo19\/[A-Za-z0-9_]+\/run-[A-Za-z0-9_]+\/(?:stdou
 
 function below(path: string, base: string): string | null {
   return base.startsWith("/") && path.startsWith(`${base}/`) ? path.slice(base.length + 1) : null;
-}
-
-function within(path: string, base: string): boolean {
-  return path === base || below(path, base) !== null;
 }
 
 function lexical(path: string): boolean {
@@ -179,39 +161,25 @@ function resolve(realpath: RealPath, path: string): string | null {
   }
 }
 
-/** Whether `path` has the shape of a run log in these (lexical or real) locations. */
-function runLogShape(path: string, logs: string | undefined, devLogs: string[]): boolean {
-  if (!lexical(path)) return false;
-  if (logs) {
-    const rest = below(path, logs);
-    return rest !== null && (CHECKOUT_RUN.test(rest) || LEGACY_CHECKOUT_RUN.test(rest));
-  }
-  return devLogs.some((base) => {
-    const rest = below(path, base);
-    return rest !== null && RUN_FILE.test(rest);
-  });
+/** Whether `path` has the shape of a run log in this (lexical or real) logs directory. */
+function runLogShape(path: string, logs: string | undefined): boolean {
+  if (!logs || !lexical(path)) return false;
+  const rest = below(path, logs);
+  return rest !== null && (CHECKOUT_RUN.test(rest) || LEGACY_CHECKOUT_RUN.test(rest));
 }
 
 /**
  * The real path of a log a compact run of this checkout writes, or null: stdout.log or stderr.log
- * in <logs>/<checkout>/run-<id>/ or, from runs before 0.8.0, <logs>/odoo19/<checkout>/run-<id>/
- * when [tooling].logs is set; otherwise in <dev logs>/run-<id>/ of one of `devLogs`. The named
- * path must have that shape, and so must its real path inside the real location, so a symlinked
- * run directory or log file cannot lead elsewhere. A path that cannot be resolved is refused.
+ * in <logs>/<checkout>/run-<id>/ or, from runs before 0.8.0, <logs>/odoo19/<checkout>/run-<id>/.
+ * The named path must have that shape, and so must its real path inside the real logs directory, so
+ * a symlinked run directory or log file cannot lead elsewhere. A path that cannot be resolved is refused.
  */
 export function runLogRealPath(path: string, locations: RunLogLocations, realpath: RealPath): string | null {
-  if (!runLogShape(path, locations.logs, locations.devLogs)) return null;
+  if (!runLogShape(path, locations.logs)) return null;
   const real = resolve(realpath, path);
-  if (real === null) return null;
-  if (locations.logs) {
-    const logs = resolve(realpath, locations.logs);
-    return logs !== null && runLogShape(real, logs, []) ? real : null;
-  }
-  const containers = locations.devContainers.map((path) => resolve(realpath, path))
-    .filter((path): path is string => path !== null);
-  const devLogs = locations.devLogs.map((path) => resolve(realpath, path))
-    .filter((path): path is string => path !== null && containers.some((container) => within(path, container)));
-  return runLogShape(real, undefined, devLogs) ? real : null;
+  if (real === null || !locations.logs) return null;
+  const logs = resolve(realpath, locations.logs);
+  return logs !== null && runLogShape(real, logs) ? real : null;
 }
 
 export function isRunLog(path: string, locations: RunLogLocations, realpath: RealPath): boolean {

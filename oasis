@@ -2,9 +2,8 @@
 """Entry point for the installed oasis tool bundle.
 
 The project is `--project <dir>`, else the git top level of the current directory (the current
-directory itself outside git). `oasis` is the entry point; `odoo19` is a compatibility alias that
-runs this same file, so every command, option, exit code and output is identical. Help and usage
-name the invoked program.
+directory itself outside git). `oasis` is the one entry point: help, usage and every message name
+`oasis`.
 """
 import argparse
 import importlib.util
@@ -19,11 +18,7 @@ COMMANDS = (
     'recreate-database-volume', 'restart', 'setup', 'start', 'start-database', 'status', 'stop', 'test-module',
     'trash', 'update-module', 'verify-module', 'view-info', 'worktree-init', 'xmlid-info',
 )
-PROGRAMS = ('oasis', 'odoo19')
-# The invoked file. The odoo19 alias runs this file with runpy.run_path(..., init_globals=
-# {'ALIAS_PATH': <its own path>}), because runpy rewrites argv[0] to this file; help, usage and
-# OASIS_ENTRYPOINT then name the program the user actually ran.
-INVOKED = Path(globals().get('ALIAS_PATH') or __file__)
+PROGRAM = 'oasis'
 
 
 # Commands that run in a checkout that still has the legacy profile: migrate converts it, doctor
@@ -50,11 +45,6 @@ def configuration_reader(tools: Path):
     return config
 
 
-def program_name() -> str:
-    """The invoked entry point (`odoo19` through its alias), else `oasis`."""
-    return INVOKED.name if INVOKED.name in PROGRAMS else 'oasis'
-
-
 def current_project(config) -> tuple[Path | None, str]:
     """The project without --project: the git top level of the current directory, or the current
     directory outside git (no `.git` at or above it). When git fails inside a repository the
@@ -76,7 +66,7 @@ def current_project(config) -> tuple[Path | None, str]:
 
 
 def main() -> int:
-    prog = program_name()
+    prog = PROGRAM
     parser = argparse.ArgumentParser(
         prog=prog,
         description=('Run an installed oasis tool for a project: --project, else the checkout of the '
@@ -134,12 +124,10 @@ def main() -> int:
         print(f'oasis tools are not installed: {tool}', file=sys.stderr)
         return 2
     env = os.environ.copy()
-    # Both names of each variable, with the same value: the tools read OASIS_* first and the
-    # legacy ODOO19_* when it is unset (tools/oasis_env.sh, tools/config.py variable()).
-    for prefix in ('OASIS', 'ODOO19'):
-        env[f'{prefix}_PROJECT_ROOT'] = str(root)
-        env[f'{prefix}_ENTRYPOINT'] = str(INVOKED.resolve())
-        env.pop(f'{prefix}_TOOLS_DIR', None)
+    # The tools read only the OASIS_* names (tools/oasis_env.sh, tools/config.py variable()).
+    env['OASIS_PROJECT_ROOT'] = str(root)
+    env['OASIS_ENTRYPOINT'] = str(Path(__file__).resolve())
+    env.pop('OASIS_TOOLS_DIR', None)
     os.execve('/bin/bash', ['bash', str(tool), *arguments], env)
     return 0  # pragma: no cover - execve replaces this process
 

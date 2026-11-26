@@ -86,7 +86,7 @@ class PolicyTableTests(unittest.TestCase):
     def test_oasis_policy_json_through_both_entry_points(self):
         env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'GIT_CEILING_DIRECTORIES': tempfile.gettempdir()}
         with tempfile.TemporaryDirectory() as scratch:
-            for program in ('oasis', 'odoo19'):
+            for program in ('oasis',):
                 with self.subTest(program=program):
                     result = subprocess.run([sys.executable, '-B', str(ROOT / program), '--project', scratch,
                                              'policy', '--json'], capture_output=True, text=True, env=env, timeout=30)
@@ -122,8 +122,8 @@ class PolicyTableTests(unittest.TestCase):
         self.assertIn(policy.as_guard(), guard, 'docs/bash-guard.md: python3 -B tools/policy.py --guard')
 
     def test_skills_follow_the_table_for_gc_apply(self):
-        for path in ('odoo19-environment/references/project-contract.md', 'odoo19-testing/references/test-targets.md',
-                     'odoo19-module-lifecycle/SKILL.md'):
+        for path in ('odoo-environment/references/project-contract.md', 'odoo-testing/references/test-targets.md',
+                     'odoo-module-lifecycle/SKILL.md'):
             text = (ROOT / path).read_text(encoding='utf-8')
             for phrase in ('only the user runs `gc --apply`', 'user-run `gc --apply`'):
                 self.assertNotIn(phrase, text, path)

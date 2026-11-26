@@ -771,7 +771,7 @@ class ServerLifecycleTests(unittest.TestCase):
         shutil.copytree(lifecycle.STAGE / 'tools', tools, ignore=shutil.ignore_patterns('__pycache__'),
                         dirs_exist_ok=True)
         (tools / 'runtime_state.py').write_text(source)
-        self.env['ODOO19_TOOLS_DIR'] = str(tools)
+        self.env['OASIS_TOOLS_DIR'] = str(tools)
 
     def test_status_ignores_stderr_of_a_successful_state_read(self):
         for stdout, expected in (('pid=4242 port=8070', 'server: running pid 4242 port 8070\n'),

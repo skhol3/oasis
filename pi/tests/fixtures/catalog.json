@@ -2,7 +2,7 @@
   "catalog_version": 1,
   "project": "/work/a project",
   "entrypoint": "/opt/oasis/oasis",
-  "server_log": "/work/a project/dev/logs/odoo19/server.log",
+  "server_log": "/work/a project/logs/main/server.log",
   "sources": {
     "modules": {
       "choices": [
@@ -259,7 +259,7 @@
         "tail",
         "-n",
         "200",
-        "/work/a project/dev/logs/odoo19/server.log"
+        "/work/a project/logs/main/server.log"
       ],
       "inputs": [],
       "destructive": false,
@@ -280,7 +280,7 @@
         "-n",
         "200",
         "-f",
-        "/work/a project/dev/logs/odoo19/server.log"
+        "/work/a project/logs/main/server.log"
       ],
       "inputs": [],
       "destructive": false,

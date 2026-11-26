@@ -83,7 +83,7 @@ class WorkspaceVersion2Tests(unittest.TestCase):
         self.workspace = self.project / 'oasis-workspace.toml'
         self.workspace.write_text(WORKSPACE)
         self.env = {key: value for key, value in os.environ.items()
-                    if not key.startswith(('GIT_', 'OASIS_', 'ODOO19_'))}
+                    if not key.startswith(('GIT_', 'OASIS_'))}
         self.env.update({'GIT_CEILING_DIRECTORIES': str(self.scratch), 'PYTHONDONTWRITEBYTECODE': '1',
                          'XDG_CONFIG_HOME': str(self.scratch / 'xdg'), 'XDG_RUNTIME_DIR': str(self.scratch)})
         # The in-process readers see the same environment as the subprocesses.
@@ -183,6 +183,15 @@ class WorkspaceVersion2Tests(unittest.TestCase):
         result = self.reader('--origins', str(empty))
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, origins + 'ODOO_VERSION_FROM=workspace\n', ''))
+
+    def test_without_logs_each_series_logs_next_to_the_workspace_file_in_a_folder_of_its_own(self):
+        # v0.17.0: no logs key gives logs/<x.y> next to oasis-workspace.toml, as setup writes it for each series
+        # (two series never share a server.log); no dev/logs/odoo19.
+        self.workspace.write_text(WORKSPACE.replace("logs = 'logs/{series}'\n", ''))
+        shop = self.checkout('shop', ('shop_sale', '19.0.1.0.0'))
+        self.assertEqual(self.output(shop), self.shell(self.expected(shop, '19.0')))
+        shop15 = self.checkout('shop15', ('cafe_sale', '15.0.1.0.0'))
+        self.assertEqual(self.config.load(shop15)['LOGS_DIR'], str(self.project / 'logs/15.0'))
 
     def test_a_section_of_the_default_series_overrides_only_what_it_sets(self):
         self.workspace.write_text(WITHOUT_15 + "[series.\"19.0\"]\nconfig = 'config/main.conf'\n"

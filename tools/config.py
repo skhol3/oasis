@@ -31,12 +31,12 @@ import tomllib
 
 
 def variable(name: str) -> str:
-    """OASIS_<name>, else the legacy ODOO19_<name> when that is unset or empty, else ''.
+    """OASIS_<name>, else '' (since 0.17.0 the legacy ODOO19_<name> is not read).
 
     For the variables a user, a project wrapper or a test may set (PROJECT_ROOT, ENTRYPOINT,
     TOOLS_DIR, COMPOSE_LOCK_TIMEOUT); tools/oasis_env.sh oasis_variable in the shell tools.
     """
-    return os.environ.get(f'OASIS_{name}') or os.environ.get(f'ODOO19_{name}') or ''
+    return os.environ.get(f'OASIS_{name}') or ''
 
 
 PROJECT_ROOT_REQUIRED = 'OASIS_PROJECT_ROOT must name an absolute existing project directory.'
@@ -52,9 +52,9 @@ def selected_root() -> Path | None:
 
 
 def program_name() -> str:
-    """The program a help or message tells the user to run (`oasis gc`): the invoked entry
-    point, `odoo19` through its alias, else `oasis` (also through a project wrapper)."""
-    return 'odoo19' if Path(variable('ENTRYPOINT')).name == 'odoo19' else 'oasis'
+    """The program a help or message tells the user to run (`oasis gc`): `oasis`, also through a
+    project wrapper or an entry point under another file name."""
+    return 'oasis'
 
 
 def usage_name() -> str:
@@ -896,6 +896,18 @@ def agent_destructive(tooling: dict) -> str:
     return value
 
 
+DEFAULT_LOGS = 'logs'
+
+
+def default_logs(document: dict, tooling: dict) -> str:
+    """The logs directory of a workspace without [tooling].logs, relative to its directory: DEFAULT_LOGS as setup
+    writes it, and DEFAULT_LOGS/<x.y> with workspace_version 2 (setup writes logs/<x.y> in each series section), so
+    two series never share one server.log. Before 0.17.0 it was each checkout's dev/logs/odoo19."""
+    if document.get('workspace_version') == 2:
+        return f'{DEFAULT_LOGS}/{tooling["version"]}'
+    return DEFAULT_LOGS
+
+
 def optional_path(tooling: dict, key: str, base: Path) -> str:
     """An optional tooling path resolved from base, or '' when absent."""
     if key not in tooling:
@@ -961,8 +973,9 @@ def resolve(document: dict, root: Path, base: Path, *, missing_source: str = '')
         if not isinstance(value, str) or not value or '\x00' in value or '\n' in value:
             raise InvalidConfig(f'Invalid tooling path: {key}.')
         output[variable] = str((base / value).resolve())
-    # Optional; emitted last (empty when absent) so the previous assignments stay unchanged.
-    logs_dir = optional_path(tooling, 'logs', base)
+    # Optional; emitted last so the previous assignments stay unchanged. Without the key (v0.17.0): what setup
+    # writes, `logs` next to the workspace file (logs/<x.y> with workspace_version 2, one per series).
+    logs_dir = optional_path(tooling, 'logs', base) or str((base / default_logs(document, tooling)).resolve())
     environment_target(Path(output['PROJECT_ENVIRONMENT']), root, Path(output['ODOO_SOURCE']))
     addons = tooling.get('addons_paths')
     if not isinstance(addons, list) or not addons or any(
@@ -987,8 +1000,7 @@ def resolve(document: dict, root: Path, base: Path, *, missing_source: str = '')
     output['CHECKOUT_KIND'] = kind
     output['CHECKOUT_SLUG'] = (override if override is not None
                                else derived_slug(top, main) if kind == 'linked' else '')
-    # The main checkout's work tree: a linked worktree may keep its dev/logs linked there.
-    # Empty when git failed in a linked worktree with a checkout slug (main checkout unknown).
+    # The main checkout's work tree. Empty when git failed in a linked worktree with a checkout slug (main checkout unknown).
     output['CHECKOUT_MAIN_ROOT'] = (str(main) if kind == 'linked' and main is not None
                                     else str(root) if kind == 'main' else '')
     slug = output['CHECKOUT_SLUG']
@@ -996,7 +1008,7 @@ def resolve(document: dict, root: Path, base: Path, *, missing_source: str = '')
     # verify-module's _update sibling.
     if output['TEST_DATABASE'] and slug and len(output['TEST_DATABASE'].encode('utf-8')) + len(slug) + 1 > 56:
         raise InvalidConfig(f'Tooling test database exceeds 56 bytes with checkout slug {slug}.')
-    # Compact runs and browser evidence go to <LOGS_DIR>/<slug or main> when set.
+    # Compact runs, browser evidence and the detached server log go to <LOGS_DIR>/<slug or main>.
     output['LOGS_DIR'] = logs_dir
     return output
 

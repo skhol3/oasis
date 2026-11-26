@@ -178,7 +178,7 @@ exit 0
         docker.chmod(0o755)
         self.env = {**os.environ, 'PATH': str(self.bindir) + ':' + os.environ['PATH'],
                     'FAKE_LOG': str(self.commands), 'PYTHONDONTWRITEBYTECODE': '1',
-                    'ODOO19_TOOLS_DIR': str(STAGE / 'tools'),
+                    'OASIS_TOOLS_DIR': str(STAGE / 'tools'),
                     # Keep git discovery inside the scratch project: no checkout identity
                     # leaks from the repository that holds the fixtures.
                     'GIT_CEILING_DIRECTORIES': self.scratch.name}
@@ -268,7 +268,7 @@ exit 0
                       self.commands.read_text())
 
     def test_missing_tools_fails_clearly_without_fallback(self):
-        self.env['ODOO19_TOOLS_DIR'] = str(self.root / 'not installed')
+        self.env['OASIS_TOOLS_DIR'] = str(self.root / 'not installed')
         result = self.invoke('status')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (2, '', 'oasis tools are not installed: ' +
@@ -401,11 +401,11 @@ exit 0
                 self.assertEqual((out.read_text(), err.read_text()), ('update out\n', 'update err\n'))
                 self.assertEqual({out.stat().st_mode & 0o777, err.stat().st_mode & 0o777}, {0o600})
                 self.assertEqual(out.parent, err.parent)
-                self.assertRegex(str(out), r'/dev/logs/odoo19/run-[^/]+/stdout\.log$')
+                self.assertRegex(str(out), r'/logs/main/run-[^/]+/stdout\.log$')
         self.assertIn('-d cc_dev_coffee -u coffee --stop-after-init', self.commands.read_text())
 
     def test_update_module_compact_refuses_before_any_log(self):
-        logs = self.root / 'dev/logs/odoo19'
+        logs = self.root / 'logs/main'
         for args, message in (
                 (('coffee', 'other_db'), 'Managed databases must use cc_dev_<name> or cc_test_<name>: other_db\n'),
                 (('coffee', 'cc_dev_coffee'), None)):  # the database does not exist
@@ -591,7 +591,7 @@ exit 0
         self.assertEqual(Path(logs['stdout_log']).read_text(), 'tests stdout\n')
         self.assertEqual(Path(logs['stderr_log']).read_text(), 'tests stderr\n')
         self.assertEqual(Path(logs['stdout_log']).stat().st_mode & 0o777, 0o600)
-        self.assertTrue(Path(logs['stdout_log']).is_relative_to(self.root / 'dev/logs/odoo19'))
+        self.assertTrue(Path(logs['stdout_log']).is_relative_to(self.root / 'logs/main'))
 
     def test_compact_verify_retains_each_phase_logs(self):
         self.configure_test_database()

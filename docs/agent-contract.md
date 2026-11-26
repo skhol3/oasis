@@ -4,7 +4,7 @@ oasis is for any agent. One policy table in the core, `tools/policy.py`, lists e
 tier and the reason; docs, skills, messages and any harness guard follow it. Read it as JSON:
 
 ```bash
-~/.agents/skills/odoo19/oasis policy --json
+~/.agents/skills/oasis/oasis policy --json
 ```
 
 It runs anywhere, also before a workspace file exists. The output holds `version`, `tiers` (what

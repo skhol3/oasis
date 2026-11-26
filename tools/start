@@ -14,7 +14,7 @@ set -Eeuo pipefail
 # ones are passed as given).
 # --detach, as the first argument only, runs the server in its own session instead of in the
 # foreground: stdin from /dev/null, stdout and stderr appended to the checkout's server.log (the
-# compact log directory: <logs>/<slug or main>/ with [tooling].logs, else dev/logs/odoo19/). It
+# compact log directory: <logs>/<slug or main>/, [tooling].logs or else logs next to the workspace file). It
 # prints pid=<pid> port=<port> log=<path> and returns once the server accepts connections on its
 # HTTP interface (tools/runtime_state.py detach): --http-interface (or an unambiguous prefix of it,
 # as Odoo reads it) when given, else the odoo.conf http_interface, 127.0.0.1 for none, 0.0.0.0 or

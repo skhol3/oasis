@@ -9,6 +9,50 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-26
+
+### Changed
+
+- Contract change: only the `OASIS_*` variables are read; `ODOO19_PROJECT_ROOT`, `ODOO19_ENTRYPOINT`,
+  `ODOO19_TOOLS_DIR` and `ODOO19_COMPOSE_LOCK_TIMEOUT` are ignored and nothing sets them.
+- Contract change: a workspace without `[tooling].logs` keeps its logs in `logs` next to
+  `oasis-workspace.toml` (`logs/<x.y>` with `workspace_version = 2`), as `oasis setup` writes the key;
+  the `dev/logs/odoo19/` fallback is gone (runs already there are left in place and no longer read).
+- `tools/check_environment.py` (and `dev/scripts/check_environment.py`) exits 3 for a drift, no longer 1,
+  so a crash is told apart from a drift.
+- Contract change: one name. `./install.sh` installs into `~/.agents/skills/oasis` and moves a previous
+  `~/.agents/skills/odoo19` install to the backups; the `odoo19` entry point, the inactive `odoo19_*` Gentle
+  Shell tools and `/odoo19` are removed (only `oasis`, `oasis_*` and `/oasis` remain). The project wrapper
+  templates call `~/.agents/skills/oasis/tools`; `doctor` FAILs `project_wrappers=old_install_dir` for a
+  project wrapper that still calls the old directory and names the edit. Update a project: replace
+  `.agents/skills/odoo19/` with `.agents/skills/oasis/` in its `dev/scripts` wrappers.
+- Skills per series (contract change): the six skills are named `odoo-<topic>` (`odoo-backend`,
+  `odoo-environment`, `odoo-module-lifecycle`, `odoo-security`, `odoo-testing`, `odoo-views-frontend`). Each
+  SKILL.md is common to every series and points to `references/15.0.md` and `references/19.0.md` for what
+  differs (view types and modifiers, Owl and legacy widgets, group fields, access checks, ORM APIs, test
+  classes, demo data and server options), chosen by the series `oasis doctor` prints.
+- `doctor --environment --full` (and `check-environment --full`, and the end of `bootstrap --apply`) reports an
+  adopted environment (`setup --environment`, or any environment oasis did not create) whose packages do not
+  match the locks as `WARN locked_environment=drifted` with a fix naming `bootstrap --apply`, not counted as a
+  failure. An environment oasis creates is marked `<environment>/.oasis-created` and its drift stays a `FAIL`.
+  No oasis command but an explicit `bootstrap --apply` changes an adopted environment. Environments created
+  before 0.17.0 carry no mark: `touch <environment>/.oasis-created` restores the `FAIL`.
+
+### Removed
+
+- The `odoo19-*` skills, without stubs; `./install.sh` replaces the whole install directory.
+
+### Fixed
+
+- A crash of the lock comparison in an adopted environment is a `FAIL`, no longer a `WARN` with exit 0.
+- The lock comparison leaves out a dist-info or egg-info without usable metadata instead of crashing.
+- `setup --apply` and `bootstrap --apply` warn and go on when `<environment>/.oasis-created` cannot be
+  written after `uv venv`.
+- CI: the `odoo15-python` job installs Python 3.8 and 3.9 together, also runs the lock comparison tests,
+  and fails when one of its tests skips; both jobs have `timeout-minutes`.
+- The lock comparison normalizes distribution names on both sides (PEP 503), so `zope.event-5.0.dist-info`
+  satisfies `zope-event==5.0` on Python 3.8 and 3.9 too; it was reported as `missing_package=zope-event==5.0`.
+
 ## [0.16.0] - 2026-11-26
 
 ### Added
@@ -1305,7 +1349,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/skhol3/oasis/releases/tag/v0.17.0
 [0.16.0]: https://github.com/skhol3/oasis/releases/tag/v0.16.0
 [0.15.1]: https://github.com/skhol3/oasis/releases/tag/v0.15.1
 [0.15.0]: https://github.com/skhol3/oasis/releases/tag/v0.15.0

@@ -192,7 +192,8 @@ const TOOL_LINES: Record<string, string> = {
  * (or omitted) for a root that holds a legacy profile, which no command reads any more.
  * `tools` are the session's tools: only the oasis tools among them are named, and a session with
  * none (a subagent without the overlay) is pointed to the CLI. Omitted: every oasis tool.
- * `version` is the configured Odoo series ("19.0"); it names the project and its skills. The last
+ * `version` is the configured Odoo series ("19.0"); it names the project and the reference of its
+ * series every odoo-<topic> skill holds (references/19.0.md, v0.17.0 S2). The last
  * line names the commands the bash guard asks the user about (docs/bash-guard.md).
  */
 export function projectContext(
@@ -203,7 +204,7 @@ export function projectContext(
 ): string {
   // The series comes from the project's configuration; without it no number is made up.
   const odoo = version ? `Odoo ${version}` : "Odoo";
-  const skills = version ? `odoo${version.split(".")[0]}-*` : "Odoo";
+  const skills = version ? `odoo-* skill (references/${version}.md)` : "odoo-* skill";
   const source = workspace
     ? `workspace ${workspace}`
     : `legacy ${PROFILE_NAME}, no longer read: the user runs /oasis migrate`;
@@ -222,7 +223,7 @@ export function projectContext(
   return [
     `${odoo} project root: ${root} (${source}).`,
     ...routing,
-    `framework APIs; load the matching ${skills} skill first.`,
+    `framework APIs; load the ${skills} first.`,
     "Tier B commands (oasis policy --json) wait for the user's confirmation; never bypass a refusal.",
   ].join("\n");
 }

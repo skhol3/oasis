@@ -220,7 +220,9 @@ copied or edited.
 
 --environment <dir> (a new workspace, or a new series section) uses an existing environment, an absolute
 directory with a pyvenv.cfg whose version is a Python the series supports (read, never run): setup
-never creates, syncs or deletes it, and bootstrap --apply syncs it to the locks.
+never creates, syncs or deletes it, and bootstrap --apply syncs it to the locks. Until then, doctor
+--environment --full reports packages that do not match the locks as WARN locked_environment=drifted
+(an environment setup or bootstrap creates is marked .oasis-created, and its drift is a FAIL).
 
 When setup would create the Python environment (a new workspace, or a new series section) and neither
 --environment nor --python is given, it asks on a terminal: Enter creates it, or the absolute path of an
@@ -273,7 +275,7 @@ def sibling(name: str):
 
 
 config, migrate, locks, db_account = sibling('config'), sibling('migrate'), sibling('locks'), sibling('db_account')
-known_problems = sibling('known_problems')
+known_problems, environment_origin = sibling('known_problems'), sibling('environment_origin')
 
 
 def usage() -> str:
@@ -982,9 +984,12 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                 else:
                     actions += [*directories(exclude.parent, planned), ('create', exclude, addition, 0o644)]
     guarded(values)
+    # setup creates the logs directory only when the workspace file sets logs (a new one always does); without the
+    # key the tools create the default one, logs next to the workspace file, when they first write to it.
     plan = {'root': root, 'workspace': workspace, 'values': values, 'lines': lines, 'actions': actions,
             'after': [], 'created': set(), 'new': new, 'questions': questions,
-            'python_origin': python_origin if new else 'from the workspace file'}
+            'python_origin': python_origin if new else 'from the workspace file',
+            'logs_set': new or 'logs' in document['tooling']}
     if new and adopted is not None:
         plan['adopted_environment'] = adopted[1]
         plan['adopted_origin'] = origin_environment
@@ -1913,7 +1918,7 @@ def gaps(plan: dict, directory: Path, planned: set):
     elif os.path.lexists(target):
         lines.append(f'kept {target}')
     for key in ('LOGS_DIR', 'DATA_DIR'):
-        if values[key]:
+        if values[key] and (key != 'LOGS_DIR' or plan.get('logs_set', True)):
             path = Path(values[key])
             if path.exists():
                 lines.append(f'kept {path}/')
@@ -2212,6 +2217,10 @@ def after_steps(plan: dict, changes: Changes, rerun: str, undo_after: bool) -> i
             except OSError:
                 status = 127
             if status == 0:
+                if command[1] == 'venv':
+                    # oasis' mark (v0.17.0 S1): its drift from the locks is a FAIL, an adopted one's a WARN.
+                    # A mark that cannot be written is a warning (try_mark prints it): setup goes on.
+                    environment_origin.try_mark(environment, f'{program} setup --apply')
                 continue
             if command[1] == 'venv' and undo_after:
                 # What uv venv left of an environment that did not exist: removed when empty, else reported.

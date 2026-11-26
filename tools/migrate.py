@@ -173,7 +173,12 @@ def legacy_load(config, checkout: Path) -> dict:
         raise config.InvalidConfig(f'Invalid tooling configuration: {profile} has no [tooling] table.')
     if tooling.get('version') != LEGACY_VERSION or tooling.get('python_version') != LEGACY_PYTHON:
         raise config.InvalidConfig(f'Tooling requires Odoo {LEGACY_VERSION} and Python {LEGACY_PYTHON}.')
-    return config.assignments(document, checkout, checkout, None, '')
+    values = config.assignments(document, checkout, checkout, None, '')
+    if 'logs' not in tooling:
+        # A profile without logs used dev/logs/odoo19 before 0.17.0; there is no such default any more, so the
+        # workspace's default logs directory (next to it) is not compared with anything (verify).
+        del values['LOGS_DIR']
+    return values
 
 
 def read_profile(path: Path) -> dict:
@@ -607,7 +612,8 @@ def verify(plan: dict, config, reader) -> list[str]:
         if path in plan['before']:
             before = plan['before'][path]
             names += [key for key in dict.fromkeys([*before, *after])
-                      if key not in WORKSPACE_ONLY and before.get(key) != after.get(key)]
+                      if key not in WORKSPACE_ONLY and before.get(key) != after.get(key)
+                      and not (key == 'LOGS_DIR' and key not in before)]
             try:
                 addons, data = effective(reader, after)
             except reader.ConfError as exc:

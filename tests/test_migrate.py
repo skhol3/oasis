@@ -28,7 +28,6 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'oasis'
-ALIAS = ROOT / 'odoo19'
 READER = ROOT / 'tools' / 'config.py'
 GIT = ['git', '-c', 'user.name=oasis tests', '-c', 'user.email=tests@example.invalid',
        '-c', 'init.defaultBranch=main', '-c', 'commit.gpgsign=false']
@@ -251,7 +250,7 @@ class MigrateTests(unittest.TestCase):
 
     def test_dry_run_prints_the_exact_plan_and_changes_nothing(self):
         before = self.tree()
-        for program in (CLI, ALIAS):
+        for program in (CLI,):
             with self.subTest(program=program.name):
                 result = self.migrate(program=program)
                 self.assertEqual((result.returncode, result.stderr), (0, ''))
@@ -361,6 +360,21 @@ class MigrateTests(unittest.TestCase):
                 self.assertIn('PASS data_dir', lines)
                 self.assertEqual(lines[-1], 'doctor_failures=0')
                 self.assertNotIn(MARKER, doctor.stdout)
+
+    def test_profiles_without_logs_migrate_to_the_default_logs_next_to_the_workspace_file(self):
+        # v0.17.0: a profile without logs used dev/logs/odoo19, a default that is gone; the migrated checkouts use
+        # logs next to the workspace file, which is no verification mismatch.
+        for checkout, text in ((self.main, PROFILE), (self.feature, FEATURE_PROFILE)):
+            (checkout / '.odoo19-agent.toml').write_text(text.replace("logs = '../../logs'\n", ''))
+        result = self.migrate('--apply')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertNotIn('logs', (self.project / 'oasis-workspace.toml').read_text())
+        for checkout in (self.main, self.feature):
+            with self.subTest(checkout=checkout.name):
+                values = subprocess.run([sys.executable, '-B', str(READER), str(checkout)],
+                                        capture_output=True, text=True, env=self.env)
+                self.assertEqual((values.returncode, values.stderr), (0, ''))
+                self.assertIn(f"LOGS_DIR={shlex.quote(str(self.project / 'logs'))}\n", values.stdout)
 
     def test_apply_without_confirm_prints_the_plan_and_names_the_exact_command(self):
         # v0.16.0 S1: --apply is Tier B; --confirm takes the workspace file the plan writes.
@@ -546,7 +560,7 @@ class MigrateTests(unittest.TestCase):
     def test_a_signal_during_apply_undoes_every_change(self):
         # A kill from a timeout or a closed terminal must not leave a half-migrated project.
         before = self.tree()
-        env = dict(self.env, ODOO19_PROJECT_ROOT=str(self.main))
+        env = dict(self.env, OASIS_PROJECT_ROOT=str(self.main))
         for name, number in (('SIGTERM', 15), ('SIGHUP', 1)):
             with self.subTest(signal=name):
                 script = (
@@ -583,7 +597,7 @@ class MigrateTests(unittest.TestCase):
             "    original(self, action)\n"
             "migrate.Changes.apply = apply\n"
             "sys.exit(migrate.main(['--apply', '--confirm', sys.argv[2]]))\n")
-        env = dict(self.env, ODOO19_PROJECT_ROOT=str(self.main))
+        env = dict(self.env, OASIS_PROJECT_ROOT=str(self.main))
         result = subprocess.run([sys.executable, '-B', '-c', script, str(ROOT / 'tools' / 'migrate.py'),
                                  str(self.project / 'oasis-workspace.toml')],
                                 capture_output=True, text=True, env=env, cwd=self.scratch)

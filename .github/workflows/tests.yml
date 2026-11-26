@@ -1,0 +1,67 @@
+# The Python and node suites on every pull request and on pushes to main (v0.17.0 S4).
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      # node --test runs the .ts files directly: type stripping is on by default from Node 22.18 / 23.6.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - name: node suite
+        run: node --test pi/tests/*.test.ts
+      # No uv here: the tests that need a 3.8 or 3.9 interpreter skip without it (job odoo15-python runs them).
+      - name: Python suite
+        run: python3 -B -m unittest discover -s tests
+
+  # What runs inside Odoo 15 environments (tools/audit_dependencies.py, tools/dev_users_runtime.py,
+  # tools/check_environment.py) with their Python. The tests run on 3.12 and find the old interpreters through
+  # `uv python find`. Both 3.8 and 3.9 are installed in this one job: test_python_39_and_38_give_the_same_output
+  # and the other *_39_and_38 tests need the two together, and the job fails when any of its tests skips.
+  odoo15-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+      # uv's own builds: they do not depend on which minors setup-python has for the runner image.
+      - name: Odoo 15 Pythons (3.8 and 3.9)
+        run: uv python install 3.8 3.9
+      - name: uv finds both
+        run: |
+          uv python find --no-project --system 3.8
+          uv python find --no-project --system 3.9
+      - name: Odoo 15 Python tests (none may skip)
+        working-directory: tests
+        shell: bash -eo pipefail {0}
+        run: |
+          python3 -B -m unittest -v \
+            test_audit_dependencies.AuditDependenciesTests.test_python_39_and_38_give_the_same_output \
+            test_check_environment.OldPythonAuditTests \
+            test_dev_users.DevelopmentUsersTests.test_the_runner_works_with_an_odoo_15_python \
+            test_adopted_environment.LockComparisonTests.test_names_are_normalized_on_both_sides_on_python_39_and_38 \
+            test_adopted_environment.LockComparisonTests.test_a_distribution_without_usable_metadata_is_left_out_on_python_39_and_38 \
+            2>&1 | tee "$RUNNER_TEMP/odoo15-python.log"
+          if grep -n 'skipped' "$RUNNER_TEMP/odoo15-python.log"; then
+            echo '::error::an Odoo 15 Python test skipped: its interpreter was not found'
+            exit 1
+          fi

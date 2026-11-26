@@ -15,14 +15,14 @@ test("testModuleArgs always asks the core for compact output", () => {
 
 test("formatTestRun summarizes the logs the core reported", () => {
   const logs: Record<string, string> = {
-    "/p/dev/logs/odoo19/run-1/stdout.log": `${STAMP} INFO db odoo.tests.result: 0 failed, 0 error(s) of 3 tests`,
-    "/p/dev/logs/odoo19/run-1/stderr.log": "",
+    "/p/logs/main/run-1/stdout.log": `${STAMP} INFO db odoo.tests.result: 0 failed, 0 error(s) of 3 tests`,
+    "/p/logs/main/run-1/stderr.log": "",
   };
   const core = {
     code: 0,
     stdout:
       "phase=tests database=cc_test_coffee exit=0\n" +
-      "stdout_log=/p/dev/logs/odoo19/run-1/stdout.log\nstderr_log=/p/dev/logs/odoo19/run-1/stderr.log\n",
+      "stdout_log=/p/logs/main/run-1/stdout.log\nstderr_log=/p/logs/main/run-1/stderr.log\n",
     stderr: "",
   };
   assert.equal(
@@ -32,7 +32,7 @@ test("formatTestRun summarizes the logs the core reported", () => {
       "result: 0 failed, 0 error(s) of 3 tests",
       "problems: 0",
       "log: 0 lines, 0 errors, 0 warnings",
-      "logs: /p/dev/logs/odoo19/run-1/stdout.log /p/dev/logs/odoo19/run-1/stderr.log",
+      "logs: /p/logs/main/run-1/stdout.log /p/logs/main/run-1/stderr.log",
     ].join("\n"),
   );
 });
@@ -97,7 +97,7 @@ test("formatUpdateRun reports errors and warnings of a compact update, without a
     "update-module", "--compact", "coffee", "cc_dev_coffee",
   ]);
   const logs: Record<string, string> = {
-    "/p/logs/odoo19/run-a/stdout.log": [
+    "/p/logs/main/run-a/stdout.log": [
       "2026-11-20 10:00:00,000 1 INFO cc_dev_coffee odoo.modules.loading: Modules loaded.",
       "2026-11-20 10:00:01,000 1 WARNING cc_dev_coffee odoo.models: field x has no label",
       "2026-11-20 10:00:02,000 1 ERROR cc_dev_coffee odoo.modules.registry: Failed to load registry",
@@ -105,9 +105,9 @@ test("formatUpdateRun reports errors and warnings of a compact update, without a
       "ValueError: bad view",
       "",
     ].join("\n"),
-    "/p/logs/odoo19/run-a/stderr.log": "",
+    "/p/logs/main/run-a/stderr.log": "",
   };
-  const stdout = "phase=update database=cc_dev_coffee exit=1\nstdout_log=/p/logs/odoo19/run-a/stdout.log\nstderr_log=/p/logs/odoo19/run-a/stderr.log\n";
+  const stdout = "phase=update database=cc_dev_coffee exit=1\nstdout_log=/p/logs/main/run-a/stdout.log\nstderr_log=/p/logs/main/run-a/stderr.log\n";
   const report = formatUpdateRun("coffee", { code: 1, stdout, stderr: "" }, (path) => logs[path], { maxFailures: 10, traceLines: 6 });
   assert.deepEqual(report.split("\n"), [
     "module=coffee database=cc_dev_coffee exit=1",
@@ -117,7 +117,7 @@ test("formatUpdateRun reports errors and warnings of a compact update, without a
     "    ValueError: bad view",
     "warnings: 1 (odoo.models ×1: field x has no label)",
     "log: 5 lines, 1 errors, 1 warnings",
-    "logs: /p/logs/odoo19/run-a/stdout.log /p/logs/odoo19/run-a/stderr.log",
+    "logs: /p/logs/main/run-a/stdout.log /p/logs/main/run-a/stderr.log",
   ]);
 });
 

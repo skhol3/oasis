@@ -87,7 +87,7 @@ raise SystemExit(int(os.environ.get('LINT_EXIT', '0')))
                        self.module / '__manifest__.py', self.module / 'models.py')}
 
     def invoke(self, *args):
-        result = subprocess.run([sys.executable, '-I', '-B', str(ROOT / 'odoo19'),
+        result = subprocess.run([sys.executable, '-I', '-B', str(ROOT / 'oasis'),
                                  '--project', str(self.root), 'lint-module', *args],
                                 cwd=self.root, env=self.env, text=True, capture_output=True)
         self.assertFalse(self.effects.exists(), 'Unexpected external service/install command')

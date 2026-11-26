@@ -37,7 +37,7 @@ class ModelInfoTests(unittest.TestCase):
         self.before = tree(FIXTURE)
 
     def invoke(self, *args, project=PROJECT):
-        result = subprocess.run([sys.executable, '-I', '-B', str(ROOT / 'odoo19'),
+        result = subprocess.run([sys.executable, '-I', '-B', str(ROOT / 'oasis'),
                                  '--project', str(project), 'model-info', *args],
                                 cwd=self.temp, env=self.env, text=True, capture_output=True)
         self.assertFalse(self.effects.exists(), 'Unexpected external service/install command')

@@ -90,13 +90,13 @@ test("fillTemplate fills words, inputs, options, flags and compact in order", ()
   assert.deepEqual(fillTemplate(action("maintenance.drop_database"), { database: "cc_dev_x", terminate: true }, true),
     [...PREFIX, "drop-database", "cc_dev_x", "--terminate", "--confirm", "cc_dev_x"]);
   assert.deepEqual(fillTemplate(action("server.logs"), {}, true),
-    ["tail", "-n", "200", "/work/a project/dev/logs/odoo19/server.log"]);
+    ["tail", "-n", "200", "/work/a project/logs/main/server.log"]);
   // S6: restart with an optional database; the live log follows server.log.
   assert.deepEqual(fillTemplate(action("server.restart"), { database: "" }, true), [...PREFIX, "restart"]);
   assert.deepEqual(fillTemplate(action("server.restart"), { database: "cc_dev_coffee" }, true),
     [...PREFIX, "restart", "-d", "cc_dev_coffee"]);
   assert.deepEqual(fillTemplate(action("server.follow"), {}, true),
-    ["tail", "-n", "200", "-f", "/work/a project/dev/logs/odoo19/server.log"]);
+    ["tail", "-n", "200", "-f", "/work/a project/logs/main/server.log"]);
   assert.deepEqual([action("server.follow").kind, action("server.follow").follow, action("server.logs").follow],
     ["log", true, false]);
 });

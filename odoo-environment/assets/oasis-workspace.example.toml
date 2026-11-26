@@ -1,0 +1,78 @@
+# Optional project workspace file for an explicitly authorized project: one per project,
+# at the project root. Values are placeholders, not defaults, discovery, access consent or
+# executable checks. Never add credentials or read/log runtime config or env-file contents.
+#
+#   acme/oasis-workspace.toml        this file
+#   acme/codigo/acme                 main checkout
+#   acme/codigo/acme-shop-feature    linked worktree (any depth below acme/ works)
+#   acme/config/                     odoo.conf, environment file, compose file, requirements/
+#   acme/data/                       Odoo data directory (data_dir below; passed as --data-dir)
+#   acme/logs/                       compact runs and browser evidence
+#
+# oasis finds this file by walking up from the checkout, as git finds .git.
+#
+# The Odoo source is the machine's, not the project's: it is declared once per machine in
+# ~/.config/oasis/config.toml ($XDG_CONFIG_HOME/oasis/config.toml when that is set), and every
+# project of the series uses it without repeating it here:
+#   [series."19.0"]
+#   community = '/srv/odoo/19.0/source/odoo'
+#   enterprise = '/srv/odoo/19.0/source/enterprise'
+workspace_version = 1
+# Odoo series of every checkout; the tooling version derives from it, and Python is the
+# series' default (3.12 on 19.0) unless a named environment below declares another one that
+# the series supports. bootstrap
+# creates the environment with that Python; doctor and doctor --environment check it.
+odoo_version = '19.0'
+
+# The tooling paths and database namespace; version and python_version derive from above.
+# Paths are relative to this file's directory, except addons_paths, which is relative to
+# each checkout ('.' is the checkout itself), because the modules live in every checkout.
+[tooling]
+# Only to override the machine file's source for this project (relative to this file, or absolute);
+# setting enterprise = false means no Enterprise here, whatever the machine file says.
+# community = 'source/odoo'
+# enterprise = 'source/enterprise'
+# Either this one environment (the series' default Python), or named [environments] below, not both.
+environment = 'environments/acme'
+config = 'config/odoo.conf'
+env_file = 'config/.env'
+compose = 'config/compose.yml'
+requirements = 'config/requirements'
+addons_paths = ['.']
+db_service = 'db'
+dev_prefix = 'acme_dev_'
+test_prefix = 'acme_test_'
+# Optional reusable sequential test target; never implies reset permission.
+# test_database = 'acme_test_suite'
+# Optional logs directory: runs go to <logs>/<slug, or main for the main checkout>/. Without it,
+# logs next to this file.
+# logs = 'logs'
+# Optional Odoo data directory: every Odoo launch gets --data-dir=<it>, and disposable test
+# runs remove their filestores there. Without it, the data_dir of odoo.conf applies.
+# data_dir = 'data'
+# Optional: what the Gentle Shell layer does when an agent runs a Tier B command (drop-database,
+# stop --database, gc --apply --trash, migrate --apply, worktree-init), or changes this file:
+# 'ask' (the default) shows the user a dialog
+# first, 'deny' blocks them, 'allow' runs them without a dialog. Only the user sets it.
+# agent_destructive = 'ask'
+#
+# An odoo.conf without addons_path needs no paths at all: every Odoo launch then gets
+# --addons-path=<enterprise>,<each addons_paths root of the checkout>,<community>/addons.
+#
+# A checkout slug is per checkout, never set here: an optional oasis-checkout.toml in the
+# checkout may set only that key and the named environment it uses (any other key is refused):
+#   [tooling]
+#   checkout_slug = 'acme_07_1'
+#   environment = 'next'
+
+# Optional named environments, instead of [tooling].environment: a checkout uses `default`
+# unless its oasis-checkout.toml names another. path follows the [tooling].environment rules
+# (relative to this file); python must lie within the range of odoo_version (19.0: 3.10 to 3.14)
+# and is the Python bootstrap creates the environment with.
+# [environments.default]
+# path = 'environments/acme'
+# python = '3.12'
+#
+# [environments.next]
+# path = 'environments/acme-next'
+# python = '3.13'

@@ -9,7 +9,7 @@ refuses to run without a terminal on stdin, so an agent cannot drive it.
 Catalog (JSON, stable keys):
   catalog_version  1
   project          the checkout root
-  entrypoint       the invoked entry point (`oasis`, or `odoo19` through its alias)
+  entrypoint       the invoked entry point (`oasis`)
   server_log       the checkout's server.log (start --detach), whether or not it exists yet
   sources          modules: {choices: [addon modules of the checkout]};
                    databases: {argv: the list-databases command, waiting: a message to show while
@@ -403,8 +403,7 @@ def catalog(config, log_dirs, root: Path) -> dict:
     values = config.load(root)
     entrypoint = config.variable('ENTRYPOINT') or str(Path(__file__).resolve().parent.parent / 'oasis')
     prefix = [entrypoint, '--project', str(root)]
-    server_log = str(log_dirs.server_log(root, values.get('CHECKOUT_KIND', ''), values.get('CHECKOUT_MAIN_ROOT', ''),
-                                         values.get('LOGS_DIR', ''), values.get('CHECKOUT_SLUG', '')))
+    server_log = str(log_dirs.server_log(values.get('LOGS_DIR', ''), values.get('CHECKOUT_SLUG', '')))
     class_filter = config.versions().capability(values['ODOO_VERSION'], 'test_class_filter')
     modules = addon_modules(values.get('ADDON_ROOTS', ''))
     checkout, record, memory = checkout_state(values, root, modules)
