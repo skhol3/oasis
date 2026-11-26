@@ -90,6 +90,13 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
   terminal it asks whether to create it or to use an existing one, and the Python of a new one
   ([A new environment and its Python](#a-new-environment-and-its-python)). Without a terminal nothing is
   asked: the environment is created with the configuration's Python, as before.
+- The `[development]` table of a new workspace (v0.16.0), which `init-dev-database` needs: the question
+  `development`, `init-dev-database needs a [development] table in <workspace file>: add one with
+  administrator_login = 'admin' (its password is generated)?`, answered `add` (recommended) or `none` with
+  `--answer development=<add|none>` or on a terminal (Enter: `add`). Without a terminal and without an
+  answer, `add` applies, as the environment's recommended answers do. `add` writes the table after
+  `[tooling]`, below a comment; `none` leaves it out and the [next steps](#next-steps) name the lines to
+  add. An existing workspace is never asked (an answer is refused as one setup does not use).
 - Questions are asked only when standard input and standard error are a terminal (never with `--json`).
   Otherwise a missing answer is an [open question](#questions-and-answers) that names its flag, for
   example `No Odoo Community source for 19.0 in the machine file <file>: pass --community <dir>.` or
@@ -114,6 +121,7 @@ question has an id that `--answer <id>=<value>` (repeatable) or `--answers <file
 | `workspace` | the project folder or the clone (the options it lists) | `--workspace <dir>` ([Where the files go](#where-the-files-go)) |
 | `series_exceptions` | `add` or `no` | [Modules of another series](#modules-of-another-series) |
 | `python_ldap` | `yes` or `no` | [python-ldap and OpenLDAP 2.6](#python-ldap-and-openldap-26) |
+| `development` | `add` or `none` | [What it infers and what it asks](#what-it-infers-and-what-it-asks) (a new workspace) |
 | `requirement:<name>` | `add`, `override` or `skip` (the options it lists) | [Module requirements](#module-requirements) |
 
 ```json
@@ -124,7 +132,8 @@ question has an id that `--answer <id>=<value>` (repeatable) or `--answers <file
   twice (by a flag and by an answer) is refused (exit 2) and changes nothing. An answer to a question that
   does not arise is not used.
 - Without a terminal and without an answer, setup uses the recommended answer only where it did before:
-  the environment is created, with the configuration's Python. Every other question is open: the plan
+  the environment is created, with the configuration's Python; and a new workspace gets its
+  `[development]` table (`development`, v0.16.0). Every other question is open: the plan
   prints the lines it has, then `open question <id>: <what it needs and the flag that answers it>` and
   `nothing changed: answer the open questions above (docs/setup.md#questions-and-answers), then run with
   --apply to set up` (exit 0). A question setup cannot go on without (the series, the source) ends the
@@ -237,7 +246,7 @@ set, pin a version of that package that has a wheel in `overrides.txt`.
 | Piece | When it is missing, setup creates |
 | --- | --- |
 | [Machine file](workspace-file.md#machine-file) entry `[series."<x.y>"]` | `community` and, with Enterprise, `enterprise`. A new file is created with mode 0600; an existing file without the entry gets it appended. An existing entry is used and never edited: a flag that disagrees with it, or an entry without `community`, is refused. |
-| `oasis-workspace.toml` | `workspace_version`, `odoo_version`, and `[tooling]` with the environment, `config`, `env_file`, `compose`, `requirements`, `addons_paths` (the directories that hold the modules, `'.'` by default), `db_service = 'db'`, the prefixes, `logs` and `data_dir`; never a source key. Mode 0600. |
+| `oasis-workspace.toml` | `workspace_version`, `odoo_version`, and `[tooling]` with the environment, `config`, `env_file`, `compose`, `requirements`, `addons_paths` (the directories that hold the modules, `'.'` by default), `db_service = 'db'`, the prefixes, `logs` and `data_dir`; never a source key. Then `[development]` with `administrator_login = 'admin'`, unless the question `development` is answered `none`. Mode 0600. |
 | `odoo.conf` | Path-free (no `addons_path`, no `data_dir`; see [Path-free odoo.conf](path-free-odoo-conf.md)): `db_host = 127.0.0.1`, the `db_port` of the compose file, `db_user` and `db_password` empty: Odoo gets the [database account](#the-database-account) of the environment file. Mode 0600. |
 | Compose file | `name: oasis-<name>-<6 hex of the workspace directory>` and the PostgreSQL service (`postgres:<postgres_default>` of the series in `tools/odoo_versions.py`: `postgres:17` on 19.0) with the variables oasis uses, published on `127.0.0.1` on the [port](#one-port-for-odooconf-and-the-compose-file) `odoo.conf` connects to. |
 | Environment file | The [database account](#the-database-account): `ODOO_DB_USER=oasis_<name>` and a random `ODOO_DB_PASSWORD`, or the `db_user` and `db_password` a kept `odoo.conf` sets; mode 0600. The password is never printed. A kept environment file gets the account in the variables it leaves empty, every other byte kept; a kept `odoo.conf` whose account it holds loses those two lines ([The database account](#the-database-account)). |
@@ -315,7 +324,13 @@ the plan shows what `add` writes and `--apply` refuses. `add` writes a `[series.
 `series_exceptions = [...]`: a new workspace file is then `workspace_version = 2`, and an existing
 version 1 file has its `workspace_version` line changed to 2 (that line only) and the section appended;
 an existing section of that series is never edited (refused, naming the modules to add). `no` refuses
-with the series guard's message, as before.
+with the series guard's message, as before, without naming the answer just declined.
+
+Where setup would propose the exception (the checkout stays one of the configured series and the workspace
+file has no `[series."<series>"]` table), the series guard's refusal and doctor's `module_series` fix name
+that action first (v0.16.0): `oasis --project <checkout> setup --answer series_exceptions=add --apply lists
+<module> in series_exceptions under [series."<series>"] in <workspace file> (setup proposes the exception),
+or run oasis in a checkout of an Odoo <series> branch, ...` (the alternatives as before).
 
 ## The checkout slug of a long worktree name
 
@@ -710,8 +725,8 @@ logs, errors).
   one. Without `--confirm` and the compose project (the top-level `name:` of the compose file) it changes
   nothing and names the exact command. When `down -v` fails, or the service does not start again after
   it, the command exits 1, says the volume may already be gone (or is), and names the command that starts
-  the service again: `docker compose --env-file <env file> -f <compose file> -p <compose project> up -d
-  --wait <service>`.
+  the service again: `oasis --project <checkout> start-database` (v0.16.0; it runs the same compose project,
+  since a `COMPOSE_PROJECT_NAME` that selects another one was refused first, and names no environment file).
 
 ## Next steps
 
@@ -719,13 +734,22 @@ After `--apply`, setup prints what is left, numbered, for example:
 
 ```text
 next steps:
-  1. docker compose --env-file <env file> -f <compose file> up -d --wait
+  1. oasis --project <checkout> start-database
   2. oasis --project <checkout> doctor
-  3. add a [development] table with administrator_login to <workspace file> (docs/dev-database.md)
-  4. oasis --project <checkout> init-dev-database <module> <name>_dev_manual
+  3. oasis --project <checkout> init-dev-database <module> <name>_dev_manual
 ```
 
 Nothing asks for an account: setup generated it ([The database account](#the-database-account)).
+`start-database` starts the service as every database command does and names no environment file, so an
+agent harness that refuses a command naming one runs it. A workspace without a `[development]` table (an
+existing one, or the answer `none`) gets a step before `init-dev-database` that names the exact lines:
+
+```text
+  3. add these lines to <workspace file> (docs/dev-database.md):
+       [development]
+       administrator_login = 'admin'
+```
+
 `bootstrap --apply` is added when setup compiled the locks of an environment it kept. With an
 [adopted environment](#an-existing-environment) that step reads `the locks in <requirements> describe
 runtime.in and dev.in (or runtime.in, dev.in and overrides.txt): oasis --project <checkout> bootstrap --apply

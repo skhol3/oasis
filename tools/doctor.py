@@ -26,6 +26,7 @@ import importlib.util
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -369,8 +370,8 @@ def check_env_file(report: Report, values: dict, program: str):
 def check_connection(report: Report, values: dict, program: str):
     """Odoo's account logs in to the PostgreSQL odoo.conf names (v0.16.0 S2): tools/db_account.py probe with
     the environment's Python and psycopg2. Refused credentials FAIL with what fixes them (odoo.conf's own
-    values that differ from the env file's, else the Tier B volume recreate); a service that does not answer,
-    or a probe that cannot run, is a WARN."""
+    values that differ from the env file's, else the Tier B volume recreate); a service that does not answer is a
+    WARN followed by the fix start-database, and a probe that cannot run is a WARN."""
     helper = Path(__file__).with_name('db_account.py')
     output = probe([values['PYTHON'], '-I', '-B', str(helper), 'probe', values['ODOO_CONFIG'], values['ENV_FILE']])
     outcome = (output or '').strip()
@@ -380,7 +381,12 @@ def check_connection(report: Report, values: dict, program: str):
         fix = sibling('db_account').authentication_fix(values['ODOO_CONFIG'], values['ENV_FILE'],
                                                        values['COMPOSE_FILE'], program, values['PROJECT_ROOT'])
         return report.fail('postgres_connection', outcome, fix)
-    return report.warn('postgres_connection', 'not_running' if outcome == 'not_running' else 'unchecked')
+    if outcome == 'not_running':
+        # Nothing answered: the oasis command that starts the service, which names no env file (v0.16.0 S6).
+        report.warn('postgres_connection', 'not_running')
+        print(f'  fix: {shlex.join([program, "--project", values["PROJECT_ROOT"], "start-database"])}')
+        return True
+    return report.warn('postgres_connection', 'unchecked')
 
 
 def check_writable(report: Report, check: str, directory: Path):
@@ -458,18 +464,19 @@ file (exists, and the database account's variables are not empty and are written
 whether odoo.conf holds a db_password (a WARN naming setup --apply, which moves it to the env file), the
 logs and data directories,
 and the HTTP port, and that Odoo's database account logs in to the PostgreSQL odoo.conf names (a refused
-account names its fix; a service that does not answer is a WARN). With workspace_version 2: the checkout's series and where it came from, its
+account names its fix; a service that does not answer is a WARN whose fix is start-database). With workspace_version 2: the checkout's series and where it came from, its
 series exceptions, and that the workspace's series share no database port, prefixes, compose
 project or env file.
 Prints PASS|WARN|FAIL <check>[=<value>] per check, `  fix: <command or action>` after each FAIL,
-and doctor_failures=<n>; exit 1 when n > 0.
+and doctor_failures=<n>; exit 1 when n > 0. A module of another series names first, when setup would
+propose it, `setup --answer series_exceptions=add --apply`.
 Never starts services or prints file contents or values; it connects only to check that account.
 
 --environment runs the environment checks instead (v0.16.0 S5): does the environment match its locks?
 --quick (the default) checks the requirement files and lock.sha256, the environment's Python, the
 virtualenv, uv, the Odoo version and compose config; --full also checks the installed packages against
 the locks, audits the dependencies and logs in to PostgreSQL with Odoo's account (the database service
-running). Prints PASS|FAIL|SKIP <check>=<value> per check, then environment_mode=<quick|full> and
+running; when it is not, the fix is start-database). Prints PASS|FAIL|SKIP <check>=<value> per check, then environment_mode=<quick|full> and
 environment_failures=<n>; exit 1 when n > 0, 2 when the environment's Python is not the declared one.
 check-environment [--quick|--full] is a deprecated alias of doctor --environment: it keeps working,
 with the same lines and exit codes.

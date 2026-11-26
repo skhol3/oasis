@@ -57,10 +57,12 @@ Releases are listed in the [changelog](CHANGELOG.md).
 2. Start the database service and run `doctor` until `doctor_failures=0` (each `FAIL` says how to
    fix it). setup generated the database account in the environment file, which the service and
    Odoo both read; no step needs a password read, copied or typed
-   ([The database account](docs/setup.md#the-database-account)):
+   ([The database account](docs/setup.md#the-database-account)). `start-database` starts the
+   service the way every database command does and names no environment file, so an agent harness
+   that refuses commands naming one runs it too:
 
    ```bash
-   docker compose --env-file .oasis/config/.env -f .oasis/config/compose.yml up -d --wait
+   ~/.agents/skills/odoo19/oasis start-database
    ~/.agents/skills/odoo19/oasis doctor
    ```
 
@@ -116,8 +118,10 @@ flag that answers each), `--answer <id>=<value>` or `--answers <file.json>` answ
 asks in advance about what would fail later (python-ldap 3.4.0 against OpenLDAP 2.6, module
 requirements missing or conflicting with Odoo's pins; uv 0.13 gets `UV_LEGACY_TAR_BACKEND=1`). Without a
 terminal an unanswered question is listed in the plan and `--apply` refuses, naming its flag.
-`oasis status --json` says what is ready, what is missing and the next command to run (an oasis
-command, or the `docker compose ... up -d --wait` that starts the database service).
+`oasis status --json` says what is ready, what is missing and the next oasis command to run
+(`start-database` for a stopped database service). A new workspace gets the `[development]` table
+`init-dev-database` needs (the question `development`, recommended `add`: `administrator_login =
+'admin'`, its password generated), so no step edits the workspace file by hand.
 [Docs →](docs/setup.md#questions-and-answers)
 
 ### Checkouts and worktrees

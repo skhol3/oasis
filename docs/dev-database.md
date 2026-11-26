@@ -2,7 +2,7 @@
 
 Use the global `init-dev-database` command for a **new, explicitly authorized development database**. By default it initializes Odoo without demo data, configures the administrator, installs one project module, and creates the project-declared role accounts. Pass `--with-demo` explicitly to use Odoo's native demo loader. The Odoo options come from the series table (`tools/odoo_versions.py`): without demo data `--without-demo` on 19.0 and `--without-demo=all` on 15.0; with it `--with-demo` on 19.0 and nothing on 15.0, which loads demo data by default and has no `--with-demo` option. Role accounts get their groups through the series' `res.users` field (`group_ids` on 19.0, `groups_id` on 15.0). The part that runs inside Odoo uses the project environment's Python (3.7 or later, such as the 3.8 or 3.9 of an Odoo 15 environment) and only its standard library: the configuration is read by oasis's own Python, which passes it the values it needs. `create-database` (empty PostgreSQL database), `install-module`, `update-module`, `start`, and test commands do not provision these users.
 
-Declare non-secret accounts in the project's `oasis-workspace.toml`:
+Declare non-secret accounts in the project's `oasis-workspace.toml`. A workspace `oasis setup` creates already has the table, with the administrator alone (the question `development`, recommended `add`; [Setup](setup.md#what-it-infers-and-what-it-asks)): `[development]` and `administrator_login = 'admin'`, so `init-dev-database` runs without editing the file; `--answer development=none` leaves it out, and setup's next steps then name those two lines. Edit it, for example:
 
 ```toml
 [development]

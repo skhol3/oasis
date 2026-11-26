@@ -10,9 +10,9 @@ The checks, in order, each {"ready": bool, "detail": ...}: workspace, environmen
 databases, server; `next` is the command of the first one that is not ready (null when all are), shell-quoted:
   workspace         setup --plan --json (no workspace file), doctor (a configuration that does not load)
   environment/locks bootstrap --apply (doctor for a lock changed by hand or locks that cannot be read)
-  database_service  the `docker compose --env-file <env file> -f <compose file> up -d --wait <service>` that
-                    starts it (stopped or starting; list-databases would start it too, but the policy says it
-                    only reads), doctor when it is unhealthy or its state cannot be read
+  database_service  start-database, which starts it (stopped or starting) and names no env file (an agent harness
+                    may refuse a command that does; list-databases would start it too, but the policy says it only
+                    reads), doctor when it is unhealthy or its state cannot be read
   databases         init-dev-database <module> <name> with [development], else install-module <module>
                     (create-database <name> without modules); doctor when they cannot be read
   server            start
@@ -36,7 +36,7 @@ import trash  # noqa: E402
 CHECKS = ('workspace', 'environment', 'locks', 'database_service', 'databases', 'server')
 PSQL = ('set -eu\nexport PGPASSWORD="$ODOO_DB_PASSWORD"\n'
         'exec psql -U "$ODOO_DB_USER" -d "$POSTGRES_DB" "$@"\n')
-# The database service states whose next command starts it (`up -d --wait` waits until it is healthy).
+# The database service states whose next command starts it (start-database waits until it is healthy).
 STARTS = ('stopped', 'starting')
 
 
@@ -46,12 +46,6 @@ def compose(values: dict, *arguments: str) -> subprocess.CompletedProcess | None
                                *arguments], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError):
         return None
-
-
-def start_service(values: dict) -> str:
-    """The command that starts the database service, as oasis runs it (common.sh wait_for_database)."""
-    return shlex.join(['docker', 'compose', '--env-file', values['ENV_FILE'], '-f', values['COMPOSE_FILE'], 'up', '-d',
-                       '--wait', values['DB_SERVICE']])
 
 
 def service_state(values: dict) -> str:
@@ -160,7 +154,7 @@ def report(root: Path) -> dict:
         return done(command('doctor') if state == 'edited' or state.startswith('unknown')
                     else command('bootstrap', '--apply'))
     if not checks['database_service']['ready']:
-        return done(start_service(values) if service in STARTS else command('doctor'))
+        return done(command('start-database') if service in STARTS else command('doctor'))
     if not checks['databases']['ready']:
         if isinstance(checks['databases']['detail'], str):
             return done(command('doctor'))

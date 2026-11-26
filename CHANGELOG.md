@@ -11,6 +11,14 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Added
 
+- `oasis start-database` (Tier A): starts the checkout's database service the way every database command
+  does and prints one line; nothing it prints names the env file. Setup's next steps, `status --json`
+  `next`, doctor's fixes for a stopped service and the recovery step of `recreate-database-volume` name it
+  instead of `docker compose --env-file ... up -d --wait`.
+- setup asks the question `development` for a new workspace (`add`, recommended and applied without a
+  terminal; or `none`): `add` writes `[development]` with `administrator_login = 'admin'`, so
+  `init-dev-database` works without editing the file; a workspace without the table gets a next step that
+  names the exact lines.
 - `oasis setup --workspace <dir>` moves a workspace that setup created in the clone to a directory above
   it: the workspace file (relative paths rewritten), `.oasis/` and the clone's exclude entries; verified
   once moved, every change undone on failure.
@@ -53,6 +61,8 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- When setup would propose the exception, the series guard refusal and doctor's `module_series` fix first
+  name `oasis --project <checkout> setup --answer series_exceptions=add --apply`.
 - `check-environment [--quick|--full]` is now `doctor --environment [--quick|--full]`; `check-environment`
   stays as a deprecated alias with the same lines, exit codes and usage line through `oasis`, `odoo19`,
   the project wrappers and the tool script (S5). `doctor`'s usage line names `--environment`. setup,

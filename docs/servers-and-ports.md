@@ -13,6 +13,7 @@ Each checkout controls only its own Odoo server; the PostgreSQL service is one a
 ## Database service
 
 - Every command that needs the database runs `compose up -d --wait <db_service>` under an exclusive `flock` of `compose-<16 hex of sha256(real path of the compose file)>.lock` (0600) in `${XDG_RUNTIME_DIR:-/tmp}/oasis-<uid>/`, so checkouts that share a compose file start the service one at a time instead of failing with Docker's container name conflict; a command that waits more than 120 s for that lock exits 1 with `Timed out waiting for another checkout to start the database service.`, and without `flock` on `PATH` it prints `WARNING: flock not found; starting the database service without the cross-checkout lock.` and runs `compose up` unlocked.
+- `start-database` (v0.16.0, Tier A in the [agent policy](agent-contract.md)) starts the service that way and nothing else, then prints one line: `database service <db_service> is running (<compose file>)`. No output of it names the environment file, so an agent harness that refuses a command naming one runs it: setup's next steps, `status --json` and doctor name it. When `compose up` fails, what docker compose printed goes to stderr with the environment file's path replaced by `[tooling].env_file`, then `ERROR: the database service <db_service> did not start (exit <n>); oasis --project <checkout> doctor checks its configuration.` (exit 1); a missing compose or environment file exits 1 naming `oasis --project <checkout> setup --apply`, which creates it (the environment file by its key, `[tooling].env_file`). It takes no arguments (exit 2 with its usage). `stop --database` stops the service again.
 
 ## Starting a server
 
@@ -59,7 +60,7 @@ is not ready with the `detail` `unknown (<reason>)`, and the output is still one
             "database_service": {"ready": false, "detail": "stopped"},
             "databases": {"ready": false, "detail": "unknown while the database service is stopped"},
             "server": {"ready": false, "detail": "stopped"}},
- "next": "docker compose --env-file /w/shop/.oasis/config/.env -f /w/shop/.oasis/config/compose.yml up -d --wait db"}
+ "next": "oasis --project /w/shop start-database"}
 ```
 
 | Check | Ready when | `next` when it is the first one missing |
@@ -67,14 +68,15 @@ is not ready with the `detail` `unknown (<reason>)`, and the output is still one
 | `workspace` | the configuration loads (`detail`: the workspace file, or why not) | `setup --plan --json` without a workspace file, `doctor` when it does not load |
 | `environment` | the environment has a `pyvenv.cfg` and its Python | `bootstrap --apply` |
 | `locks` | `lock.sha256` matches (`detail`: `current`, `missing`, `stale`, `edited`, `unknown (<reason>)`) | `bootstrap --apply` (`doctor` for `edited` and `unknown`) |
-| `database_service` | `docker compose ps` shows it running, and healthy when it has a health check (`detail`: `running`, `starting`, `unhealthy`, `stopped`, `unknown (<reason>)`) | `docker compose --env-file <env file> -f <compose file> up -d --wait <db_service>`, which starts it (and waits until it is healthy), for `stopped` and `starting`; `doctor` for `unhealthy` and `unknown` |
+| `database_service` | `docker compose ps` shows it running, and healthy when it has a health check (`detail`: `running`, `starting`, `unhealthy`, `stopped`, `unknown (<reason>)`) | `start-database`, which starts it (and waits until it is healthy), for `stopped` and `starting`; `doctor` for `unhealthy` and `unknown` |
 | `databases` | a development database of this checkout exists (`detail`: this checkout's managed databases, or `unknown (<reason>)`) | `init-dev-database <module> <dev_prefix>manual` with `[development]`, else `install-module <module>` (the first module of the addon roots; `create-database <name>` without modules); `doctor` when they cannot be read |
 | `server` | this checkout's server runs (`detail`: `running pid <pid> port <port>`) | `start` |
 
 `next` is `null` when everything is ready, and a shell-quoted command line otherwise (Python's `shlex.join`:
-a checkout path with spaces or quotes is quoted). Every command but the one that starts the database service
-is `oasis --project <checkout> ...` (`odoo19` through the alias). The database service gets its
-`docker compose ... up` command rather than `list-databases`: `list-databases` starts the service too, but the
-[agent policy](agent-contract.md) lists it as one that only reads and reports.
+a checkout path with spaces or quotes is quoted). Every command is `oasis --project <checkout> ...` (`odoo19`
+through the alias). The database service gets `start-database` rather than `list-databases`: `list-databases`
+starts the service too, but the [agent policy](agent-contract.md) lists it as one that only reads and reports;
+and rather than the `docker compose ... up -d --wait` it runs, which names the environment file. With the
+`[development]` table setup writes in a new workspace, `databases` is followed by `init-dev-database`.
 
 Earlier behaviour of `stop` and of the test databases is recorded in the [changelog](../CHANGELOG.md) (0.3.0, 0.4.0 and 0.8.0, under Changed).

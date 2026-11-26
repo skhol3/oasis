@@ -98,10 +98,10 @@ class StatusJsonTests(unittest.TestCase):
                          {'ready': False, 'detail': 'unknown while the database service is stopped'})
         self.assertEqual(status['checks']['server'], {'ready': False, 'detail': 'stopped'})
         # list-databases would start the service, which the policy's "reads and reports" does not say: the command
-        # that starts it is named instead.
-        config_dir = self.checkout / '.oasis/config'
-        self.assertEqual(status['next'], shlex.join(['docker', 'compose', '--env-file', str(config_dir / '.env'), '-f',
-                                                     str(config_dir / 'compose.yml'), 'up', '-d', '--wait', 'db']))
+        # that starts it is named instead, start-database, which names no env file (an agent harness may refuse a
+        # command that does).
+        self.assertEqual(status['next'], f'{program} start-database')
+        self.assertNotIn('.env', json.dumps(status['next']))
         # Read only: compose ps and nothing else (no `up`).
         calls = self.docker_log.read_text().splitlines()
         self.assertEqual(len(calls), 1)
@@ -117,7 +117,8 @@ class StatusJsonTests(unittest.TestCase):
         status = self.status_json()
         self.assertEqual(status['checks']['database_service'], {'ready': True, 'detail': 'running'})
         self.assertEqual(status['checks']['databases'], {'ready': False, 'detail': []})
-        self.assertEqual(status['next'], f'{program} install-module shop_sale')
+        # setup wrote [development] (its recommended answer without a terminal): init-dev-database works.
+        self.assertEqual(status['next'], f'{program} init-dev-database shop_sale shop_dev_manual')
         self.env['FAKE_DATABASES'] = 'other_dev_x\nshop_dev_manual\nshop_test_x\n'
         status = self.status_json()
         self.assertEqual(status['checks']['databases'], {'ready': True, 'detail': ['shop_dev_manual', 'shop_test_x']})
@@ -130,16 +131,16 @@ class StatusJsonTests(unittest.TestCase):
         self.assertEqual(status['checks']['locks'], {'ready': False, 'detail': 'stale'})
         self.assertEqual(status['next'], f'{program} bootstrap --apply')
 
-    def configured(self):
-        applied = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+    def configured(self, *answers):
+        applied = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *answers)
         self.assertEqual(applied.returncode, 0, applied.stderr)
         return shlex.join(['oasis', '--project', str(self.checkout)])
 
     def test_each_state_of_the_database_service_and_its_next_command(self):
         program = self.configured()
-        config_dir = self.checkout / '.oasis/config'
-        start = shlex.join(['docker', 'compose', '--env-file', str(config_dir / '.env'), '-f',
-                            str(config_dir / 'compose.yml'), 'up', '-d', '--wait', 'db'])
+        start = f'{program} start-database'
+        # setup wrote [development] (v0.16.0 S6): the next database command is init-dev-database.
+        init_dev = f'{program} init-dev-database shop_sale shop_dev_manual'
         for ps, detail, ready, next_command in (
                 ('', 'stopped', False, start),
                 ('{"Service":"db","State":"exited","Health":""}\n', 'stopped', False, start),
@@ -148,8 +149,8 @@ class StatusJsonTests(unittest.TestCase):
                 ('not json\n', 'unknown (docker compose ps printed no JSON)', False, f'{program} doctor'),
                 ('"text"', 'unknown (docker compose ps printed no JSON)', False, f'{program} doctor'),
                 # The array form of older docker compose releases, and a service without a health check.
-                ('[{"Service":"db","State":"running","Health":"healthy"}]', 'running', True, f'{program} install-module shop_sale'),
-                ('{"Service":"db","State":"running"}\n', 'running', True, f'{program} install-module shop_sale')):
+                ('[{"Service":"db","State":"running","Health":"healthy"}]', 'running', True, init_dev),
+                ('{"Service":"db","State":"running"}\n', 'running', True, init_dev)):
             with self.subTest(ps=ps):
                 self.env['FAKE_PS'] = ps
                 status = self.status_json()
@@ -178,8 +179,9 @@ class StatusJsonTests(unittest.TestCase):
         self.assertEqual(status['next'], f'{program} doctor')
 
     def test_the_next_database_command_follows_the_workspace(self):
-        program = self.configured()
+        program = self.configured('--answer', 'development=none')
         self.env['FAKE_PS'] = RUNNING
+        self.assertEqual(self.status_json()['next'], f'{program} install-module shop_sale')
         workspace = self.checkout / 'oasis-workspace.toml'
         workspace.write_text(workspace.read_text() + "\n[development]\nadministrator_login = 'admin'\n")
         self.assertEqual(self.status_json()['next'], f'{program} init-dev-database shop_sale shop_dev_manual')

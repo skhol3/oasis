@@ -64,6 +64,7 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `restart` | A | restarts this checkout's Odoo server |  |
 | `stop` | A | stops this checkout's Odoo server; start runs it again |  |
 | `status` | A | reads and reports; changes nothing |  |
+| `start-database` | A | starts the database service every checkout shares, as every database command does; names no env file |  |
 | `stop --database` | B | stops the database service every checkout shares, ending the sessions of a server on it |  |
 | `install-module` | A | installs a module in a managed database |  |
 | `update-module` | A | updates a module in a managed database |  |

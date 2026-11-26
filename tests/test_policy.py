@@ -25,6 +25,7 @@ class PolicyTableTests(unittest.TestCase):
     def test_tiers_follow_s1(self):
         table = tiers()
         for operation in ('setup', 'setup --apply', 'bootstrap', 'create-database', 'start', 'stop', 'restart',
+                          'start-database',
                           'install-module', 'update-module', 'doctor', 'check-environment', 'gc', 'gc --apply',
                           'test-module', 'verify-module', 'migrate --plan', 'worktree-init --dry-run'):
             self.assertEqual(table[operation], 'A', operation)

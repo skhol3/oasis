@@ -109,7 +109,7 @@ class DoctorTests(unittest.TestCase):
                  *self.origins().splitlines(), 'PASS git=2.47.1', 'PASS docker',
                  'PASS docker_compose=2.29.1', 'PASS flock', 'PASS proc', 'PASS python=3.12',
                  'PASS odoo_release=19.0', 'PASS odoo_conf', 'PASS compose', 'PASS env_file', 'PASS logs_dir',
-                 *extra, f'PASS http_port={self.port}', 'WARN postgres_connection=not_running']
+                 *extra, f'PASS http_port={self.port}', self.not_running()]
         replacements = {re.split(r'[ =]', line, maxsplit=2)[1]: line for line in changed}
         # The connection check needs the checks it reads: python, odoo_conf and env_file.
         if any(line.startswith('FAIL ') and name in ('python', 'odoo_conf', 'env_file')
@@ -125,6 +125,11 @@ class DoctorTests(unittest.TestCase):
                 report.append(after[name])
         failures = sum(line.startswith('FAIL ') for line in report)
         return '\n'.join(report) + f'\ndoctor_failures={failures}\n'
+
+    def not_running(self):
+        """The connection WARN when nothing answers, and its fix: start-database (v0.16.0 S6), naming no env file."""
+        start = shlex.join(['oasis', '--project', str(self.root), 'start-database'])
+        return f'WARN postgres_connection=not_running\n  fix: {start}'
 
     def assert_report(self, expected, docker_calls=1):
         """doctor prints exactly expected (exit 1 with a FAIL line, else 0) and changes nothing."""
@@ -165,7 +170,7 @@ class DoctorTests(unittest.TestCase):
                            'PASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
                            'PASS python=3.12\nPASS odoo_release=19.0\nPASS odoo_conf\nPASS compose\n'
                            f'PASS env_file\nPASS logs_dir\nPASS http_port={self.port}\n'
-                           'WARN postgres_connection=not_running\ndoctor_failures=0\n')
+                           f'{self.not_running()}\ndoctor_failures=0\n')
         self.assertEqual(os.listdir(self.runtime.name), [])
 
     def test_workspace_checkout_passes_every_check(self):
@@ -177,7 +182,7 @@ class DoctorTests(unittest.TestCase):
                            'PASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
                            'PASS python=3.12\nPASS odoo_release=19.0\nPASS odoo_conf\nPASS compose\n'
                            'PASS env_file\nPASS logs_dir\nPASS data_dir\n'
-                           f'PASS http_port={self.port}\nWARN postgres_connection=not_running\n'
+                           f'PASS http_port={self.port}\n{self.not_running()}\n'
                            'doctor_failures=0\n')
         self.assertEqual(os.listdir(self.runtime.name), [])
 
@@ -546,7 +551,7 @@ class DoctorTests(unittest.TestCase):
                                                    "    ports:\n      - '127.0.0.1:6001:5432'\n")
         self.conf.write_text(f'[options]\nhttp_port = {self.port}\ndb_host = 127.0.0.1\ndb_port = 6001\n')
         for outcome, line in (('ready', 'PASS postgres_connection'),
-                              ('not_running', 'WARN postgres_connection=not_running'),
+                              ('not_running', self.not_running()),
                               ('no_driver', 'WARN postgres_connection=unchecked'),
                               ('Traceback', 'WARN postgres_connection=unchecked')):
             with self.subTest(outcome=outcome):
@@ -622,6 +627,21 @@ class DoctorTests(unittest.TestCase):
                 manifest.write_text(f"{{'name': 'Coffee', 'version': '{version}'}}\n")
                 (self.root / 'tea/__manifest__.py').write_text(f"{{'name': 'Tea', 'version': '{version}'}}\n")
                 self.assert_report(self.expected())
+
+    def test_a_module_of_another_series_in_a_checkout_of_the_series_first_names_the_setup_exception(self):
+        # v0.16.0 S6: when setup would propose the exception (the checkout stays an Odoo 19.0 one and the workspace
+        # file has no [series."19.0"] section, which setup never edits), the fix names that oasis action first.
+        (self.root / 'coffee/__manifest__.py').write_text("{'name': 'Coffee', 'version': '19.0.1.0.0'}\n")
+        (self.root / 'tea').mkdir()
+        (self.root / 'tea/__manifest__.py').write_text("{'name': 'Tea', 'version': '15.0.1.0.0'}\n")
+        setup = shlex.join(['oasis', '--project', str(self.root), 'setup', '--answer', 'series_exceptions=add',
+                            '--apply'])
+        self.assert_report(self.expected(after={'odoo_release': (
+            'FAIL module_series=15.0 module=tea expected=19.0\n'
+            f'  fix: {setup} lists tea in series_exceptions under [series."19.0"] in {self.workspace} (setup proposes '
+            'the exception), or run oasis in a checkout of an Odoo 19.0 branch, or set the version of tea to '
+            '19.0.x.y.z if it is an Odoo 19.0 module; for Odoo 15.0 here, run oasis setup to add a [series."15.0"] '
+            f'section to {self.workspace}')}))
 
 
 class DoctorSurfaceTests(unittest.TestCase):

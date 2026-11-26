@@ -84,6 +84,17 @@ class DoctorEnvironmentTests(unittest.TestCase):
         command = shlex.join(['odoo19', '--project', str(self.root), 'recreate-database-volume', '--confirm', 'cc-shop'])
         self.assertIn(command, stderr)
 
+    def test_a_stopped_database_service_names_start_database(self):
+        # v0.16.0 S6: the fix is the oasis command, which names no env file (a harness may refuse one that does).
+        self.prepare()
+        observed = self.assert_same(('--full',))
+        for program in PROGRAMS:
+            code, _stdout, stderr, _log = observed[program, ('--full',)]
+            start = shlex.join([program, '--project', str(self.root), 'start-database'])
+            self.assertEqual(code, 1)
+            self.assertIn(f'FAIL postgres_service=not_running\n  fix: {start}\n', stderr)
+            self.assertNotIn(str(self.root / 'dev/.env'), stderr)
+
     def test_usage_errors_name_doctor_and_run_nothing(self):
         self.prepare()
         for program in PROGRAMS:

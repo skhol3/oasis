@@ -46,7 +46,9 @@ change: end of input refuses (exit 2), Ctrl-C exits 130, and nothing is changed.
 v0.16.0 S3 (docs/setup.md#questions-and-answers): --plan --json prints the plan as one JSON object
 (plan_document); --answer <id>=<value> and --answers <file.json> answer the questions by id (answered);
 a new runtime.in gets the questions of the problems tools/known_problems.py anticipates (anticipated):
-python-ldap against OpenLDAP 2.6 and the modules' external_dependencies.
+python-ldap against OpenLDAP 2.6 and the modules' external_dependencies. v0.16.0 S6: a new workspace file asks
+the question development (development_choice) and gets [development] with administrator_login = 'admin' unless
+the answer is none; the next steps name start-database, never the docker compose command with the env file.
 """
 import configparser
 import copy
@@ -102,9 +104,15 @@ OPEN_PLAN = ('nothing changed: answer the open questions above (docs/setup.md#qu
 QUESTION_FLAGS = {'series': '--series', 'community': '--community', 'environment': '--environment',
                   'python': '--python', 'workspace': '--workspace'}
 QUESTION_ID = re.compile(r'series|community|enterprise|environment|python|workspace|series_exceptions|python_ldap'
-                         r'|requirement:[a-z0-9][a-z0-9-]*')
-QUESTION_IDS = ('series, community, enterprise, environment, python, workspace, series_exceptions, python_ldap and '
-                'requirement:<name>')
+                         r'|development|requirement:[a-z0-9][a-z0-9-]*')
+QUESTION_IDS = ('series, community, enterprise, environment, python, workspace, series_exceptions, python_ldap, '
+                'development and requirement:<name>')
+# The [development] table of a new workspace (v0.16.0 S6, the question development): init-dev-database needs its
+# administrator_login; the administrator's password is generated (tools/dev_users.py). An existing workspace without
+# one gets a next step that names these lines.
+DEVELOPMENT = {'administrator_login': 'admin'}
+DEVELOPMENT_COMMENT = ('# The administrator of the databases init-dev-database creates; its password is generated '
+                       '(docs/dev-database.md).\n')
 # A clone in <project>/code/<repo> or <project>/codigo/<repo> gets <project> as its recommended workspace (v0.16.0
 # S4.11), unless <project> holds one of these: then it is not a project folder of its own.
 CODE_FOLDERS = ('code', 'codigo')
@@ -193,7 +201,8 @@ can never apply. With --apply it creates only what is missing and keeps everythi
     files are kept;
   - the locks (uv pip compile, as bootstrap --apply) and the Python environment (uv venv, uv pip sync).
 The series comes from the module manifests (<series>.x.y.z), else from the machine file's single series,
-else --series. It ends with the next steps.
+else --series. It ends with the next steps; the database service step is start-database, which names
+no env file (an agent harness may refuse a command that names one).
 
 In a checkout of a series the existing workspace file has no section for (its oasis-checkout.toml
 odoo_version, else its module manifests, the modules of --exception <module> left out), it appends a
@@ -224,12 +233,15 @@ configuration's Python. End of input or Ctrl-C at a question changes nothing (ex
 Questions and answers (docs/setup.md#questions-and-answers): every question has a flag, and
 --answer <id>=<value> (repeatable) or --answers <file.json> (a JSON object {"<id>": "<value>"}) answers
 it by its id: series, community, enterprise (a path or none), environment (create or a path), python,
-workspace (the project folder or the clone), series_exceptions (add or no), python_ldap (yes or no) and
-requirement:<name>. Without a terminal and without an answer, a question
+workspace (the project folder or the clone), series_exceptions (add or no), python_ldap (yes or no),
+development (add or none) and requirement:<name>. Without a terminal and without an answer, a question
 whose answer setup cannot go without (series, community, enterprise) or one of an anticipated problem
 is an open question: the plan lists it with its flag and --apply refuses, changing nothing; the
-environment and its Python take the recommended answers, as before. --plan --json prints the plan as
-one JSON object (inferred values and their origin, changes, questions; never a password).
+environment and its Python take the recommended answers, as before, and so does development.
+A new workspace file gets the [development] table init-dev-database needs (the question development:
+add, recommended, writes administrator_login = 'admin', whose password init-dev-database generates;
+none leaves it out); a workspace file without one gets a next step that names its exact lines.
+--plan --json prints the plan as one JSON object (inferred values and their origin, changes, questions; never a password).
 Anticipated problems (a new runtime.in only): Odoo 15.0's python-ldap==3.4.0 on a machine with
 OpenLDAP 2.6 without libldap_r (python_ldap: pin python-ldap==3.4.4 in a new overrides.txt), and each
 external_dependencies python requirement of the checkout's modules that the requirements do not list
@@ -597,6 +609,28 @@ def environment_choice(options: dict, questions: Questions, series: str, environ
                       f'{default}.\n')
 
 
+def development_choice(questions: Questions, workspace: Path) -> bool:
+    """Whether a new workspace file gets the [development] table init-dev-database needs (v0.16.0 S6): the question
+    development, add (recommended; applied without a terminal and without an answer, as the environment's
+    recommended answers are) or none."""
+    login = migrate.toml_string(DEVELOPMENT['administrator_login'])
+    question = {'id': 'development',
+                'text': f'init-dev-database needs a [development] table in {workspace}: add one with '
+                        f'administrator_login = {login} (its password is generated)?',
+                'options': [{'value': 'add', 'label': f'add [development] with administrator_login = {login}'},
+                            {'value': 'none', 'label': 'none: no [development] table (init-dev-database then needs '
+                                                       'one added by hand)'}],
+                'recommended': 'add', 'flag': '--answer development=<add|none>'}
+    if question['id'] in questions.answers:
+        return questions.choose(question) == 'add'
+    if not questions.interactive:
+        questions.met(question, 'add', 'recommended (no terminal)')
+        return True
+    answer = questions.choose(question)
+    questions.met(question, answer, 'answered')
+    return answer == 'add'
+
+
 def directory_answer(value: str, label: str) -> Path:
     if not value or not os.path.isabs(value) or not os.path.isdir(value):
         raise Refused(f'{label} requires an absolute existing directory.')
@@ -859,7 +893,7 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                  'ADDON_ROOTS': '\n'.join(str((root / item).resolve()) for item in roots)}
         found = other_series(early)
         exceptions = (exceptions_question(questions, root, found, series, workspace,
-                                          config.series_refusal(found[0], early)) if found else [])
+                                          config.series_refusal(found[0], early, propose=False)) if found else [])
         adopted = adopted_environment(options['--environment'], series) if '--environment' in options else None
         chosen, origin_environment = chosen_python(options, series), 'from --environment'
         community, enterprise, origin, machine_lines, machine_actions, environments = choose_sources(
@@ -881,6 +915,7 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                   *machine_lines]
         actions += machine_actions
         layout = f'{LAYOUT}/' if directory == root else ''
+        development = False
 
         def configured(adopted, chosen):
             """(the workspace file's text, the values it gives) with that adopted environment or Python."""
@@ -905,6 +940,8 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
             version = 2 if exceptions else 1
             text = (WORKSPACE_HEADER + f'workspace_version = {version}\nodoo_version = {migrate.toml_string(series)}\n\n'
                     + migrate.toml_table('tooling', tooling)
+                    + ('\n' + DEVELOPMENT_COMMENT + migrate.toml_table('development', DEVELOPMENT)
+                       if development else '')
                     + ('\n' + migrate.toml_table('environments.default', named) if named is not None else '')
                     + ('\n' + SECTION_COMMENT.format(series=series) + migrate.toml_table(
                         f'series.{json.dumps(series)}', {'series_exceptions': exceptions}) if exceptions else ''))
@@ -926,6 +963,9 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                 adopted, chosen, origin_environment = answered_now, chosen_now, 'answered'
                 python_origin = 'answered'
                 text, values = configured(adopted, chosen)
+        development = development_choice(questions, workspace)
+        if development:
+            text, values = configured(adopted, chosen)
         lines.append(f'create {workspace} (mode 0600):')
         lines += [f'  {line}' if line else '' for line in text.splitlines()]
         actions.append(('create', workspace, text.encode(), 0o600))
@@ -1478,7 +1518,8 @@ def with_exceptions(root, workspace, values, found, questions, lines, actions, c
         document = config.checked_workspace(workspace)
     except config.InvalidConfig as exc:
         raise Refused(str(exc)) from exc
-    modules = exceptions_question(questions, root, found, series, workspace, config.series_refusal(found[0], values))
+    modules = exceptions_question(questions, root, found, series, workspace,
+                                  config.series_refusal(found[0], values, propose=False))
     if series in config.series_sections(document, workspace):
         raise Refused(f'{workspace} has a [series.{json.dumps(series)}] section, which setup never edits: add '
                       f'{", ".join(modules)} to its series_exceptions yourself, then run {config.program_name()} setup '
@@ -1571,7 +1612,7 @@ def guarded(values: dict):
     """Refuse a configuration whose modules declare another Odoo series (config.series_mismatch, S11)."""
     mismatch = config.series_mismatch(values)
     if mismatch is not None:
-        raise Refused(config.series_refusal(mismatch, values))
+        raise Refused(config.series_refusal(mismatch, values, propose=False))
 
 
 def published_port(compose: Path) -> int | None:
@@ -2111,7 +2152,6 @@ def apply_plan(plan: dict) -> int:
     if failed:
         return failed
     values = plan['values']
-    env_file = values['ENV_FILE']
     # The account is generated (new_account) and read by the service and Odoo: nothing to fill in.
     steps = []
     if 'adopted_environment' in plan:
@@ -2124,8 +2164,8 @@ def apply_plan(plan: dict) -> int:
                      'packages installed there)')
     elif any(step[0] == 'compile' for step in plan['after']) and not any(step[0] == 'environment' for step in plan['after']):
         steps.append(f'{program} --project {root} bootstrap --apply')
-    steps += [f'docker compose --env-file {env_file} -f {values["COMPOSE_FILE"]} up -d --wait',
-              f'{program} --project {root} doctor']
+    # start-database names no env file: an agent harness may refuse a command that does (v0.16.0 S6).
+    steps += [f'{program} --project {root} start-database', f'{program} --project {root} doctor']
     # init-dev-database needs the role accounts of [development] (tools/dev_users.py). A workspace
     # file that cannot be read now gets no edit advice: doctor reports the configuration.
     workspace_file = Path(values['WORKSPACE_ROOT']) / config.WORKSPACE_NAME
@@ -2134,8 +2174,9 @@ def apply_plan(plan: dict) -> int:
     except config.InvalidConfig:
         development = None
     if development is False:
-        steps.append(f'add a [development] table with administrator_login to {workspace_file} '
-                     '(docs/dev-database.md)')
+        lines = migrate.toml_table('development', DEVELOPMENT).splitlines()
+        steps.append(f'add these lines to {workspace_file} (docs/dev-database.md):'
+                     + ''.join(f'\n       {line}' for line in lines))
     steps.append(f'{program} --project {root} init-dev-database <module> {values["DEV_PREFIX"]}manual')
     print('next steps:')
     for number, step in enumerate(steps, 1):

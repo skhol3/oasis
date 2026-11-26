@@ -46,6 +46,12 @@ def python_prompt(environment, pythons, default):
     return f'Python of the new environment {environment}, one of {pythons} [Enter: {default}]: '
 
 
+def development_prompt(workspace):
+    """The question development of a new workspace on a terminal (v0.16.0 S6); Enter adds the table."""
+    return (f"init-dev-database needs a [development] table in {workspace}: add one with administrator_login = "
+            "'admin' (its password is generated)? (add/none) [Enter: add]: ")
+
+
 def asked_again(answer, series, pythons, default):
     return f'{answer} is not a Python Odoo {series} supports; answer one of {pythons}, or Enter for {default}.\n'
 
@@ -135,6 +141,9 @@ class NewWorkspacePromptTests(unittest.TestCase):
     def venv(self):
         return self.checkout / '.oasis/venv'
 
+    def development(self):
+        return development_prompt(self.checkout / 'oasis-workspace.toml')
+
     def named(self, python):
         """The fixture's new workspace file with the default named environment of that Python."""
         return (test_setup.WORKSPACE.format(base='.oasis/').replace("environment = '.oasis/venv'\n", '')
@@ -143,10 +152,12 @@ class NewWorkspacePromptTests(unittest.TestCase):
     def test_on_a_terminal_the_plan_asks_and_enter_twice_gives_the_plan_without_a_terminal(self):
         before = self.tree()
         status, stdout, written = self.terminal('--community', str(self.source), '--no-enterprise', steps=(
-            (environment_prompt('19.0', self.venv()), b'\n'), (python_prompt(self.venv(), PYTHONS_19, '3.12'), b'\n')))
+            (environment_prompt('19.0', self.venv()), b'\n'), (python_prompt(self.venv(), PYTHONS_19, '3.12'), b'\n'),
+            (self.development(), b'\n')))
         self.assertEqual((status, stdout), (0, self.plan(self.port_of(stdout)) + DRY_RUN), written)
         self.assertEqual(written, environment_prompt('19.0', self.venv()) + python_prompt(self.venv(), PYTHONS_19,
-                                                                                          '3.12'))
+                                                                                          '3.12')
+                         + self.development())
         self.assertEqual(self.tree(), before)
         self.assertFalse(self.log.exists())
 
@@ -155,8 +166,8 @@ class NewWorkspacePromptTests(unittest.TestCase):
         workspace = self.checkout / 'oasis-workspace.toml'
         requirements = self.checkout / '.oasis/config/requirements'
         status, stdout, written = self.terminal('--apply', '--community', str(self.source), '--no-enterprise', steps=(
-            (environment_prompt('19.0', self.venv()), f'{environment}\n'.encode()),))
-        self.assertEqual((status, written), (0, environment_prompt('19.0', self.venv())), stdout)
+            (environment_prompt('19.0', self.venv()), f'{environment}\n'.encode()), (self.development(), b'\n')))
+        self.assertEqual((status, written), (0, environment_prompt('19.0', self.venv()) + self.development()), stdout)
         plan = self.plan(self.port_of(stdout)).replace("  environment = '.oasis/venv'",
                                                        f"  environment = '{environment}'")
         plan = plan.replace(
@@ -198,11 +209,11 @@ class NewWorkspacePromptTests(unittest.TestCase):
         prompt = python_prompt(self.venv(), PYTHONS_19, '3.12')
         status, stdout, written = self.terminal('--apply', '--community', str(self.source), '--no-enterprise', steps=(
             (environment_prompt('19.0', self.venv()), b'\n'), (prompt, b'3.9\n'), (prompt, b'x\n'),
-            (prompt, b'3.13\n')))
+            (prompt, b'3.13\n'), (self.development(), b'\n')))
         self.assertEqual(status, 0, written + stdout)
         self.assertEqual(written, environment_prompt('19.0', self.venv()) + prompt
                          + asked_again('3.9', '19.0', PYTHONS_19, '3.12') + prompt
-                         + asked_again('x', '19.0', PYTHONS_19, '3.12') + prompt)
+                         + asked_again('x', '19.0', PYTHONS_19, '3.12') + prompt + self.development())
         requirements = self.checkout / '.oasis/config/requirements'
         self.assertIn(f'compile {requirements}/runtime.txt, dev.txt and lock.sha256 with Python 3.13 (uv pip compile)\n'
                       f'create the environment {self.venv()} with Python 3.13 (uv venv) and sync dev.txt '
@@ -224,8 +235,8 @@ class NewWorkspacePromptTests(unittest.TestCase):
         self.assertEqual((default.returncode, default.stdout, default.stderr),
                          (0, self.plan(self.port_of(default.stdout)) + DRY_RUN, ''))
         status, stdout, written = self.terminal('--python', '3.13', '--community', str(self.source),
-                                                '--no-enterprise')
-        self.assertEqual((status, written), (0, ''), stdout)
+                                                '--no-enterprise', steps=((self.development(), b'\n'),))
+        self.assertEqual((status, written), (0, self.development()), stdout)
         self.assertIn('with Python 3.13 (uv venv)', stdout)
         self.assertEqual(self.tree(), before)
         self.assertFalse(self.log.exists())
@@ -241,6 +252,17 @@ class NewWorkspacePromptTests(unittest.TestCase):
         self.assert_refused(self.setup_cmd('--python', '3.13'),
                             f'--python: {self.checkout} is already configured by '
                             f'{self.checkout / "oasis-workspace.toml"}; setup only fills what is missing.', before)
+
+    def test_the_development_question_takes_none_and_asks_again_after_another_answer(self):
+        # v0.16.0 S6: Enter adds [development] (the tests above); none leaves it out, anything else is asked again.
+        prompt = self.development()
+        status, stdout, written = self.terminal('--apply', '--python', '3.12', '--community', str(self.source),
+                                                '--no-enterprise', steps=((prompt, b'maybe\n'), (prompt, b'none\n')))
+        self.assertEqual(status, 0, written + stdout)
+        self.assertEqual(written, prompt + 'Answer add or none, or Enter for add.\n' + prompt)
+        self.assertEqual((self.checkout / 'oasis-workspace.toml').read_text(),
+                         test_setup.WORKSPACE.format(base='.oasis/').replace(test_setup.DEVELOPMENT, ''))
+        self.assertIn("add these lines to", stdout)
 
     def test_python_that_the_series_does_not_support_or_that_cannot_apply_is_refused(self):
         environment = self.existing_environment('shop', '3.12.3')
@@ -265,8 +287,9 @@ class NewWorkspacePromptTests(unittest.TestCase):
         self.assert_refused(self.setup_cmd('--python', '3.13', '--community', str(self.source), '--no-enterprise'),
                             f'--python 3.13: the environment {self.venv()} exists and is kept; setup creates no '
                             'environment, so drop --python.', before)
-        status, stdout, written = self.terminal('--community', str(self.source), '--no-enterprise')
-        self.assertEqual((status, written), (0, ''), stdout)
+        status, stdout, written = self.terminal('--community', str(self.source), '--no-enterprise',
+                                                steps=((self.development(), b'\n'),))
+        self.assertEqual((status, written), (0, self.development()), stdout)
         self.assertIn(f'kept the environment {self.venv()}\n', stdout)
         self.assertEqual(self.tree(), before)
 
@@ -278,7 +301,13 @@ class NewWorkspacePromptTests(unittest.TestCase):
                 ('end of input, environment', ((first, b'\x04'),), 2, no_answer('19.0')),
                 ('end of input, python', ((first, b'\n'), (second, b'\x04')), 2, no_answer('19.0')),
                 ('ctrl-c, environment', ((first, b'\x03'),), 130, INTERRUPTED),
-                ('ctrl-c, python', ((first, b'\n'), (second, b'\x03')), 130, INTERRUPTED)):
+                ('ctrl-c, python', ((first, b'\n'), (second, b'\x03')), 130, INTERRUPTED),
+                # v0.16.0 S6: the question development, the same way.
+                ('end of input, development', ((first, b'\n'), (second, b'\n'), (self.development(), b'\x04')), 2,
+                 'ERROR: No answer for development (end of input): nothing changed; pass --answer '
+                 'development=<add|none>.\n'),
+                ('ctrl-c, development', ((first, b'\n'), (second, b'\n'), (self.development(), b'\x03')), 130,
+                 INTERRUPTED)):
             with self.subTest(name=name):
                 code, stdout, written = self.terminal('--apply', '--community', str(self.source), '--no-enterprise',
                                                       steps=steps)

@@ -20,6 +20,7 @@ export const POLICY: readonly PolicyEntry[] = [
   {"operation": "restart", "tier": "A", "kind": "oasis", "reason": "restarts this checkout's Odoo server", "example": "oasis --project /p restart", "confirm": null},
   {"operation": "stop", "tier": "A", "kind": "oasis", "reason": "stops this checkout's Odoo server; start runs it again", "example": "oasis --project /p stop", "confirm": null},
   {"operation": "status", "tier": "A", "kind": "oasis", "reason": "reads and reports; changes nothing", "example": "oasis --project /p status", "confirm": null},
+  {"operation": "start-database", "tier": "A", "kind": "oasis", "reason": "starts the database service every checkout shares, as every database command does; names no env file", "example": "oasis --project /p start-database", "confirm": null},
   {"operation": "stop --database", "tier": "B", "kind": "oasis", "reason": "stops the database service every checkout shares, ending the sessions of a server on it", "example": "oasis --project /p stop --database", "confirm": null},
   {"operation": "install-module", "tier": "A", "kind": "oasis", "reason": "installs a module in a managed database", "example": "oasis --project /p install-module coffee cc_dev_x", "confirm": null},
   {"operation": "update-module", "tier": "A", "kind": "oasis", "reason": "updates a module in a managed database", "example": "oasis --project /p update-module coffee cc_dev_x", "confirm": null},

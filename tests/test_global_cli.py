@@ -25,7 +25,7 @@ def legacy_refusal(profile, program='oasis'):
 PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
           'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases',
           'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy',
-          'recreate-database-volume', 'restart', 'setup', 'start',
+          'recreate-database-volume', 'restart', 'setup', 'start', 'start-database',
           'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info', 'worktree-init',
           'xmlid-info')
 

@@ -624,8 +624,9 @@ class RecreateVolumeTests(unittest.TestCase):
                          '-p', 'cc-shop', *args])
 
     def start_command(self):
-        return shlex.join(['docker', 'compose', '--env-file', str(self.root / 'dev/.env'), '-f',
-                           str(self.root / 'dev/compose.yml'), '-p', 'cc-shop', 'up', '-d', '--wait', 'db'])
+        # v0.16.0 S6: start-database, which names no env file (a harness may refuse a command that does); it runs
+        # the same compose project, since a COMPOSE_PROJECT_NAME that selects another one was refused first.
+        return shlex.join(['oasis', '--project', str(self.root), 'start-database'])
 
     def cli(self, *args):
         result = subprocess.run([sys.executable, '-B', str(ROOT / 'oasis'), '--project', str(self.root),

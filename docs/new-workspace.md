@@ -85,10 +85,13 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
    [The database account](setup.md#the-database-account)): nothing to fill in, and no step needs
    a password read, copied or typed. Never commit that file.
 
-4. Start the database service.
+4. Start the database service. `start-database` runs `docker compose up -d --wait` of the
+   service with the compose file and the environment file of the configuration, as every database
+   command does, prints one line and names no environment file (an agent harness may refuse a
+   command that names one).
 
    ```bash
-   docker compose --env-file .oasis/config/.env -f .oasis/config/compose.yml up -d --wait
+   ~/.agents/skills/odoo19/oasis start-database
    ```
 
 5. Run `doctor` until it prints `doctor_failures=0`. Each `FAIL` line is followed by a `fix:`
@@ -100,7 +103,9 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
    ```
 
 6. Create a development database. It needs a `[development]` table with an
-   `administrator_login` in `oasis-workspace.toml` (setup writes none; see
+   `administrator_login` in `oasis-workspace.toml`: a new workspace gets one from setup (the
+   question `development`, recommended `add`: `administrator_login = 'admin'`; `--answer
+   development=none` leaves it out, and the next steps then name the two lines to add; see
    [the example tree](#the-example-tree) and [Development database](dev-database.md)), and the
    name must start with the `dev_prefix` (`acme_dev_`, from the checkout's name or
    `setup --name`). The passwords are generated into `.oasis/config/acme_dev_manual.logins`
@@ -212,8 +217,9 @@ cd ~/odoo/19.0/projects/acme/codigo/acme
 ```
 
 With `--workspace`, `config/`, `data/` and `logs/` go directly under that directory, and nothing
-is added to `.git/info/exclude`. The workspace file it writes, after the `[development]` table you
-add for `init-dev-database`; it names no source, which comes from the machine file:
+is added to `.git/info/exclude`. The workspace file it writes, with its `[development]` table
+edited to other logins and a role account (setup writes `administrator_login = 'admin'` below a
+comment); it names no source, which comes from the machine file:
 
 ```toml
 # projects/acme/oasis-workspace.toml

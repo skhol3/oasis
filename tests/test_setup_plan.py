@@ -27,6 +27,18 @@ LDCONFIG_24 = ('\tlibldap_r-2.4.so.2 (libc6,x86-64) => /usr/lib/libldap_r-2.4.so
                '\tlibldap-2.4.so.2 (libc6,x86-64) => /usr/lib/libldap-2.4.so.2\n')
 
 
+
+def development_question(workspace, answer, origin):
+    """The question development of a new workspace (v0.16.0 S6) as the JSON plan lists it."""
+    return {'id': 'development',
+            'text': f"init-dev-database needs a [development] table in {workspace}: add one with administrator_login = "
+                    "'admin' (its password is generated)?",
+            'options': [{'value': 'add', 'label': "add [development] with administrator_login = 'admin'"},
+                        {'value': 'none', 'label': 'none: no [development] table (init-dev-database then needs one '
+                                                   'added by hand)'}],
+            'recommended': 'add', 'flag': '--answer development=<add|none>', 'answer': answer, 'origin': origin}
+
+
 class PlanJsonTests(unittest.TestCase):
     setUp = test_setup.SetupTests.setUp
     git = test_setup.SetupTests.git
@@ -102,7 +114,14 @@ class PlanJsonTests(unittest.TestCase):
              'origin': 'recommended (no terminal)'},
             {'id': 'python', 'text': f'Python of the new environment {environment}', 'options': [
                 {'value': python, 'label': f'Python {python}'} for python in ('3.10', '3.11', '3.12', '3.13', '3.14')],
-             'recommended': '3.12', 'flag': '--python <x.y>', 'answer': '3.12', 'origin': 'recommended (no terminal)'}])
+             'recommended': '3.12', 'flag': '--python <x.y>', 'answer': '3.12', 'origin': 'recommended (no terminal)'},
+            development_question(self.checkout / 'oasis-workspace.toml', 'add', 'recommended (no terminal)')])
+        # v0.16.0 S6: the answer none leaves the table out; an answer is reported with where it came from.
+        plan = self.json_plan('--community', str(self.source), '--no-enterprise', '--answer', 'development=none')
+        self.assertEqual(plan['questions'][-1],
+                         development_question(self.checkout / 'oasis-workspace.toml', 'none', 'from --answer'))
+        self.assertNotIn('  [development]', plan['lines'])
+        self.assertEqual((plan['open'], plan['ready_to_apply']), ([], True))
 
     def test_without_an_answer_the_plan_lists_the_open_question_and_apply_names_its_flag(self):
         before = self.tree()
@@ -144,7 +163,7 @@ class PlanJsonTests(unittest.TestCase):
         unknown = self.answers({'colour': 'blue'})
         self.assert_refused(self.setup_cmd('--answers', str(unknown)),
                             f'--answers {unknown}: unknown question colour (setup asks series, community, enterprise, '
-                            'environment, python, workspace, series_exceptions, python_ldap and requirement:<name>).',
+                            'environment, python, workspace, series_exceptions, python_ldap, development and requirement:<name>).',
                             before)
         for content in ('[1]', '{"community": 1}', 'not json'):
             with self.subTest(content=content):
@@ -277,7 +296,8 @@ class PlanJsonTests(unittest.TestCase):
         before = self.tree()
         status, stdout, terminal = on_terminal(
             ['--project', str(self.checkout), 'setup', '--community', str(self.source), '--no-enterprise',
-             '--python', '3.9', '--answer', 'requirement:cryptography=skip', '--answer', 'requirement:phonenumbers=skip'],
+             '--python', '3.9', '--answer', 'requirement:cryptography=skip', '--answer', 'requirement:phonenumbers=skip',
+             '--answer', 'development=add'],
             self.env, self.scratch, [('(yes/no) [Enter: yes]: ', b'maybe\n'), ('Answer yes or no, or Enter for yes.\n', b'\n')])
         self.assertEqual(status, 0, terminal)
         self.assertIn('python-ldap==3.4.0, which does not build', terminal)
@@ -335,7 +355,7 @@ class PlanJsonTests(unittest.TestCase):
         before = self.tree()
         status, stdout, terminal = on_terminal(
             ['--project', str(self.checkout), 'setup', '--community', str(self.source), '--no-enterprise',
-             '--python', '3.12'],
+             '--python', '3.12', '--answer', 'development=add'],
             self.env, self.scratch, [('as written? (add/skip): ', b'\n'), ('Answer add or skip.\n', b'skip\n')])
         self.assertEqual(status, 0, terminal)
         self.assertNotIn('Enter', terminal)

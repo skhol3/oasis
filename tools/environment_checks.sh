@@ -85,7 +85,10 @@ if [[ "$mode" == "--full" ]]; then
   if compose ps --status running --services | grep -qx "$DB_SERVICE"; then
     running=true
     pass "postgres_service=running"
-  else fail "postgres_service=not_running"
+  else
+    fail "postgres_service=not_running"
+    # The oasis command that starts it, which names no env file (v0.16.0 S6).
+    printf '  fix: %s\n' "$(confirm_command start-database)" >&2
   fi
   if "$running" && [[ -z "$unsupported" ]]; then
     # Odoo's own account over the connection odoo.conf names, with the environment's Python and

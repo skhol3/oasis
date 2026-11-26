@@ -108,7 +108,7 @@ class ProjectFolderTests(unittest.TestCase):
         prompt = (f'Workspace directory: Enter puts it in {project} (the project folder above code/), or type '
                   f'{self.checkout} to keep it in the clone: ')
         arguments = ['--project', str(self.checkout), 'setup', '--community', str(self.source), '--no-enterprise',
-                     '--python', '3.12']
+                     '--python', '3.12', '--answer', 'development=add']
         code, stdout, written = on_terminal(arguments, self.env, self.scratch, [(prompt, b'\n')])
         self.assertEqual(code, 0, written)
         self.assertIn(f'workspace: {project} (new; the project folder above code/; ', stdout)

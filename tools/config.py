@@ -762,11 +762,40 @@ def series_mismatch(values: dict[str, str]) -> dict | None:
     return None
 
 
-def series_fix(mismatch: dict, expected: str, values: dict[str, str] | None = None) -> str:
+def setup_proposes_exceptions(values: dict[str, str]) -> bool:
+    """Whether `oasis setup` in the checkout of values asks the question series_exceptions for its modules of
+    another series (tools/setup.py section_target and with_exceptions; v0.16.0 S6): its workspace file reads and
+    has no [series."<ODOO_VERSION>"] table (setup never edits one, nor adds a second one to a version 1 file, which
+    does not read it), and setup keeps the checkout's series: the
+    checkout file's odoo_version, else the one supported series its manifests declare, is one the workspace
+    configures, or the manifests declare several (or none). Otherwise setup adds a series section instead."""
+    root, workspace = Path(values['PROJECT_ROOT']), Path(values['WORKSPACE_ROOT']) / WORKSPACE_NAME
+    try:
+        document = checked_workspace(workspace)
+        tables = document.get('series')
+        if values['ODOO_VERSION'] in series_sections(document, workspace) or (
+                isinstance(tables, dict) and values['ODOO_VERSION'] in tables):
+            return False
+        series = checkout_file(root).get('odoo_version', MISSING)
+        if series is MISSING:
+            try:
+                series = detected_series(root, document, workspace)
+            except InvalidConfig:
+                return True
+        configured = (declared_series(document, workspace) if document['workspace_version'] == 2
+                      else [document['odoo_version']])
+    except (InvalidConfig, OSError):
+        return False
+    return series is None or series in configured
+
+
+def series_fix(mismatch: dict, expected: str, values: dict[str, str] | None = None, propose: bool = True) -> str:
     """How to fix a series mismatch (doctor's fix line and the end of series_refusal). With the
-    assignments of a version 2 checkout (values), the fix also names series_exceptions. For a
-    supported series it ends with the series model (S3): the checkout file's odoo_version when the
-    workspace configures that series, else oasis setup to add its section."""
+    assignments of a checkout (values) whose setup proposes the exception (setup_proposes_exceptions), the fix
+    first names that oasis action, `setup --answer series_exceptions=add --apply` (v0.16.0 S6), unless propose
+    is False (setup's own refusal after the answer no). With the assignments of a version 2 checkout, the fix
+    also names series_exceptions. For a supported series it ends with the series model (S3): the checkout
+    file's odoo_version when the workspace configures that series, else oasis setup to add its section."""
     program, module, found = program_name(), mismatch['module'], mismatch['series']
     fix = (f'run {program} in a checkout of an Odoo {expected} branch, or set the version of {module} to '
            f'{expected}.x.y.z if it is an Odoo {expected} module')
@@ -775,6 +804,11 @@ def series_fix(mismatch: dict, expected: str, values: dict[str, str] | None = No
     else:
         workspace = Path(values['WORKSPACE_ROOT']) / WORKSPACE_NAME
         configured = workspace_series(workspace) if values.get('WORKSPACE_VERSION') == '2' else []
+        if propose and setup_proposes_exceptions(values):
+            setup = shlex.join([program, '--project', values['PROJECT_ROOT'], 'setup', '--answer',
+                                'series_exceptions=add', '--apply'])
+            fix = (f'{setup} lists {module} in series_exceptions under [series.{json.dumps(expected)}] in {workspace} '
+                   f'(setup proposes the exception), or {fix}')
     if configured:
         fix += f', or list {module} in series_exceptions under [series.{json.dumps(expected)}] in {workspace}'
     if found not in versions().CAPABILITIES:
@@ -795,13 +829,14 @@ def workspace_series(workspace: Path) -> list[str]:
     return declared_series(document, workspace) if document['workspace_version'] == 2 else []
 
 
-def series_refusal(mismatch: dict, values: dict[str, str]) -> str:
-    """The refusal of a checkout with a module of another series: the module, both series, the fix."""
+def series_refusal(mismatch: dict, values: dict[str, str], propose: bool = True) -> str:
+    """The refusal of a checkout with a module of another series: the module, both series, the fix (series_fix;
+    propose False leaves out the setup action, as setup's own refusal after the answer no does)."""
     expected = values['ODOO_VERSION']
     workspace = Path(values['WORKSPACE_ROOT']) / WORKSPACE_NAME
     return (f'The module {mismatch["module"]} declares Odoo {mismatch["series"]} (version {mismatch["version"]} '
             f'in {mismatch["manifest"]}), but {values["PROJECT_ROOT"]} is configured for Odoo {expected} by '
-            f'{workspace}: {series_fix(mismatch, expected, values)}.')
+            f'{workspace}: {series_fix(mismatch, expected, values, propose)}.')
 
 
 def origins(root: Path) -> dict[str, str]:

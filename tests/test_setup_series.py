@@ -23,7 +23,7 @@ import sys
 import tempfile
 import unittest
 
-from test_setup import GIT, UV
+from test_setup import ADD_DEVELOPMENT, GIT, UV
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'oasis'
@@ -318,9 +318,9 @@ class SeriesSetupTests(unittest.TestCase):
             f'compiled {requirements}/runtime.txt, dev.txt and lock.sha256',
             f'created the environment {environment}',
             'next steps:',
-            f'  1. docker compose --env-file {series / ".env"} -f {series / "compose.yml"} up -d --wait',
+            f'  1. oasis --project {self.checkout} start-database',
             f'  2. oasis --project {self.checkout} doctor',
-            f'  3. add a [development] table with administrator_login to {self.workspace} (docs/dev-database.md)',
+            f'  3. {ADD_DEVELOPMENT.format(workspace=self.workspace)}',
             f'  4. oasis --project {self.checkout} init-dev-database <module> cc15_dev_manual']) + '\n')
         # Only the version line changed; the section is appended; the mode is kept.
         self.assertEqual(self.workspace.read_text(),
@@ -920,9 +920,9 @@ series_exceptions = ['report_xlsx']
             f'  1. the locks in {requirements} describe runtime.in, dev.in and overrides.txt: oasis --project '
             f'{self.checkout} bootstrap --apply syncs the adopted environment {environment} to them (it changes '
             'the packages installed there)',
-            f'  2. docker compose --env-file {folder / ".env"} -f {folder / "compose.yml"} up -d --wait',
+            f'  2. oasis --project {self.checkout} start-database',
             f'  3. oasis --project {self.checkout} doctor',
-            f'  4. add a [development] table with administrator_login to {self.workspace} (docs/dev-database.md)',
+            f'  4. {ADD_DEVELOPMENT.format(workspace=self.workspace)}',
             f'  5. oasis --project {self.checkout} init-dev-database <module> cc15_dev_manual']) + '\n')
         self.assertEqual(self.workspace.read_text(),
                          V1.replace('workspace_version = 1', 'workspace_version = 2') + '\n' + section)

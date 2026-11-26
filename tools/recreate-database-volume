@@ -10,7 +10,8 @@
 # initialized with other credentials. Tier B in the agent policy (tools/policy.py): it runs only with
 # --confirm <compose project>; without it, after the plan, it refuses naming the exact command and
 # changes nothing. A failure after the volume was deleted says so and names the command that starts the
-# service again (exit 1).
+# service again, start-database (exit 1): it runs the same compose project, since a COMPOSE_PROJECT_NAME that
+# selects another one was refused first, and names no env file.
 set -Eeuo pipefail
 source "$(dirname "$0")/oasis_env.sh"
 usage() {
@@ -94,8 +95,7 @@ fi
 compose() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -p "$project" "$@"
 }
-start=$(python3 -I -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' docker compose --env-file "$ENV_FILE" \
-  -f "$COMPOSE_FILE" -p "$project" up -d --wait "$DB_SERVICE")
+start=$(confirm_command start-database)
 status=0
 compose down -v || status=$?
 if (( status != 0 )); then
