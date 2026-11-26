@@ -1,0 +1,60 @@
+# The Python and node suites on every pull request and on pushes to main (v0.17.0 S4).
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      # node --test runs the .ts files directly: type stripping is on by default from Node 22.18 / 23.6.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - name: node suite
+        run: node --test pi/tests/*.test.ts
+      # No uv here: the tests that need a 3.8 or 3.9 interpreter skip without it (job odoo15-python runs them).
+      - name: Python suite
+        run: python3 -B -m unittest discover -s tests
+
+  # What runs inside Odoo 15 environments (tools/audit_dependencies.py, tools/dev_users_runtime.py) with
+  # their Python. The tests run on 3.12 and find the old interpreter through `uv python find`; the other
+  # minor of the matrix is not installed, so its test skips.
+  odoo15-python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.8', '3.9']
+    steps:
+      - uses: actions/checkout@v5
+      # The last version listed is the default python3.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: |
+            ${{ matrix.python }}
+            3.12
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+      - name: uv finds the Odoo 15 Python
+        env:
+          MINOR: ${{ matrix.python }}
+        run: uv python find --no-project --system "$MINOR"
+      - name: Odoo 15 Python tests
+        working-directory: tests
+        run: >-
+          python3 -B -m unittest -v
+          test_audit_dependencies.AuditDependenciesTests.test_python_39_and_38_give_the_same_output
+          test_check_environment.OldPythonAuditTests
+          test_dev_users.DevelopmentUsersTests.test_the_runner_works_with_an_odoo_15_python
