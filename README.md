@@ -181,7 +181,7 @@ identical alias): [which one when](docs/setup.md#setup-bootstrap-or-migrate).
 | [Setting up a new workspace](docs/new-workspace.md) | From a clone to `doctor` and a database with `oasis setup`; where each value lives, an example tree, the steps by hand |
 | [Setting up a checkout with oasis setup](docs/setup.md) | `oasis setup`: the plan, then `--apply` creates only what is missing |
 | [New project setup](docs/project-setup.md) | Workspace file, entry point and optional project wrappers |
-| [Checking the environment](docs/checking-environment.md) | `doctor`, `doctor --environment` (`check-environment`, a deprecated alias) and `lock.sha256` |
+| [Checking the environment](docs/checking-environment.md) | `doctor`, `doctor --environment` (`check-environment`, a deprecated alias), `lock.sha256` and the installed packages (a drifted adopted environment is a WARN) |
 | [Workspace file](docs/workspace-file.md) | One `oasis-workspace.toml` for every checkout |
 | [Migrating to the workspace file](docs/migrating.md) | `oasis migrate` |
 | [Path-free odoo.conf](docs/path-free-odoo-conf.md) | What oasis passes on the Odoo command line |

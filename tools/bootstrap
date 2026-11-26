@@ -106,8 +106,12 @@ if [[ "$locks_state" != current ]]; then
   printf 'locks_compiled=runtime.txt,dev.txt,lock.sha256\n'
 fi
 mkdir -p "$ENVIRONMENTS_DIR"
+# The environment bootstrap creates carries oasis' mark (tools/environment_origin.py, v0.17.0 S1): its drift
+# from the locks is a FAIL. An existing environment is never marked: when oasis did not create it (adopted),
+# this explicit --apply is the one command that changes it, and a drift is a WARN.
 if [[ ! -x "$PYTHON" ]]; then
   uv venv --python "$PYTHON_VERSION" "$PROJECT_ENVIRONMENT"
+  python3 -I -B "$(dirname "$0")/environment_origin.py" mark "$PROJECT_ENVIRONMENT" "$(program_name) bootstrap --apply"
   require_python_version
 fi
 uv pip freeze --python "$PYTHON" > "$snapshot_dir/bootstrap-before.txt"

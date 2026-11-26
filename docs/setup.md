@@ -253,7 +253,7 @@ set, pin a version of that package that has a wheel in `overrides.txt`.
 | `runtime.in`, `dev.in` | `-r <community>/requirements.txt`, then what the series needs that those requirements do not list (`runtime_requirements` in `tools/odoo_versions.py`: nothing on 19.0, `setuptools<81` on 15.0, [below](#odoo-150-requirements)); `-c runtime.txt` and `-r runtime.in`, to which you add your development tools. With an adopted series folder that holds `requirements-extra.txt`, `runtime.in` also includes it ([Another Odoo series](#the-projects-requirement-files)). |
 | `overrides.txt` | With an adopted series folder that holds `requirements-overrides.txt`: `-r <that file>`, given to `uv pip compile` as `--override` ([Another Odoo series](#the-projects-requirement-files)); and the pins of the [anticipated problems](#anticipated-problems) answered `yes` or `override`. |
 | Locks | `runtime.txt`, `dev.txt` and `lock.sha256`, compiled with the series' Python by the same code as `bootstrap --apply` when they are missing or stale; current locks are kept, and a lock changed by hand is kept and leaves the environment uncreated. |
-| Environment | `uv venv --python <python>` and `uv pip sync` of `dev.txt`, with the series' default Python, `--python <x.y>` or the [answered one](#a-new-environment-and-its-python). An existing environment is kept and not synced (run `bootstrap --apply` for that); `--environment <dir>` (or an answered path) [adopts one](#an-existing-environment) instead of creating it. |
+| Environment | `uv venv --python <python>` and `uv pip sync` of `dev.txt`, with the series' default Python, `--python <x.y>` or the [answered one](#a-new-environment-and-its-python), then marked `<environment>/.oasis-created` (its drift from the locks is a `FAIL`, an [adopted one's](#an-existing-environment) a `WARN`). An existing environment is kept and not synced (run `bootstrap --apply` for that); `--environment <dir>` (or an answered path) [adopts one](#an-existing-environment) instead of creating it. |
 | `logs`, `data_dir` | The directories (mode 0700). |
 
 ### One port for odoo.conf and the compose file
@@ -603,6 +603,12 @@ options: `--environment: <checkout> is already configured by <file>; setup only 
 - The next steps say that the locks describe the inputs and that `oasis --project <checkout> bootstrap
   --apply` syncs the adopted environment to them, which changes the packages installed there: read
   `bootstrap --preview` (its `uv pip sync --dry-run`) first.
+- oasis never marks, syncs or otherwise changes an adopted environment; only an explicit `bootstrap --apply`
+  does. Until then, `doctor --environment --full` (and bootstrap's final checks) reports packages that do not
+  match the locks as `WARN locked_environment=drifted` with the fix `oasis --project <checkout> bootstrap
+  --apply`, never as a failure; an environment setup or bootstrap creates carries the mark
+  `<environment>/.oasis-created`, and its drift is a `FAIL` ([The installed
+  packages](checking-environment.md#the-installed-packages)).
 - On a terminal, the path can also be the answer to the environment question
   ([below](#a-new-environment-and-its-python)): it is checked and adopted exactly as `--environment`, with
   the same refusals, and the plan line says `(answered)` instead of `(from --environment)`.

@@ -4,7 +4,7 @@ One command, `doctor`, for two questions (v0.16.0: `check-environment` became `d
 [check-environment, a deprecated alias](#check-environment-a-deprecated-alias)):
 
 - `oasis --project /absolute/project doctor` asks *can oasis work here at all?* It checks the environment contract up front and is read-only: it never starts a service and never prints file contents; its one connection logs in to PostgreSQL with the account Odoo uses (`postgres_connection`, below). In Gentle Shell, `/oasis doctor` (or `/odoo19 doctor`) shows the same report.
-- `oasis --project /absolute/project doctor --environment [--quick|--full]` asks *does the project environment match its locks?* `--quick` (the default) checks the requirement files and their fingerprint, `lock.sha256`, the environment's Python, the virtualenv, uv, the Odoo version and `compose config`; it skips the installed packages, the dependency audit and PostgreSQL (`SKIP <check>=use_--full`). `--full` also checks the installed packages against the locks (`dev.txt`) and their compatibility, audits dependencies and logs in to PostgreSQL with the account Odoo uses (`postgres_connection`: the environment's Python and psycopg2 connect to the `db_host` and `db_port` of `odoo.conf` with the `db_user` and `db_password` it sets, else those of the env file; see [The database account](setup.md#the-database-account)), so it needs the database service running. A stopped service is `FAIL postgres_service=not_running`, followed on stderr by `  fix: oasis --project <checkout> start-database` (v0.16.0). It prints `PASS postgres_connection=ready` or `FAIL postgres_connection=<authentication_failed|not_running|no_driver|failed|unchecked>` (`unchecked`: the probe printed none of the other words, an error of the environment's Python), never a value or the server's message; `authentication_failed` is followed on stderr by the same `  fix:` line as doctor's. It ends with `environment_mode=<quick|full>` and `environment_failures=<n>` (exit 1 when `n > 0`). Both modes print `FAIL env_file=unsupported_value <names>` and doctor's `  fix:` line on stderr when the env file writes an account variable Odoo would get with compose interpolation or a double-quoted escape ([The database account](setup.md#the-database-account)); `--full` then does not try the connection. The dependency audit (`oasis audit-dependencies [module]`, also run by `bootstrap --apply`) runs with the environment's Python, 3.7 and later: it maps each imported top-level module to its distribution with `importlib.metadata.packages_distributions` from Python 3.10, and on older Pythons (Odoo 15) from the installed distributions' `top_level.txt`, else their file lists, with the same output.
+- `oasis --project /absolute/project doctor --environment [--quick|--full]` asks *does the project environment match its locks?* `--quick` (the default) checks the requirement files and their fingerprint, `lock.sha256`, the environment's Python, the virtualenv, uv, the Odoo version and `compose config`; it skips the installed packages, the dependency audit and PostgreSQL (`SKIP <check>=use_--full`). `--full` also checks the installed packages against the locks (`dev.txt`, [The installed packages](#the-installed-packages)) and their compatibility, audits dependencies and logs in to PostgreSQL with the account Odoo uses (`postgres_connection`: the environment's Python and psycopg2 connect to the `db_host` and `db_port` of `odoo.conf` with the `db_user` and `db_password` it sets, else those of the env file; see [The database account](setup.md#the-database-account)), so it needs the database service running. A stopped service is `FAIL postgres_service=not_running`, followed on stderr by `  fix: oasis --project <checkout> start-database` (v0.16.0). It prints `PASS postgres_connection=ready` or `FAIL postgres_connection=<authentication_failed|not_running|no_driver|failed|unchecked>` (`unchecked`: the probe printed none of the other words, an error of the environment's Python), never a value or the server's message; `authentication_failed` is followed on stderr by the same `  fix:` line as doctor's. It ends with `environment_mode=<quick|full>` and `environment_failures=<n>` (exit 1 when `n > 0`). Both modes print `FAIL env_file=unsupported_value <names>` and doctor's `  fix:` line on stderr when the env file writes an account variable Odoo would get with compose interpolation or a double-quoted escape ([The database account](setup.md#the-database-account)); `--full` then does not try the connection. The dependency audit (`oasis audit-dependencies [module]`, also run by `bootstrap --apply`) runs with the environment's Python, 3.7 and later: it maps each imported top-level module to its distribution with `importlib.metadata.packages_distributions` from Python 3.10, and on older Pythons (Odoo 15) from the installed distributions' `top_level.txt`, else their file lists, with the same output.
 
 ## The declared Python
 
@@ -55,6 +55,30 @@ Without uv on PATH, `bootstrap` stops with exit 2: `uv is required to bootstrap 
 - A lock changed by hand under current inputs is refused as before, naming it: `runtime.in, dev.in and overrides.txt match it, so a lock was changed by hand: ... fingerprint it again in <requirements> with sha256sum runtime.in runtime.txt dev.in dev.txt overrides.txt > lock.sha256.`
 
 Without it, the compile commands, `lock.sha256` and every message are exactly as before. `lock.sha256` records `runtime.in` and `overrides.txt`, not the files they include with `-r`: after changing an included file, move `lock.sha256` away so that `bootstrap --apply` compiles the locks again.
+
+## The installed packages
+
+`doctor --environment --full` (and `check-environment --full`, and the end of `bootstrap --apply`) compares
+every pin of `dev.txt` with the distributions installed in the environment, with the environment's Python
+(3.8 and later). Names are normalized on both sides as [PEP 503](https://peps.python.org/pep-0503/) does
+(v0.17.0): lowercase, and runs of `-`, `_` and `.` become `-`, so `zope.event-5.0.dist-info`, as pip
+installs it, satisfies `zope-event==5.0` in the lock on every Python (before 0.17.0 an Odoo 15 environment
+reported it as `missing_package=zope-event==5.0`). It prints `locked_packages=<n>`, one
+`missing_package=<name>==<version>` or `version_mismatch=<name>: expected=<x> actual=<y>` per difference,
+then `missing_packages=<n>` and `version_mismatches=<n>`, and the result depends on who created the
+environment:
+
+| Environment | Matches the locks | Does not match them |
+| --- | --- | --- |
+| Created by oasis: `bootstrap --apply` or `setup --apply` ran `uv venv` and marked it with `<environment>/.oasis-created` | `PASS locked_environment=exact` | `FAIL locked_environment=drifted` on stderr, counted in `environment_failures` (exit 1) |
+| Adopted: [`setup --environment`](setup.md#an-existing-environment), an answered path, or any environment without that mark | `PASS locked_environment=exact` | `WARN locked_environment=drifted`, then `  fix: oasis --project <checkout> bootstrap --apply (syncs the adopted environment <dir> to the locks: it changes the packages installed there)`, both on stdout; not counted (the exit code is the one without the drift) |
+
+An adopted environment belongs to you: no oasis command writes into it, marks it or syncs it, except an
+explicit `bootstrap --apply` (read `bootstrap --preview`, its `uv pip sync --dry-run`, first). A lock that
+cannot be read (malformed, unpinned, no pins) is a `FAIL locked_environment=drifted` for every environment.
+An environment oasis created before 0.17.0 has no mark and is reported as adopted; to have its drift fail
+again, create the mark yourself (`touch <environment>/.oasis-created`), or move the environment away and
+run `bootstrap --apply`, which creates and marks it.
 
 ## check-environment, a deprecated alias
 

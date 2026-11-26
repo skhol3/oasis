@@ -9,6 +9,20 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Changed
+
+- `doctor --environment --full` (and `check-environment --full`, and the end of `bootstrap --apply`) reports an
+  adopted environment (`setup --environment`, or any environment oasis did not create) whose packages do not
+  match the locks as `WARN locked_environment=drifted` with a fix naming `bootstrap --apply`, not counted as a
+  failure. An environment oasis creates is marked `<environment>/.oasis-created` and its drift stays a `FAIL`.
+  No oasis command but an explicit `bootstrap --apply` changes an adopted environment. Environments created
+  before 0.17.0 carry no mark: `touch <environment>/.oasis-created` restores the `FAIL`.
+
+### Fixed
+
+- The lock comparison normalizes distribution names on both sides (PEP 503), so `zope.event-5.0.dist-info`
+  satisfies `zope-event==5.0` on Python 3.8 and 3.9 too; it was reported as `missing_package=zope-event==5.0`.
+
 ## [0.16.0] - 2026-11-26
 
 ### Added

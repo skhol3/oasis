@@ -476,7 +476,13 @@ Never starts services or prints file contents or values; it connects only to che
 --quick (the default) checks the requirement files and lock.sha256, the environment's Python, the
 virtualenv, uv, the Odoo version and compose config; --full also checks the installed packages against
 the locks, audits the dependencies and logs in to PostgreSQL with Odoo's account (the database service
-running; when it is not, the fix is start-database). Prints PASS|FAIL|SKIP <check>=<value> per check, then environment_mode=<quick|full> and
+running; when it is not, the fix is start-database). Package names are compared normalized (PEP 503:
+zope.event satisfies zope-event). Installed packages that do not match the locks are FAIL
+locked_environment=drifted for an environment oasis created (bootstrap --apply or setup --apply; it
+carries <environment>/.oasis-created), and WARN locked_environment=drifted, not counted as a failure, for an
+adopted one (setup --environment, or any other): its fix line names oasis --project <checkout>
+bootstrap --apply, the one command that changes it. bootstrap --apply ends with these --full checks.
+Prints PASS|WARN|FAIL|SKIP <check>=<value> per check, then environment_mode=<quick|full> and
 environment_failures=<n>; exit 1 when n > 0, 2 when the environment's Python is not the declared one.
 check-environment [--quick|--full] is a deprecated alias of doctor --environment: it keeps working,
 with the same lines and exit codes.

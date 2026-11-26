@@ -220,7 +220,9 @@ copied or edited.
 
 --environment <dir> (a new workspace, or a new series section) uses an existing environment, an absolute
 directory with a pyvenv.cfg whose version is a Python the series supports (read, never run): setup
-never creates, syncs or deletes it, and bootstrap --apply syncs it to the locks.
+never creates, syncs or deletes it, and bootstrap --apply syncs it to the locks. Until then, doctor
+--environment --full reports packages that do not match the locks as WARN locked_environment=drifted
+(an environment setup or bootstrap creates is marked .oasis-created, and its drift is a FAIL).
 
 When setup would create the Python environment (a new workspace, or a new series section) and neither
 --environment nor --python is given, it asks on a terminal: Enter creates it, or the absolute path of an
@@ -273,7 +275,7 @@ def sibling(name: str):
 
 
 config, migrate, locks, db_account = sibling('config'), sibling('migrate'), sibling('locks'), sibling('db_account')
-known_problems = sibling('known_problems')
+known_problems, environment_origin = sibling('known_problems'), sibling('environment_origin')
 
 
 def usage() -> str:
@@ -2212,6 +2214,9 @@ def after_steps(plan: dict, changes: Changes, rerun: str, undo_after: bool) -> i
             except OSError:
                 status = 127
             if status == 0:
+                if command[1] == 'venv':
+                    # oasis' mark (v0.17.0 S1): its drift from the locks is a FAIL, an adopted one's a WARN.
+                    environment_origin.mark(environment, f'{program} setup --apply')
                 continue
             if command[1] == 'venv' and undo_after:
                 # What uv venv left of an environment that did not exist: removed when empty, else reported.

@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
+"""Compare the installed distributions with a lock (run with the environment's Python, 3.8 and later).
+
+Distribution names are normalized on both sides (PEP 503, v0.17.0 S1): lowercase, runs of `-`, `_` and `.`
+become `-`. The installed names come from each distribution's metadata, not from importlib.metadata's own
+name lookup, which before Python 3.10 does not find `zope.event-5.0.dist-info` for `zope-event`.
+"""
 from __future__ import annotations
 
 import re
 import sys
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import distributions
 from pathlib import Path
 
 NAME_PATTERN = re.compile(r"^([A-Za-z0-9_.-]+)==([^\s;]+)$")
@@ -37,6 +43,17 @@ def locked_packages(path: Path) -> dict[str, tuple[str, str]]:
     return packages
 
 
+def installed_versions() -> dict[str, str]:
+    """{normalized name: version} of every installed distribution; the first one on sys.path wins, as
+    importlib.metadata.version would find it. A distribution without a name in its metadata is left out."""
+    found: dict[str, str] = {}
+    for dist in distributions():
+        name = dist.metadata['Name']
+        if name:
+            found.setdefault(normalize(name), dist.version)
+    return found
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(f"Usage: {Path(sys.argv[0]).name} <lockfile>", file=sys.stderr)
@@ -52,10 +69,10 @@ def main() -> int:
     except LockfileError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
-    for _normalized, (name, expected) in sorted(packages.items()):
-        try:
-            actual = version(name)
-        except PackageNotFoundError:
+    installed = installed_versions()
+    for normalized, (name, expected) in sorted(packages.items()):
+        actual = installed.get(normalized)
+        if actual is None:
             missing.append(f"{name}=={expected}")
             continue
         if actual != expected:
