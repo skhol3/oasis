@@ -43,9 +43,11 @@ Each checkout controls only its own Odoo server; the PostgreSQL service is one a
 ### Status as JSON
 
 `oasis status --json` (v0.16.0) prints one JSON object on one line: what is ready, what is missing and the
-next oasis command to run. It only reads (the configuration, the environment's `pyvenv.cfg`, the locks,
+next command to run. It only reads (the configuration, the environment's `pyvenv.cfg`, the locks,
 `docker compose ps` of the database service, this checkout's databases while the service runs, and the
 server record); it never starts the service, and it also runs in a checkout without a workspace file.
+A step it cannot read (a configuration or lock file it may not open, a worktree whose slug cannot be read)
+is not ready with the `detail` `unknown (<reason>)`, and the output is still one JSON object (exit 0).
 `status` without `--json` is unchanged.
 
 ```json
@@ -57,19 +59,22 @@ server record); it never starts the service, and it also runs in a checkout with
             "database_service": {"ready": false, "detail": "stopped"},
             "databases": {"ready": false, "detail": "unknown while the database service is stopped"},
             "server": {"ready": false, "detail": "stopped"}},
- "next": "oasis --project /w/shop list-databases"}
+ "next": "docker compose --env-file /w/shop/.oasis/config/.env -f /w/shop/.oasis/config/compose.yml up -d --wait db"}
 ```
 
 | Check | Ready when | `next` when it is the first one missing |
 | --- | --- | --- |
 | `workspace` | the configuration loads (`detail`: the workspace file, or why not) | `setup --plan --json` without a workspace file, `doctor` when it does not load |
 | `environment` | the environment has a `pyvenv.cfg` and its Python | `bootstrap --apply` |
-| `locks` | `lock.sha256` matches (`detail`: `current`, `missing`, `stale`, `edited`) | `bootstrap --apply` (`doctor` for `edited`) |
-| `database_service` | `docker compose ps` shows it running (and healthy) | `list-databases`, which starts it |
-| `databases` | a development database of this checkout exists (`detail`: this checkout's managed databases) | `init-dev-database <module> <dev_prefix>manual` with `[development]`, else `install-module <module>` (the first module of the addon roots; `create-database <name>` without modules) |
+| `locks` | `lock.sha256` matches (`detail`: `current`, `missing`, `stale`, `edited`, `unknown (<reason>)`) | `bootstrap --apply` (`doctor` for `edited` and `unknown`) |
+| `database_service` | `docker compose ps` shows it running, and healthy when it has a health check (`detail`: `running`, `starting`, `unhealthy`, `stopped`, `unknown (<reason>)`) | `docker compose --env-file <env file> -f <compose file> up -d --wait <db_service>`, which starts it (and waits until it is healthy), for `stopped` and `starting`; `doctor` for `unhealthy` and `unknown` |
+| `databases` | a development database of this checkout exists (`detail`: this checkout's managed databases, or `unknown (<reason>)`) | `init-dev-database <module> <dev_prefix>manual` with `[development]`, else `install-module <module>` (the first module of the addon roots; `create-database <name>` without modules); `doctor` when they cannot be read |
 | `server` | this checkout's server runs (`detail`: `running pid <pid> port <port>`) | `start` |
 
-`next` is `null` when everything is ready. Every command is `oasis --project <checkout> ...` (`odoo19`
-through the alias).
+`next` is `null` when everything is ready, and a shell-quoted command line otherwise (Python's `shlex.join`:
+a checkout path with spaces or quotes is quoted). Every command but the one that starts the database service
+is `oasis --project <checkout> ...` (`odoo19` through the alias). The database service gets its
+`docker compose ... up` command rather than `list-databases`: `list-databases` starts the service too, but the
+[agent policy](agent-contract.md) lists it as one that only reads and reports.
 
 Earlier behaviour of `stop` and of the test databases is recorded in the [changelog](../CHANGELOG.md) (0.3.0, 0.4.0 and 0.8.0, under Changed).

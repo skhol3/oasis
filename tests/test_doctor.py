@@ -438,6 +438,7 @@ class DoctorTests(unittest.TestCase):
         for text, empty in (
                 ('ODOO_DB_USER=\nODOO_DB_PASSWORD=""\n', 'ODOO_DB_USER,ODOO_DB_PASSWORD'),
                 (f"# account\nODOO_DB_USER={MARKER}\nODOO_DB_PASSWORD= # fill in\n", 'ODOO_DB_PASSWORD'),
+                (f"ODOO_DB_USER=\t# fill in\nODOO_DB_PASSWORD={MARKER}\n", 'ODOO_DB_USER'),
                 (f"export ODOO_DB_USER=''\nODOO_DB_PASSWORD={MARKER}\n", 'ODOO_DB_USER')):
             with self.subTest(text=text):
                 self.commands.unlink(missing_ok=True)
@@ -448,6 +449,12 @@ class DoctorTests(unittest.TestCase):
         self.commands.unlink(missing_ok=True)
         env_file.write_text(f'ODOO_DB_PASSWORD=\nODOO_DB_PASSWORD={MARKER}\nODOO_DB_USER={MARKER}\n')
         self.assert_report(self.expected())
+        # `~` and `null` are values in an env file, as setup reads them too: passes.
+        for text in ('ODOO_DB_USER=~\nODOO_DB_PASSWORD=null\n', 'ODOO_DB_USER=null # mine\nODOO_DB_PASSWORD=~\n'):
+            with self.subTest(text=text):
+                self.commands.unlink(missing_ok=True)
+                env_file.write_text(text)
+                self.assert_report(self.expected())
         # Neither declared (another account's naming): respected, a WARN that says how to opt in.
         for text in (f'POSTGRES_PASSWORD={MARKER}\nOTHER=\n', ''):
             with self.subTest(text=text):

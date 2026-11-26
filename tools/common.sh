@@ -263,7 +263,9 @@ require_existing_database() {
 # waiting at most 120 s. Once the first caller finished, the next `up` finds the service
 # running. The lock descriptor is closed before returning, so Odoo never inherits it.
 # OASIS_COMPOSE_LOCK_TIMEOUT (seconds; the legacy ODOO19_COMPOSE_LOCK_TIMEOUT when unset)
-# exists for the tests only.
+# exists for the tests only. Every step checks its own status and returns it (never errexit), so a
+# caller may run it in a condition or a `||` list, where errexit is off, and still get a non-zero
+# status on any failure (recreate-database-volume does; tests/test_credentials.py covers each one).
 wait_for_database() {
   local lock lock_fd timeout=120 status=0
   if ! command -v flock >/dev/null 2>&1; then

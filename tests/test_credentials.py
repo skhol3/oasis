@@ -6,6 +6,9 @@ lifecycle fixture of test_lifecycle (fake docker and environment Python) and a f
 for the connection probe. No real database, container or Odoo runs.
 """
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
+import fcntl
+import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -191,6 +194,9 @@ class GeneratedAccountTests(unittest.TestCase):
                  None),
                 ('', 'ODOO_DB_USER=mine\nODOO_DB_PASSWORD=\n', 'ODOO_DB_PASSWORD', 'a generated ODOO_DB_PASSWORD',
                  rf'ODOO_DB_USER=mine\nODOO_DB_PASSWORD={password}\n', None),
+                # A value that is only a comment is empty, as doctor reads it (FAIL env_file=empty).
+                ('', 'ODOO_DB_USER= # comment\nODOO_DB_PASSWORD=\t# fill in\n', both, generated,
+                 rf'ODOO_DB_USER=oasis_shop # comment\nODOO_DB_PASSWORD={password}\t# fill in\n', None),
                 ('db_user = legacy\n', 'ODOO_DB_USER=\nODOO_DB_PASSWORD=\n', both,
                  f'ODOO_DB_USER from db_user of {conf} and a generated ODOO_DB_PASSWORD',
                  rf'ODOO_DB_USER=legacy\nODOO_DB_PASSWORD={password}\n', 'db_user')):
@@ -221,6 +227,22 @@ class GeneratedAccountTests(unittest.TestCase):
         self.assertIn(f'kept {env_file}\n', again.stdout)
         self.assertNotIn('fill ', again.stdout)
 
+    def test_setup_keeps_a_tilde_or_null_account_value_as_a_value(self):
+        # In an env file `~` and `null` are the words themselves (docker compose reads them so): not empty.
+        project = self.existing_workspace()
+        conf, env_file = project / 'config/odoo.conf', project / 'config/.env'
+        conf.write_text('[options]\ndb_port = 6543\n')
+        for env_text in ('ODOO_DB_USER=~\nODOO_DB_PASSWORD=null\n', 'ODOO_DB_USER=null # mine\nODOO_DB_PASSWORD=~\n'):
+            with self.subTest(env_text=env_text):
+                env_file.write_text(env_text)
+                env_file.chmod(0o600)
+                result = self.setup_cmd('--apply')
+                self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+                self.assertIn(f'kept {env_file}\n', result.stdout)
+                self.assertNotIn('fill ', result.stdout)
+                self.assertNotIn(f'WARN: {env_file}', result.stdout)
+                self.assertEqual(env_file.read_text(), env_text)
+
     def test_setup_leaves_an_env_file_that_declares_no_account_unchanged_and_warns(self):
         project = self.existing_workspace()
         conf, env_file = project / 'config/odoo.conf', project / 'config/.env'
@@ -243,6 +265,103 @@ class GeneratedAccountTests(unittest.TestCase):
                     self.assertEqual(env_file.read_text(), env_text)
                     self.assertEqual(env_file.stat().st_mode & 0o777, 0o644)
                     self.assertEqual(conf.read_text(), f'[options]\ndb_port = 6543\n{conf_text}')
+
+
+def load_tool(name):
+    """A tool of the bundle as a module, loaded from its file (python3 -I runs them off sys.path)."""
+    spec = importlib.util.spec_from_file_location(f'oasis_test_{name}', ROOT / 'tools' / f'{name}.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class EmptyAccountValueTests(unittest.TestCase):
+    """setup fills exactly the account values doctor reports empty (FAIL env_file=empty)."""
+
+    def test_setup_and_doctor_agree_on_which_account_values_are_empty(self):
+        account, doctor = load_tool('db_account'), load_tool('doctor')
+        for raw, empty in (('', True), ('   ', True), (' # comment', True), ('\t# comment', True), ('""', True),
+                           ("''", True), ('"" # comment', True), ("'' # comment", True), ('~', False),
+                           ('null', False), ('~ # comment', False), ('#x', False), ('v # comment', False),
+                           ("'a # b'", False), ('" "', False)):
+            with self.subTest(raw=raw):
+                values = account.text_values(f'export ODOO_DB_USER={raw}\nODOO_DB_PASSWORD=x\n', account.account_names())
+                self.assertEqual(account.fill_names(values), ['ODOO_DB_USER'] if empty else [])
+                self.assertEqual(doctor.empty_value(raw), empty)
+
+
+class AuthenticationFixTests(unittest.TestCase):
+    """db_account.py fix: a port mapping oasis cannot read never decides which server refused the account."""
+
+    def setUp(self):
+        self.scratch = Path(tempfile.mkdtemp(prefix='oasis-credentials-')).resolve()
+        self.addCleanup(shutil.rmtree, self.scratch, ignore_errors=True)
+        self.conf, self.env_file = self.scratch / 'odoo.conf', self.scratch / '.env'
+        self.compose = self.scratch / 'compose.yml'
+        self.conf.write_text('[options]\ndb_host = 127.0.0.1\ndb_port = 6001\n')
+        self.env_file.write_text(f'ODOO_DB_USER=oasis_cc\nODOO_DB_PASSWORD={MARKER}\n')
+
+    def fix(self, ports):
+        if ports is not None:
+            self.compose.write_text(f'name: cc-shop\nservices:\n  db:\n    image: postgres:17\n{ports}')
+        result = subprocess.run([sys.executable, '-B', str(ACCOUNT), 'fix', str(self.conf), str(self.env_file),
+                                 str(self.compose), 'oasis', str(self.scratch)], capture_output=True, text=True,
+                                timeout=60)
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertNotIn(MARKER, result.stdout)
+        return result.stdout
+
+    def unread(self, why, where='db_host 127.0.0.1, db_port 6001', confirm=True):
+        command = ['oasis', '--project', str(self.scratch), 'recreate-database-volume']
+        command += ['--confirm', 'cc-shop'] if confirm else []
+        return (f'the PostgreSQL that {self.conf} names ({where}) refuses the account Odoo uses, and oasis could not '
+                f'read the port {self.compose} publishes to 5432 ({why}), so it cannot tell whether that server is the '
+                f'service of {self.compose}: if it is, {shlex.join(command)} recreates its volume with the account of '
+                f'{self.env_file} (Tier B: it deletes every database of the service); if it is not, correct that '
+                'account on that server; then run oasis doctor again\n')
+
+    def test_a_port_mapping_oasis_cannot_read_names_both_fixes(self):
+        entry = 'an entry other than - [<address>:]<port>:5432'
+        for ports, why in (
+                ('    ports:\n      - target: 5432\n        published: 6001\n', entry),
+                ('    ports:\n      - published: 6001\n        target: 5432\n', entry),
+                ("    ports:\n      - '${DB_PORT:-6001}:5432'\n", entry),
+                ('    ports:\n      - "6001-6002:5432"\n', entry),
+                ('    ports:\n      - 5432\n', entry),
+                ("    ports:\n      - '127.0.0.1:6001:5432'\n      - '${OTHER}:5432'\n", entry),
+                ("    ports:\n      - '127.0.0.1:6001:5432'\n      - '127.0.0.1:6002:5432'\n", 'several ports')):
+            with self.subTest(ports=ports):
+                self.assertEqual(self.fix(ports), self.unread(why))
+        # The host alone does not decide either while the mapping is unread.
+        self.conf.write_text('[options]\ndb_host = db.example.invalid\ndb_port = 6001\n')
+        self.assertEqual(self.fix("    ports:\n      - '${DB_PORT:-6001}:5432'\n"),
+                         self.unread(entry, where='db_host db.example.invalid, db_port 6001'))
+
+    @unittest.skipIf(os.geteuid() == 0, 'root reads any file')
+    def test_an_unreadable_compose_file_names_both_fixes(self):
+        self.compose.write_text("name: cc-shop\nservices:\n  db:\n    ports:\n      - '127.0.0.1:6001:5432'\n")
+        self.compose.chmod(0)
+        self.addCleanup(self.compose.chmod, 0o600)
+        self.assertEqual(self.fix(None), self.unread('it cannot be read', confirm=False))
+
+    def test_a_mapping_it_reads_keeps_its_fix(self):
+        recreate = shlex.join(['oasis', '--project', str(self.scratch), 'recreate-database-volume', '--confirm',
+                               'cc-shop'])
+        local = (f'the PostgreSQL that {self.conf} names refuses the account Odoo uses: its volume was initialized with '
+                 f'other credentials than {self.env_file}; {recreate} recreates it with them (Tier B: it deletes every '
+                 'database of the service)\n')
+        for ports in ("    ports:\n      - '127.0.0.1:6001:5432'\n",
+                      "    ports:\n      - '127.0.0.1:6001:5432'\n      - '6001:5432/tcp'  # same port\n"):
+            with self.subTest(ports=ports):
+                self.assertEqual(self.fix(ports), local)
+        other = ('the PostgreSQL that {conf} names (db_host 127.0.0.1, db_port 6001) refuses the account Odoo uses, and '
+                 'it is not the service of {compose} ({service}): correct that account on that server, or set db_host '
+                 '= 127.0.0.1 and the db_port {compose} publishes in {conf}; then run oasis doctor again\n')
+        self.assertEqual(self.fix("    ports:\n      - '127.0.0.1:6002:5432'\n"),
+                         other.format(conf=self.conf, compose=self.compose, service='published on 127.0.0.1:6002'))
+        # No entry names the container's port: nothing is published to 5432.
+        self.assertEqual(self.fix('    environment:\n      POSTGRES_DB: postgres\n'),
+                         other.format(conf=self.conf, compose=self.compose, service='no port published to 5432 found'))
 
 
 class LaunchTests(unittest.TestCase):
@@ -565,6 +684,52 @@ class RecreateVolumeTests(unittest.TestCase):
             'ERROR: docker compose down -v failed (exit 1): the volume of compose project cc-shop may already be gone; '
             f'start the service again with {self.start_command()}\n'))
         self.assertEqual(self.calls(), [self.compose('down', '-v')])
+
+    def gone(self, status):
+        return ('ERROR: the volume of compose project cc-shop is already gone (docker compose down -v), but service db '
+                f'did not start again (exit {status}): start it with {self.start_command()}\n')
+
+    def test_each_way_the_service_fails_to_start_after_the_volume_is_gone_is_reported(self):
+        # wait_for_database runs in a `||` list (errexit off): each of its steps checks its own status.
+        compose = self.root / 'dev/compose.yml'
+        lock_dir = Path(self.env['XDG_RUNTIME_DIR']) / f'oasis-{os.getuid()}'
+        lock = lock_dir / ('compose-' + hashlib.sha256(os.path.realpath(compose).encode()).hexdigest()[:16] + '.lock')
+        lock_dir.mkdir(mode=0o700)
+        # Another checkout holds the compose lock: timed out, no `up`.
+        descriptor = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, descriptor)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        self.env['OASIS_COMPOSE_LOCK_TIMEOUT'] = '0.3'
+        result = self.cli('--confirm', 'cc-shop')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, self.plan(), (
+            'Timed out waiting for another checkout to start the database service.\n' + self.gone(1))))
+        self.assertEqual(self.calls(), [self.compose('down', '-v')])
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        # The compose lock cannot be opened: runtime_state.py fails (exit 2), no `up`.
+        self.commands.unlink()
+        lock.unlink()
+        lock.mkdir()
+        result = self.cli('--confirm', 'cc-shop')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, self.plan(), (
+            f'ERROR: Cannot open the compose lock: {lock}\n' + self.gone(2))))
+        self.assertEqual(self.calls(), [self.compose('down', '-v')])
+        lock.rmdir()
+        # Without flock, a failing `up` is reported the same way.
+        self.commands.unlink()
+        farm = Path(tempfile.mkdtemp(prefix='oasis-no-flock-'))
+        self.addCleanup(shutil.rmtree, farm, ignore_errors=True)
+        for directory in self.env['PATH'].split(':'):
+            if directory and os.path.isdir(directory):
+                for entry in os.scandir(directory):
+                    if entry.name != 'flock' and not os.path.lexists(farm / entry.name):
+                        (farm / entry.name).symlink_to(entry.path)
+        self.env.update(PATH=str(farm), FAKE_UP_FAIL='1')
+        result = self.cli('--confirm', 'cc-shop')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, self.plan(), (
+            'WARNING: flock not found; starting the database service without the cross-checkout lock.\n'
+            + self.gone(1))))
+        self.assertEqual(self.calls(), [self.compose('down', '-v'), self.compose('up', '-d', '--wait', '--wait-timeout',
+                                                                                 '60', 'db')])
 
     def test_each_usage_error_and_a_compose_file_without_a_name_change_nothing(self):
         usage = f'Usage: {ROOT / "oasis"} [--confirm <compose project>]\n'

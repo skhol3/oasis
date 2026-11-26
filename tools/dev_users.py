@@ -4,9 +4,13 @@
 On a terminal each password is asked with the echo off; Enter at its first prompt generates it. Without a
 terminal every password is generated (v0.16.0 S2: no oasis workflow requires typing one). Generated
 passwords (secrets.token_urlsafe(24)) are stored, never printed, in <database>.logins next to the env file
-(mode 0600), once the database exists: written to a 0600 temporary file in that directory first, then
-renamed into place only when the database was created, so a refused existing database keeps its file.
+(mode 0600), once the database exists: written to a 0600 temporary file in that directory first (removed when
+it cannot be written), then renamed into place only when the runner says the database was created (exit 0, or
+1 without a traceback), so a refused existing database keeps its file (exit 3). When the outcome is unknown
+(another exit, a traceback, an interrupt after the runner started) or the rename fails, the temporary file is
+kept and its path printed, never a password.
 """
+import contextlib
 import getpass
 import json
 import os
@@ -33,13 +37,31 @@ def logins_file(values, database) -> Path:
 
 def staged(path: Path, database, generated) -> Path:
     """A 0600 temporary file next to path with the generated passwords; renamed to path once the database
-    exists."""
+    exists. Removed again when it cannot be written (OSError raised)."""
     descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f'.{path.name}.')
-    with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
-        os.fchmod(stream.fileno(), 0o600)
-        stream.write(LOGINS_HEADER.format(database=database)
-                     + ''.join(f'{login} {password}\n' for login, password in generated))
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(LOGINS_HEADER.format(database=database)
+                         + ''.join(f'{login} {password}\n' for login, password in generated))
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(name)
+        raise
     return Path(name)
+
+
+def kept(pending: Path, note, generated) -> str:
+    """The line that names a staged logins file left in place (never a password)."""
+    return f'Generated passwords: {pending} (mode 0600; {note}): {", ".join(login for login, _password in generated)}'
+
+
+def created(result) -> bool:
+    """Whether the runner (dev_users_runtime.py) says the database was created: exit 0 (initialized) or 1 (created,
+    then a later phase failed). An exit 1 with a traceback is an uncaught error of the interpreter, not the
+    runner's answer; any other exit is unknown (3 alone says nothing was created)."""
+    return result.returncode == 0 or (result.returncode == 1
+                                      and 'Traceback (most recent call last):' not in result.stderr)
 
 
 def declaration(root):
@@ -130,27 +152,49 @@ def main():
         print(f'ERROR: Cannot write the generated passwords next to {target}; no database was created.',
               file=sys.stderr)
         return 2
+    unknown = f'rename it to {target} if {database} exists'
     try:
         result = subprocess.run([values['PYTHON'], '-B', str(runner), str(root), module, database],
                                 input=json.dumps(payload), text=True, capture_output=True)
+    except KeyboardInterrupt:
+        # The runner may have created the database already: its generated passwords stay where they are.
+        print(f'ERROR: Interrupted while creating {database}; it may exist: {program_name()} list-databases shows it.',
+              file=sys.stderr)
+        if pending is not None:
+            print(kept(pending, unknown, generated))
+        return 130
     except BaseException:
         if pending is not None:
             pending.unlink(missing_ok=True)
         raise
-    stored = ''
+    if result.returncode != 3 and not created(result):
+        # Never relay the child's output; whether the database exists is unknown.
+        print(f'ERROR: Development setup stopped unexpectedly (exit {result.returncode}); {database} may exist: '
+              f'{program_name()} list-databases shows it.', file=sys.stderr)
+        if pending is not None:
+            print(kept(pending, unknown, generated))
+        return 1
+    stored = renamed = ''
     if pending is not None:
         if result.returncode == 3:
             # No database was created: an existing one keeps its logins file.
             pending.unlink(missing_ok=True)
         else:
-            os.replace(pending, target)
-            stored = f'Generated passwords: {target} (mode 0600): {", ".join(login for login, _password in generated)}'
+            try:
+                os.replace(pending, target)
+                stored = (f'Generated passwords: {target} (mode 0600): '
+                          f'{", ".join(login for login, _password in generated)}')
+            except OSError:
+                renamed = f'ERROR: Cannot rename {pending} to {target}; the generated passwords stay in {pending}.'
+                stored = kept(pending, f'it could not be renamed to {target}', generated)
     if result.returncode:
         # Never relay Odoo exceptions, SQL logs, or an unexpected child traceback.
         message = ('Could not create a fresh development database; existing data was not modified.'
                    if result.returncode == 3 else
                    'Development setup failed; the new database was retained.')
         print('ERROR: ' + message, file=sys.stderr)
+        if renamed:
+            print(renamed, file=sys.stderr)
         if stored:
             print(stored)
         return 1
@@ -158,6 +202,9 @@ def main():
     print(f'Accounts ready: {len(logins)}')
     if stored:
         print(stored)
+    if renamed:
+        print(renamed, file=sys.stderr)
+        return 1
     return 0
 
 

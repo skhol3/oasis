@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
-"""`oasis status --json` (v0.16.0 S3): what is ready, what is missing and the next oasis command, as one JSON
-object (docs/servers-and-ports.md#status-as-json). It only reads: the configuration (tools/config.py), the
-environment's pyvenv.cfg, the locks (tools/locks.py current/state), `docker compose ps` of the database service,
-this checkout's databases when the service runs (the query list-databases runs, inside the service), and the
-server record (tools/runtime_state.py). It never starts the service: `oasis status` without --json is unchanged.
+"""`oasis status --json` (v0.16.0 S3): what is ready, what is missing and the next command, as one JSON object
+(docs/servers-and-ports.md#status-as-json), also when a step cannot be read (its detail is `unknown (<reason>)`,
+exit 0). It only reads: the configuration (tools/config.py), the environment's pyvenv.cfg, the locks
+(tools/locks.py current/state), `docker compose ps` of the database service, this checkout's databases when the
+service runs (the query list-databases runs, inside the service), and the server record (tools/runtime_state.py).
+It never starts the service: `oasis status` without --json is unchanged.
 
 The checks, in order, each {"ready": bool, "detail": ...}: workspace, environment, locks, database_service,
-databases, server; `next` is the command of the first one that is not ready (null when all are):
+databases, server; `next` is the command of the first one that is not ready (null when all are), shell-quoted:
   workspace         setup --plan --json (no workspace file), doctor (a configuration that does not load)
-  environment/locks bootstrap --apply (doctor for a lock changed by hand)
-  database_service  list-databases (it starts the service and lists the databases)
+  environment/locks bootstrap --apply (doctor for a lock changed by hand or locks that cannot be read)
+  database_service  the `docker compose --env-file <env file> -f <compose file> up -d --wait <service>` that
+                    starts it (stopped or starting; list-databases would start it too, but the policy says it
+                    only reads), doctor when it is unhealthy or its state cannot be read
   databases         init-dev-database <module> <name> with [development], else install-module <module>
-                    (create-database <name> without modules)
+                    (create-database <name> without modules); doctor when they cannot be read
   server            start
 """
+from __future__ import annotations
+
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
@@ -30,6 +36,8 @@ import trash  # noqa: E402
 CHECKS = ('workspace', 'environment', 'locks', 'database_service', 'databases', 'server')
 PSQL = ('set -eu\nexport PGPASSWORD="$ODOO_DB_PASSWORD"\n'
         'exec psql -U "$ODOO_DB_USER" -d "$POSTGRES_DB" "$@"\n')
+# The database service states whose next command starts it (`up -d --wait` waits until it is healthy).
+STARTS = ('stopped', 'starting')
 
 
 def compose(values: dict, *arguments: str) -> subprocess.CompletedProcess | None:
@@ -40,9 +48,15 @@ def compose(values: dict, *arguments: str) -> subprocess.CompletedProcess | None
         return None
 
 
+def start_service(values: dict) -> str:
+    """The command that starts the database service, as oasis runs it (common.sh wait_for_database)."""
+    return shlex.join(['docker', 'compose', '--env-file', values['ENV_FILE'], '-f', values['COMPOSE_FILE'], 'up', '-d',
+                       '--wait', values['DB_SERVICE']])
+
+
 def service_state(values: dict) -> str:
-    """running, stopped, or unknown (<reason>), from `docker compose ps --format json <service>` (one JSON
-    object per line, or one array)."""
+    """running (and healthy, or without a health check), starting, unhealthy, stopped, or unknown (<reason>), from
+    `docker compose ps --format json <service>` (one JSON object per line, or one array of them)."""
     result = compose(values, 'ps', '--format', 'json', values['DB_SERVICE'])
     if result is None or result.returncode != 0:
         return 'unknown (docker compose ps failed)'
@@ -51,64 +65,87 @@ def service_state(values: dict) -> str:
         rows = json.loads(text) if text.startswith('[') else [json.loads(line) for line in text.splitlines() if line]
     except ValueError:
         return 'unknown (docker compose ps printed no JSON)'
-    running = [row for row in rows if isinstance(row, dict) and row.get('State') == 'running'
-               and row.get('Health') in (None, '', 'healthy')]
-    return 'running' if running else 'stopped'
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        return 'unknown (docker compose ps printed no JSON)'
+    health = [row.get('Health') for row in rows if row.get('State') == 'running']
+    if any(value in (None, '', 'healthy') for value in health):
+        return 'running'
+    if 'starting' in health:
+        return 'starting'
+    return 'unhealthy' if health else 'stopped'
 
 
-def databases(values: dict, root: Path) -> list[str] | None:
-    """This checkout's managed databases (the names list-databases lists), or None when the query fails."""
+def databases(values: dict, root: Path) -> list[str] | str:
+    """This checkout's managed databases (the names list-databases lists), or why they cannot be read."""
     dev, test = values['DEV_PREFIX'], values['TEST_PREFIX']
     like = ' OR '.join(f"datname LIKE '{prefix.replace('_', chr(92) + '_')}%' ESCAPE '{chr(92)}'"
                        for prefix in (dev, test))
     result = compose(values, 'exec', '-T', values['DB_SERVICE'], 'sh', '-c', PSQL, 'sh', '-Atqc',
                      f'SELECT datname FROM pg_database WHERE {like} ORDER BY datname')
     if result is None or result.returncode != 0:
-        return None
-    slug, slugs = values.get('CHECKOUT_SLUG', ''), trash.gc.checkout_slugs(root)
+        return 'the database query failed'
+    try:
+        slug, slugs = values.get('CHECKOUT_SLUG', ''), trash.gc.checkout_slugs(root)
+    except (OSError, ValueError) as exc:
+        return str(exc)
     return [name for name in (line.strip() for line in result.stdout.splitlines())
             if name and trash.owned(name, dev, test, slug, slugs)]
 
 
 def first_module(values: dict) -> str | None:
     for addon_root in values['ADDON_ROOTS'].splitlines():
-        found = sorted(path.parent.name for path in Path(addon_root).glob('*/__manifest__.py'))
+        try:
+            found = sorted(path.parent.name for path in Path(addon_root).glob('*/__manifest__.py'))
+        except OSError:
+            continue
         if found:
             return found[0]
     return None
 
 
 def report(root: Path) -> dict:
-    program = f'{config.program_name()} --project {root}'
+    program = [config.program_name(), '--project', str(root)]
+
+    def command(*words: str) -> str:
+        return shlex.join([*program, *words])
     checks = {name: {'ready': False, 'detail': 'needs the workspace'} for name in CHECKS}
-    found = {}
 
     def done(next_command):
         ready = [name for name in CHECKS if checks[name]['ready']]
         return {'project': str(root), 'ready': ready, 'missing': [name for name in CHECKS if name not in ready],
                 'checks': checks, 'next': next_command}
-    workspace = config.workspace_file(root)
+    try:
+        workspace = config.workspace_file(root)
+    except OSError as exc:
+        checks['workspace']['detail'] = f'unknown ({exc})'
+        return done(command('doctor'))
     if workspace is None:
-        checks['workspace']['detail'] = config.missing_configuration(root)[len('Missing tooling configuration: '):-1]
-        return done(f'{program} setup --plan --json')
+        checks['workspace']['detail'] = f'no {config.WORKSPACE_NAME} at or above {root}'
+        return done(command('setup', '--plan', '--json'))
     try:
         values = config.load(root)
     except config.InvalidConfig as exc:
         checks['workspace']['detail'] = str(exc)
-        return done(f'{program} doctor')
+        return done(command('doctor'))
+    except OSError as exc:
+        checks['workspace']['detail'] = f'unknown ({exc})'
+        return done(command('doctor'))
     checks['workspace'] = {'ready': True, 'detail': str(workspace)}
     environment = Path(values['PROJECT_ENVIRONMENT'])
     checks['environment'] = {'ready': (environment / 'pyvenv.cfg').is_file() and os.access(values['PYTHON'], os.X_OK),
                              'detail': str(environment)}
     requirements = Path(values['REQUIREMENTS_DIR'])
-    current = locks.current(requirements, Path(values['PROJECT_ROOT']))
-    state = 'current' if current else locks.state(requirements, Path(values['PROJECT_ROOT']))
+    try:
+        current = locks.current(requirements, Path(values['PROJECT_ROOT']))
+        state = 'current' if current else locks.state(requirements, Path(values['PROJECT_ROOT']))
+    except (OSError, ValueError) as exc:
+        current, state = False, f'unknown ({exc})'
     checks['locks'] = {'ready': current, 'detail': state}
     service = service_state(values)
     checks['database_service'] = {'ready': service == 'running', 'detail': service}
     if service == 'running':
         found = databases(values, root)
-        checks['databases'] = ({'ready': False, 'detail': 'unknown (the database query failed)'} if found is None
+        checks['databases'] = ({'ready': False, 'detail': f'unknown ({found})'} if isinstance(found, str)
                                else {'ready': any(name.startswith(values['DEV_PREFIX']) for name in found),
                                      'detail': found})
     else:
@@ -120,10 +157,13 @@ def report(root: Path) -> dict:
     except (OSError, ValueError, runtime_state.StateError) as exc:
         checks['server'] = {'ready': False, 'detail': f'unknown ({exc})'}
     if not checks['environment']['ready'] or not current:
-        return done(f'{program} doctor' if state == 'edited' else f'{program} bootstrap --apply')
+        return done(command('doctor') if state == 'edited' or state.startswith('unknown')
+                    else command('bootstrap', '--apply'))
     if not checks['database_service']['ready']:
-        return done(f'{program} list-databases')
+        return done(start_service(values) if service in STARTS else command('doctor'))
     if not checks['databases']['ready']:
+        if isinstance(checks['databases']['detail'], str):
+            return done(command('doctor'))
         slug = values.get('CHECKOUT_SLUG', '')
         name = f'{values["DEV_PREFIX"]}{slug + "_" if slug else ""}manual'
         module = first_module(values)
@@ -132,10 +172,9 @@ def report(root: Path) -> dict:
         except config.InvalidConfig:
             development = False
         if module is None:
-            return done(f'{program} create-database {name}')
-        return done(f'{program} init-dev-database {module} {name}' if development
-                    else f'{program} install-module {module}')
-    return done(None if checks['server']['ready'] else f'{program} start')
+            return done(command('create-database', name))
+        return done(command('init-dev-database', module, name) if development else command('install-module', module))
+    return done(None if checks['server']['ready'] else command('start'))
 
 
 def main(arguments: list[str]) -> int:

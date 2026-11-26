@@ -21,8 +21,9 @@ Usage:
       the compose file's top-level name, or nothing.
   db_account.py fix <odoo.conf> <env_file> <compose file> <program> <project root>
       what fixes an authentication failure (doctor and check-environment print it): recreating the volume
-      only when odoo.conf names the endpoint the compose service publishes, else correcting the account on
-      the server odoo.conf names.
+      only when odoo.conf names the endpoint the compose service publishes, correcting the account on the
+      server odoo.conf names when it is another one, and both when the port the compose file publishes to
+      5432 cannot be read (several ports, the long syntax, a variable or a range).
   db_account.py unsupported <odoo.conf> <env_file>
       a `FAIL env_file=unsupported_value <names>` line and its fix when the env file writes an account
       variable Odoo would get with compose interpolation ($) or a double-quoted escape (\\), which this reader
@@ -54,6 +55,10 @@ EMPTY_VALUES = ('', '""', "''", '~', 'null')
 # (the long syntax, ranges, variables) is not read; no YAML parser is used.
 PUBLISHED_PORT = re.compile(r'''\s*-\s*(["']?)(?:(?:[0-9]{1,3}(?:\.[0-9]{1,3}){3}|localhost|\[[0-9A-Fa-f:]*\]):)?'''
                             r'''([0-9]{1,5}):5432(?:/tcp)?\1\s*(?:#.*)?''')
+# Any other line that names the container's PostgreSQL port as a port entry: a list entry (a variable, a range,
+# no host port) or a key of the long syntax (`target: 5432`). The port it publishes cannot be read from it.
+OTHER_PORT_ENTRY = re.compile(r'''\s*(?:-\s*(?:target\s*:\s*)?|target\s*:\s*)\S*5432(?![0-9]).*''')
+UNREAD_ENTRY = 'an entry other than - [<address>:]<port>:5432'
 # The hosts that reach the port the compose service publishes on 127.0.0.1.
 LOCAL_HOSTS = ('127.0.0.1', 'localhost')
 POSTGRES_PORT = 5432
@@ -86,8 +91,13 @@ UNSUPPORTED = Unsupported()
 
 def env_value(raw: str):
     """An env file value as docker compose reads it: inside single quotes literal, inside double quotes
-    as written, else up to a ` #` comment, stripped; UNSUPPORTED when docker compose would read it otherwise:
-    a `$` outside single quotes (interpolation) or a `\\` inside double quotes (an escape)."""
+    as written, else up to a ` #` comment, stripped; empty when it is only a ` # comment`; UNSUPPORTED when
+    docker compose would read it otherwise: a `$` outside single quotes (interpolation) or a `\\` inside double
+    quotes (an escape). `~` and `null` are those words, not empty (YAML does not apply to an env file)."""
+    if re.match(r'\s+#', raw):
+        # Only a comment after the `=` (`NAME= # fill in`): empty, as doctor reads it and setup fills it (docker
+        # compose itself would read the comment as the value).
+        return ''
     value = raw.strip()
     if len(value) >= 2 and value[0] == "'" and "'" in value[1:]:
         return value[1:value.index("'", 1)]
@@ -275,27 +285,67 @@ def compose_project(path):
     return None
 
 
-def published_port(compose):
-    """The one host port the compose file publishes to 5432 (PUBLISHED_PORT), or None: none, several
-    different ones, or an unreadable file."""
+def compose_lines(compose):
+    """The lines of the compose file, or None when it cannot be read."""
     try:
         with open(compose, encoding='utf-8') as stream:
-            lines = stream.read().splitlines()
+            return stream.read().splitlines()
     except (OSError, UnicodeError):
         return None
+
+
+def published_ports(lines) -> set:
+    """The host ports the PUBLISHED_PORT entries of lines publish to 5432."""
     ports = set()
     for line in lines:
         match = PUBLISHED_PORT.fullmatch(line)
         if match and 1 <= int(match.group(2)) <= 65535:
             ports.add(int(match.group(2)))
+    return ports
+
+
+def published_port(compose):
+    """The one host port the compose file publishes to 5432 (PUBLISHED_PORT), or None: none, several
+    different ones, or an unreadable file."""
+    lines = compose_lines(compose)
+    ports = published_ports(lines) if lines is not None else set()
     return ports.pop() if len(ports) == 1 else None
+
+
+def port_mapping(compose):
+    """(the one host port the compose file publishes to 5432 or None, why that port cannot be read or None): no
+    reason with no port means no entry names 5432; a reason means the file cannot be read, it publishes several
+    ports, or an entry is not one PUBLISHED_PORT reads (OTHER_PORT_ENTRY)."""
+    lines = compose_lines(compose)
+    if lines is None:
+        return None, 'it cannot be read'
+    if any(OTHER_PORT_ENTRY.fullmatch(line) and not PUBLISHED_PORT.fullmatch(line) for line in lines):
+        return None, UNREAD_ENTRY
+    ports = published_ports(lines)
+    if len(ports) > 1:
+        return None, 'several ports'
+    return (ports.pop() if ports else None), None
+
+
+def recreate_command(compose, program, root) -> str:
+    """The Tier B command that recreates the volume of the compose project, with --confirm when it has a name."""
+    try:
+        project = compose_project(compose)
+    except (OSError, UnicodeError):
+        project = None
+    command = [program, '--project', str(root), 'recreate-database-volume']
+    if project is not None:
+        command += ['--confirm', project]
+    return ' '.join(shlex.quote(word) for word in command)
 
 
 def authentication_fix(conf, env_file, compose, program, root) -> str:
     """What fixes Odoo's account being refused: odoo.conf's own account values when they differ from the
-    env file's; else, when odoo.conf names the endpoint the compose service publishes (db_host 127.0.0.1 or
-    localhost, and its published port), recreating the volume, which was initialized with other credentials;
-    else correcting the account on the server odoo.conf names, which is not that service."""
+    env file's; else, when the port the compose file publishes to 5432 cannot be read (port_mapping), both
+    fixes, since oasis cannot tell which server odoo.conf names; else, when odoo.conf names the endpoint the
+    compose service publishes (db_host 127.0.0.1 or localhost, and its published port), recreating the volume,
+    which was initialized with other credentials; else correcting the account on the server odoo.conf names,
+    which is not that service."""
     try:
         options = differing(conf, env_file)
     except AccountError:
@@ -308,27 +358,27 @@ def authentication_fix(conf, env_file, compose, program, root) -> str:
         endpoint = conf_options(conf)
     except AccountError:
         endpoint = {}
-    host, port, published = endpoint.get('db_host'), endpoint.get('db_port'), published_port(compose)
+    host, port = endpoint.get('db_host'), endpoint.get('db_port')
+    published, unread = port_mapping(compose)
+    where = (f'db_host {host}' if host else 'no db_host') + (f', db_port {port}' if port else ', no db_port')
+    if unread is not None:
+        return (f'the PostgreSQL that {conf} names ({where}) refuses the account Odoo uses, and oasis could not read '
+                f'the port {compose} publishes to 5432 ({unread}), so it cannot tell whether that server is the service '
+                f'of {compose}: if it is, {recreate_command(compose, program, root)} recreates its volume with the '
+                f'account of {env_file} (Tier B: it deletes every database of the service); if it is not, correct that '
+                f'account on that server; then run {program} doctor again')
     try:
         local = host in LOCAL_HOSTS and published is not None and int(port or POSTGRES_PORT) == published
     except ValueError:
         local = False
     if not local:
-        where = (f'db_host {host}' if host else 'no db_host') + (f', db_port {port}' if port else ', no db_port')
         service = (f'published on 127.0.0.1:{published}' if published is not None
                    else 'no port published to 5432 found')
         return (f'the PostgreSQL that {conf} names ({where}) refuses the account Odoo uses, and it is not the service '
                 f'of {compose} ({service}): correct that account on that server, or set db_host = 127.0.0.1 and the '
                 f'db_port {compose} publishes in {conf}; then run {program} doctor again')
-    try:
-        project = compose_project(compose)
-    except (OSError, UnicodeError):
-        project = None
-    command = [program, '--project', str(root), 'recreate-database-volume']
-    if project is not None:
-        command += ['--confirm', project]
     return (f'the PostgreSQL that {conf} names refuses the account Odoo uses: its volume was initialized with other '
-            f'credentials than {env_file}; {" ".join(shlex.quote(word) for word in command)} recreates it with them '
+            f'credentials than {env_file}; {recreate_command(compose, program, root)} recreates it with them '
             '(Tier B: it deletes every database of the service)')
 
 

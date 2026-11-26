@@ -592,8 +592,8 @@ logs, errors).
   value as written; ...`). The user name is `oasis_` and the `dev_prefix` without its `_dev_` suffix (and
   any trailing `_`), so another prefix is never cut short.
 - An existing environment file is kept, with one exception: the account variables it assigns an empty
-  value (`NAME=`, `NAME=""`, also after `export` or before a ` # comment`; files written by older setups)
-  get the same values a new file would (the kept `odoo.conf`'s, else generated), in place. Every other byte
+  value (`NAME=`, `NAME=""`, also after `export` or before a ` # comment`, and `NAME= # comment` with only
+  a comment; files written by older setups) get the same values a new file would (the kept `odoo.conf`'s, else generated), in place. Every other byte
   is kept and the file ends with mode 0600. The plan says `fill <names> in <env file> (mode 0600; every
   other line kept): <what each gets>`, never a value. A variable the file does not assign is never added:
   a file that assigns neither (another account's naming) is left unchanged, and the plan says `WARN: <env
@@ -623,7 +623,10 @@ logs, errors).
   exported, since Odoo 19 ranks `PGUSER` and `PGPASSWORD` above `odoo.conf`: an existing project keeps
   working unchanged. When either file cannot be read, nothing is exported and the command runs as before
   (`doctor` reports the file). oasis reads the environment file as docker compose does for literal values:
-  unquoted (up to a ` # comment`), in single quotes, or in double quotes. A value Odoo would get that uses
+  unquoted (up to a ` # comment`), in single quotes, or in double quotes; `~` and `null` are those words
+  (YAML does not apply to an environment file), and a value that is only a ` # comment` is empty, as
+  `doctor` reports it and setup fills it (docker compose alone would read the comment as the value). A value
+  Odoo would get that uses
   compose interpolation (`$VAR`, `${VAR}`, any `$` outside single quotes) or a double-quoted escape (`\`)
   is never passed on as written: the command exits 2 with `ERROR: <env file> sets <names> with compose
   interpolation ($) or a double-quoted escape (\), which oasis does not read: write the value literally in
@@ -637,7 +640,12 @@ logs, errors).
   only when `odoo.conf` points at the compose service: `db_host` `127.0.0.1` or `localhost` and the
   `db_port` the compose file publishes to 5432 (5432 without a `db_port`). Another server refusing the
   account gets `correct that account on that server, or set db_host = 127.0.0.1 and the db_port <compose
-  file> publishes in <odoo.conf>` instead: recreating the local volume would not change it.
+  file> publishes in <odoo.conf>` instead: recreating the local volume would not change it. oasis reads the
+  published port only from short entries such as `- '127.0.0.1:6001:5432'`; when the compose file cannot
+  be read, publishes several ports to 5432, or has another entry for it (the long syntax `target: 5432`, a
+  variable such as `${DB_PORT:-6001}:5432`, a range, no host port), the fix says that oasis could not read
+  the port (`it cannot be read`, `several ports` or `an entry other than - [<address>:]<port>:5432`) and
+  names both: the recreate if that server is the compose service, correcting the account if it is not.
 - `recreate-database-volume` prints the plan, then runs `docker compose -p <compose project> down -v`:
   it removes the compose project's containers and networks, every named volume of its compose file and
   every anonymous volume of its containers, so every database of its PostgreSQL, the trash included

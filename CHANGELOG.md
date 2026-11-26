@@ -101,6 +101,18 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Fixed
 
+- `setup` fills an account variable whose value is only a comment (`ODOO_DB_USER= # fill in`), which
+  `doctor` already reported as empty; `~` and `null` stay values for both.
+- When the compose file's port mapping cannot be read (long syntax, a variable, a range, several ports,
+  an unreadable file), the `postgres_connection` fix says the port could not be read and names both the
+  Tier B `recreate-database-volume` and correcting the account on that server.
+- `init-dev-database` keeps the generated passwords when the outcome is unknown (an unexpected exit, a
+  traceback, Ctrl-C once it started, a failed rename): the 0600 temporary file stays and is named; a file
+  that cannot be written is removed.
+- `oasis status --json` names the `docker compose ... up -d --wait <service>` that starts a stopped or
+  starting database service instead of `list-databases`; a starting or unhealthy container is no longer
+  `stopped`; `next` is shell-quoted; a step it cannot read is `unknown (<reason>)` with `doctor` next, and
+  the output stays one JSON object.
 - The generated database user name strips `_dev_` only when it is there.
 - `worktree-init` names `git worktree prune` when a prunable worktree entry (its folder gone) holds
   the target branch, instead of saying the branch is checked out there (S4.9).

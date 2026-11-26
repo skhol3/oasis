@@ -5,23 +5,28 @@ a fake that answers `compose ps` with FAKE_PS and the database query with FAKE_D
 so nothing reaches a real service.
 """
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
+import importlib.util
 import json
+import os
+import shlex
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 import test_setup
-from test_setup import CLI
+from test_setup import CLI, ROOT
 
 DOCKER = '''#!/bin/sh
 printf 'docker %s\\n' "$*" >> "$FAKE_DOCKER_LOG"
 case "$*" in
-  *" ps --format json "*) printf '%s' "${FAKE_PS:-}" ;;
-  *"SELECT datname FROM pg_database"*) printf '%s' "${FAKE_DATABASES:-}" ;;
+  *" ps --format json "*) [ -z "${FAKE_PS_FAIL:-}" ] || exit 1; printf '%s' "${FAKE_PS:-}" ;;
+  *"SELECT datname FROM pg_database"*) [ -z "${FAKE_QUERY_FAIL:-}" ] || exit 1; printf '%s' "${FAKE_DATABASES:-}" ;;
   *) exit 9 ;;
 esac
 '''
 CHECKS = ('workspace', 'environment', 'locks', 'database_service', 'databases', 'server')
+RUNNING = '{"Service":"db","State":"running","Health":"healthy"}\n'
 
 
 class StatusJsonTests(unittest.TestCase):
@@ -78,11 +83,22 @@ class StatusJsonTests(unittest.TestCase):
         self.assertEqual(status['checks']['databases'],
                          {'ready': False, 'detail': 'unknown while the database service is stopped'})
         self.assertEqual(status['checks']['server'], {'ready': False, 'detail': 'stopped'})
-        self.assertEqual(status['next'], f'{program} list-databases')
+        # list-databases would start the service, which the policy's "reads and reports" does not say: the command
+        # that starts it is named instead.
+        config_dir = self.checkout / '.oasis/config'
+        self.assertEqual(status['next'], shlex.join(['docker', 'compose', '--env-file', str(config_dir / '.env'), '-f',
+                                                     str(config_dir / 'compose.yml'), 'up', '-d', '--wait', 'db']))
         # Read only: compose ps and nothing else (no `up`).
         calls = self.docker_log.read_text().splitlines()
         self.assertEqual(len(calls), 1)
         self.assertIn(' ps --format json db', calls[0])
+        # A state compose ps cannot report: doctor, which checks docker.
+        self.env['FAKE_PS_FAIL'] = '1'
+        status = self.status_json()
+        self.assertEqual(status['checks']['database_service'],
+                         {'ready': False, 'detail': 'unknown (docker compose ps failed)'})
+        self.assertEqual(status['next'], f'{program} doctor')
+        del self.env['FAKE_PS_FAIL']
         self.env['FAKE_PS'] = '{"Service":"db","State":"running","Health":"healthy"}\n'
         status = self.status_json()
         self.assertEqual(status['checks']['database_service'], {'ready': True, 'detail': 'running'})
@@ -99,6 +115,123 @@ class StatusJsonTests(unittest.TestCase):
         status = self.status_json()
         self.assertEqual(status['checks']['locks'], {'ready': False, 'detail': 'stale'})
         self.assertEqual(status['next'], f'{program} bootstrap --apply')
+
+    def configured(self):
+        applied = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        return shlex.join(['oasis', '--project', str(self.checkout)])
+
+    def test_each_state_of_the_database_service_and_its_next_command(self):
+        program = self.configured()
+        config_dir = self.checkout / '.oasis/config'
+        start = shlex.join(['docker', 'compose', '--env-file', str(config_dir / '.env'), '-f',
+                            str(config_dir / 'compose.yml'), 'up', '-d', '--wait', 'db'])
+        for ps, detail, ready, next_command in (
+                ('', 'stopped', False, start),
+                ('{"Service":"db","State":"exited","Health":""}\n', 'stopped', False, start),
+                ('{"Service":"db","State":"running","Health":"starting"}\n', 'starting', False, start),
+                ('{"Service":"db","State":"running","Health":"unhealthy"}\n', 'unhealthy', False, f'{program} doctor'),
+                ('not json\n', 'unknown (docker compose ps printed no JSON)', False, f'{program} doctor'),
+                ('"text"', 'unknown (docker compose ps printed no JSON)', False, f'{program} doctor'),
+                # The array form of older docker compose releases, and a service without a health check.
+                ('[{"Service":"db","State":"running","Health":"healthy"}]', 'running', True, f'{program} install-module shop_sale'),
+                ('{"Service":"db","State":"running"}\n', 'running', True, f'{program} install-module shop_sale')):
+            with self.subTest(ps=ps):
+                self.env['FAKE_PS'] = ps
+                status = self.status_json()
+                self.assertEqual(status['checks']['database_service'], {'ready': ready, 'detail': detail})
+                if not ready:
+                    self.assertEqual(status['checks']['databases'],
+                                     {'ready': False, 'detail': f'unknown while the database service is {detail}'})
+                self.assertEqual(status['next'], next_command)
+        self.assertNotIn(' up ', self.docker_log.read_text())
+
+    def test_databases_that_cannot_be_read_need_doctor(self):
+        program = self.configured()
+        self.env.update(FAKE_PS=RUNNING, FAKE_QUERY_FAIL='1')
+        status = self.status_json()
+        self.assertEqual(status['checks']['databases'], {'ready': False, 'detail': 'unknown (the database query failed)'})
+        self.assertEqual(status['next'], f'{program} doctor')
+        # A worktree whose slug cannot be read (a legacy profile): the databases are unknown, as list-databases stops.
+        del self.env['FAKE_QUERY_FAIL']
+        worktree = self.checkout.parent / 'wt'
+        self.git(self.checkout, 'worktree', 'add', '-q', '-b', 'wt', str(worktree))
+        (worktree / '.odoo19-agent.toml').write_text('')
+        status = self.status_json()
+        self.assertFalse(status['checks']['databases']['ready'])
+        self.assertTrue(status['checks']['databases']['detail'].startswith(
+            f'unknown (Cannot read the checkout slug of {worktree}: '), status['checks']['databases'])
+        self.assertEqual(status['next'], f'{program} doctor')
+
+    def test_the_next_database_command_follows_the_workspace(self):
+        program = self.configured()
+        self.env['FAKE_PS'] = RUNNING
+        workspace = self.checkout / 'oasis-workspace.toml'
+        workspace.write_text(workspace.read_text() + "\n[development]\nadministrator_login = 'admin'\n")
+        self.assertEqual(self.status_json()['next'], f'{program} init-dev-database shop_sale shop_dev_manual')
+        (self.checkout / 'shop_sale/__manifest__.py').unlink()
+        self.assertEqual(self.status_json()['next'], f'{program} create-database shop_dev_manual')
+
+    def test_a_running_server_leaves_nothing_next(self):
+        self.configured()
+        self.env.update(FAKE_PS=RUNNING, FAKE_DATABASES='shop_dev_manual\n')
+        # A live record of this checkout: the test process, within the start grace period.
+        recorded = subprocess.run([sys.executable, '-I', '-B', str(ROOT / 'tools/runtime_state.py'), 'record',
+                                   str(self.checkout), str(os.getpid()), '8069', str(self.source / 'odoo-bin')],
+                                  env=self.env, capture_output=True, text=True)
+        self.assertEqual((recorded.returncode, recorded.stderr), (0, ''))
+        status = self.status_json()
+        self.assertEqual((status['ready'], status['missing']), (list(CHECKS), []))
+        self.assertEqual(status['checks']['server'], {'ready': True, 'detail': f'running pid {os.getpid()} port 8069'})
+        self.assertIsNone(status['next'])
+
+    def test_a_lock_changed_by_hand_needs_doctor(self):
+        program = self.configured()
+        lock = self.checkout / '.oasis/config/requirements/dev.txt'
+        lock.write_text(lock.read_text() + '# edited\n')
+        status = self.status_json()
+        self.assertEqual(status['checks']['locks'], {'ready': False, 'detail': 'edited'})
+        self.assertEqual(status['next'], f'{program} doctor')
+
+    @unittest.skipIf(os.geteuid() == 0, 'root reads any file')
+    def test_locks_that_cannot_be_read_are_unknown_in_one_json_object(self):
+        program = self.configured()
+        runtime_in = self.checkout / '.oasis/config/requirements/runtime.in'
+        runtime_in.chmod(0)
+        self.addCleanup(runtime_in.chmod, 0o644)
+        status = self.status_json()
+        self.assertEqual(status['checks']['locks'],
+                         {'ready': False, 'detail': f"unknown ([Errno 13] Permission denied: '{runtime_in}')"})
+        self.assertEqual(status['next'], f'{program} doctor')
+
+    def test_a_configuration_that_cannot_be_read_is_unknown_in_one_json_object(self):
+        self.configured()
+        spec = importlib.util.spec_from_file_location('oasis_test_status_json', ROOT / 'tools/status_json.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                mock.patch.object(module.config, 'load', side_effect=PermissionError(13, 'Permission denied', 'x')):
+            status = module.report(self.checkout)
+        self.assertEqual(status['checks']['workspace'], {'ready': False, 'detail': "unknown ([Errno 13] Permission denied: 'x')"})
+        self.assertEqual(status['next'], shlex.join(['oasis', '--project', str(self.checkout), 'doctor']))
+        json.dumps(status)
+
+    def test_the_project_path_is_shell_quoted_in_next(self):
+        checkout = self.checkout.parent / "my shop's"
+        self.checkout.rename(checkout)
+        self.checkout = checkout
+        status = self.status_json()
+        self.assertEqual(status['next'], shlex.join(['oasis', '--project', str(checkout), 'setup', '--plan', '--json']))
+        self.assertEqual(shlex.split(status['next'])[2], str(checkout))
+
+    def test_extra_arguments_after_json_are_a_usage_error(self):
+        self.configured()
+        for args in (('--json', 'extra'), ('--json', '--json')):
+            with self.subTest(args=args):
+                result = self.status(*args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (2, '', f'Usage: {CLI} status [--json]\n'))
+        self.assertFalse(self.docker_log.exists())
 
     def test_an_invalid_configuration_needs_doctor(self):
         (self.checkout / 'oasis-workspace.toml').write_text('workspace_version = 1\n')
