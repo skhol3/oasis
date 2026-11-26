@@ -206,6 +206,26 @@ exit 0
                              (2, '', 'Usage: ' + str(self.root / 'dev/scripts' / command) + tail + '\n'))
             self.unchanged()
 
+    def test_tier_b_flags_are_never_abbreviated_or_valued(self):
+        # v0.16.0 S1 review: stop --database and drop-database --confirm take only their exact spelling
+        # (no argparse abbreviations); the guard asks for the other spellings anyway (pi/lib/bash-guard.ts).
+        # stop's usage names the tool the wrapper runs.
+        stop = 'Usage: ' + str(STAGE / 'tools/stop') + ' [--database | --force]\n'
+        for args in (('--d',), ('--datab',), ('--database=x',), ('--database', '--database')):
+            with self.subTest(args=args):
+                result = self.invoke('stop', *args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', stop))
+                self.unchanged()
+        drop = ('Usage: ' + str(self.root / 'dev/scripts/drop-database')
+                + ' <cc_dev_*|cc_test_*> [--terminate] [--confirm <database>]\n')
+        for args in (('--conf', 'cc_dev_coffee'), ('--confirm', 'cc_dev_coffee', '--term'),
+                     ('--terminate=1', '--confirm', 'cc_dev_coffee')):
+            with self.subTest(args=args):
+                result = self.invoke('drop-database', 'cc_dev_coffee', *args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', drop))
+                commands = self.commands.read_text() if self.commands.exists() else ''
+                self.assertNotIn('ALTER DATABASE', commands)
+
     def test_wrong_runtime_version_rejects_before_docker(self):
         self.python.write_text(self.python.read_text().replace('echo 3.12', 'echo 3.11'))
         result = self.invoke('install-module', 'coffee')
@@ -264,8 +284,10 @@ exit 0
         # A legacy profile is refused before anything runs, with the fix, also next to a workspace.
         profile = self.root / '.odoo19-agent.toml'
         profile.write_text('[tooling]\n')
-        refusal = (f'ERROR: {profile} is the old profile format, no longer read: run oasis migrate --plan to see '
-                   'its conversion to oasis-workspace.toml, then oasis migrate --apply.\n')
+        # migrate cannot plan this profile, so only its runnable --plan is named (it says why).
+        plan = shlex.join(['oasis', '--project', str(self.root), 'migrate', '--plan'])
+        refusal = (f'ERROR: {profile} is the old profile format, no longer read: run {plan} to see '
+                   'its conversion to oasis-workspace.toml or what stops it.\n')
         for workspace in (False, True):
             if workspace:
                 (self.root / 'oasis-workspace.toml').write_text(WORKSPACE)
@@ -308,14 +330,14 @@ exit 0
         self.env.update(FAKE_SESSIONS='2')
         plan = (r'database=cc_dev_coffee\nsize=unknown\nsessions=2\nfilestore=none\n'
                 r'trash=(cc_dev_coffee_trash_\d{8}_\d{6})\n')
-        result = self.invoke('drop-database', 'cc_dev_coffee')
+        result = self.invoke('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stderr),
                          (3, 'Refusing to drop database with 2 active session(s): cc_dev_coffee\n'
                           'Retry with --terminate only after confirming those sessions may be closed.\n'))
         self.assertRegex(result.stdout, rf'\A{plan}\Z')
         self.assertNotIn('pg_terminate_backend', self.commands.read_text())
         self.assertNotIn('ALTER DATABASE', self.commands.read_text())
-        result = self.invoke('drop-database', 'cc_dev_coffee', '--terminate')
+        result = self.invoke('drop-database', 'cc_dev_coffee', '--terminate', '--confirm', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertRegex(result.stdout, rf'\A{plan}Database moved to trash: cc_dev_coffee -> \1\n'
                                         r'Restore it with: oasis trash restore \1\n\Z')

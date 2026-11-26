@@ -78,8 +78,23 @@ Releases are listed in the [changelog](CHANGELOG.md).
 
 Agent tools (`oasis_test_module`, `oasis_update_module`, `oasis_model_info`, ...) with validated
 parameters and compact output, prompt context, the `/oasis` command and a bash guard that keeps
-the agent away from direct `odoo-bin`, `dropdb`, `psql` and the user-run commands.
+the agent away from direct `odoo-bin`, `dropdb`, `psql` and asks the user before Tier B commands.
 [Docs →](docs/gentle-shell-layer.md)
+
+### Agent contract
+
+One policy table in the core (`tools/policy.py`, `oasis policy --json`) lists every
+operation, its tier (A: the agent alone; B: the agent proposes, a person confirms; C: a person
+only) and why; docs, skills and the bash guard follow it. [Docs →](docs/agent-contract.md)
+
+Contract change in v0.16.0: the Gentle Shell guard takes its tiers from that table. Agents now run
+`setup --apply`, `migrate` without `--apply` and `worktree-init --dry-run` (Tier A); `worktree-init`
+and `migrate --apply` (Tier B) wait for the user's confirmation in a dialog, honoring
+`[tooling].agent_destructive`, like `drop-database`, instead of being blocked; `gc --apply` is
+Tier A in the skills too. In the CLI, `drop-database`, `gc --apply --trash`, `migrate --apply` and
+`worktree-init` run only with `--confirm <exact name>` (the database, the project root, the
+workspace file, the worktree path); without it they exit 2 and name the exact command. The menu,
+`/oasis worktree` and `/oasis migrate` pass it after your confirmation.
 
 ### Checkouts and worktrees
 
@@ -123,6 +138,7 @@ command that still reads it, converts the profiles of every checkout into one wo
 | [docs/README.md](docs/README.md) | Index of the documentation by reader |
 | [Install or update](docs/install.md) | Which install does what: `install.sh` (skills and CLI) and the package (tools, `/oasis`, panel) |
 | [Gentle Shell layer](docs/gentle-shell-layer.md) | The agent tools, prompt context, `/oasis` and aliases |
+| [Agent contract](docs/agent-contract.md) | The policy table: each operation's tier (A, B, C) and why, as JSON for any agent |
 | [Bash guard](docs/bash-guard.md) | Which agent bash commands run, wait for the user's confirmation or are blocked; `agent_destructive` |
 | [Subagents](docs/subagents.md) | The overlay that gives Gentle Shell subagents the `oasis_*` tools |
 | [Setting up a new workspace](docs/new-workspace.md) | From a clone to `doctor` and a database with `oasis setup`; where each value lives, an example tree, the steps by hand |

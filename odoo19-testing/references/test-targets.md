@@ -1,6 +1,6 @@
 # Test targets and compact runs
 
-- Default: `test-module` and `verify-module` without an explicit or configured database create a disposable database for the run and drop it afterwards, also after a failure or an interruption. `gc` lists leftovers; only the user runs `gc --apply`.
+- Default: `test-module` and `verify-module` without an explicit or configured database create a disposable database for the run and drop it afterwards, also after a failure or an interruption. `gc` lists leftovers and `gc --apply` drops them (Tier A in the [agent contract](../../docs/agent-contract.md): the agent runs it).
 - Reused targets: `[tooling].test_database` or an explicit database is reset and reused. Run such targets sequentially, with exact-target reset authorization. Preserve development data and failed-run evidence; active-session checks are not locks. Configuration is not consent.
 - Names: with a checkout slug, test targets are `<test_prefix><slug>_<name>`. Names ending in `_r` plus six hex digits are reserved for disposable runs.
 - Verification uses a separate `_update` target, not a historical migration baseline.

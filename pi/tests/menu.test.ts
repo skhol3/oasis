@@ -88,7 +88,7 @@ test("fillTemplate fills words, inputs, options, flags and compact in order", ()
   assert.deepEqual(fillTemplate(action("tests.class"), { module: "coffee", only: "TestCup.test_fill" }, true),
     [...PREFIX, "test-module", "--compact", "--only", "TestCup.test_fill", "coffee"]);
   assert.deepEqual(fillTemplate(action("maintenance.drop_database"), { database: "cc_dev_x", terminate: true }, true),
-    [...PREFIX, "drop-database", "cc_dev_x", "--terminate"]);
+    [...PREFIX, "drop-database", "cc_dev_x", "--terminate", "--confirm", "cc_dev_x"]);
   assert.deepEqual(fillTemplate(action("server.logs"), {}, true),
     ["tail", "-n", "200", "/work/a project/dev/logs/odoo19/server.log"]);
   // S6: restart with an optional database; the live log follows server.log.

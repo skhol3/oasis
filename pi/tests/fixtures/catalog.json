@@ -826,6 +826,10 @@
         {
           "input": "terminate",
           "flag": "--terminate"
+        },
+        {
+          "input": "database",
+          "option": "--confirm"
         }
       ],
       "inputs": [
@@ -937,7 +941,9 @@
         {
           "input": "older_than",
           "option": "--older-than"
-        }
+        },
+        "--confirm",
+        "/work/a project"
       ],
       "inputs": [
         {
@@ -1054,9 +1060,27 @@
         "--project",
         "/work/a project",
         "migrate",
-        "--apply"
+        "--apply",
+        {
+          "input": "workspace_file",
+          "option": "--confirm"
+        }
       ],
-      "inputs": [],
+      "inputs": [
+        {
+          "id": "workspace_file",
+          "label": "Workspace file to write (the plan names it after write)",
+          "kind": "text",
+          "source": null,
+          "required": true,
+          "allow_new": false,
+          "pattern": "^/.+",
+          "error": "Enter an absolute path.",
+          "default": null,
+          "hint": null,
+          "choices": null
+        }
+      ],
       "destructive": true,
       "confirm": "yes",
       "user_run": true,
@@ -1080,6 +1104,14 @@
         },
         {
           "input": "branch"
+        },
+        {
+          "input": "path",
+          "option": "--path"
+        },
+        {
+          "input": "path",
+          "option": "--confirm"
         }
       ],
       "inputs": [
@@ -1107,6 +1139,19 @@
           "error": null,
           "default": null,
           "hint": null,
+          "choices": null
+        },
+        {
+          "id": "path",
+          "label": "Worktree folder (absolute; its name gives the slug)",
+          "kind": "text",
+          "source": null,
+          "required": true,
+          "allow_new": false,
+          "pattern": "^/.+",
+          "error": "Enter an absolute path.",
+          "default": null,
+          "hint": "for example /work/a project-<feature>",
           "choices": null
         }
       ],

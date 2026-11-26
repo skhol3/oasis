@@ -9,6 +9,54 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Added
+
+- Agent contract (S1): one policy table in the core (`tools/policy.py`) lists every operation, its tier
+  (A: the agent alone; B: the agent proposes, a person confirms; C: a person only), why, and what
+  `--confirm` takes. `oasis policy --json` (and `odoo19 policy --json`) prints it from any directory,
+  also without a workspace file or in a checkout with a legacy profile. docs/agent-contract.md and the
+  bash guard's tier table are generated from it.
+
+### Changed
+
+- Contract change: Tier B in the CLI. `drop-database <name>`, `gc --apply --trash`, `migrate --apply`
+  and `worktree-init` run only with `--confirm <exact name>` (the database name, the project root, the
+  workspace file the plan writes, the worktree path the plan names). Without it, or with another value,
+  they change nothing, exit 2 and name the exact command to run. `worktree-init --dry-run`,
+  `migrate --plan` and resuming an existing worktree need no confirmation. The menu (Move a database to
+  the trash, Empty trash, Migrate, Create a linked worktree, which now asks for the absolute folder),
+  `/oasis worktree` and `/oasis migrate` pass it after the user's confirmation.
+- Contract change: the Gentle Shell bash guard takes its tiers from the policy table
+  (`pi/lib/policy.generated.ts`, checked against it by the tests). Agents may now run `setup --apply`,
+  `migrate` without `--apply` and `worktree-init --dry-run` (Tier A). `worktree-init` and
+  `migrate --apply` (Tier B) now wait for the user's confirmation in a dialog, honoring
+  `[tooling].agent_destructive`, like `drop-database`; before, they were blocked in every session. An
+  oasis command whose arguments are not literal gets its strictest tier. `stop --database` stays Tier B
+  (it ends the sessions of a running server on the shared database). The skills treat `gc --apply` as
+  Tier A.
+- The refusal of a legacy `.odoo19-agent.toml` and `doctor`'s fix name runnable commands:
+  `oasis --project <checkout> migrate --plan`, then the exact
+  `oasis --project <checkout> migrate --apply --confirm <workspace file>` (the file the plan writes),
+  or only the plan when migrate cannot plan.
+- Bash guard: an abbreviated or `=` form of a Tier B option (`migrate --ap`, `stop --datab`,
+  `gc --apply --tr`) asks like the full option; an entry point whose command word is not known from
+  the text gets the strictest row of any oasis command word on the line. `oasis policy` has its own
+  row (Tier A).
+- The Gentle Shell prompt context points to `oasis policy --json` for the Tier B commands.
+
+### Fixed
+
+- `worktree-init` names `git worktree prune` when a prunable worktree entry (its folder gone) holds
+  the target branch, instead of saying the branch is checked out there (S4.9).
+- `check-environment --full` and `bootstrap` no longer report `FAIL dependency_audit=failed` on an
+  environment whose Python is older than 3.10 (Odoo 15: 3.7 to 3.9): the dependency audit works out
+  which distribution provides each module from the installed distributions and the standard-library
+  names from the interpreter itself. On 3.10 and later its output is unchanged.
+- `oasis_test_module` and `oasis_test_summary` read the Odoo 15 result line (logger
+  `odoo.tests.runner`): Odoo 15 runs no longer report `result: not reported`, and a failing run's
+  result line is no longer counted as a problem. A run in which no test ran adds
+  `no tests ran: the run only installed <module>` (`updated` in reuse update mode).
+
 ## [0.15.1] - 2026-11-26
 
 ### Fixed

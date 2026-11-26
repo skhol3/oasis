@@ -39,9 +39,12 @@ APPENDED = ['ODOO_VERSION=19.0', 'ODOO_SECOND_PORT_OPTION=--gevent-port', 'ODOO_
 
 
 def refusal(profile, program='oasis'):
-    """The refusal of a checkout that still has a legacy profile."""
-    return (f'ERROR: {profile} is the old profile format, no longer read: run {program} migrate --plan to see '
-            f'its conversion to oasis-workspace.toml, then {program} migrate --apply.\n')
+    """The refusal of a checkout that still has a legacy profile migrate cannot plan here (no git
+    worktree list, no odoo.conf): its runnable --plan, which names what stops it (tests/test_migrate.py
+    covers the one that names the exact --apply --confirm <workspace file>)."""
+    plan = shlex.join([program, '--project', str(profile.parent), 'migrate', '--plan'])
+    return (f'ERROR: {profile} is the old profile format, no longer read: run {plan} to see '
+            'its conversion to oasis-workspace.toml or what stops it.\n')
 
 
 class ConfigCliTests(unittest.TestCase):

@@ -180,7 +180,7 @@ class DropToTrashTests(TrashFixture):
         self.seed({'cc_dev_coffee': {'size': 8_000_000}, 'cc_dev_other': {}})
         store = self.filestore('cc_dev_coffee')
         before = datetime.now(timezone.utc).replace(microsecond=0)
-        result = self.cli('drop-database', 'cc_dev_coffee')
+        result = self.cli('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee')
         after = datetime.now(timezone.utc)
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         found = re.fullmatch(
@@ -205,7 +205,7 @@ class DropToTrashTests(TrashFixture):
         self.seed({'cc_dev_coffee': {'sessions': 2}})
         self.filestore('cc_dev_coffee')
         before = self.snapshot()
-        result = self.cli('drop-database', 'cc_dev_coffee')
+        result = self.cli('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stderr), (3, (
             'Refusing to drop database with 2 active session(s): cc_dev_coffee\n'
             'Retry with --terminate only after confirming those sessions may be closed.\n')))
@@ -214,7 +214,7 @@ class DropToTrashTests(TrashFixture):
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(self.mutations(), [])
         # --terminate keeps its meaning: close the sessions, then move to the trash.
-        result = self.cli('drop-database', 'cc_dev_coffee', '--terminate')
+        result = self.cli('drop-database', 'cc_dev_coffee', '--terminate', '--confirm', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertIn('sessions=2\n', result.stdout)
         [trash] = self.databases()
@@ -224,7 +224,7 @@ class DropToTrashTests(TrashFixture):
 
     def test_without_a_filestore_the_plan_says_none(self):
         self.seed({'cc_test_coffee': {'size': 512}})
-        result = self.cli('drop-database', 'cc_test_coffee')
+        result = self.cli('drop-database', 'cc_test_coffee', '--confirm', 'cc_test_coffee')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertRegex(result.stdout, r'\Adatabase=cc_test_coffee\nsize=512B\nsessions=0\nfilestore=none\n'
                                         r'trash=cc_test_coffee_trash_\d{8}_\d{6}\n')
@@ -232,14 +232,14 @@ class DropToTrashTests(TrashFixture):
         # No data_dir at all: nothing is known to move either.
         (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text())
         self.seed({'cc_dev_coffee': {}})
-        result = self.cli('drop-database', 'cc_dev_coffee')
+        result = self.cli('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertIn('\nfilestore=none\n', result.stdout)
 
     def test_a_missing_database_keeps_the_existing_message_and_exit(self):
         self.seed({'cc_dev_other': {}})
         before = self.snapshot()
-        result = self.cli('drop-database', 'cc_dev_coffee')
+        result = self.cli('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, 'Database does not exist: cc_dev_coffee\n', ''))
         self.assertEqual(self.snapshot(), before)
@@ -247,8 +247,8 @@ class DropToTrashTests(TrashFixture):
 
     def test_usage_and_unmanaged_names_are_refused_as_before(self):
         for args, stderr in (
-                ((), f'Usage: {ENTRY} <cc_dev_*|cc_test_*> [--terminate]\n'),
-                (('cc_dev_coffee', '--force'), f'Usage: {ENTRY} <cc_dev_*|cc_test_*> [--terminate]\n'),
+                ((), f'Usage: {ENTRY} <cc_dev_*|cc_test_*> [--terminate] [--confirm <database>]\n'),
+                (('cc_dev_coffee', '--force'), f'Usage: {ENTRY} <cc_dev_*|cc_test_*> [--terminate] [--confirm <database>]\n'),
                 (('other_db',), 'Managed databases must use cc_dev_<name> or cc_test_<name>: other_db\n')):
             with self.subTest(args=args):
                 result = self.cli('drop-database', *args)
@@ -260,7 +260,7 @@ class DropToTrashTests(TrashFixture):
         (self.data / 'filestore').mkdir(parents=True)
         (self.data / 'filestore/cc_dev_coffee').symlink_to(self.root)
         before = self.snapshot()
-        result = self.cli('drop-database', 'cc_dev_coffee')
+        result = self.cli('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stdout), (2, ''))
         self.assertEqual(result.stderr, 'Filestore of cc_dev_coffee is not a directory; not moved: '
                                         f'{self.data}/filestore/cc_dev_coffee\n')
@@ -272,7 +272,7 @@ class DropToTrashTests(TrashFixture):
         store = self.filestore('cc_dev_coffee')
         self.env['FAKE_RENAME_FAILS'] = '1'
         before = self.snapshot()
-        result = self.cli('drop-database', 'cc_dev_coffee')
+        result = self.cli('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee')
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stderr, 'ERROR:  rename failed\n'
                                         'Cannot move cc_dev_coffee to the trash; nothing changed.\n')
@@ -284,7 +284,7 @@ class DropToTrashTests(TrashFixture):
         self.filestore('cc_dev_coffee')
         self.env['FAKE_RENAME_FAILS'] = '1'
         self.env['FAKE_RENAME_BLOCKS'] = str(self.data / 'filestore/cc_dev_coffee')
-        result = self.cli('drop-database', 'cc_dev_coffee')
+        result = self.cli('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee')
         self.assertEqual(result.returncode, 1)
         trash = re.search(r'^trash=(\S+)$', result.stdout, re.M).group(1)
         self.assertEqual(result.stderr, 'ERROR:  rename failed\n'
@@ -305,7 +305,7 @@ class DropToTrashTests(TrashFixture):
         self.seed({'cc_dev_coffee': {}, **{name: {} for name in taken}})
         self.filestore('cc_dev_coffee')
         before = self.snapshot()
-        result = self.cli('drop-database', 'cc_dev_coffee')
+        result = self.cli('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stdout), (2, ''))
         found = re.fullmatch(r'Trash name already exists: (cc_dev_coffee_trash_\d{8}_\d{6})\n', result.stderr)
         self.assertIsNotNone(found, result.stderr)
@@ -320,7 +320,7 @@ class DropToTrashTests(TrashFixture):
         for name in taken:
             (self.data / 'filestore' / name).mkdir()
         before = self.snapshot()
-        result = self.cli('drop-database', 'cc_dev_coffee')
+        result = self.cli('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stdout), (2, ''))
         found = re.fullmatch(f'Filestore path already exists: {re.escape(str(self.data))}/filestore/'
                              r'(cc_dev_coffee_trash_\d{8}_\d{6})\n', result.stderr)
@@ -338,7 +338,7 @@ class DropToTrashTests(TrashFixture):
         self.seed({original: {}})
         self.filestore(original)
         before = self.snapshot()
-        result = self.cli('drop-database', original)
+        result = self.cli('drop-database', original, '--confirm', original)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (
             2, '', f'Database prefix and checkout slug leave no room for a trash name: {dev}\n'))
         self.assertEqual(self.snapshot(), before)
@@ -349,7 +349,7 @@ class DropToTrashTests(TrashFixture):
         self.assertEqual(len(original), 63)
         self.seed({original: {}})
         self.filestore(original)
-        result = self.cli('drop-database', original)
+        result = self.cli('drop-database', original, '--confirm', original)
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         stamp = re.search(r'^trash=\S+_trash_' + STAMP + '$', result.stdout, re.M).group(1)
         trash = shortened(original, stamp)
@@ -369,7 +369,7 @@ class DropToTrashTests(TrashFixture):
         original = 'cc_test_' + 'b' * 33
         self.assertEqual(len(original) + len('_trash_20261123_142501'), 63)
         self.seed({original: {}})
-        result = self.cli('drop-database', original)
+        result = self.cli('drop-database', original, '--confirm', original)
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertRegex(result.stdout, rf'\ntrash={original}_trash_\d{{8}}_\d{{6}}\n')
 
@@ -410,7 +410,7 @@ class SluggedTrashTests(TrashFixture):
     def test_the_trash_name_keeps_the_namespace_and_the_listing_is_this_checkouts(self):
         original = 'cc_test_wt_1_' + 'c' * 50
         self.seed({original: {}, 'cc_dev_wt_1_coffee': {}})
-        result = self.cli('drop-database', original)
+        result = self.cli('drop-database', original, '--confirm', original)
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         stamp = re.search(r'^trash=\S+_trash_' + STAMP + '$', result.stdout, re.M).group(1)
         trash = shortened(original, stamp)
@@ -571,19 +571,19 @@ class GcTrashTests(TrashFixture):
                 self.assertEqual(self.mutations(), [])
 
     def test_apply_trash_drops_expired_entries_and_their_filestores_only(self):
-        result = self.gc('--apply', '--trash')
+        result = self.gc('--apply', '--trash', '--confirm', str(self.root))
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, f'dropped {self.old}\ndropped=1\nfailed=0\n', ''))
         self.assertEqual(sorted(self.databases()), sorted([self.recent, self.anonymous, self.orphan, 'cc_dev_live']))
         self.assertEqual(self.filestores(), sorted([self.recent, self.orphan]))
-        result = self.gc('--apply', '--trash', '--older-than', '0')
+        result = self.gc('--apply', '--trash', '--older-than', '0', '--confirm', str(self.root))
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, f'dropped {self.recent}\ndropped=1\nfailed=0\n', ''))
         self.assertEqual(self.filestores(), [self.orphan])
 
     def test_a_failed_purge_is_reported_and_keeps_the_filestore(self):
         self.env['FAKE_DROP_FAILS_FOR'] = self.old
-        result = self.gc('--apply', '--trash', '--older-than', '1')
+        result = self.gc('--apply', '--trash', '--older-than', '1', '--confirm', str(self.root))
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (1, f'dropped {self.recent}\ndropped=1\nfailed=1\n', f'drop failed\nfailed {self.old}\n'))
         self.assertIn(self.old, self.databases())
@@ -596,7 +596,7 @@ class GcTrashTests(TrashFixture):
             path.unlink() if path.is_file() else path.rmdir()
         store.rmdir()
         store.write_text('not a directory\n')
-        result = self.gc('--apply', '--trash', '--older-than', '1')
+        result = self.gc('--apply', '--trash', '--older-than', '1', '--confirm', str(self.root))
         self.assertEqual((result.returncode, result.stdout, result.stderr), (
             1, f'dropped {self.recent}\ndropped=1\nfailed=1\n',
             f'Filestore of {self.old} is not a directory; not removed: {store}\n'
@@ -608,7 +608,7 @@ class GcTrashTests(TrashFixture):
     def test_a_filestore_whose_path_cannot_be_resolved_is_reported_with_the_literal_path(self):
         conf = self.root / 'dev/odoo.conf'
         self.env['FAKE_DROP_BREAKS_CONF'] = str(conf)
-        result = self.gc('--apply', '--trash')
+        result = self.gc('--apply', '--trash', '--confirm', str(self.root))
         self.assertEqual((result.returncode, result.stdout, result.stderr), (
             1, 'dropped=0\nfailed=1\n',
             f'Cannot read data_dir from {conf}: invalid configuration file. Filestore of {self.old} not removed.\n'
@@ -632,7 +632,7 @@ class GcTrashTests(TrashFixture):
         self.assertEqual(self.filestores(), sorted([self.old, self.recent]))
 
     def test_usage(self):
-        usage = f'Usage: {ENTRY} gc [--apply] [--all-checkouts] | gc [--apply] --trash [--older-than <days>]\n'
+        usage = f'Usage: {ENTRY} gc [--apply] [--all-checkouts] | gc [--apply] --trash [--older-than <days>] [--confirm <project root>]\n'
         for args in (('--older-than', '3'), ('--trash', '--older-than'), ('--trash', '--older-than', 'x'),
                      ('--trash', '--older-than', '-1'), ('--trash', '--older-than', '36501'),
                      ('--trash', '--older-than', '99999999999999999999'),

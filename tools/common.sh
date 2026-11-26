@@ -84,6 +84,12 @@ require_runtime_paths() {
   require_python_version
 }
 
+# The exact command a Tier B refusal names (tools/policy.py): `<program> --project <root> <args>`,
+# shell-quoted like the Python tools do (shlex.join).
+confirm_command() {
+  python3 -I -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' "$(program_name)" --project "$PROJECT_ROOT" "$@"
+}
+
 require_runtime() {
   local odoo_version series
   require_runtime_paths

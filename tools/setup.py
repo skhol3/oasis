@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """Set up a checkout for oasis (`oasis setup`, v0.14.0 S1, S6, S7, S9, S10).
 
-User-run: --apply writes the project's and the machine's configuration (the Gentle Shell bash guard
-blocks it for agents; the plan stays allowed). Without --apply it prints the plan and changes
-nothing. It infers what it can (the checkout, the Odoo series from the module manifests, the source
-from the machine file), asks on a terminal what it cannot (every answer also has a flag; without a
-terminal a missing answer is an error naming the flag), adopts what exists and never overwrites:
-an existing workspace file, odoo.conf, compose file, environment file, requirement inputs, locks and
-environment are kept, and only the missing pieces are created. Without a workspace file, the
-workspace is the checkout itself: oasis-workspace.toml at its root and config/, data/, logs/ and the
-environment under .oasis/, both excluded in .git/info/exclude (never the tracked .gitignore);
---workspace <dir> chooses another directory at or above the checkout. The Odoo source goes to the
-machine file, never to a new workspace file. The locks are compiled with tools/locks.py, as
-bootstrap does, then the environment is created with uv and synced. The environment file gets only
-the variable names, with empty values: it is never read or printed.
+Tier A in the agent policy (tools/policy.py): --apply writes the project's and the machine's
+configuration, creating only what is missing, so an agent runs it alone. Without --apply it prints
+the plan and changes nothing. It infers what it can (the checkout, the Odoo series from the module
+manifests, the source from the machine file), asks on a terminal what it cannot (every answer also
+has a flag; without a terminal a missing answer is an error naming the flag), adopts what exists
+and never overwrites: an existing workspace file, odoo.conf, compose file, environment file,
+requirement inputs, locks and environment are kept, and only the missing pieces are created.
+Without a workspace file, the workspace is the checkout itself: oasis-workspace.toml at its root
+and config/, data/, logs/ and the environment under .oasis/, both excluded in .git/info/exclude
+(never the tracked .gitignore); --workspace <dir> chooses another directory at or above the
+checkout. The Odoo source goes to the machine file, never to a new workspace file. The locks are
+compiled with tools/locks.py, as bootstrap does, then the environment is created with uv and
+synced. The environment file gets only the variable names, with empty values: it is never read or
+printed.
 
 In a checkout of a series its workspace file has no section for (v0.15.0 S5), setup appends a
 [series."<x.y>"] section to that file (a version 1 file becomes version 2, that line only) and plans

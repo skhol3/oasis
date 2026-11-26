@@ -223,6 +223,91 @@ export function projectContext(
     `${odoo} project root: ${root} (${source}).`,
     ...routing,
     `framework APIs; load the matching ${skills} skill first.`,
-    "drop-database, stop --database, gc --apply --trash ask the user; never bypass a refusal.",
+    "Tier B commands (oasis policy --json) wait for the user's confirmation; never bypass a refusal.",
   ].join("\n");
+}
+
+/**
+ * The --confirm value of a Tier B command from its dry-run plan (v0.16.0 S1): worktree-init's
+ * `worktree: <path>` line, migrate's `write <dir>/oasis-workspace.toml` line; null when absent.
+ */
+export function planConfirmation(kind: "worktree" | "migrate", plan: string): string | null {
+  for (const line of plan.split("\n")) {
+    if (kind === "worktree" && line.startsWith("worktree: ")) return line.slice("worktree: ".length);
+    if (kind === "migrate" && line.startsWith("write ") && line.endsWith(`/${WORKSPACE_NAME}`)) return line.slice("write ".length);
+  }
+  return null;
+}
+
+/**
+ * What the user's /oasis worktree and /oasis migrate need: `run` runs the oasis CLI in the project
+ * root with these arguments (after `--project <root>`), `ui` the session's dialogs.
+ */
+export interface PlanFlow {
+  run(args: string[]): Promise<{ code: number; stdout: string; stderr: string }>;
+  ui: {
+    notify(message: string, level?: "info" | "warning" | "error"): void;
+    confirm(title: string, message: string): Promise<boolean>;
+  };
+}
+
+/** A run's stdout and stderr, trimmed, else its exit status. */
+function shown(result: { code: number; stdout: string; stderr: string }): string {
+  return [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n") || `exit ${result.code}`;
+}
+
+/**
+ * The user's /oasis worktree: the dry-run plan in a dialog, then, on yes, `worktree-init <feature>
+ * <branch> --confirm <the worktree path the plan names>` (Tier B, see planConfirmation). A plan
+ * without that line runs unconfirmed, so the CLI's own refusal names the command.
+ */
+export async function worktreeFlow(flow: PlanFlow, feature: string, branch: string): Promise<void> {
+  const args = ["worktree-init", feature, branch];
+  try {
+    const plan = await flow.run([...args, "--dry-run"]);
+    if (plan.code !== 0) {
+      flow.ui.notify(`oasis worktree: ${plan.stderr.trim() || `exit ${plan.code}`}`, "error");
+      return;
+    }
+    const steps = plan.stdout.trim().split("\n").filter((line) => line !== "dry run: nothing changed");
+    if (!(await flow.ui.confirm("oasis worktree", `${steps.join("\n")}\n\nCreate this worktree?`))) {
+      flow.ui.notify("oasis worktree: nothing changed.", "info");
+      return;
+    }
+    const path = planConfirmation("worktree", plan.stdout);
+    const result = await flow.run(path === null ? args : [...args, "--confirm", path]);
+    flow.ui.notify(`oasis worktree:\n${shown(result)}`, result.code === 0 ? "info" : "error");
+  } catch (error) {
+    flow.ui.notify(`oasis worktree failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+  }
+}
+
+/**
+ * The user's /oasis migrate: the plan in a dialog, then, on yes, `migrate --apply --confirm <the
+ * workspace file the plan writes>` (Tier B, see planConfirmation); `nothing to migrate` is only shown.
+ */
+export async function migrateFlow(flow: PlanFlow): Promise<void> {
+  try {
+    const plan = await flow.run(["migrate"]);
+    if (plan.code !== 0) {
+      flow.ui.notify(`oasis migrate: ${plan.stderr.trim() || `exit ${plan.code}`}`, "error");
+      return;
+    }
+    const output = plan.stdout.trim();
+    if (output.startsWith("nothing to migrate")) {
+      flow.ui.notify(`oasis migrate: ${output}`, "info");
+      return;
+    }
+    const steps = output.split("\n").filter((line) => !line.startsWith("dry run: "));
+    if (!(await flow.ui.confirm("oasis migrate", `${steps.join("\n")}\n\nMigrate to this workspace file?`))) {
+      flow.ui.notify("oasis migrate: nothing changed.", "info");
+      return;
+    }
+    const workspace = planConfirmation("migrate", plan.stdout);
+    const confirm = workspace === null ? [] : ["--confirm", workspace];
+    const result = await flow.run(["migrate", "--apply", ...confirm]);
+    flow.ui.notify(`oasis migrate:\n${shown(result)}`, result.code === 0 ? "info" : "error");
+  } catch (error) {
+    flow.ui.notify(`oasis migrate failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+  }
 }

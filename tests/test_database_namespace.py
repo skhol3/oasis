@@ -8,6 +8,7 @@ one JSON line. The main checkout is a real git repository with real linked workt
 as gc and the trash read them.
 """
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
+import shlex
 import subprocess
 import unittest
 
@@ -91,10 +92,10 @@ class WorktreeNamespaceTests(NamespaceFixture):
         checkout_file.unlink()
         profile = self.linked / '.odoo19-agent.toml'
         profile.write_text("[tooling]\ncheckout_slug = 'wtx'\n")
+        plan = shlex.join(['oasis', '--project', str(self.linked), 'migrate', '--plan'])
         self.assert_main_listing_refused(
             f'ERROR: Cannot read the checkout slug of {self.linked}: {profile} is the old profile format, '
-            'no longer read: run oasis migrate --plan to see its conversion to oasis-workspace.toml, then '
-            'oasis migrate --apply.\n')
+            f'no longer read: run {plan} to see its conversion to oasis-workspace.toml or what stops it.\n')
         profile.unlink()
         self.assertEqual(self.listed(self.main), MAIN)
 

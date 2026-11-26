@@ -187,7 +187,12 @@ class MigrateTests(unittest.TestCase):
             result[str(path.relative_to(self.scratch))] = (value, stat.S_IMODE(info.st_mode))
         return result
 
-    def migrate(self, *args, project=None, program=CLI):
+    def migrate(self, *args, project=None, program=CLI, confirm=True):
+        """migrate; with --apply, confirmed (v0.16.0 S1) with the workspace file it writes: under
+        --workspace <dir>, else self.project, unless confirm is False."""
+        if confirm and '--apply' in args:
+            directory = args[args.index('--workspace') + 1] if '--workspace' in args else self.project
+            args = (*args, '--confirm', str(Path(directory) / 'oasis-workspace.toml'))
         return subprocess.run([sys.executable, '-B', str(program), '--project', str(project or self.main),
                                'migrate', *args], capture_output=True, text=True, env=self.env, cwd=self.scratch)
 
@@ -357,6 +362,72 @@ class MigrateTests(unittest.TestCase):
                 self.assertEqual(lines[-1], 'doctor_failures=0')
                 self.assertNotIn(MARKER, doctor.stdout)
 
+    def test_apply_without_confirm_prints_the_plan_and_names_the_exact_command(self):
+        # v0.16.0 S1: --apply is Tier B; --confirm takes the workspace file the plan writes.
+        before = self.tree()
+        workspace = self.project / 'oasis-workspace.toml'
+        for args, confirm, error in (
+                (('--apply',), None, f'ERROR: migrate --apply rewrites the configuration files of every checkout and '
+                                     f'writes {workspace} (Tier B: it needs explicit confirmation); nothing changed. '
+                                     f'Run: oasis --project {self.main} migrate --apply --confirm {workspace}\n'),
+                (('--apply', '--confirm', str(self.project)), str(self.project),
+                 f'ERROR: --confirm {self.project} does not name the workspace file {workspace}; nothing changed. '
+                 f'Run: oasis --project {self.main} migrate --apply --confirm {workspace}\n'),
+                (('--workspace', str(self.project), '--apply', f'--confirm={self.project}/x'), None,
+                 f'ERROR: --confirm {self.project}/x does not name the workspace file {workspace}; nothing changed. '
+                 f'Run: oasis --project {self.main} migrate --workspace {self.project} --apply --confirm {workspace}\n')):
+            with self.subTest(args=args):
+                result = self.migrate(*args, confirm=False)
+                self.assertEqual((result.returncode, result.stderr), (2, error))
+                self.assertEqual(STAMP.sub('.bak-<stamp>', result.stdout), self.plan('')[:-1])
+                self.assertEqual(self.tree(), before)
+        # --confirm without --apply is a usage error.
+        result = self.migrate('--confirm', str(workspace), confirm=False)
+        self.assertEqual((result.returncode, result.stdout), (2, ''))
+
+    def test_the_legacy_refusal_names_the_exact_commands_and_the_confirmed_one_migrates(self):
+        # v0.16.0 S1 review: no placeholder. The workspace file is the one migrate --plan writes (its
+        # `write <file>` line): the plan made read-only, the same from either checkout.
+        before = self.tree()
+        workspace = self.project / 'oasis-workspace.toml'
+        for checkout in (self.main, self.feature):
+            plan = shlex.join(['oasis', '--project', str(checkout), 'migrate', '--plan'])
+            apply = shlex.join(['oasis', '--project', str(checkout), 'migrate', '--apply', '--confirm', str(workspace)])
+            refusal = (f'{checkout}/.odoo19-agent.toml is the old profile format, no longer read: run {plan} to see '
+                       f'its conversion to oasis-workspace.toml, then {apply}.')
+            with self.subTest(checkout=checkout.name):
+                result = subprocess.run([sys.executable, '-B', str(CLI), '--project', str(checkout), 'status'],
+                                        capture_output=True, text=True, env=self.env, cwd=self.scratch)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', f'ERROR: {refusal}\n'))
+                doctor = subprocess.run([sys.executable, '-B', str(CLI), '--project', str(checkout), 'doctor'],
+                                        capture_output=True, text=True, env=self.env, cwd=self.scratch)
+                self.assertEqual(doctor.returncode, 1, doctor.stdout)
+                self.assertEqual(doctor.stdout.splitlines()[:2],
+                                 [f'FAIL configuration={refusal}', f'  fix: {plan}, then {apply}'])
+                self.assertEqual(self.tree(), before)
+        # The command it names runs as written.
+        words = shlex.split(apply)
+        result = subprocess.run([sys.executable, '-B', str(CLI), *words[1:]], capture_output=True, text=True,
+                                env=self.env, cwd=self.scratch)
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertTrue(result.stdout.endswith(f'verified: 2 checkouts load the same configuration from {workspace}\n'))
+
+    def test_the_legacy_refusal_names_only_the_plan_when_migrate_cannot_make_one(self):
+        (self.project / 'oasis-workspace.toml').write_text('# hand-written\n')
+        result = subprocess.run([sys.executable, '-B', str(CLI), '--project', str(self.main), 'status'],
+                                capture_output=True, text=True, env=self.env, cwd=self.scratch)
+        plan = shlex.join(['oasis', '--project', str(self.main), 'migrate', '--plan'])
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+            f'ERROR: {self.main}/.odoo19-agent.toml is the old profile format, no longer read: run {plan} to see its '
+            'conversion to oasis-workspace.toml or what stops it.\n')))
+        self.assertEqual(self.migrate('--plan').stderr, f'ERROR: {self.project}/oasis-workspace.toml already exists.\n')
+
+    def test_abbreviated_or_valued_flags_are_usage_errors(self):
+        # The guard (pi/lib/bash-guard.ts) asks for them anyway; the tool never takes them as --apply.
+        for args in (('--ap',), ('--appl',), ('--apply=x',), ('--pl',), ('--plan=x',), ('--apply', '--conf', 'x')):
+            with self.subTest(args=args):
+                self.assert_refused(args, f'Usage: {CLI} migrate [--workspace <dir>] [--apply --confirm <workspace file> | --plan]\n')
+
     def test_second_run_has_nothing_to_migrate(self):
         self.assertEqual(self.migrate('--apply').returncode, 0)
         before = self.tree()
@@ -426,10 +497,10 @@ class MigrateTests(unittest.TestCase):
 
     def test_usage(self):
         for args in (('--bogus',), ('--apply', '--apply'), ('--workspace',)):
-            self.assert_refused(args, f'Usage: {CLI} migrate [--workspace <dir>] [--apply | --plan]\n')
+            self.assert_refused(args, f'Usage: {CLI} migrate [--workspace <dir>] [--apply --confirm <workspace file> | --plan]\n')
         result = self.migrate('--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertTrue(result.stdout.startswith(f'Usage: {CLI} migrate [--workspace <dir>] [--apply | --plan]\n'))
+        self.assertTrue(result.stdout.startswith(f'Usage: {CLI} migrate [--workspace <dir>] [--apply --confirm <workspace file> | --plan]\n'))
 
     def test_verification_mismatch_restores_every_file(self):
         # An addons_path item that no [tooling] root gives: the composed --addons-path would differ.
@@ -490,8 +561,9 @@ class MigrateTests(unittest.TestCase):
                     "    if count['n'] == 3:\n"
                     f"        os.kill(os.getpid(), signal.{name}); os.kill(os.getpid(), signal.{name})\n"
                     "migrate.Changes.apply = apply\n"
-                    "sys.exit(migrate.main(['--apply']))\n")
-                result = subprocess.run([sys.executable, '-B', '-c', script, str(ROOT / 'tools' / 'migrate.py')],
+                    "sys.exit(migrate.main(['--apply', '--confirm', sys.argv[2]]))\n")
+                result = subprocess.run([sys.executable, '-B', '-c', script, str(ROOT / 'tools' / 'migrate.py'),
+                                         str(self.project / 'oasis-workspace.toml')],
                                         capture_output=True, text=True, env=env, cwd=self.scratch)
                 self.assertEqual(result.returncode, 128 + number, result.stderr)
                 self.assertIn('every change was undone', result.stderr)
@@ -510,9 +582,10 @@ class MigrateTests(unittest.TestCase):
             "    print(action[0], getattr(action[1], 'name', action[1]), file=sys.stderr)\n"
             "    original(self, action)\n"
             "migrate.Changes.apply = apply\n"
-            "sys.exit(migrate.main(['--apply']))\n")
+            "sys.exit(migrate.main(['--apply', '--confirm', sys.argv[2]]))\n")
         env = dict(self.env, ODOO19_PROJECT_ROOT=str(self.main))
-        result = subprocess.run([sys.executable, '-B', '-c', script, str(ROOT / 'tools' / 'migrate.py')],
+        result = subprocess.run([sys.executable, '-B', '-c', script, str(ROOT / 'tools' / 'migrate.py'),
+                                 str(self.project / 'oasis-workspace.toml')],
                                 capture_output=True, text=True, env=env, cwd=self.scratch)
         self.assertEqual(result.returncode, 0, result.stderr)
         steps = [line for line in result.stderr.splitlines() if line.split(' ')[0] in ('create', 'replace', 'rename')]
@@ -529,16 +602,21 @@ class MigrateSurfaceTests(unittest.TestCase):
         # The subcommand table (usage pinned in pi/tests/commands.test.ts) and its dispatch.
         self.assertIn('name: "migrate"', (ROOT / 'pi/lib/commands.ts').read_text())
         self.assertIn('migrate: (ctx) => migrate(ctx),', source)
-        self.assertIn('run(root, ["migrate"]', source)
-        self.assertIn('run(root, ["migrate", "--apply"]', source)
-        self.assertIn('ctx.ui.confirm("oasis migrate"', source)
+        # v0.16.0 S1: the flow lives in lib/project.ts (migrateFlow, pi/tests/project.test.ts runs it):
+        # confirmed with the workspace file the plan writes (planConfirmation).
+        self.assertIn('await migrateFlow(planFlow(root, ctx.ui));', source)
+        flow = (ROOT / 'pi/lib/project.ts').read_text()
+        self.assertIn('flow.run(["migrate"])', flow)
+        self.assertIn('const workspace = planConfirmation("migrate", plan.stdout);', flow)
+        self.assertIn('flow.run(["migrate", "--apply", ...confirm])', flow)
+        self.assertIn('flow.ui.confirm("oasis migrate"', flow)
 
     def test_readme_documents_migrate(self):
         # The section moved from the README to its own topic file, linked from the README.
         self.assertIn('](docs/migrating.md)', (ROOT / 'README.md').read_text())
         doc = (ROOT / 'docs/migrating.md').read_text()
         self.assertTrue(doc.startswith('# Migrating to the workspace file\n'))
-        self.assertIn('oasis --project /absolute/checkout migrate [--workspace <dir>] [--apply | --plan]', doc)
+        self.assertIn('oasis --project /absolute/checkout migrate [--workspace <dir>] [--apply --confirm <workspace file> | --plan]', doc)
 
 
 if __name__ == '__main__':

@@ -13,7 +13,10 @@ import {
 import { withHeartbeat } from "../lib/heartbeat.ts";
 import { DECISION_ENTRY, type GateEffects, settingReader, toolCallRouter } from "../lib/destructive.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
-import { findWorkspaceFile, legacyProfile, notProject, projectContext, projectRootResolver } from "../lib/project.ts";
+import {
+  findWorkspaceFile, legacyProfile, migrateFlow, notProject, type PlanFlow, projectContext, projectRootResolver,
+  worktreeFlow,
+} from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
 import { aliasOf, nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
 import { overlayReminder, runSetup, type SetupInput } from "../lib/setup.ts";
@@ -155,64 +158,36 @@ export default function oasisLayer(pi: ExtensionAPI) {
     await runSetup({ env: process.env, homedir: homedir(), template: OVERLAY_TEMPLATE, ui: ctx.ui });
   }
 
-  // User-run only (agents are blocked from worktree-init): show the dry-run plan, then create it on yes.
-  async function worktree(ctx: { cwd: string; ui: { notify: (message: string, level?: "info" | "warning" | "error") => void;
-    confirm: (title: string, message: string) => Promise<boolean> } }, feature: string, branch: string): Promise<void> {
-    const root = await projectRoot(ctx.cwd);
-    if (!root) {
-      ctx.ui.notify(`Not an Odoo project: ${notProject(ctx.cwd)}`, "warning");
-      return;
-    }
-    const args = ["worktree-init", feature, branch];
-    try {
-      const plan = await run(root, [...args, "--dry-run"], undefined, TOOL_TIMEOUT_MS);
-      if (plan.code !== 0) {
-        ctx.ui.notify(`oasis worktree: ${plan.stderr.trim() || `exit ${plan.code}`}`, "error");
-        return;
-      }
-      const steps = plan.stdout.trim().split("\n").filter((line) => line !== "dry run: nothing changed");
-      if (!(await ctx.ui.confirm("oasis worktree", `${steps.join("\n")}\n\nCreate this worktree?`))) {
-        ctx.ui.notify("oasis worktree: nothing changed.", "info");
-        return;
-      }
-      const result = await run(root, args, undefined, TOOL_TIMEOUT_MS);
-      const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
-      ctx.ui.notify(`oasis worktree:\n${output || `exit ${result.code}`}`, result.code === 0 ? "info" : "error");
-    } catch (error) {
-      ctx.ui.notify(`oasis worktree failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-    }
+  type FlowUi = { notify: (message: string, level?: "info" | "warning" | "error") => void;
+    confirm: (title: string, message: string) => Promise<boolean> };
+  // The CLI in the project root and the session's dialogs, for the plan-then-confirm flows (lib/project.ts).
+  function planFlow(root: string, ui: FlowUi): PlanFlow {
+    return {
+      run: (args) => run(root, args, undefined, TOOL_TIMEOUT_MS),
+      ui,
+    };
   }
 
-  // User-run only (agents are blocked from migrate): show the dry-run plan, then `migrate --apply` on yes.
-  async function migrate(ctx: { cwd: string; ui: { notify: (message: string, level?: "info" | "warning" | "error") => void;
-    confirm: (title: string, message: string) => Promise<boolean> } }): Promise<void> {
+  // The user's /oasis worktree: the dry-run plan, then `worktree-init --confirm <worktree path>` (Tier B)
+  // on yes, with the path the plan names (worktreeFlow).
+  async function worktree(ctx: { cwd: string; ui: FlowUi }, feature: string, branch: string): Promise<void> {
     const root = await projectRoot(ctx.cwd);
     if (!root) {
       ctx.ui.notify(`Not an Odoo project: ${notProject(ctx.cwd)}`, "warning");
       return;
     }
-    try {
-      const plan = await run(root, ["migrate"], undefined, TOOL_TIMEOUT_MS);
-      if (plan.code !== 0) {
-        ctx.ui.notify(`oasis migrate: ${plan.stderr.trim() || `exit ${plan.code}`}`, "error");
-        return;
-      }
-      const output = plan.stdout.trim();
-      if (output.startsWith("nothing to migrate")) {
-        ctx.ui.notify(`oasis migrate: ${output}`, "info");
-        return;
-      }
-      const steps = output.split("\n").filter((line) => !line.startsWith("dry run: "));
-      if (!(await ctx.ui.confirm("oasis migrate", `${steps.join("\n")}\n\nMigrate to this workspace file?`))) {
-        ctx.ui.notify("oasis migrate: nothing changed.", "info");
-        return;
-      }
-      const result = await run(root, ["migrate", "--apply"], undefined, TOOL_TIMEOUT_MS);
-      const shown = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
-      ctx.ui.notify(`oasis migrate:\n${shown || `exit ${result.code}`}`, result.code === 0 ? "info" : "error");
-    } catch (error) {
-      ctx.ui.notify(`oasis migrate failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+    await worktreeFlow(planFlow(root, ctx.ui), feature, branch);
+  }
+
+  // The user's /oasis migrate: the plan, then `migrate --apply --confirm <workspace file>` (Tier B) on yes,
+  // with the workspace file the plan writes (migrateFlow).
+  async function migrate(ctx: { cwd: string; ui: FlowUi }): Promise<void> {
+    const root = await projectRoot(ctx.cwd);
+    if (!root) {
+      ctx.ui.notify(`Not an Odoo project: ${notProject(ctx.cwd)}`, "warning");
+      return;
     }
+    await migrateFlow(planFlow(root, ctx.ui));
   }
 
   // User-run only (no agent tool): `oasis doctor`, read-only, shown like the status.
@@ -403,11 +378,11 @@ export default function oasisLayer(pi: ExtensionAPI) {
   });
 
   // Agent shell (bash, bash_background, monitor: SHELL_TOOLS), edit and write tool calls, nested
-  // ones (codemode) included; lib/destructive.ts decides (toolCallRouter). Deny tier:
-  // direct odoo-bin/dropdb/psql bypass the core's database guards (Odoo projects); worktree-init
-  // adds a git worktree and branch, migrate rewrites configuration files and menu is the user's interactive
-  // menu, so all three are user-run in every session. Ask tier: drop-database, stop --database and
-  // gc --apply --trash run after the user types the database name or `yes` in a dialog, unless
+  // ones (codemode) included; lib/destructive.ts decides (toolCallRouter) with the tiers of the core
+  // policy table (lib/policy.ts). Deny tier (C): direct odoo-bin/dropdb/psql bypass the core's database
+  // guards (Odoo projects), and the user's interactive menu is denied in every session. Ask tier (B):
+  // drop-database, stop --database, gc --apply --trash, migrate --apply and worktree-init run after the
+  // user types the database name or `yes` in a dialog, unless
   // [tooling].agent_destructive (read through config.py, never from a tool argument) says deny or
   // allow: the stricter of the session project's and the target project's (`--project`, or a tool
   // script's OASIS_PROJECT_ROOT or ODOO19_PROJECT_ROOT). The files that hold that setting (an

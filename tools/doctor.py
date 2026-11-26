@@ -413,7 +413,8 @@ def configuration_fix(config, root: Path, message: str, error: Exception | None 
     missing workspace file, series section or source, else the setting the error names."""
     program = config.program_name()
     if (root / config.PROFILE_NAME).is_file():
-        return f'{program} migrate --plan, then {program} migrate --apply'
+        # Tier B (tools/policy.py): the fix names its exact confirmation when migrate can plan.
+        return config.legacy_profile_fix(root / config.PROFILE_NAME, program)
     if config.workspace_file(root) is None or isinstance(error, config.MissingSeries):
         return f'{program} setup --apply'
     try:

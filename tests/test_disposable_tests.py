@@ -766,11 +766,11 @@ class GcTests(GcFixture):
     def test_usage_and_help(self):
         result = self.gc('--force')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'Usage: {CLI} gc [--apply] [--all-checkouts] | gc [--apply] --trash [--older-than <days>]\n'))
+                         (2, '', f'Usage: {CLI} gc [--apply] [--all-checkouts] | gc [--apply] --trash [--older-than <days>] [--confirm <project root>]\n'))
         self.unchanged()
         result = self.gc('--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertTrue(result.stdout.startswith(f'Usage: {CLI} gc [--apply] [--all-checkouts] | gc [--apply] --trash [--older-than <days>]\n'))
+        self.assertTrue(result.stdout.startswith(f'Usage: {CLI} gc [--apply] [--all-checkouts] | gc [--apply] --trash [--older-than <days>] [--confirm <project root>]\n'))
         self.assertIn('--apply', result.stdout)
         self.unchanged()
 
@@ -919,12 +919,12 @@ class ReservedRunNameTests(DisposableFixture):
         result = self.cli('module-status', 'coffee', database)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
             f'database={database}\nmodule=coffee\ndatabase_state=missing\nmodule_state=unknown\n'), ''))
-        result = self.cli('drop-database', database)
+        result = self.cli('drop-database', database, '--confirm', database)
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, f'Database does not exist: {database}\n', ''))
         Path(str(self.commands) + '.databases').write_text(f'{database}\n')
         self.commands.unlink()
-        result = self.cli('drop-database', database)
+        result = self.cli('drop-database', database, '--confirm', database)
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertRegex(result.stdout, rf'\nDatabase moved to trash: {database} -> {database}_trash_\d{{8}}_\d{{6}}\n')
         [rename] = [entry for entry in entries(self.log()) if 'ALTER DATABASE' in entry]

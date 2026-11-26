@@ -15,8 +15,8 @@ import sys
 COMMANDS = (
     'audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
     'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases',
-    'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'restart', 'setup',
-    'start', 'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info',
+    'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy', 'restart',
+    'setup', 'start', 'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info',
     'worktree-init', 'xmlid-info',
 )
 PROGRAMS = ('oasis', 'odoo19')
@@ -27,11 +27,11 @@ INVOKED = Path(globals().get('ALIAS_PATH') or __file__)
 
 
 # Commands that run in a checkout that still has the legacy profile: migrate converts it, doctor
-# reports it as one FAIL. Every other command is refused before it runs.
-LEGACY_COMMANDS = ('migrate', 'doctor')
-# Commands that run in a checkout without a workspace file: setup creates it. Every other command
-# is refused there (missing configuration).
-UNCONFIGURED_COMMANDS = ('doctor', 'setup')
+# reports it as one FAIL, policy prints the agent contract. Every other command is refused before it runs.
+LEGACY_COMMANDS = ('migrate', 'doctor', 'policy')
+# Commands that run in a checkout without a workspace file: setup creates it, policy reads no
+# configuration. Every other command is refused there (missing configuration).
+UNCONFIGURED_COMMANDS = ('doctor', 'policy', 'setup')
 
 
 def configuration_reader(tools: Path):

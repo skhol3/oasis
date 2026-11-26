@@ -1,5 +1,5 @@
-// The agent's bash gate (S3, S4): the deny tier as before, and the ask tier, which the user
-// confirms in a dialog unless the project's [tooling].agent_destructive says deny or allow. The
+// The agent's bash gate (S3, S4; tiers from the core policy table since v0.16.0, see lib/policy.ts):
+// the deny tier (Tier C), and the ask tier (Tier B), which the user confirms in a dialog unless the project's [tooling].agent_destructive says deny or allow. The
 // files that hold that setting are in the ask tier too, for bash writes and the agent's edit and
 // write tools (agentFileGate), and so is a checkout's oasis-checkout.toml. The Pi effects are injected (dialogs, appendEntry, the configuration
 // read), so it is tested without Pi; pi/extensions/oasis.ts only adapts ctx and pi to these
@@ -301,8 +301,8 @@ function asker(effects: GateEffects) {
 
 /**
  * The tool_call gate for agent bash commands. The deny tier is decided as before (blockReason):
- * in an Odoo project the first denied program blocks with its reason; outside one, a user-run
- * program anywhere on the line does (direct odoo-bin, dropdb and psql run there). The ask commands
+ * in an Odoo project the first denied program blocks with its reason; outside one, a Tier C oasis
+ * command anywhere on the line does (direct odoo-bin, dropdb and psql run there). The ask commands
  * of what is left, bash writes to the setting files included, then go through the ask tier.
  */
 export function agentGate(effects: GateEffects): (command: string, ctx: GateContext) => Promise<GateResult> {
