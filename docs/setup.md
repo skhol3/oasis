@@ -29,6 +29,7 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
 - [Another Odoo series](#another-odoo-series): a checkout of a series the workspace file has no section for.
 - [The database account](#the-database-account): the generated account, one file, read by the service and Odoo.
 - [Next steps](#next-steps): what is left for you.
+- [setup, bootstrap or migrate](#setup-bootstrap-or-migrate): which one to run when.
 - [oasis setup and /oasis setup](#oasis-setup-and-oasis-setup): two different commands.
 
 ## Plan and apply
@@ -681,9 +682,9 @@ logs, errors).
   compose interpolation (`$VAR`, `${VAR}`, any `$` outside single quotes) or a double-quoted escape (`\`)
   is never passed on as written: the command exits 2 with `ERROR: <env file> sets <names> with compose
   interpolation ($) or a double-quoted escape (\), which oasis does not read: write the value literally in
-  single quotes.`, and `doctor` and `check-environment` fail `env_file=unsupported_value <names>`, naming
+  single quotes.`, and `doctor` and `doctor --environment` fail `env_file=unsupported_value <names>`, naming
   the variables, never the value.
-- `doctor` and `check-environment --full` log in with that account (`postgres_connection`, see
+- `doctor` and `doctor --environment --full` log in with that account (`postgres_connection`, see
   [The doctor report](checking-environment.md#the-doctor-report)). When the compose service refuses it,
   its volume was initialized with other credentials (the environment file changed after the service first
   started, or a volume from an older setup), and the fix is the Tier B
@@ -730,6 +731,21 @@ Nothing asks for an account: setup generated it ([The database account](#the-dat
 runtime.in and dev.in (or runtime.in, dev.in and overrides.txt): oasis --project <checkout> bootstrap --apply
 syncs the adopted environment <dir> to them (it changes the packages installed there)`. Then follow
 [Development database](dev-database.md) and [Tests and test databases](testing.md).
+
+## setup, bootstrap or migrate
+
+Three commands touch a checkout's configuration or environment. They share code (the locks are compiled by
+`tools/locks.py` for both setup and bootstrap), but none does what another does, so none is an alias of
+another (v0.16.0 S5); each keeps its name:
+
+| Situation | Run | What it changes |
+| --- | --- | --- |
+| A clone without `oasis-workspace.toml` at or above it; a file of the configuration missing; a checkout of a series the workspace file has no section for; a workspace setup created in the clone, to move above it | `oasis setup`, then `oasis setup --apply` (Tier A) | Creates only what is missing (configuration, locks, environment) and never syncs an existing environment |
+| The configuration exists and the environment must match the locks: `runtime.in` or `dev.in` changed, the locks are stale, the environment drifted or was moved away, an [adopted environment](#an-existing-environment) | `oasis bootstrap` (`--preview`, the default), then `oasis bootstrap --apply` (Tier A) | Compiles missing or stale locks, creates a missing environment, syncs it to `dev.txt` every time (`uv pip sync`, saving `bootstrap-before.txt` first) and ends with `doctor --environment --full`; never writes the configuration, and needs a workspace file |
+| A checkout that still has the legacy per-checkout profile | `oasis migrate --plan`, then `oasis migrate --apply --confirm <workspace file>` (Tier B) | Converts every checkout's profile into one workspace file and rewrites `odoo.conf` and `lock.sha256` ([Migrating](migrating.md)); every other command, setup included, refuses such a checkout and names migrate |
+
+A new clone: `setup --apply`. After a pull that changed the requirements: `bootstrap --apply`. A checkout of a
+release before 0.12.0: `migrate`. `doctor` names the one that fixes each failure (its `fix:` lines).
 
 ## oasis setup and /oasis setup
 

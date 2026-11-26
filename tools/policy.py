@@ -70,7 +70,9 @@ OPERATIONS = (
     ('audit-dependencies', 'A', 'oasis', 'reads and reports; changes nothing',
      'oasis --project /p audit-dependencies'),
     ('doctor', 'A', 'oasis', 'reads and reports; changes nothing', 'oasis --project /p doctor'),
-    ('check-environment', 'A', 'oasis', 'reads and reports; changes nothing',
+    ('doctor --environment', 'A', 'oasis', 'checks the environment against its locks; reads and reports, changes nothing',
+     'oasis --project /p doctor --environment --quick'),
+    ('check-environment', 'A', 'oasis', 'deprecated alias of doctor --environment; reads and reports, changes nothing',
      'oasis --project /p check-environment --quick'),
     ('policy', 'A', 'oasis', 'prints this policy table; changes nothing', 'oasis --project /p policy --json'),
     ('gc', 'A', 'oasis', 'lists leftover disposable test databases; changes nothing', 'oasis --project /p gc'),
@@ -113,6 +115,9 @@ OPERATIONS = (
     ('type a password', 'C', 'action', 'only when the person wants their own; no oasis workflow needs one', None),
 )
 KEYS = ('operation', 'tier', 'kind', 'reason', 'example')
+# Deprecated command names (v0.16.0 S5) and the operation each runs: the alias keeps a row of its own, with
+# the tier of its target (the entry point's DEPRECATED_ALIASES; tests/test_policy.py checks both).
+ALIASES = {'check-environment': 'doctor --environment'}
 # What `--confirm` takes for a Tier B oasis command (its refusal names the exact command); a Tier B
 # operation without one is confirmed only by a person or a harness dialog (stop --database).
 CONFIRM = {'drop-database': 'database name', 'gc --apply --trash': 'project root',

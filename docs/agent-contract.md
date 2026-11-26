@@ -79,7 +79,8 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `xmlid-info` | A | reads source; changes nothing |  |
 | `audit-dependencies` | A | reads and reports; changes nothing |  |
 | `doctor` | A | reads and reports; changes nothing |  |
-| `check-environment` | A | reads and reports; changes nothing |  |
+| `doctor --environment` | A | checks the environment against its locks; reads and reports, changes nothing |  |
+| `check-environment` | A | deprecated alias of doctor --environment; reads and reports, changes nothing |  |
 | `policy` | A | prints this policy table; changes nothing |  |
 | `gc` | A | lists leftover disposable test databases; changes nothing |  |
 | `gc --apply` | A | drops disposable test databases no live run holds; rebuildable |  |

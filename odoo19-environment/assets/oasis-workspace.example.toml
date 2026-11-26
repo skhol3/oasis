@@ -21,7 +21,7 @@ workspace_version = 1
 # Odoo series of every checkout; the tooling version derives from it, and Python is the
 # series' default (3.12 on 19.0) unless a named environment below declares another one that
 # the series supports. bootstrap
-# creates the environment with that Python; doctor and check-environment check it.
+# creates the environment with that Python; doctor and doctor --environment check it.
 odoo_version = '19.0'
 
 # The tooling paths and database namespace; version and python_version derive from above.

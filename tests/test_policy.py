@@ -33,6 +33,22 @@ class PolicyTableTests(unittest.TestCase):
             self.assertEqual(table[operation], 'B', operation)
         self.assertEqual(table['type a password'], 'C')
 
+    def test_a_deprecated_alias_has_the_tier_of_its_target(self):
+        # v0.16.0 S5: check-environment runs doctor --environment; both keep a row of the same tier, and the
+        # alias's reason says what it is.
+        self.assertEqual(policy.ALIASES, {'check-environment': 'doctor --environment'})
+        rows = {row['operation']: row for row in policy.operations()}
+        for alias, target in policy.ALIASES.items():
+            self.assertEqual(rows[alias]['tier'], rows[target]['tier'], alias)
+            self.assertEqual(rows[alias]['kind'], rows[target]['kind'], alias)
+            self.assertTrue(rows[alias]['reason'].startswith(f'deprecated alias of {target}; '), rows[alias])
+        self.assertEqual(rows['doctor --environment']['example'], 'oasis --project /p doctor --environment --quick')
+        # The entry point lists the same aliases in its help.
+        tree = ast.parse((ROOT / 'oasis').read_text(encoding='utf-8'))
+        [listed] = [ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
+                    and [target.id for target in node.targets if isinstance(target, ast.Name)] == ['DEPRECATED_ALIASES']]
+        self.assertEqual(listed, policy.ALIASES)
+
     def test_every_row_is_complete_and_unique(self):
         rows = policy.operations()
         self.assertEqual(len({row['operation'] for row in rows}), len(rows))

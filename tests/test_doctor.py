@@ -193,10 +193,11 @@ class DoctorTests(unittest.TestCase):
     def test_help_and_unknown_arguments(self):
         result = self.doctor('--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertTrue(result.stdout.startswith(f'Usage: {CLI} doctor\n'), result.stdout)
+        # v0.16.0 S5: the usage names --environment (tests/test_doctor_environment.py).
+        usage = f'Usage: {CLI} doctor [--environment [--quick|--full]]\n'
+        self.assertTrue(result.stdout.startswith(usage), result.stdout)
         result = self.doctor('--bogus')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', f'Usage: {CLI} doctor\n'))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', usage))
         self.assertFalse(self.commands.exists())
 
     # -- failures and warnings ------------------------------------------------------------------

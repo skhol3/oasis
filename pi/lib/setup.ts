@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { shellJoin } from "./menu.ts";
 
 export type OverlayState = "missing" | "outdated" | "current";
 export type InstallState = "created" | "updated" | "unchanged";
@@ -145,12 +146,25 @@ export function formatSetupReport({ status, plan, overlay }: { status: Outcome; 
         ? `recommended: ${question.recommended}` : "no recommended answer";
       lines.push(`  open question ${id}: ${detail(question.text ?? id)} (${detail(question.flag ?? "")}; ${recommended})`);
     }
-    const apply = `oasis --project ${checkout} setup --apply`;
-    if (open.length) lines.push(`  nothing applied: answer the open questions, then run ${apply}`);
-    else if (changes.length) lines.push(`  nothing applied: ${apply} applies it`);
+    // The command to copy, shell-quoted like the CLI's (shellJoin); none without a known checkout.
+    const apply = checkout ? shellJoin(["oasis", "--project", checkout, "setup", "--apply"]) : "";
+    if (open.length) {
+      lines.push(`  nothing applied: answer the open questions${apply ? `, then run ${apply}` : ""}`);
+    } else if (changes.length) {
+      lines.push(`  nothing applied${apply ? `: ${apply} applies it` : ""}`);
+    }
   }
   lines.push(overlay);
   return lines.join("\n");
+}
+
+// How /oasis setup runs `oasis <args>` (the extension's wiring): with `--project <root>` in the root when the session
+// found the checkout under a workspace file, else in the session's working directory, where the CLI finds the
+// checkout itself (a clone setup has not configured yet).
+export function setupCommand(oasis: string, root: string | null, cwd: string, args: string[]):
+  { command: "python3"; args: string[]; cwd: string } {
+  if (root) return { command: "python3", args: ["-B", oasis, "--project", root, ...args], cwd: root };
+  return { command: "python3", args: ["-B", oasis, ...args], cwd };
 }
 
 // User-run only (no tool registers it): shows the workspace status and the plan of `oasis setup` for the

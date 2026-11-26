@@ -34,7 +34,7 @@ The package does not bring the skills: they come from `./install.sh` into `~/.ag
 
 ### Test runs
 
-Tools `oasis_test_module`, `oasis_module_status`, `oasis_check_environment` and `oasis_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`, or `<logs>/<main|slug>/` with `[tooling].logs`. Other output is capped at 60 lines (head and tail kept).
+Tools `oasis_test_module`, `oasis_module_status`, `oasis_check_environment` (it runs `doctor --environment --quick`, or `--full`) and `oasis_lint_module` with validated parameters. Test runs return the result line and failures with the end of each traceback; full logs stay under the project's `dev/logs/odoo19/`, or `<logs>/<main|slug>/` with `[tooling].logs`. Other output is capped at 60 lines (head and tail kept).
 
 Test summaries also carry up to five `stats:` lines (tests, time, queries per module) and one `warnings:` line grouping repeated warnings by logger and message. They always end with a control line, `log: <lines> lines, <errors> errors, <warnings> warnings`, counted over the full stdout and stderr logs and never capped: lines match `cat stdout.log stderr.log | wc -l`, errors are ERROR/CRITICAL lines except the result line's logger (`odoo.tests.result`, or `odoo.tests.runner` on Odoo 15), and warnings are WARNING lines except `odoo.tests.*`, so the summary can be checked against the logs.
 

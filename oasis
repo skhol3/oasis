@@ -33,6 +33,9 @@ LEGACY_COMMANDS = ('migrate', 'doctor', 'policy')
 # configuration, and `status --json` reports that the workspace is missing (v0.16.0 S3). Every other
 # command is refused there (missing configuration).
 UNCONFIGURED_COMMANDS = ('doctor', 'policy', 'setup')
+# Deprecated command names (v0.16.0 S5): each keeps working, with the same output and exit codes as the
+# command it stands for (tools/policy.py ALIASES gives both the same tier).
+DEPRECATED_ALIASES = {'check-environment': 'doctor --environment'}
 
 
 def configuration_reader(tools: Path):
@@ -79,10 +82,12 @@ def main() -> int:
         description=('Run an installed oasis tool for a project: --project, else the checkout of the '
                      'current directory.'),
         epilog=('Commands: ' + ', '.join(COMMANDS) + '\n'
+                'Deprecated aliases (they keep working): '
+                + ', '.join(f'{alias} runs {target}' for alias, target in DEPRECATED_ALIASES.items()) + '\n'
                 'New checkout: the setup command prints the plan of its configuration; setup --apply '
                 'creates it\n'
-                f'Example: {prog} --project /absolute/project check-environment --quick\n'
-                f'Example: cd /absolute/project && {prog} check-environment --quick'),
+                f'Example: {prog} --project /absolute/project doctor --environment --quick\n'
+                f'Example: cd /absolute/project && {prog} doctor --environment --quick'),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('--project', metavar='/absolute/project',
@@ -96,6 +101,11 @@ def main() -> int:
     if args.command not in COMMANDS:
         print(f'ERROR: Unsupported oasis command: {args.command}', file=sys.stderr)
         return 2
+    # argparse consumes a separator after the command; tool arguments must stay byte-for-byte.
+    arguments = sys.argv[sys.argv.index(args.command, 1) + 1:]
+    # `doctor --environment` runs the environment checks, which need the configuration: refused where
+    # check-environment, its deprecated alias (DEPRECATED_ALIASES), is.
+    gated = 'check-environment' if args.command == 'doctor' and arguments[:1] == ['--environment'] else args.command
     tools = Path(__file__).resolve().parent / 'tools'
     if args.project is not None and (not args.project or not Path(args.project).is_absolute()
                                      or not Path(args.project).is_dir()):
@@ -110,10 +120,10 @@ def main() -> int:
             print(f'ERROR: {error}', file=sys.stderr)
             return 2
     if config is not None and (root / config.PROFILE_NAME).is_file():
-        if args.command not in LEGACY_COMMANDS:
+        if gated not in LEGACY_COMMANDS:
             print(f'ERROR: {config.legacy_profile_refusal(root / config.PROFILE_NAME, prog)}', file=sys.stderr)
             return 2
-    elif (args.command not in UNCONFIGURED_COMMANDS and not (args.command == 'status' and args.arguments == ['--json'])
+    elif (gated not in UNCONFIGURED_COMMANDS and not (args.command == 'status' and args.arguments == ['--json'])
           and (config is None or config.workspace_file(root) is None)):
         message = (config.missing_configuration(root) if config is not None
                    else f'Missing tooling configuration: no oasis-workspace.toml at or above {root}.')
@@ -130,8 +140,6 @@ def main() -> int:
         env[f'{prefix}_PROJECT_ROOT'] = str(root)
         env[f'{prefix}_ENTRYPOINT'] = str(INVOKED.resolve())
         env.pop(f'{prefix}_TOOLS_DIR', None)
-    # argparse consumes a separator after the command; tool arguments must stay byte-for-byte.
-    arguments = sys.argv[sys.argv.index(args.command, 1) + 1:]
     os.execve('/bin/bash', ['bash', str(tool), *arguments], env)
     return 0  # pragma: no cover - execve replaces this process
 

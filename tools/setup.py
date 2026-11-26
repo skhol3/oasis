@@ -957,7 +957,8 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
 def moved_paths(document: dict, root: Path, target: Path) -> list[tuple[str, str, str]]:
     """(key, value, new value) of every relative path of the workspace file in root that the move to target must
     rewrite to keep resolving: the SERIES_PATHS of [tooling] and of the [series] tables, and the path of each
-    [environments] table; those in .oasis/, which moves along, are kept, and addons_paths resolve from the checkout."""
+    [environments] table; those in .oasis/, which moves along, are kept (normalized first: .oasis/../x is outside it),
+    and addons_paths resolve from the checkout."""
     tables = [document.get('tooling', {}), *document.get('series', {}).values()]
     found = [(key, table.get(key)) for table in tables if isinstance(table, dict) for key in config.SERIES_PATHS]
     environments = document.get('environments')
@@ -966,7 +967,7 @@ def moved_paths(document: dict, root: Path, target: Path) -> list[tuple[str, str
     moved = []
     for key, value in found:
         if (not isinstance(value, str) or not value or os.path.isabs(value)
-                or Path(value).parts[:1] == (LAYOUT,)):
+                or Path(os.path.normpath(value)).parts[:1] == (LAYOUT,)):
             continue
         new = Path(os.path.relpath(os.path.normpath(root / value), target)).as_posix()
         if (key, value, new) not in moved:
@@ -1532,7 +1533,10 @@ def slug_change(root: Path, kind: str, main: Path | None):
     except config.InvalidConfig:
         return None, None, None  # the configuration refuses it
     raw = config.worktree_slug(root, main)
-    if 'checkout_slug' in current.get('tooling', {}) or not raw or config.SLUG.fullmatch(raw):
+    # Only a slug over 20 characters is shortened. Any other invalid one (a name that gives nothing) is never
+    # proposed: the configuration refuses it at plan time with the derived-slug message (config.derived_slug).
+    if ('checkout_slug' in current.get('tooling', {}) or config.SLUG.fullmatch(raw) or len(raw) <= 20
+            or not config.SLUG.fullmatch(raw[:20].rstrip('_'))):
         return None, None, None
     taken, slug, number = worktree_slugs(root, main), raw[:20].rstrip('_'), 2
     while slug in taken:

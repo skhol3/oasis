@@ -39,8 +39,8 @@ The installer copies the committed HEAD only (uncommitted edits are never instal
 (the current directory itself outside git), so these two run the same command:
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/project check-environment --quick
-cd /absolute/project/addons && ~/.agents/skills/odoo19/oasis check-environment --quick
+~/.agents/skills/odoo19/oasis --project /absolute/project doctor --environment --quick
+cd /absolute/project/addons && ~/.agents/skills/odoo19/oasis doctor --environment --quick
 ```
 
 A directory with no `oasis-workspace.toml` at or above its checkout (or, for a linked worktree,

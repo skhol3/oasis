@@ -216,7 +216,7 @@ export function projectContext(
       ]
     : [
         "This session has no oasis tools. Instead of raw odoo-bin, psql or dropdb, run the guarded CLI:",
-        `\`oasis --project ${root} <command>\` (test-module --compact, module-status, check-environment --quick,`,
+        `\`oasis --project ${root} <command>\` (test-module --compact, module-status, doctor --environment --quick,`,
         "lint-module, model-info). Do not browse Odoo source for",
       ];
   return [

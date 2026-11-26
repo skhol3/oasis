@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   configHome, formatSetupReport, gentleShellHost, installOverlay, NOT_GENTLE_SHELL, overlayReminder, overlayState,
-  overlayTarget, runSetup,
+  overlayTarget, runSetup, setupCommand,
 } from "../lib/setup.ts";
 
 const TEMPLATE_BODY = '{\n  "gentle-ai-worker": { "add": ["odoo19_test_module"] }\n}\n';
@@ -246,6 +246,38 @@ test("formatSetupReport: a plan ready to apply, nothing to set up, a refusal and
   ].join("\n"));
   assert.match(report({ code: 2, stdout: "", stderr: "" }, json(ready)), /^status \(oasis status --json\): unavailable \(exit 2\)$/m);
   assert.match(report(json(STATUS), json(ready)), new RegExp(`^oasis setup: ${CHECKOUT}$`, "m"));
+});
+
+test("formatSetupReport: the apply hint shell-quotes the checkout and is left out when none is known", () => {
+  const spaced = "/work/my shop/code/it's";
+  const quoted = "'/work/my shop/code/it'\"'\"'s'";
+  const report = (plan: unknown, status: Result) =>
+    formatSetupReport({ status, plan: json(plan), overlay: "subagent overlay: x" }).split("\n");
+  const ready = { ...PLAN, checkout: spaced, questions: [], open: [] };
+  assert.ok(report(ready, json(STATUS)).includes(`  nothing applied: oasis --project ${quoted} setup --apply applies it`));
+  assert.ok(report({ ...PLAN, checkout: spaced }, json(STATUS)).includes(
+    `  nothing applied: answer the open questions, then run oasis --project ${quoted} setup --apply`));
+  // No checkout in the plan or the status: no command to copy, only what was (not) done.
+  const unknown = { code: 2, stdout: "", stderr: "" };
+  const anonymous = report({ ...ready, checkout: "" }, unknown);
+  assert.equal(anonymous[0], "oasis setup: the current checkout");
+  assert.ok(anonymous.includes("  nothing applied"), anonymous.join("\n"));
+  assert.ok(!anonymous.some((line) => line.includes("--project")), anonymous.join("\n"));
+  const open = report({ ...PLAN, checkout: "" }, unknown);
+  assert.ok(open.includes("  nothing applied: answer the open questions"), open.join("\n"));
+  assert.ok(!open.some((line) => line.includes("--project")), open.join("\n"));
+});
+
+test("setupCommand: --project <root> in the root when the session knows it, else the working directory", () => {
+  const oasis = "/bundle/oasis";
+  assert.deepEqual(setupCommand(oasis, "/work/shop/code/shop", "/work/shop/code/shop/addons", ["status", "--json"]), {
+    command: "python3", args: ["-B", oasis, "--project", "/work/shop/code/shop", "status", "--json"],
+    cwd: "/work/shop/code/shop",
+  });
+  // A clone setup has not configured yet: no root, so the CLI finds the checkout of the working directory.
+  assert.deepEqual(setupCommand(oasis, null, "/work/new/code/new", ["setup", "--plan", "--json"]), {
+    command: "python3", args: ["-B", oasis, "setup", "--plan", "--json"], cwd: "/work/new/code/new",
+  });
 });
 
 test("runSetup shows the status and the plan, never applies setup, and installs the overlay in Gentle Shell", async () => {

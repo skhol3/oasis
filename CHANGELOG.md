@@ -53,6 +53,11 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- `check-environment [--quick|--full]` is now `doctor --environment [--quick|--full]`; `check-environment`
+  stays as a deprecated alias with the same lines, exit codes and usage line through `oasis`, `odoo19`,
+  the project wrappers and the tool script (S5). `doctor`'s usage line names `--environment`. setup,
+  bootstrap and migrate stay three commands (no alias would behave identically): docs/setup.md says which
+  one to run when.
 - `oasis setup` in a clone at `<project>/code/<repo>` or `<project>/codigo/<repo>` puts a new workspace in
   `<project>` (the new question `workspace`; its recommended answer applies without a terminal);
   `--workspace <clone>` keeps the old default.
@@ -118,6 +123,8 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Fixed
 
+- Moving a workspace with `setup --workspace` rewrites relative paths such as `.oasis/../x`.
+- The apply hint of `/oasis setup` shell-quotes the checkout path and is left out when no checkout is known.
 - `init-dev-database` works with an Odoo 15 environment's Python (3.7 to 3.10): the part that runs in
   Odoo no longer imports tomllib; oasis passes it the values it needs.
 - The database account check reads a compose `ports:` key with a YAML tag or anchor (`ports: !override`).

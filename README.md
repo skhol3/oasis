@@ -144,7 +144,8 @@ of a checkout and runs them by hand. [Docs →](docs/action-menu.md)
 
 ### Environment and workspace file
 
-[`oasis setup`](docs/setup.md) configures a clone, `doctor` and `check-environment` check the
+[`oasis setup`](docs/setup.md) configures a clone, `bootstrap` syncs its environment to the locks
+([which one when](docs/setup.md#setup-bootstrap-or-migrate)), `doctor` and `doctor --environment` check the
 environment; one [`oasis-workspace.toml`](docs/workspace-file.md) configures every checkout, and
 the machine file gives the Odoo source of each series.
 [Docs →](docs/checking-environment.md)
@@ -154,6 +155,14 @@ read. A checkout that still has one is refused (exit 2) with
 `<checkout>/.odoo19-agent.toml is the old profile format, no longer read: run oasis migrate --plan to see its conversion to oasis-workspace.toml, then oasis migrate --apply.`;
 `doctor` reports it as one `FAIL configuration`. [`oasis migrate`](docs/migrating.md), the only
 command that still reads it, converts the profiles of every checkout into one workspace file.
+
+Contract note in v0.16.0 (S5): `check-environment [--quick|--full]` is a deprecated alias of
+`doctor --environment [--quick|--full]`. Both names keep working through `oasis` and `odoo19`, the
+project wrappers and the tool script, with the same lines, exit codes and usage line as before; the help of
+`oasis`, `doctor --help` and the policy table (both Tier A) say so, and the `oasis_check_environment` tool runs
+`doctor --environment`. `doctor`'s usage line now names the option: `Usage: <program> doctor
+[--environment [--quick|--full]]`. setup, bootstrap and migrate stay three commands (none would be an
+identical alias): [which one when](docs/setup.md#setup-bootstrap-or-migrate).
 
 ## Documentation
 
@@ -168,7 +177,7 @@ command that still reads it, converts the profiles of every checkout into one wo
 | [Setting up a new workspace](docs/new-workspace.md) | From a clone to `doctor` and a database with `oasis setup`; where each value lives, an example tree, the steps by hand |
 | [Setting up a checkout with oasis setup](docs/setup.md) | `oasis setup`: the plan, then `--apply` creates only what is missing |
 | [New project setup](docs/project-setup.md) | Workspace file, entry point and optional project wrappers |
-| [Checking the environment](docs/checking-environment.md) | `doctor`, `check-environment` and `lock.sha256` |
+| [Checking the environment](docs/checking-environment.md) | `doctor`, `doctor --environment` (`check-environment`, a deprecated alias) and `lock.sha256` |
 | [Workspace file](docs/workspace-file.md) | One `oasis-workspace.toml` for every checkout |
 | [Migrating to the workspace file](docs/migrating.md) | `oasis migrate` |
 | [Path-free odoo.conf](docs/path-free-odoo-conf.md) | What oasis passes on the Odoo command line |

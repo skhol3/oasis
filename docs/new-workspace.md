@@ -110,7 +110,7 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
 
    ```bash
    ~/.agents/skills/odoo19/oasis init-dev-database acme_sale acme_dev_manual
-   ~/.agents/skills/odoo19/oasis check-environment --full
+   ~/.agents/skills/odoo19/oasis doctor --environment --full
    ```
 
 Next, run a module's tests on a disposable database ([Tests and test databases](testing.md)):
@@ -354,7 +354,7 @@ steps write [the example tree](#the-example-tree); any other folders work the sa
    [Dependency locks](checking-environment.md#dependency-locks)).
 
 5. Create the environment with the same `python` and install the locked packages. Once steps 1
-   to 4 are done, `oasis bootstrap --apply` does the same and ends with `check-environment --full`
+   to 4 are done, `oasis bootstrap --apply` does the same and ends with `doctor --environment --full`
    (`bootstrap --preview` shows the plan).
 
    ```bash
@@ -447,7 +447,7 @@ environment = 'next'
 ```
 
 With these, the main checkout uses `environments/acme` and the worktree `environments/acme-next`;
-`bootstrap` creates each one with its `python`, and `doctor` and `check-environment` check that
+`bootstrap` creates each one with its `python`, and `doctor` and `doctor --environment` check that
 its interpreter reports it. Create the second environment as in [step 5](#steps) with
 `python=3.13`, or run `bootstrap --apply` in the worktree. `oasis-checkout.toml` may set only
 `checkout_slug` and `environment`; see [Workspace file](workspace-file.md#checkout-file-and-named-environments).

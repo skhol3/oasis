@@ -5,11 +5,14 @@ The fixture is tests/test_setup.py's (scratch directories, git with an empty con
 file and a fake uv); the clone lives in work/<project>/<folder>/shop.
 """
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
+import importlib.util
 import json
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 import test_setup
@@ -171,6 +174,31 @@ class CheckoutSlugTests(unittest.TestCase):
             name=self.checkout.name, raw='invoice_reconciliation_rework', slug='invoice_reconcilia_2'))
         self.assertEqual(self.slug(), ['CHECKOUT_SLUG=invoice_reconcilia_2'])
 
+    def worktree(self, name):
+        """A linked worktree of the main checkout at work/<name>, as the checkout under test."""
+        self.checkout = self.scratch / 'work' / name
+        self.git(self.main, 'worktree', 'add', '-q', '-b', f'branch-{len(name)}', str(self.checkout))
+        return self.checkout
+
+    def test_only_a_slug_over_20_characters_is_shortened(self):
+        # A one-character slug and one starting with a digit are valid slugs (config.SLUG): nothing is proposed.
+        for name, slug in (('shop-x', 'x'), ('shop-1fix', '1fix')):
+            with self.subTest(name=name):
+                self.worktree(name)
+                result = self.setup_cmd()
+                self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+                self.assertNotIn('checkout_slug', result.stdout)
+                self.assertNotIn('over 20 characters', result.stdout)
+                self.assertEqual(self.slug(), [f'CHECKOUT_SLUG={slug}'])
+        # A name that gives no slug at all is refused at plan time with the derived-slug message, never proposed.
+        checkout = self.worktree('shop-\u00f1\u00f1')
+        before = self.tree()
+        self.assert_refused(self.setup_cmd(), (
+            f'Cannot derive a checkout slug from the worktree directory name {checkout.name}: it gives nothing, and a '
+            'slug is 1 to 20 lowercase letters, digits or underscores, starting with a letter or digit; set '
+            f'[tooling].checkout_slug in {checkout / "oasis-checkout.toml"}.'), before)
+        self.assertNotIn('over 20 characters', self.setup_cmd('--plan', '--json').stdout)
+
     def test_a_checkout_file_with_its_own_tooling_table_is_never_edited(self):
         self.file.write_text("[tooling]\nenvironment = 'default'\n")
         before = self.tree()
@@ -251,6 +279,36 @@ class MoveWorkspaceTests(unittest.TestCase):
         self.assertTrue(result.stdout.endswith(f'remove /oasis-workspace.toml and /.oasis/ from {self.exclude}\n'))
         self.assertEqual(self.tree(), before)
 
+    def test_a_path_through_the_layout_folder_is_rewritten_like_any_outside_path(self):
+        # .oasis/../mylogs names <clone>/mylogs: normalized first, it is not in .oasis/, which moves along.
+        self.old.write_text(self.old.read_text().replace("logs = '.oasis/logs'", "logs = '.oasis/../mylogs'"))
+        result = self.setup_cmd('--workspace', str(self.project))
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn(f'move {self.old} to {self.new} (mode 0600), its relative paths rewritten: logs .oasis/../mylogs '
+                      '-> code/shop/mylogs\n', result.stdout)
+        result = self.setup_cmd('--apply', '--workspace', str(self.project))
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn("logs = 'code/shop/mylogs'\n", self.new.read_text())
+        self.assertEqual(self.values()['LOGS_DIR'], str(self.checkout / 'mylogs'))
+
+    def test_a_verification_failure_after_the_delete_brings_the_workspace_file_back(self):
+        # config.load rejects the moved configuration (the series guard: a module of another series) once every
+        # action ran, the delete of the clone's workspace file included: the rollback recreates it (its bytes and
+        # mode 0600) and undoes the rest.
+        self.module('shop_legacy', "{'name': 'Legacy', 'version': '15.0.1.0.0'}\n")
+        original = self.old.read_bytes()
+        self.assertEqual(self.old.stat().st_mode & 0o777, 0o600)
+        before = self.tree()
+        result = self.setup_cmd('--apply', '--workspace', str(self.project))
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertTrue(result.stderr.startswith('ERROR: Verification failed ('), result.stderr)
+        self.assertIn('shop_legacy', result.stderr)
+        self.assertTrue(result.stderr.endswith('; every change was undone.\n'), result.stderr)
+        self.assertTrue(result.stdout.endswith(f'remove /oasis-workspace.toml and /.oasis/ from {self.exclude}\n'))
+        self.assertEqual(self.tree(), before)
+        self.assertEqual((self.old.read_bytes(), self.old.stat().st_mode & 0o777), (original, 0o600))
+        self.assertFalse(self.new.exists())
+
     def test_a_move_that_cannot_be_made_is_refused(self):
         before = self.tree()
         self.assert_refused(self.setup_cmd('--workspace', str(self.checkout / 'shop_sale')),
@@ -267,6 +325,35 @@ class MoveWorkspaceTests(unittest.TestCase):
         self.assert_refused(self.setup_cmd('--workspace', str(self.project)),
                             f'Refusing to move {self.old}: git tracks it; move it yourself.', before)
 
+
+
+class DeleteGuardTests(unittest.TestCase):
+    """The 'delete' change of a move (tools/setup.py Changes): it removes only the bytes the plan read, and its
+    rollback ('recreate') brings them back with their mode."""
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location('oasis_setup_changes', test_setup.ROOT / 'tools/setup.py')
+        self.setup = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.setup)
+        scratch = tempfile.TemporaryDirectory(prefix='oasis-delete-')
+        self.addCleanup(scratch.cleanup)
+        self.path = Path(scratch.name) / 'oasis-workspace.toml'
+        self.path.write_bytes(b'workspace_version = 1\n')
+        self.path.chmod(0o600)
+
+    def test_a_file_changed_since_the_plan_is_refused_and_kept(self):
+        changes = self.setup.Changes()
+        with self.assertRaisesRegex(OSError, 'changed since the plan'):
+            changes.apply(('delete', self.path, b'workspace_version = 2\n'))
+        self.assertEqual(changes.rollback(), [])
+        self.assertEqual((self.path.read_bytes(), self.path.stat().st_mode & 0o777), (b'workspace_version = 1\n', 0o600))
+
+    def test_a_deleted_file_comes_back_with_its_bytes_and_mode(self):
+        changes = self.setup.Changes()
+        changes.apply(('delete', self.path, b'workspace_version = 1\n'))
+        self.assertFalse(self.path.exists())
+        self.assertEqual(changes.rollback(), [])
+        self.assertEqual((self.path.read_bytes(), self.path.stat().st_mode & 0o777), (b'workspace_version = 1\n', 0o600))
 
 if __name__ == '__main__':
     unittest.main()

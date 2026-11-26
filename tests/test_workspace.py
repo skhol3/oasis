@@ -677,7 +677,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertIn('--python "$python"', guide)
         self.assertIn('--python-version "$python"', guide)
         # Checking the installed packages against the locks is --full; --quick skips it.
-        self.assertIn('check-environment --full', guide)
+        self.assertIn('doctor --environment --full', guide)
         # Each block that uses "$python" sets it first: a block pasted in a new shell works alone.
         blocks = re.findall(r'^ *```bash\n(.*?)^ *```$', guide, re.MULTILINE | re.DOTALL)
         using = [block for block in blocks if '"$python"' in block]

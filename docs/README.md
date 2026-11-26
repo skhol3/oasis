@@ -11,7 +11,7 @@ One topic per file. Start from the group that matches what you are doing; the
 | [Setting up a new workspace](new-workspace.md) | Start here: from a clone to `doctor` and a database with `oasis setup`; where each value lives, an example tree, the steps by hand |
 | [Setting up a checkout with oasis setup](setup.md) | `oasis setup` reference: the plan, then `--apply` creates only what is missing |
 | [New project: deliberate setup](project-setup.md) | Workspace file, entry point and optional project wrappers |
-| [Checking the environment](checking-environment.md) | `doctor`, `check-environment` and `lock.sha256` |
+| [Checking the environment](checking-environment.md) | `doctor`, `doctor --environment` (`check-environment`, a deprecated alias) and `lock.sha256` |
 | [Workspace file](workspace-file.md) | One `oasis-workspace.toml` for every checkout |
 | [Gentle Shell layer](gentle-shell-layer.md) | Installing the package, the agent tools and `/oasis` |
 
