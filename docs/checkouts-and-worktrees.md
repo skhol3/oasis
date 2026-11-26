@@ -107,7 +107,7 @@ A shared `odoo.conf` may name the main checkout in its `addons_path`. In a linke
 ```
 
 ```bash
-~/.agents/skills/odoo19/oasis --project /absolute/project worktree-init <feature> <branch> [--path <dir>] [--dry-run] [--resume]
+~/.agents/skills/odoo19/oasis --project /absolute/project worktree-init <feature> <branch> [--path <dir>] [--dry-run] [--resume] [--confirm <worktree path>]
 ```
 
 - The folder is `<main folder>-<feature>` next to the main checkout, so the feature becomes the checkout slug (`acme` with `shop feature` gives `acme-shop-feature`, slug `shop_feature`). An existing folder is refused, unless you pass `--resume` (below).
@@ -116,7 +116,8 @@ A shared `odoo.conf` may name the main checkout in its `addons_path`. In a linke
 - Only `git worktree add` runs: the new worktree reads the workspace file the main checkout reads, above the new folder or, when there is none above it, through git, so nothing is copied or linked. A folder below another workspace file would read that one and is refused (`The new worktree <path> would read <file>, not the main checkout's <file>; choose another --path.`), and a main checkout that finds none is refused (`The main checkout <path> has no oasis-workspace.toml at or above it; prepare the worktree by hand.`). A workspace file inside the main checkout that git tracks is refused too (`<file> is tracked by git in the main checkout <path>: each worktree would read its own committed copy, not this file. Untrack it (git rm --cached oasis-workspace.toml) or keep the workspace file above the checkouts.`): every worktree checks out its own copy and reads it, with paths resolved from that worktree; an untracked one is read through git. A workspace file the new worktree could not read is refused with the error every command gives for it (`Invalid TOML in <file>.` or `Refusing untrusted workspace file <file>: ...`).
 - It prints `worktree: <path>`, `branch: <branch> (...)` (`created from HEAD <commit>`, `existing`, `tracking origin/<branch>` or `resumed`), `slug: <slug>` and `workspace: <dir>`. `--dry-run` prints the same lines, then `dry run: nothing changed`, and changes nothing; `/oasis worktree` shows them and asks before creating anything.
 - `--resume` accepts an existing folder only when it is a worktree of this repository with `<branch>` checked out, and adds nothing to it. A plain folder, a symlink, another repository's worktree or a worktree on another branch is refused. Without the folder, `--resume` creates the worktree as usual.
-- Agents cannot run it: the bash guard blocks it because it adds a worktree and a branch for the user.
+- Adding a worktree (and a new branch) is Tier B in the [agent contract](agent-contract.md): it runs only with `--confirm <worktree path>`, the path the plan names after `worktree:`. Without it, or with another path, it exits 2 and names the exact command (`worktree-init adds the git worktree <path> and its branch <branch> (Tier B: it needs explicit confirmation); nothing changed. Run: oasis --project <root> worktree-init <feature> <branch> --confirm <path>`). `--dry-run` and `--resume` of an existing worktree need none; `/oasis worktree` passes it after you confirm. In Gentle Shell an agent's `worktree-init` waits for your confirmation in a dialog, like `drop-database` (see [Bash guard](bash-guard.md)).
+- A branch held by a worktree entry whose folder is gone (git lists it as prunable) is refused with `Branch <branch> is held by the prunable worktree entry <path> (its folder is gone); run git -C <main checkout> worktree prune, then run worktree-init again.`
 
 ### Logs without [tooling].logs
 

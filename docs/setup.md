@@ -54,8 +54,8 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
   kept: fix it, then run oasis --project <checkout> bootstrap --apply to sync it.`
 - When nothing is missing it prints the `kept` lines and `nothing to set up: run oasis --project
   <checkout> doctor` (exit 0). Refusals exit 2 with `ERROR: <reason>` and change nothing.
-- Agents may run the plan; the Gentle Shell [bash guard](bash-guard.md) blocks `setup --apply` (and
-  any `setup` whose arguments it cannot read literally) the way it blocks `migrate --apply`.
+- `setup` and `setup --apply` are Tier A in the [agent contract](agent-contract.md): an agent runs
+  them alone, since `--apply` creates only what is missing.
 
 ## What it infers and what it asks
 

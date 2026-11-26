@@ -9,6 +9,40 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Added
+
+- Agent contract (S1): one policy table in the core (`tools/policy.py`) lists every operation, its tier
+  (A: the agent alone; B: the agent proposes, a person confirms; C: a person only), why, and what
+  `--confirm` takes. `oasis policy --json` (and `odoo19 policy --json`) prints it from any directory,
+  also without a workspace file or in a checkout with a legacy profile. docs/agent-contract.md and the
+  bash guard's tier table are generated from it.
+
+### Changed
+
+- Contract change: Tier B in the CLI. `drop-database <name>`, `gc --apply --trash`, `migrate --apply`
+  and `worktree-init` run only with `--confirm <exact name>` (the database name, the project root, the
+  workspace file the plan writes, the worktree path the plan names). Without it, or with another value,
+  they change nothing, exit 2 and name the exact command to run. `worktree-init --dry-run`,
+  `migrate --plan` and resuming an existing worktree need no confirmation. The menu (Move a database to
+  the trash, Empty trash, Migrate, Create a linked worktree, which now asks for the absolute folder),
+  `/oasis worktree` and `/oasis migrate` pass it after the user's confirmation.
+- Contract change: the Gentle Shell bash guard takes its tiers from the policy table
+  (`pi/lib/policy.generated.ts`, checked against it by the tests). Agents may now run `setup --apply`,
+  `migrate` without `--apply` and `worktree-init --dry-run` (Tier A). `worktree-init` and
+  `migrate --apply` (Tier B) now wait for the user's confirmation in a dialog, honoring
+  `[tooling].agent_destructive`, like `drop-database`; before, they were blocked in every session. An
+  oasis command whose arguments are not literal gets its strictest tier. `stop --database` stays Tier B
+  (it ends the sessions of a running server on the shared database). The skills treat `gc --apply` as
+  Tier A.
+- The legacy-profile refusal and `doctor`'s fix for it name the confirmation:
+  `... then oasis migrate --apply --confirm <the workspace file the plan writes>.`
+- The Gentle Shell prompt context points to `oasis policy --json` for the Tier B commands.
+
+### Fixed
+
+- `worktree-init` names `git worktree prune` when a prunable worktree entry (its folder gone) holds
+  the target branch, instead of saying the branch is checked out there (S4.9).
+
 ## [0.15.1] - 2026-11-26
 
 ### Fixed

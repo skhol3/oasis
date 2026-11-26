@@ -49,8 +49,9 @@ test_prefix = 'acme_test_'
 # Optional Odoo data directory: every Odoo launch gets --data-dir=<it>, and disposable test
 # runs remove their filestores there. Without it, the data_dir of odoo.conf applies.
 # data_dir = 'data'
-# Optional: what the Gentle Shell layer does when an agent runs drop-database, stop --database
-# or gc --apply --trash, or changes this file: 'ask' (the default) shows the user a dialog
+# Optional: what the Gentle Shell layer does when an agent runs a Tier B command (drop-database,
+# stop --database, gc --apply --trash, migrate --apply, worktree-init), or changes this file:
+# 'ask' (the default) shows the user a dialog
 # first, 'deny' blocks them, 'allow' runs them without a dialog. Only the user sets it.
 # agent_destructive = 'ask'
 #
