@@ -6,9 +6,9 @@ terminal every password is generated (v0.16.0 S2: no oasis workflow requires typ
 passwords (secrets.token_urlsafe(24)) are stored, never printed, in <database>.logins next to the env file
 (mode 0600), once the database exists: written to a 0600 temporary file in that directory first (removed when
 it cannot be written), then renamed into place only when the runner says the database was created (exit 0, or
-1 without a traceback), so a refused existing database keeps its file (exit 3). When the outcome is unknown
-(another exit, a traceback, an interrupt after the runner started) or the rename fails, the temporary file is
-kept and its path printed, never a password.
+4: created, then a later step failed), so a refused existing database keeps its file (exit 3). When the outcome
+is unknown (another exit, such as 1 for an uncaught error, or an interrupt after the runner started) or the
+rename fails, the temporary file is kept and its path printed, never a password.
 """
 import contextlib
 import getpass
@@ -23,6 +23,7 @@ import tempfile
 import warnings
 
 from config import InvalidConfig, configuration, load, program_name
+from dev_users_runtime import CREATED_THEN_FAILED
 
 INVALID = 'ERROR: Invalid development user configuration.'
 TERMINAL = 'ERROR: Password entry failed on the terminal; no database was created.'
@@ -57,11 +58,10 @@ def kept(pending: Path, note, generated) -> str:
 
 
 def created(result) -> bool:
-    """Whether the runner (dev_users_runtime.py) says the database was created: exit 0 (initialized) or 1 (created,
-    then a later phase failed). An exit 1 with a traceback is an uncaught error of the interpreter, not the
-    runner's answer; any other exit is unknown (3 alone says nothing was created)."""
-    return result.returncode == 0 or (result.returncode == 1
-                                      and 'Traceback (most recent call last):' not in result.stderr)
+    """Whether the runner (dev_users_runtime.py) says the database was created: exit 0 (initialized) or
+    CREATED_THEN_FAILED (4: created, then a later step failed). Any other exit is unknown (3 alone says nothing
+    was created; 1 is an error the runner did not catch, an import error included)."""
+    return result.returncode in (0, CREATED_THEN_FAILED)
 
 
 def declaration(root):

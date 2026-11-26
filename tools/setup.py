@@ -218,8 +218,8 @@ one JSON object (inferred values and their origin, changes, questions; never a p
 Anticipated problems (a new runtime.in only): Odoo 15.0's python-ldap==3.4.0 on a machine with
 OpenLDAP 2.6 without libldap_r (python_ldap: pin python-ldap==3.4.4 in a new overrides.txt), and each
 external_dependencies python requirement of the checkout's modules that the requirements do not list
-(add it to runtime.in) or that an Odoo pin does not satisfy (pin the lowest version it accepts in a new
-overrides.txt). uv 0.13 and later run with UV_LEGACY_TAR_BACKEND=1 (old source archives).
+(add it to runtime.in; no recommended answer for a name that may be only an import name, such as cv2)
+or that an Odoo pin does not satisfy (pin the lowest version it accepts in a new overrides.txt). uv 0.13 and later run with UV_LEGACY_TAR_BACKEND=1 (old source archives).
 '''
 
 
@@ -372,9 +372,11 @@ class Questions:
 
     def choose(self, question: dict) -> str | None:
         """The answer to a question of an anticipated problem (v0.16.0 S3): --answer or --answers, else asked
-        on a terminal (Enter: the recommended one), else None: an open question that --apply refuses."""
+        on a terminal (Enter: the recommended one, when it has one), else None: an open question that --apply
+        refuses."""
         values = [option['value'] for option in question['options']]
         listed = ', '.join(values[:-1]) + f' or {values[-1]}'
+        recommended = question['recommended']
         if question['id'] in self.answers:
             answer, source = self.answers[question['id']]
             self.used.add(question['id'])
@@ -382,17 +384,20 @@ class Questions:
                 raise Refused(f'Invalid answer {answer} for {question["id"]}: answer {listed}.')
             self.met(question, answer, f'from {source.split()[0]}')
             return answer
-        refusal = f'{question["text"]} Answer with {question["flag"]} (recommended: {question["recommended"]}).'
+        refusal = (f'{question["text"]} Answer with {question["flag"]} '
+                   + (f'(recommended: {recommended}).' if recommended is not None else '(no recommended answer).'))
         if not self.interactive:
             self.met(question, None, None, refusal)
             return None
         while True:
-            answer = self.ask(f'{question["text"]} ({"/".join(values)}) [Enter: {question["recommended"]}]: ',
+            answer = self.ask(f'{question["text"]} ({"/".join(values)})'
+                              + (f' [Enter: {recommended}]: ' if recommended is not None else ': '),
                               f'No answer for {question["id"]} (end of input): nothing changed; pass '
-                              f'{question["flag"]}.') or question['recommended']
+                              f'{question["flag"]}.') or recommended
             if answer in values:
                 return answer
-            self.say(f'Answer {listed}, or Enter for {question["recommended"]}.\n')
+            self.say(f'Answer {listed}, or Enter for {recommended}.\n' if recommended is not None
+                     else f'Answer {listed}.\n')
 
 
 # -- inference -------------------------------------------------------------------------------------
@@ -1627,12 +1632,27 @@ def anticipated(plan: dict, source: Path, requirements: Path, extra, overrides, 
     roots = [Path(root) for root in values['ADDON_ROOTS'].splitlines() if root]
     for problem in known_problems.requirement_problems(known_problems.module_requirements(roots), found):
         module, entry, question_id = problem['module'], problem['entry'], problem['id']
-        if problem['kind'] == 'missing':
+        if problem['kind'] == 'missing' and problem['known']:
             question = {'id': question_id, 'text': (f'The module {module} requires {entry} (external_dependencies), '
                                                     f'which no requirement of {runtime} lists: add it there?'),
                         'options': [{'value': 'add', 'label': f'add {entry} to runtime.in'},
                                     {'value': 'skip', 'label': 'leave it out: the module will not install without it'}],
                         'recommended': 'add', 'flag': f'--answer {question_id}=<add|skip>'}
+        elif problem['kind'] == 'missing':
+            # A name setup does not know as a distribution's may be only an import name (cv2 is opencv-python's):
+            # never proposed; added as written only when the answer says it is the distribution's name.
+            name = problem['name']
+            question = {'id': question_id, 'text': (f'The module {module} requires {entry} (external_dependencies), '
+                                                    f'which no requirement of {runtime} lists, and setup cannot tell '
+                                                    f'whether {name} is the name of its distribution or only the '
+                                                    f'module it imports: add {entry} there as written?'),
+                        'options': [{'value': 'add', 'label': f'add {entry} to runtime.in: {name} is the name of its '
+                                                              'distribution'},
+                                    {'value': 'skip', 'label': f'leave it out: add the distribution that provides '
+                                                               f'{name} to the requirements yourself, or the module '
+                                                               'will not install'}],
+                        'recommended': None, 'flag': f'--answer {question_id}=<add|skip>'}
+        if problem['kind'] == 'missing':
             if questions.choose(question) == 'add':
                 additions.append((entry, module))
         elif not kept:

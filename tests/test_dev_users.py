@@ -522,8 +522,9 @@ test_prefix = 'cc_test_'
                 self.assertFalse(target.exists())
 
     def test_a_runner_failure_it_does_not_report_keeps_the_staged_passwords(self):
+        # Exit 1 is any uncaught error of the interpreter, with or without a traceback: never the runner's answer.
         for variable, value, code in (('FAKE_RUNNER_EXIT', '9', 9), ('FAKE_RUNNER_EXIT', '2', 2),
-                                      ('FAKE_RUNNER_RAISE', '1', 1)):
+                                      ('FAKE_RUNNER_EXIT', '1', 1), ('FAKE_RUNNER_RAISE', '1', 1)):
             with self.subTest(variable=variable, value=value):
                 for path in self.staged_files():
                     path.unlink()
@@ -539,6 +540,17 @@ test_prefix = 'cc_test_'
                 self.assert_kept(pending)
                 self.assertFalse(self.logins_file().exists())
                 self.assertFalse(self.state.exists())
+
+    def test_a_database_the_runner_created_before_a_later_step_failed_keeps_its_passwords(self):
+        # Exit 4: the runner created the database, then a later step failed (dev_users_runtime.py).
+        result = subprocess.run(self.command('coffee', 'cc_dev_coffee'), input='', text=True, capture_output=True,
+                                env={**self.env, 'FAKE_RUNNER_EXIT': '4'}, timeout=10)
+        self.assertEqual((result.returncode, result.stderr),
+                         (1, 'ERROR: Development setup failed; the new database was retained.\n'))
+        self.assertEqual(result.stdout, f'Generated passwords: {self.logins_file()} (mode 0600): local_admin, planner, '
+                                        'manager\n')
+        self.assertEqual(self.staged_files(), [])
+        self.assert_kept(self.logins_file())
 
     def test_an_interrupt_after_the_runner_started_keeps_the_staged_passwords(self):
         marker = self.root / 'runner.pid'

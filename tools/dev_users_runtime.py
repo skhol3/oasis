@@ -10,6 +10,10 @@ import sys
 from config import load, versions
 from odoo_addons_path import config_arguments
 
+# The exits dev_users.py reads: 0 initialized, CREATED_THEN_FAILED the database was created and a later step
+# failed, 3 nothing was created; any other (1: an uncaught error) is unknown.
+CREATED_THEN_FAILED = 4
+
 
 def main():
     created = False
@@ -89,8 +93,9 @@ def main():
                 raise ValueError('Account authentication could not be verified.')
         return 0
     except Exception:
-        # The host emits a fixed message, never exception details or database contents.
-        return 1 if created else 3
+        # The host emits a fixed message, never exception details or database contents. CREATED_THEN_FAILED, not
+        # 1: an interpreter error the runner does not catch also exits 1, and says nothing of the database.
+        return CREATED_THEN_FAILED if created else 3
 
 
 if __name__ == '__main__':

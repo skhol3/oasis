@@ -226,6 +226,72 @@ class LocksTests(unittest.TestCase):
         quiet = self.run_locks('uv-env', env={**env, 'FAKE_UV_VERSION': '0.12.0'})
         self.assertEqual((quiet.returncode, quiet.stdout, quiet.stderr), (0, '', ''))
 
+    def test_uv_env_exports_nothing_when_the_variable_is_set_or_the_version_cannot_be_read(self):
+        env = self.fake_uv()
+        for value in ('1', '0', ''):
+            with self.subTest(value=value):
+                result = self.run_locks('uv-env', env={**env, 'FAKE_UV_VERSION': '0.13.0', 'UV_LEGACY_TAR_BACKEND': value})
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        uv = Path(env['PATH']) / 'uv'
+        for name, script in (
+                ('unparseable', '#!/bin/sh\necho "uv (development build)"\n'),
+                ('failing', '#!/bin/sh\necho "error: broken" >&2\nexit 3\n'),
+                ('silent', '#!/bin/sh\nexit 0\n'),
+                ('not executable', None)):
+            with self.subTest(uv=name):
+                if script is None:
+                    uv.chmod(0o644)
+                else:
+                    uv.write_text(script)
+                result = self.run_locks('uv-env', env=env)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        uv.unlink()
+        result = self.run_locks('uv-env', env=env)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+
+    def test_compile_streams_uv_messages_while_uv_runs(self):
+        # uv prints a line, then waits until the test has read it: compile passes it on before uv ends.
+        env = self.fake_uv()
+        release = self.root.parent / 'release'
+        uv = Path(env['PATH']) / 'uv'
+        uv.write_text('#!/bin/sh\n'
+                      'if [ "$1" = --version ]; then echo "uv 0.9.0 (fake)"; exit 0; fi\n'
+                      'echo "Resolved 3 packages" >&2\n'
+                      f'i=0; while [ ! -e "$FAKE_RELEASE" ] && [ $i -lt 300 ]; do {shutil.which("sleep")} 0.05; '
+                      'i=$((i+1)); done\n'
+                      '[ -e "$FAKE_RELEASE" ] || exit 9\n'
+                      'for last; do :; done\nprintf "# compiled\\n" > "$last"\n')
+        process = subprocess.Popen([sys.executable, '-I', '-B', str(LOCKS), 'compile', str(self.requirements), '3.12',
+                                    'oasis bootstrap --apply'], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   env={**env, 'FAKE_RELEASE': str(release)})
+        try:
+            first = process.stderr.readline()
+            self.assertIsNone(process.poll())
+            release.touch()
+            rest = process.stderr.read()
+            self.assertEqual(process.wait(timeout=30), 0)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            process.stdout.close()
+            process.stderr.close()
+        self.assertEqual((first, rest), (b'Resolved 3 packages\n', b'Resolved 3 packages\n'))
+
+    def test_compile_passes_uv_messages_on_as_uv_wrote_them(self):
+        # Undecodable bytes are replaced and line ends translated, as before; the remedy follows uv's last line.
+        env = self.fake_uv()
+        (Path(env['PATH']) / 'uv').write_text('#!/bin/sh\n'
+                                              'if [ "$1" = --version ]; then echo "uv 0.9.0 (fake)"; exit 0; fi\n'
+                                              "printf 'caf\\303\\251 \\377\\r\\nline\\rend' >&2\nexit 1\n")
+        result = subprocess.run([sys.executable, '-I', '-B', str(LOCKS), 'compile', str(self.requirements), '3.12',
+                                 'oasis bootstrap --apply'], capture_output=True, env=env)
+        self.assertEqual((result.returncode, result.stdout), (2, b''))
+        self.assertEqual(result.stderr, (
+            'café �\nline\nenduv pip compile of runtime.in failed (exit 1); lock.sha256 was left as it was.\n'
+            f'Fix {self.requirements / "runtime.in"} or its access to the package index, then run oasis bootstrap '
+            '--apply again.\n').encode())
+
     def test_an_invalid_tar_identity_names_its_remedy(self):
         env = {**self.fake_uv(), 'FAKE_STDERR': 'error: Failed to extract archive: PyPDF2-1.26.0.tar.gz: invalid tar '
                                                 'identity'}

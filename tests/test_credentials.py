@@ -359,6 +359,22 @@ class AuthenticationFixTests(unittest.TestCase):
                  '= 127.0.0.1 and the db_port {compose} publishes in {conf}; then run oasis doctor again\n')
         self.assertEqual(self.fix("    ports:\n      - '127.0.0.1:6002:5432'\n"),
                          other.format(conf=self.conf, compose=self.compose, service='published on 127.0.0.1:6002'))
+        # Only the entries under ports: are judged: expose and environment items that name 5432 next to a mapping
+        # it reads keep its fix.
+        for others in ('    expose:\n      - "5432"\n',
+                       '    environment:\n      - PGPORT=5432\n      - POSTGRES_HOST_AUTH_METHOD=md5\n',
+                       '    healthcheck:\n      test:\n        - CMD-SHELL\n        - pg_isready -p 5432\n',
+                       '    labels:\n      - target: 5432\n'):
+            for order in ('before', 'after'):
+                with self.subTest(others=others, order=order):
+                    ports = "    ports:\n      - '127.0.0.1:6001:5432'\n"
+                    self.assertEqual(self.fix(others + ports if order == 'before' else ports + others), local)
+        # A ports list at the key's own indentation, and its long syntax, are still judged.
+        self.assertEqual(self.fix("    ports:\n    - '127.0.0.1:6001:5432'\n    expose:\n    - '5432'\n"), local)
+        self.assertEqual(self.fix('    ports:\n    - target: 5432\n      published: 6001\n'),
+                         self.unread('an entry other than - [<address>:]<port>:5432'))
+        self.assertEqual(self.fix("    ports:  # published\n\n      # the database\n      - '${DB_PORT}:5432'\n"),
+                         self.unread('an entry other than - [<address>:]<port>:5432'))
         # No entry names the container's port: nothing is published to 5432.
         self.assertEqual(self.fix('    environment:\n      POSTGRES_DB: postgres\n'),
                          other.format(conf=self.conf, compose=self.compose, service='no port published to 5432 found'))

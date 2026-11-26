@@ -115,7 +115,8 @@ flag that answers each), `--answer <id>=<value>` or `--answers <file.json>` answ
 asks in advance about what would fail later (python-ldap 3.4.0 against OpenLDAP 2.6, module
 requirements missing or conflicting with Odoo's pins; uv 0.13 gets `UV_LEGACY_TAR_BACKEND=1`). Without a
 terminal an unanswered question is listed in the plan and `--apply` refuses, naming its flag.
-`oasis status --json` says what is ready, what is missing and the next oasis command.
+`oasis status --json` says what is ready, what is missing and the next command to run (an oasis
+command, or the `docker compose ... up -d --wait` that starts the database service).
 [Docs →](docs/setup.md#questions-and-answers)
 
 ### Checkouts and worktrees

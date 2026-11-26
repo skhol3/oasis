@@ -11,12 +11,17 @@ setup asks about each problem in its plan instead of failing at --apply (docs/se
 - external_dependencies: each python requirement a module manifest of the checkout declares that the
   requirements do not list (missing), or that an Odoo pin does not satisfy (conflict). Import names that
   name another distribution (ldap: python-ldap, ...) are translated, and standard library modules skipped.
+  A missing entry is known to name its distribution when it is translated, is a name DISTRIBUTION_NAMES lists,
+  or has a `-` (no import name has one); any other may be only an import name (cv2 is opencv-python's), which
+  setup never proposes as a distribution: its question has no recommended answer.
 
 Requirement lines are read as pip reads them closely enough for pins: `name[extras] <clauses> ; marker`,
 comments and options (-r, -c, --...) left out; a marker is evaluated for python_version, python_full_version,
 sys_platform and platform_system joined by `and` (any other marker counts as applying). Versions compare
 numerically; one that is not numbers and dots is never reported.
 """
+from __future__ import annotations
+
 import ast
 import re
 import shutil
@@ -25,7 +30,7 @@ import sys
 from pathlib import Path
 
 REQUIREMENT = re.compile(r'([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*(.*)')
-CLAUSE = re.compile(r'(===|==|>=|<=|~=|!=|>|<)\s*([0-9][0-9.]*(?:\.\*)?)')
+CLAUSE = re.compile(r'(===|==|>=|<=|~=|!=|>|<)\s*([0-9]+(?:\.[0-9]+)*(?:\.\*)?)')
 MARKER = re.compile(r'''(python_version|python_full_version|sys_platform|platform_system)\s*(==|!=|>=|<=|>|<)\s*'''
                     r'''['"]([^'"]*)['"]''')
 # Import names that external_dependencies may list for a distribution of another name.
@@ -34,6 +39,13 @@ DISTRIBUTIONS = {'ldap': 'python-ldap', 'dateutil': 'python-dateutil', 'yaml': '
                  'crypto': 'pycryptodome', 'magic': 'python-magic', 'stdnum': 'python-stdnum',
                  'docx': 'python-docx', 'barcode': 'python-barcode', 'slugify': 'python-slugify',
                  'bs4': 'beautifulsoup4', 'sklearn': 'scikit-learn', 'git': 'gitpython'}
+# Import names that are also the name of their distribution, normalized: a missing one is proposed as written.
+DISTRIBUTION_NAMES = frozenset((
+    'babel', 'boto3', 'cryptography', 'docutils', 'freezegun', 'geopy', 'html2text', 'jinja2', 'lxml', 'markdown',
+    'mock', 'num2words', 'numpy', 'ofxparse', 'openpyxl', 'pandas', 'paramiko', 'passlib', 'pdf2image',
+    'phonenumbers', 'polib', 'psutil', 'psycopg2', 'pycountry', 'pyotp', 'pypdf', 'pypdf2', 'pysftp', 'pytz',
+    'pyzbar', 'qrcode', 'reportlab', 'requests', 'shapely', 'simplejson', 'unidecode', 'validators', 'vobject',
+    'werkzeug', 'xlrd', 'xlsxwriter', 'xlwt', 'xmltodict', 'zeep'))
 
 
 def normalized(name: str) -> str:
@@ -181,7 +193,8 @@ def module_requirements(roots: list[Path]) -> list[tuple[str, str]]:
 
 def requirement_problems(entries, found: dict) -> list[dict]:
     """The missing or conflicting module requirements (module_requirements) against found (pins), one per
-    distribution, in order: {id, module, entry, kind: missing|conflict, pin, proposal}."""
+    distribution, in order: {id, module, name, entry, kind: missing|conflict, known, pin, proposal}; known says
+    whether name is known to be its distribution's (a conflict's always is: a requirement pins it)."""
     problems, seen = [], set()
     for module, entry in entries:
         parsed = requirement(entry)
@@ -189,13 +202,16 @@ def requirement_problems(entries, found: dict) -> list[dict]:
             continue
         name = DISTRIBUTIONS.get(parsed[0].lower(), parsed[0])
         key = normalized(name)
+        known = (parsed[0].lower() in DISTRIBUTIONS or key in DISTRIBUTION_NAMES or '-' in name
+                 or key in {normalized(value) for value in DISTRIBUTIONS.values()})
         if key in seen:
             continue
         seen.add(key)
         listed = found.get(key)
         if not listed:
-            problems.append({'id': f'requirement:{key}', 'module': module, 'entry': f'{name}{entry[len(parsed[0]):]}'
-                             .partition(';')[0].strip(), 'kind': 'missing', 'pin': None, 'proposal': None})
+            problems.append({'id': f'requirement:{key}', 'module': module, 'name': name,
+                             'entry': f'{name}{entry[len(parsed[0]):]}'.partition(';')[0].strip(), 'kind': 'missing',
+                             'known': known, 'pin': None, 'proposal': None})
             continue
         for line, clauses in listed:
             exact = [value for operator, value in clauses if operator in ('==', '===')]
@@ -205,7 +221,7 @@ def requirement_problems(entries, found: dict) -> list[dict]:
                 lowest = next((value for operator, value in parsed[1] if operator in ('>=', '==', '~=')
                                and version(value)), None)
                 proposal = f'{name}=={lowest}' if lowest else f'{name}{entry[len(parsed[0]):]}'.partition(';')[0]
-                problems.append({'id': f'requirement:{key}', 'module': module, 'entry': entry, 'kind': 'conflict',
-                                 'pin': line, 'proposal': proposal.strip()})
+                problems.append({'id': f'requirement:{key}', 'module': module, 'name': name, 'entry': entry,
+                                 'kind': 'conflict', 'known': True, 'pin': line, 'proposal': proposal.strip()})
                 break
     return problems

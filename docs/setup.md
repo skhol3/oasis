@@ -130,7 +130,7 @@ question has an id that `--answer <id>=<value>` (repeatable) or `--answers <file
   `ERROR: open question <id>: ...` line per open question, then `ERROR: nothing changed: answer the open
   questions, then run oasis setup --apply again.` (exit 2).
 - On a terminal, a question of an anticipated problem is asked like the others: Enter takes the
-  recommended answer; an answer that is not an option is asked again.
+  recommended answer (a question without one asks again); an answer that is not an option is asked again.
 - `init-dev-database` needs no terminal either: on one it asks each password with the echo off (Enter
   generates one), otherwise it generates them ([Development database](dev-database.md)).
 
@@ -210,7 +210,12 @@ environment's Python on Linux. Import names of another distribution are translat
 `python-ldap`, `dateutil` `python-dateutil`, ...) and standard library modules skipped.
 
 - Missing (no requirement names it): `requirement:<name>`, `add` (recommended: below a comment in the new
-  `runtime.in`; setup never edits the project's `requirements-extra.txt`) or `skip`.
+  `runtime.in`; setup never edits the project's `requirements-extra.txt`) or `skip`. A name setup does not
+  know as the name of its distribution (not translated, not one of the common names `tools/known_problems.py`
+  lists, and without a `-`) may be only the module it imports, such as `cv2` (`opencv-python`): its question
+  has no recommended answer (`(no recommended answer)`, `"recommended": null`; on a terminal Enter is not an
+  answer). `add` writes it as written; `skip` leaves it out, and the distribution that provides it is yours
+  to add to the project's requirements.
 - Conflicting (an exact pin that does not satisfy it, such as `cryptography>=3.3.1` against Odoo 15.0's
   `cryptography==2.6.1`): `requirement:<name>`, `override` (recommended: the lowest version it accepts,
   `cryptography==3.3.1`, in a new `overrides.txt`) or `skip`.
@@ -642,8 +647,9 @@ logs, errors).
   account gets `correct that account on that server, or set db_host = 127.0.0.1 and the db_port <compose
   file> publishes in <odoo.conf>` instead: recreating the local volume would not change it. oasis reads the
   published port only from short entries such as `- '127.0.0.1:6001:5432'`; when the compose file cannot
-  be read, publishes several ports to 5432, or has another entry for it (the long syntax `target: 5432`, a
-  variable such as `${DB_PORT:-6001}:5432`, a range, no host port), the fix says that oasis could not read
+  be read, publishes several ports to 5432, or has another entry for it under `ports:` (the long syntax
+  `target: 5432`, a variable such as `${DB_PORT:-6001}:5432`, a range, no host port; `expose:`,
+  `environment:` and other keys are not port entries), the fix says that oasis could not read
   the port (`it cannot be read`, `several ports` or `an entry other than - [<address>:]<port>:5432`) and
   names both: the recreate if that server is the compose service, correcting the account if it is not.
 - `recreate-database-volume` prints the plan, then runs `docker compose -p <compose project> down -v`:

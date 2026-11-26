@@ -55,9 +55,11 @@ EMPTY_VALUES = ('', '""', "''", '~', 'null')
 # (the long syntax, ranges, variables) is not read; no YAML parser is used.
 PUBLISHED_PORT = re.compile(r'''\s*-\s*(["']?)(?:(?:[0-9]{1,3}(?:\.[0-9]{1,3}){3}|localhost|\[[0-9A-Fa-f:]*\]):)?'''
                             r'''([0-9]{1,5}):5432(?:/tcp)?\1\s*(?:#.*)?''')
-# Any other line that names the container's PostgreSQL port as a port entry: a list entry (a variable, a range,
-# no host port) or a key of the long syntax (`target: 5432`). The port it publishes cannot be read from it.
+# Any other line under a `ports:` key (port_entries) that names the container's PostgreSQL port as a port entry:
+# a list entry (a variable, a range, no host port) or a key of the long syntax (`target: 5432`). The port it
+# publishes cannot be read from it. Lines under other keys (expose:, environment:) are not port entries.
 OTHER_PORT_ENTRY = re.compile(r'''\s*(?:-\s*(?:target\s*:\s*)?|target\s*:\s*)\S*5432(?![0-9]).*''')
+PORTS_KEY = re.compile(r'''(\s*)(?:ports|"ports"|'ports')\s*:\s*(?:#.*)?''')
 UNREAD_ENTRY = 'an entry other than - [<address>:]<port>:5432'
 # The hosts that reach the port the compose service publishes on 127.0.0.1.
 LOCAL_HOSTS = ('127.0.0.1', 'localhost')
@@ -312,14 +314,34 @@ def published_port(compose):
     return ports.pop() if len(ports) == 1 else None
 
 
+def port_entries(lines):
+    """The lines of the block of each `ports:` key of lines (block style, read by indentation as YAML does): those
+    indented deeper than the key, and its `- ` items at the key's own indentation; blank and comment lines
+    included. No YAML parser is used."""
+    entries, indent = [], None
+    for line in lines:
+        stripped = line.strip()
+        if indent is not None and stripped and not stripped.startswith('#'):
+            width = len(line) - len(line.lstrip())
+            if width < indent or (width == indent and not stripped.startswith('-')):
+                indent = None
+        if indent is not None:
+            entries.append(line)
+            continue
+        key = PORTS_KEY.fullmatch(line)
+        if key is not None:
+            indent = len(key.group(1))
+    return entries
+
+
 def port_mapping(compose):
     """(the one host port the compose file publishes to 5432 or None, why that port cannot be read or None): no
     reason with no port means no entry names 5432; a reason means the file cannot be read, it publishes several
-    ports, or an entry is not one PUBLISHED_PORT reads (OTHER_PORT_ENTRY)."""
+    ports, or an entry under ports: is not one PUBLISHED_PORT reads (OTHER_PORT_ENTRY)."""
     lines = compose_lines(compose)
     if lines is None:
         return None, 'it cannot be read'
-    if any(OTHER_PORT_ENTRY.fullmatch(line) and not PUBLISHED_PORT.fullmatch(line) for line in lines):
+    if any(OTHER_PORT_ENTRY.fullmatch(line) and not PUBLISHED_PORT.fullmatch(line) for line in port_entries(lines)):
         return None, UNREAD_ENTRY
     ports = published_ports(lines)
     if len(ports) > 1:

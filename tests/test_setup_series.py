@@ -12,6 +12,7 @@ ceiling at the scratch directory, the machine file is a scratch XDG_CONFIG_HOME'
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import hashlib
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
@@ -260,6 +261,42 @@ class SeriesSetupTests(unittest.TestCase):
         # A free port, and not the one the 19.0 series' files use (nothing listens there in this test).
         self.assertNotEqual(port, self.port19)
         self.assertTrue(5432 <= port < 5532)
+        self.assertEqual(self.tree(), before)
+        self.assertFalse(self.log.exists())
+
+    def test_the_json_plan_of_a_new_section_says_where_each_value_came_from(self):
+        # v0.16.0 S3: the same plan as one JSON object, the series section's values with their origin.
+        self.workspace.write_text(V1)
+        before = self.tree()
+        arguments = ('--plan', '--json', '--community', str(self.source15), '--no-enterprise', '--exception',
+                     'report_xlsx')
+        result = self.setup_cmd(*arguments)
+        self.assertEqual((result.returncode, result.stderr, result.stdout.count('\n')), (0, '', 1), result.stdout)
+        plan = json.loads(result.stdout)
+        port = plan['inferred']['db_port']['value']
+        environment = self.project / 'environments/cc-15.0'
+        self.assertEqual(plan['inferred'], {
+            'checkout': {'value': str(self.checkout), 'origin': 'main'},
+            'workspace': {'value': str(self.project), 'origin': 'existing'},
+            'series': {'value': '15.0', 'origin': 'from the module manifests'},
+            'community': {'value': str(self.source15), 'origin': 'from --community'},
+            'enterprise': {'value': None, 'origin': 'from --no-enterprise'},
+            'db_port': {'value': port, 'origin': 'a free port'},
+            'environment': {'value': str(environment), 'origin': 'new'},
+            'python': {'value': PYTHON_15, 'origin': 'the default of Odoo 15.0'}})
+        self.assertEqual((plan['complete'], plan['ready_to_apply'], plan['open']), (True, True, []))
+        self.assertEqual(plan['lines'], self.new_plan(port).splitlines())
+        self.assertEqual([(question['id'], question['answer'], question['origin']) for question in plan['questions']],
+                         [('environment', 'create', 'recommended (no terminal)'),
+                          ('python', PYTHON_15, 'recommended (no terminal)')])
+        self.assertEqual(plan['changes'][:2], [
+            {'kind': 'extend', 'path': str(self.machine), 'summary': f'add [series."15.0"] to {self.machine}'},
+            {'kind': 'extend', 'path': str(self.workspace),
+             'summary': f'change workspace_version = 1 to workspace_version = 2 in {self.workspace} (that line only)'}])
+        # --python gives the new environment's Python, and says so.
+        chosen = json.loads(self.setup_cmd(*arguments, '--python', '3.8').stdout)
+        self.assertEqual((chosen['inferred']['python'], chosen['inferred']['environment']['origin']),
+                         ({'value': '3.8', 'origin': 'from --python'}, 'new'))
         self.assertEqual(self.tree(), before)
         self.assertFalse(self.log.exists())
 

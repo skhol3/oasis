@@ -68,6 +68,20 @@ class StatusJsonTests(unittest.TestCase):
         self.assertEqual((human.returncode, human.stdout), (2, ''))
         self.assertTrue(human.stderr.startswith('ERROR: Missing tooling configuration'))
 
+    def test_the_json_status_runs_isolated_from_python_variables(self):
+        # tools/status runs status_json.py as tools/doctor runs doctor.py (python3 -I -B): a module that
+        # PYTHONPATH plants is not imported. tools/status is run directly, so the launcher's own Python is unaffected.
+        planted = self.scratch / 'planted'
+        planted.mkdir()
+        (planted / 'json.py').write_text('raise ImportError("planted json")\n')
+        env = {**self.env, 'PYTHONPATH': str(planted), 'OASIS_PROJECT_ROOT': str(self.checkout),
+               'ODOO19_PROJECT_ROOT': str(self.checkout), 'OASIS_ENTRYPOINT': str(CLI), 'ODOO19_ENTRYPOINT': str(CLI)}
+        result = subprocess.run(['/bin/bash', str(ROOT / 'tools/status'), '--json'], capture_output=True, text=True,
+                                env=env, stdin=subprocess.DEVNULL)
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(json.loads(result.stdout)['project'], str(self.checkout))
+        self.assertEqual(result.stdout, self.status('--json').stdout)
+
     def test_a_configured_checkout_reports_each_step_and_the_next_command(self):
         applied = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
         self.assertEqual(applied.returncode, 0, applied.stderr)

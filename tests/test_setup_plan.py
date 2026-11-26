@@ -285,6 +285,135 @@ class PlanJsonTests(unittest.TestCase):
         self.assertTrue(stdout.endswith(DRY_RUN), stdout)
         self.assertEqual(self.tree(), before)
 
+    def test_an_import_name_setup_does_not_know_gets_no_recommended_answer(self):
+        # cv2 is the module opencv-python provides: setup never proposes an import name as a distribution.
+        self.module('shop_vision', "{'name': 'Shop Vision', 'version': '19.0.1.0.0', 'depends': ['sale'],\n"
+                                   " 'external_dependencies': {'python': ['cv2', 'yaml']}}\n")
+        before = self.tree()
+        runtime = self.checkout / '.oasis/config/requirements/runtime.in'
+        flags = ('--community', str(self.source), '--no-enterprise')
+        plan = self.json_plan(*flags)
+        self.assertEqual((plan['open'], plan['ready_to_apply']), (['requirement:cv2', 'requirement:pyyaml'], False))
+        questions = {question['id']: question for question in plan['questions']}
+        cv2 = {'id': 'requirement:cv2',
+               'text': ('The module shop_vision requires cv2 (external_dependencies), which no requirement of '
+                        f'{runtime} lists, and setup cannot tell whether cv2 is the name of its distribution or only '
+                        'the module it imports: add cv2 there as written?'),
+               'options': [{'value': 'add', 'label': 'add cv2 to runtime.in: cv2 is the name of its distribution'},
+                           {'value': 'skip', 'label': 'leave it out: add the distribution that provides cv2 to the '
+                                                      'requirements yourself, or the module will not install'}],
+               'recommended': None, 'flag': '--answer requirement:cv2=<add|skip>', 'answer': None, 'origin': None}
+        self.assertEqual(questions['requirement:cv2'], cv2)
+        # A translated import name keeps its recommended answer.
+        self.assertEqual((questions['requirement:pyyaml']['recommended'], questions['requirement:pyyaml']['options'][0]),
+                         ('add', {'value': 'add', 'label': 'add pyyaml to runtime.in'}))
+        text = self.setup_cmd(*flags)
+        self.assertEqual(text.returncode, 0)
+        self.assertIn(f'open question requirement:cv2: {cv2["text"]} Answer with --answer requirement:cv2=<add|skip> '
+                      '(no recommended answer).\n', text.stdout)
+        refused = self.setup_cmd('--apply', *flags, '--answer', 'requirement:pyyaml=add')
+        self.assertEqual((refused.returncode, refused.stdout), (2, ''))
+        self.assertTrue(refused.stderr.startswith(
+            f'ERROR: open question requirement:cv2: {cv2["text"]} Answer with --answer requirement:cv2=<add|skip> '
+            '(no recommended answer).\n'), refused.stderr)
+        self.assertEqual(self.tree(), before)
+        # add writes it as written, as the answer says; skip leaves it out of runtime.in.
+        added = self.setup_cmd(*flags, '--answer', 'requirement:cv2=add', '--answer', 'requirement:pyyaml=add')
+        self.assertIn(f'create {runtime}: -r {self.source}/requirements.txt, cv2, pyyaml\n', added.stdout)
+        applied = self.setup_cmd('--apply', *flags, '--answer', 'requirement:cv2=skip', '--answer',
+                                 'requirement:pyyaml=add')
+        self.assertEqual((applied.returncode, applied.stderr), (0, ''), applied.stdout)
+        self.assertIn(f'create {runtime}: -r {self.source}/requirements.txt, pyyaml\n', applied.stdout)
+        self.assertTrue(runtime.read_text().endswith(
+            '# The module shop_vision requires it (external_dependencies).\npyyaml\n'))
+        self.assertNotIn('cv2', runtime.read_text())
+
+    def test_on_a_terminal_a_question_without_a_recommended_answer_needs_one(self):
+        self.module('shop_vision', "{'name': 'Shop Vision', 'version': '19.0.1.0.0',\n"
+                                   " 'external_dependencies': {'python': ['cv2']}}\n")
+        before = self.tree()
+        status, stdout, terminal = on_terminal(
+            ['--project', str(self.checkout), 'setup', '--community', str(self.source), '--no-enterprise',
+             '--python', '3.12'],
+            self.env, self.scratch, [('as written? (add/skip): ', b'\n'), ('Answer add or skip.\n', b'skip\n')])
+        self.assertEqual(status, 0, terminal)
+        self.assertNotIn('Enter', terminal)
+        runtime = self.checkout / '.oasis/config/requirements/runtime.in'
+        self.assertIn(f'create {runtime}: -r {self.source}/requirements.txt\n', stdout)
+        self.assertTrue(stdout.endswith(DRY_RUN), stdout)
+        self.assertEqual(self.tree(), before)
+
+    def test_a_kept_overrides_file_is_never_edited_python_ldap_gets_a_warning_and_a_conflict_no_question(self):
+        self.use_15()
+        requirements = self.checkout / '.oasis/config/requirements'
+        requirements.mkdir(parents=True)
+        overrides = requirements / 'overrides.txt'
+        overrides.write_text('# mine\n')
+        flags = ('--community', str(self.source), '--no-enterprise')
+        before = self.tree()
+        plan = self.json_plan(*flags)
+        self.assertEqual(plan['open'], ['requirement:phonenumbers'])
+        self.assertEqual([question['id'] for question in plan['questions'] if question['answer'] is None],
+                         ['requirement:phonenumbers'])
+        warning = ("WARN: Odoo 15.0 pins python-ldap==3.4.0, which does not build against this machine's OpenLDAP "
+                   f'2.6.8 (no libldap_r): add python-ldap==3.4.4 to {overrides} yourself (setup keeps that file)')
+        self.assertIn(warning, plan['lines'])
+        self.assertIn(f'kept {overrides}', plan['lines'])
+        self.assertEqual(self.tree(), before)
+        for question in ('python_ldap', 'requirement:cryptography'):
+            with self.subTest(question=question):
+                self.assert_refused(self.setup_cmd(*flags, '--answer', f'{question}=yes'),
+                                    f'--answer: setup does not ask {question} for this checkout; nothing changed: '
+                                    'drop it.', before)
+        applied = self.setup_cmd('--apply', *flags, '--answer', 'requirement:phonenumbers=add')
+        self.assertEqual((applied.returncode, applied.stderr), (0, ''), applied.stdout)
+        self.assertIn(warning + '\n', applied.stdout)
+        self.assertEqual(overrides.read_text(), '# mine\n')
+        self.assertTrue((requirements / 'runtime.in').read_text().endswith('phonenumbers\n'))
+
+    def test_the_json_plan_of_an_existing_workspace_says_what_it_keeps_and_where_it_came_from(self):
+        applied = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        before = self.tree()
+        plan = self.json_plan()
+        config = self.checkout / '.oasis/config'
+        self.assertEqual(plan['inferred'], {
+            'checkout': {'value': str(self.checkout), 'origin': 'main'},
+            'workspace': {'value': str(self.checkout), 'origin': 'existing'},
+            'series': {'value': '19.0', 'origin': 'from the workspace file'},
+            'db_port': {'value': self.port_of(applied.stdout), 'origin': f'from {config / "odoo.conf"}'},
+            'environment': {'value': str(self.checkout / '.oasis/venv'), 'origin': 'existing'},
+            'python': {'value': '3.12', 'origin': 'from the workspace file'}})
+        self.assertEqual({key: plan[key] for key in ('complete', 'ready_to_apply', 'open', 'questions', 'changes')},
+                         {'complete': True, 'ready_to_apply': True, 'open': [], 'questions': [], 'changes': []})
+        text = self.setup_cmd()
+        self.assertEqual((text.returncode, text.stderr), (0, ''))
+        self.assertEqual(plan['lines'], text.stdout.splitlines()[:len(plan['lines'])])
+        self.assertEqual(plan['lines'][-1], f'kept the environment {self.checkout / ".oasis/venv"}')
+        self.assertEqual(self.tree(), before)
+
+    def test_an_environment_answer_adopts_it_as_environment_does(self):
+        environment = test_setup.SetupTests.existing_environment(self, 'shop', '3.12.3')
+        flags = ('--community', str(self.source), '--no-enterprise')
+        before = self.tree()
+        answered = self.json_plan(*flags, '--answer', f'environment={environment}')
+        given = self.json_plan(*flags, '--environment', str(environment))
+        self.assertEqual(answered, given)
+        self.assertEqual((answered['inferred']['environment'], answered['inferred']['python']),
+                         ({'value': str(environment), 'origin': 'from --environment'},
+                          {'value': '3.12', 'origin': 'from the adopted environment'}))
+        self.assertEqual(answered['lines'][-1], f'adopt the environment {environment} (from --environment): Python 3.12 '
+                                                '(its pyvenv.cfg); setup never creates, syncs or deletes it')
+        self.assertEqual(self.setup_cmd(*flags, '--answer', f'environment={environment}').stdout,
+                         self.setup_cmd(*flags, '--environment', str(environment)).stdout)
+        self.assert_refused(self.setup_cmd(*flags, '--environment', str(environment), '--answer',
+                                           f'environment={environment}'),
+                            'The question environment is answered twice: by --environment and by --answer.', before)
+        self.assert_refused(self.setup_cmd(*flags, '--answer', f'environment={self.scratch / "none"}'),
+                            '--environment requires an absolute existing directory.',
+                            before)
+        self.assertFalse((self.scratch / 'python-ran').exists())
+
     def test_json_never_applies_and_help_names_the_new_options(self):
         result = self.setup_cmd('--apply', '--json')
         self.assertEqual(result.returncode, 2)

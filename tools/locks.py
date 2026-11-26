@@ -20,8 +20,8 @@ the same code here (compile), which then writes lock.sha256.
   locks.py compile <requirements dir> <python> <command to rerun>
       Runs `uv pip compile --python-version <python> <input> -o <lock>` in that directory for
       runtime.in, then dev.in (dev.in constrains itself with -c runtime.txt; uv's echo of the lock is
-      dropped), then fingerprint. A failed compile stops before lock.sha256 (exit 2), naming the
-      input and the command to run again.
+      dropped; its messages pass through to stderr as uv writes them), then fingerprint. A failed
+      compile stops before lock.sha256 (exit 2), naming the input and the command to run again.
   locks.py recorded <requirements dir> <project root>
       Exit 0 when overrides.txt does not exist or lock.sha256 records it, else 1: bootstrap and
       check-environment add it to `sha256sum --check`, which cannot see a file lock.sha256 omits.
@@ -40,7 +40,10 @@ get `--override overrides.txt` (uv replaces the requirements it names, nested -r
 lock.sha256 records it, so adding, changing or removing it makes the locks stale. Without it every
 command does exactly what it did before. No command ever writes an input (.in or overrides.txt) file.
 """
+import codecs
 import hashlib
+import io
+import locale
 import os
 import re
 import subprocess
@@ -149,20 +152,38 @@ def uv_environment(base=None):
     return env
 
 
+def streamed(command, **options):
+    """(exit status, stderr) of command, its stderr passed on to ours as it comes (tee), decoded as text mode
+    decodes it (the locale's encoding, undecodable bytes replaced, line ends translated)."""
+    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, **options)
+    decoder = io.IncrementalNewlineDecoder(codecs.getincrementaldecoder(locale.getpreferredencoding(False))(
+        errors='replace'), translate=True)
+    received = []
+    with process.stderr:
+        while True:
+            chunk = os.read(process.stderr.fileno(), 65536)
+            text = decoder.decode(chunk, final=not chunk)
+            if text:
+                received.append(text)
+                sys.stderr.write(text)
+                sys.stderr.flush()
+            if not chunk:
+                break
+    return process.wait(), ''.join(received)
+
+
 def compile_locks(requirements, python, rerun):
     """Compile runtime.txt, then dev.txt, then fingerprint; 0, or 2 after a failed compile (the message
-    names the input and rerun, the command to run again). uv's messages pass through to stderr."""
+    names the input and rerun, the command to run again). uv's messages pass through to stderr as uv writes
+    them."""
     override = ['--override', OVERRIDES] if (requirements / OVERRIDES).is_file() else []
     env = uv_environment({**os.environ, 'PWD': str(requirements)})
     for source, lock in zip(INPUTS, LOCKS):
         try:
-            result = subprocess.run(['uv', 'pip', 'compile', '--python-version', python, *override, source, '-o', lock],
-                                    cwd=requirements, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
-                                    errors='replace', env=env)
-            status, errors = result.returncode, result.stderr
+            status, errors = streamed(['uv', 'pip', 'compile', '--python-version', python, *override, source, '-o',
+                                       lock], cwd=requirements, env=env)
         except OSError:
             status, errors = 127, ''
-        sys.stderr.write(errors)
         if status != 0:
             if INVALID_TAR not in errors:
                 remedy = f'Fix {requirements / source} or its access to the package index, then run {rerun} again.'
