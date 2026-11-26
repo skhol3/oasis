@@ -11,6 +11,11 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Added
 
+- `oasis setup --workspace <dir>` moves a workspace that setup created in the clone to a directory above
+  it: the workspace file (relative paths rewritten), `.oasis/` and the clone's exclude entries; verified
+  once moved, every change undone on failure.
+- `oasis setup` in a linked worktree whose directory name gives a checkout slug over 20 characters writes
+  its `oasis-checkout.toml` with `checkout_slug` cut to 20 (`_<n>` when another checkout uses it).
 - `oasis setup --plan --json` (also `setup --json`): the plan as one JSON object (inferred values and their
   origin, changes, questions with options, the recommended answer and the flag; never a password); `--json`
   with `--apply` is a usage error (docs/setup.md#the-plan-as-json).
@@ -48,6 +53,12 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- `oasis setup` in a clone at `<project>/code/<repo>` or `<project>/codigo/<repo>` puts a new workspace in
+  `<project>` (the new question `workspace`; its recommended answer applies without a terminal);
+  `--workspace <clone>` keeps the old default.
+- Modules whose manifest declares another series are the setup question `series_exceptions` (`add` writes
+  a `[series."<x.y>"]` section and makes the file `workspace_version = 2`; `no` refuses as before), in a
+  new workspace, an existing one or a new series section.
 - `/oasis setup` (Gentle Shell) shows the workspace status (`oasis status --json`) and the `oasis setup`
   plan of the checkout (changes and open questions; never applied), installs the subagent overlay without
   asking and says what it did.

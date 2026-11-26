@@ -110,6 +110,8 @@ question has an id that `--answer <id>=<value>` (repeatable) or `--answers <file
 | `enterprise` | an absolute directory, or `none` | `--enterprise <dir>`, `--no-enterprise` |
 | `environment` | `create`, or the absolute directory of an existing environment | `--environment <dir>` |
 | `python` | `<x.y>` | `--python <x.y>` |
+| `workspace` | the project folder or the clone (the options it lists) | `--workspace <dir>` ([Where the files go](#where-the-files-go)) |
+| `series_exceptions` | `add` or `no` | [Modules of another series](#modules-of-another-series) |
 | `python_ldap` | `yes` or `no` | [python-ldap and OpenLDAP 2.6](#python-ldap-and-openldap-26) |
 | `requirement:<name>` | `add`, `override` or `skip` (the options it lists) | [Module requirements](#module-requirements) |
 
@@ -267,6 +269,24 @@ set, pin a version of that package that has a wheel in `overrides.txt`.
   ignores them, so no directory layout is imposed and nothing new shows in `git status`. The
   environment goes to `<environments>/<name>` instead when the machine file's entry sets
   `environments`.
+- A clone at `<project>/code/<repo>` or `<project>/codigo/<repo>`, whose `<project>` holds none of
+  `.git`, `oasis-checkout.toml`, a [legacy profile](migrating.md), `__manifest__.py` or `odoo-bin` (and is yours), is
+  different: the question `workspace` recommends `<project>` and offers the clone. Without a terminal the
+  recommended answer applies (as for the environment), so the workspace file and `config/`, `data/`,
+  `logs/` and `venv/` go to `<project>`, and nothing is excluded in the clone; the plan says so
+  (`workspace: <project> (new; the project folder above code/; --workspace <clone> keeps it in the
+  clone)`). On a terminal Enter takes `<project>`, and typing the clone's path keeps the default.
+  `--workspace <clone>` (or `--answer workspace=<clone>`) keeps the workspace in the clone.
+- A workspace that setup created in the clone (`oasis-workspace.toml` at the checkout's root) moves with
+  `--workspace <dir>` above the checkout: the plan moves the file to `<dir>` (its relative paths outside
+  `.oasis/` rewritten so they still resolve, listed in the plan line), `.oasis/` to `<dir>/.oasis/`
+  whole (one rename, on the same file system), and removes `/oasis-workspace.toml` and `/.oasis/` from
+  the clone's `.git/info/exclude`. `--apply` verifies that the checkout loads its configuration from
+  the moved file; any failure undoes every change (`ERROR: Could not set up: <reason>; every change was
+  undone.`). It is refused when `<dir>` already holds `oasis-workspace.toml` or `.oasis`, or when git
+  tracks the workspace file (`Refusing to move <file>: git tracks it; move it yourself.`). Nothing else is
+  created: run `setup` again to fill what is missing. The environment keeps working through its
+  `bin/python`; its console scripts still name the old path, so recreate it if you use them.
 - `--workspace <dir>` puts the workspace file in `<dir>` instead, an absolute existing directory at
   or above the checkout (`Refusing --workspace <dir>: it is not at or above the checkout <checkout>.`),
   with `config/`, `data/`, `logs/` and `venv/` directly under it, as in the
@@ -274,14 +294,39 @@ set, pin a version of that package that has a wheel in `overrides.txt`.
   group or others ([Trust](workspace-file.md#trust)).
 - With a workspace file at or above the checkout (or found through git), that file is adopted: its
   paths decide where everything goes and only the missing pieces are created. The options that
-  answer a new configuration (`--series`, `--name`, `--workspace`, and the source options when the
-  configuration already has a source) are then refused (`<option>: <checkout> is already configured
+  answer a new configuration (`--series`, `--name`, `--workspace` but for the move above, and the
+  source options when the configuration already has a source) are then refused (`<option>: <checkout> is already configured
   by <file>; setup only fills what is missing.`). A workspace file without a source gets the machine
   file entry. A checkout that still has the legacy profile is refused before setup runs: run
   [migrate](migrating.md) first. A checkout of another series than the file configures gets a
   section instead ([Another Odoo series](#another-odoo-series)). `--exception` and `--config-dir` apply
   only then; without a workspace file they are refused (`<option>: <checkout> has no workspace file; it
   only applies when setup adds a [series."<x.y>"] section to one.`).
+
+## Modules of another series
+
+In any checkout (a new workspace, an existing one, or a new series section), modules whose manifest
+declares another series than the checkout's are the question `series_exceptions` (v0.16.0): `The
+modules <module> (Odoo <x.y>), ... of <checkout> declare another Odoo series than <series>: list them in
+series_exceptions under [series."<series>"] in <workspace file>?`, answered `add` (recommended) or `no`
+with `--answer series_exceptions=<add|no>` or on a terminal. Without an answer it is an open question:
+the plan shows what `add` writes and `--apply` refuses. `add` writes a `[series."<series>"]` section with
+`series_exceptions = [...]`: a new workspace file is then `workspace_version = 2`, and an existing
+version 1 file has its `workspace_version` line changed to 2 (that line only) and the section appended;
+an existing section of that series is never edited (refused, naming the modules to add). `no` refuses
+with the series guard's message, as before.
+
+## The checkout slug of a long worktree name
+
+A linked worktree whose directory name gives a slug over 20 characters (`Cannot derive a checkout slug
+from the worktree directory name <name>: it gives <slug> (<n> characters), and a slug is 1 to 20
+lowercase letters, digits or underscores, starting with a letter or digit; ...`) gets one from setup,
+when it has no `checkout_slug`: the plan creates its `oasis-checkout.toml` with `[tooling]` and
+`checkout_slug` cut to 20 characters (`create <worktree>/oasis-checkout.toml: checkout_slug <slug> (the
+worktree directory name <name> gives <slug>, <n> characters; a slug has at most 20)`), with `_2`, `_3`,
+... when another checkout of the repository already uses it. A checkout file without `[tooling]`
+(only `odoo_version`) gets the table appended; one with `[tooling]` is never edited: refused, naming the
+line to add.
 
 ## Another Odoo series
 
@@ -292,10 +337,11 @@ that series' files, next to the other series and without touching them:
 - The checkout's series: `odoo_version` in its `oasis-checkout.toml`, else the series its module
   manifests declare, the modules of `--exception <module>` (repeatable) and of every section's
   `series_exceptions` left out. Manifests of several supported series are refused as before. A module
-  of another series that is not an exception is refused before any question: `The module <module>
-  declares Odoo 16.0 (version 16.0.2.0.2 in <manifest>), but <checkout> is an Odoo 15.0 checkout: pass
-  --exception <module> to list it in series_exceptions under [series."15.0"], or set its version to
-  15.0.x.y.z if it is an Odoo 15.0 module.`
+  of another series that is not an exception gets the question `series_exceptions` before any other
+  ([Modules of another series](#modules-of-another-series)); answered `no`, it is refused: `The module
+  <module> declares Odoo 16.0 (version 16.0.2.0.2 in <manifest>), but <checkout> is an Odoo 15.0
+  checkout: pass --exception <module> to list it in series_exceptions under [series."15.0"], or set its
+  version to 15.0.x.y.z if it is an Odoo 15.0 module.`
 - The machine file entry of the series, when it is missing, exactly as for a new checkout (`--community`,
   `--enterprise` or `--no-enterprise`, else a question). `--series`, `--name` and `--workspace` are refused.
 - The workspace file: `add [series."<x.y>"] to <file>:` shows the section, appended after a one-line
