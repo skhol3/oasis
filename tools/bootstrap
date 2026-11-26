@@ -87,6 +87,10 @@ if [[ "$mode" == "--preview" ]]; then
   exit 0
 fi
 printf 'mutation=isolated_project_virtualenv\n'
+# uv 0.13 and later read old source archives (V7 tar headers) only with UV_LEGACY_TAR_BACKEND=1: exported
+# for every uv command below when `uv --version` needs it and it is not set (tools/locks.py uv-env).
+uv_env=$(python3 -I -B "$(dirname "$0")/locks.py" uv-env)
+eval "$uv_env"
 # The snapshot of the packages before the sync goes to the checkout's log directory
 # (tools/log_dirs.py, created 0700), never under global tools; resolved before any change.
 snapshot_dir=$(server_log_path)

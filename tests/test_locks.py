@@ -36,7 +36,12 @@ class LocksTests(unittest.TestCase):
         `<lock>` for `pip compile ... -o <lock>` (with an echo on stdout, which compile drops)."""
         bindir = self.root.parent / 'bin'
         bindir.mkdir()
-        (bindir / 'uv').write_text('#!/bin/sh\nprintf "%s (in %s)\\n" "$*" "$PWD" >> "$FAKE_LOG"\n'
+        # `uv --version` prints FAKE_UV_VERSION (0.9.0 by default) and is not recorded; a compile records
+        # UV_LEGACY_TAR_BACKEND when it is set, and FAKE_STDERR makes it fail with that message.
+        (bindir / 'uv').write_text('#!/bin/sh\n'
+                                   'if [ "$1" = --version ]; then echo "uv ${FAKE_UV_VERSION:-0.9.0} (fake)"; exit 0; fi\n'
+                                   'printf "%s (in %s)%s\\n" "$*" "$PWD" "${UV_LEGACY_TAR_BACKEND:+ legacy}" >> "$FAKE_LOG"\n'
+                                   'if [ -n "${FAKE_STDERR:-}" ]; then echo "$FAKE_STDERR" >&2; exit 1; fi\n'
                                    'for last; do :; done\nprintf "# compiled\\n" > "$last"\necho "# echo of the lock"\n')
         (bindir / 'uv').chmod(0o755)
         return {'PATH': str(bindir), 'FAKE_LOG': str(self.root.parent / 'uv.log')}
@@ -99,7 +104,7 @@ class LocksTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr), (
             2, '', 'Usage: locks.py state <requirements dir> <project root> | '
                    'fingerprint <requirements dir> | compile <requirements dir> <python> <command to rerun> | '
-                   'recorded <requirements dir> <project root>\n'))
+                   'recorded <requirements dir> <project root> | uv-env\n'))
 
     # -- overrides.txt (v0.15.0 S7) -------------------------------------------------------------
 
@@ -195,6 +200,51 @@ class LocksTests(unittest.TestCase):
             f'Fix {self.requirements / "runtime.in"} or its access to the package index, then run oasis setup '
             '--apply again.\n')))
         self.assertEqual({path.name: path.read_bytes() for path in self.requirements.iterdir()}, before)
+
+    # -- old source archives (v0.16.0 S3, docs/setup.md#old-source-archives) ------------------------
+
+    def test_uv_0_13_and_later_compile_with_the_legacy_tar_backend(self):
+        env = self.fake_uv()
+        log = Path(env['FAKE_LOG'])
+        for version, mark in (('0.12.9', ''), ('0.13.0', ' legacy'), ('1.2.3', ' legacy')):
+            with self.subTest(version=version):
+                result = self.run_locks('compile', self.requirements, '3.9', 'oasis setup --apply',
+                                        env={**env, 'FAKE_UV_VERSION': version})
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+                self.assertEqual(log.read_text().splitlines(), [
+                    f'pip compile --python-version 3.9 runtime.in -o runtime.txt (in {self.requirements}){mark}',
+                    f'pip compile --python-version 3.9 dev.in -o dev.txt (in {self.requirements}){mark}'])
+                log.unlink()
+        # A value the caller set is kept, whatever the version.
+        result = self.run_locks('compile', self.requirements, '3.9', 'oasis setup --apply',
+                                env={**env, 'UV_LEGACY_TAR_BACKEND': '', 'FAKE_UV_VERSION': '0.13.0'})
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse(log.read_text().splitlines()[0].endswith(' legacy'))
+        exported = self.run_locks('uv-env', env={**env, 'FAKE_UV_VERSION': '0.13.0'})
+        self.assertEqual((exported.returncode, exported.stdout, exported.stderr),
+                         (0, 'export UV_LEGACY_TAR_BACKEND=1\n', ''))
+        quiet = self.run_locks('uv-env', env={**env, 'FAKE_UV_VERSION': '0.12.0'})
+        self.assertEqual((quiet.returncode, quiet.stdout, quiet.stderr), (0, '', ''))
+
+    def test_an_invalid_tar_identity_names_its_remedy(self):
+        env = {**self.fake_uv(), 'FAKE_STDERR': 'error: Failed to extract archive: PyPDF2-1.26.0.tar.gz: invalid tar '
+                                                'identity'}
+        self.write_lock()
+        before = {path.name: path.read_bytes() for path in self.requirements.iterdir()}
+        for version, remedy in (
+                ('0.12.0', 'uv could not read an old source archive (invalid tar identity): set UV_LEGACY_TAR_BACKEND=1 '
+                           '(docs/setup.md#old-source-archives), then run oasis setup --apply again.\n'),
+                ('0.13.2', 'uv could not read an old source archive (invalid tar identity) even with '
+                           f'UV_LEGACY_TAR_BACKEND=1: pin a version of that package with a wheel in '
+                           f'{self.requirements / "overrides.txt"} (uv pip compile --override), then run oasis setup '
+                           '--apply again.\n')):
+            with self.subTest(version=version):
+                result = self.run_locks('compile', self.requirements, '3.9', 'oasis setup --apply',
+                                        env={**env, 'FAKE_UV_VERSION': version})
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+                    f'{env["FAKE_STDERR"]}\nuv pip compile of runtime.in failed (exit 1); lock.sha256 was left as it '
+                    f'was.\n{remedy}')))
+                self.assertEqual({path.name: path.read_bytes() for path in self.requirements.iterdir()}, before)
 
     def test_current_accepts_what_sha256sum_check_accepts_from_either_base(self):
         spec = importlib.util.spec_from_file_location('oasis_locks_test', LOCKS)

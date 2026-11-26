@@ -25,6 +25,15 @@ the same code here (compile), which then writes lock.sha256.
   locks.py recorded <requirements dir> <project root>
       Exit 0 when overrides.txt does not exist or lock.sha256 records it, else 1: bootstrap and
       check-environment add it to `sha256sum --check`, which cannot see a file lock.sha256 omits.
+  locks.py uv-env
+      Prints `export UV_LEGACY_TAR_BACKEND=1` when the uv on PATH needs it (below), else nothing:
+      bootstrap evaluates it before its uv commands.
+
+Old source archives (v0.16.0 S3, docs/setup.md#old-source-archives): uv 0.13 and later refuse some
+old sdists (V7 tar headers, such as PyPDF2 1.26.0 of Odoo 15.0) with "invalid tar identity" unless
+UV_LEGACY_TAR_BACKEND=1. Every uv command of compile, setup and bootstrap gets that variable when
+`uv --version` reports 0.13 or later and the caller did not set it (a value set, even empty, is kept). A
+compile that still fails with that message names the remedy instead of the package index.
 
 overrides.txt (v0.15.0 S7) is an optional input next to runtime.in: when it exists, both compiles
 get `--override overrides.txt` (uv replaces the requirements it names, nested -r included), and
@@ -44,6 +53,11 @@ FILES = ('runtime.in', 'runtime.txt', 'dev.in', 'dev.txt')
 # The optional input of uv's --override (S7): fingerprinted after FILES, only when it exists.
 OVERRIDES = 'overrides.txt'
 FINGERPRINT = 'lock.sha256'
+LEGACY_TAR = 'UV_LEGACY_TAR_BACKEND'
+# The first uv release whose tar backend refuses V7 archives without LEGACY_TAR.
+LEGACY_TAR_FROM = (0, 13)
+INVALID_TAR = 'invalid tar identity'
+_UV_VERSION = []
 # sha256sum's line: the digest, a space, then a space (text) or '*' (binary), then the name.
 ENTRY = re.compile(r'([0-9a-fA-F]{64}) [ *](.+)')
 
@@ -114,20 +128,52 @@ def current(requirements, root):
             and overrides_recorded(requirements, root))
 
 
+def uv_version():
+    """(major, minor) of the uv on PATH (`uv --version`, run once), or None when it cannot be read."""
+    if not _UV_VERSION:
+        try:
+            output = subprocess.run(['uv', '--version'], capture_output=True, text=True, timeout=30, cwd='/',
+                                    stdin=subprocess.DEVNULL).stdout
+        except (OSError, subprocess.SubprocessError):
+            output = ''
+        match = re.match(r'uv ([0-9]+)\.([0-9]+)', output)
+        _UV_VERSION.append((int(match.group(1)), int(match.group(2))) if match else None)
+    return _UV_VERSION[0]
+
+
+def uv_environment(base=None):
+    """base (default: os.environ) with UV_LEGACY_TAR_BACKEND=1 when uv needs it and base does not set it."""
+    env = dict(os.environ if base is None else base)
+    if LEGACY_TAR not in env and (uv_version() or (0, 0)) >= LEGACY_TAR_FROM:
+        env[LEGACY_TAR] = '1'
+    return env
+
+
 def compile_locks(requirements, python, rerun):
     """Compile runtime.txt, then dev.txt, then fingerprint; 0, or 2 after a failed compile (the message
-    names the input and rerun, the command to run again)."""
+    names the input and rerun, the command to run again). uv's messages pass through to stderr."""
     override = ['--override', OVERRIDES] if (requirements / OVERRIDES).is_file() else []
+    env = uv_environment({**os.environ, 'PWD': str(requirements)})
     for source, lock in zip(INPUTS, LOCKS):
         try:
-            status = subprocess.run(['uv', 'pip', 'compile', '--python-version', python, *override, source, '-o', lock],
-                                    cwd=requirements, stdout=subprocess.DEVNULL,
-                                    env={**os.environ, 'PWD': str(requirements)}).returncode
+            result = subprocess.run(['uv', 'pip', 'compile', '--python-version', python, *override, source, '-o', lock],
+                                    cwd=requirements, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                    errors='replace', env=env)
+            status, errors = result.returncode, result.stderr
         except OSError:
-            status = 127
+            status, errors = 127, ''
+        sys.stderr.write(errors)
         if status != 0:
-            print(f'uv pip compile of {source} failed (exit {status}); lock.sha256 was left as it was.\n'
-                  f'Fix {requirements / source} or its access to the package index, then run {rerun} again.',
+            if INVALID_TAR not in errors:
+                remedy = f'Fix {requirements / source} or its access to the package index, then run {rerun} again.'
+            elif env.get(LEGACY_TAR) == '1':
+                remedy = (f'uv could not read an old source archive ({INVALID_TAR}) even with {LEGACY_TAR}=1: pin a '
+                          f'version of that package with a wheel in {requirements / OVERRIDES} (uv pip compile '
+                          f'--override), then run {rerun} again.')
+            else:
+                remedy = (f'uv could not read an old source archive ({INVALID_TAR}): set {LEGACY_TAR}=1 '
+                          f'(docs/setup.md#old-source-archives), then run {rerun} again.')
+            print(f'uv pip compile of {source} failed (exit {status}); lock.sha256 was left as it was.\n{remedy}',
                   file=sys.stderr)
             return 2
     fingerprint(requirements)
@@ -151,8 +197,13 @@ def main(argv):
         return compile_locks(Path(argv[1]), argv[2], argv[3])
     if len(argv) == 3 and argv[0] == 'recorded':
         return 0 if overrides_recorded(Path(argv[1]), Path(argv[2])) else 1
+    if argv == ['uv-env']:
+        if uv_environment().get(LEGACY_TAR) == '1' and LEGACY_TAR not in os.environ:
+            print(f'export {LEGACY_TAR}=1')
+        return 0
     print('Usage: locks.py state <requirements dir> <project root> | fingerprint <requirements dir> | '
-          'compile <requirements dir> <python> <command to rerun> | recorded <requirements dir> <project root>',
+          'compile <requirements dir> <python> <command to rerun> | recorded <requirements dir> <project root> | '
+          'uv-env',
           file=sys.stderr)
     return 2
 
