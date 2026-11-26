@@ -11,12 +11,21 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- Skills per series (contract change): the six skills are named `odoo-<topic>` (`odoo-backend`,
+  `odoo-environment`, `odoo-module-lifecycle`, `odoo-security`, `odoo-testing`, `odoo-views-frontend`). Each
+  SKILL.md is common to every series and points to `references/15.0.md` and `references/19.0.md` for what
+  differs (view types and modifiers, Owl and legacy widgets, group fields, access checks, ORM APIs, test
+  classes, demo data and server options), chosen by the series `oasis doctor` prints.
 - `doctor --environment --full` (and `check-environment --full`, and the end of `bootstrap --apply`) reports an
   adopted environment (`setup --environment`, or any environment oasis did not create) whose packages do not
   match the locks as `WARN locked_environment=drifted` with a fix naming `bootstrap --apply`, not counted as a
   failure. An environment oasis creates is marked `<environment>/.oasis-created` and its drift stays a `FAIL`.
   No oasis command but an explicit `bootstrap --apply` changes an adopted environment. Environments created
   before 0.17.0 carry no mark: `touch <environment>/.oasis-created` restores the `FAIL`.
+
+### Removed
+
+- The `odoo19-*` skills, without stubs; `./install.sh` replaces the whole install directory.
 
 ### Fixed
 

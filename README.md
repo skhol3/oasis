@@ -5,10 +5,11 @@ agent skills, and a thin Gentle Shell layer that wraps the CLI with compact, tok
 output. It runs tests, databases and servers per checkout without letting an agent bypass the
 database prefix guards.
 
-Odoo 19.0 is the supported series today; further series are added in
-[`tools/odoo_versions.py`](tools/odoo_versions.py), the one table of what differs between them. The `odoo19` names (the install directory
-`~/.agents/skills/odoo19`, the `odoo19-*` skills and the `odoo19` alias of `oasis`) stay as they
-are until a second series is supported.
+Odoo 19.0 and 15.0 are supported; [`tools/odoo_versions.py`](tools/odoo_versions.py) is the one
+table of what differs between them for the tools. The skills are named `odoo-<topic>` (since 0.17.0;
+the `odoo19-*` skills are removed): each SKILL.md is common to every series and points to its
+`references/15.0.md` and `references/19.0.md`. The other `odoo19` names (the install directory
+`~/.agents/skills/odoo19` and the `odoo19` alias of `oasis`) keep their names for now.
 
 *Odoo Agent Skills & Infrastructure Scripts.* This repository is the source of the reusable global package installed at `~/.agents/skills/odoo19`, **not a seventh skill** and not a project staging directory. Contributor rules are in `AGENTS.md` in the source repository (not installed).
 
@@ -20,7 +21,7 @@ Two installs, each with its own job. Install both to get everything.
 
 | Install | What you get | Where it works |
 | --- | --- | --- |
-| `./install.sh` from this repository | The six `odoo19-*` skills and the `oasis` CLI (with its `odoo19` alias) in `~/.agents/skills/odoo19` | Any agent (Claude Code, Codex, Gentle Shell) and the terminal |
+| `./install.sh` from this repository | The six `odoo-<topic>` skills and the `oasis` CLI (with its `odoo19` alias) in `~/.agents/skills/odoo19` | Any agent (Claude Code, Codex, Gentle Shell) and the terminal |
 | The package from a release tag | The `oasis_*` agent tools, `/oasis`, the `alt+o` panel and the bash guard | Gentle Shell |
 
 The package does not bring the skills; `install.sh` does not add the tools, `/oasis` or the panel

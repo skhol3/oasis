@@ -330,8 +330,8 @@ class GlobalCliTests(unittest.TestCase):
         # The setup and tool-manager sections moved from the README to their topic files.
         setup = (ROOT / 'docs/project-setup.md').read_text()
         troubleshooting = (ROOT / 'docs/troubleshooting.md').read_text()
-        environment = (ROOT / 'odoo19-environment/SKILL.md').read_text()
-        lifecycle = (ROOT / 'odoo19-module-lifecycle/SKILL.md').read_text()
+        environment = (ROOT / 'odoo-environment/SKILL.md').read_text()
+        lifecycle = (ROOT / 'odoo-module-lifecycle/SKILL.md').read_text()
         example = ('~/.agents/skills/odoo19/oasis --project /absolute/project '
                    'doctor --environment --quick')
         self.assertIn(example, setup)

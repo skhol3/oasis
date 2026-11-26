@@ -1,6 +1,6 @@
 ---
-name: odoo19-security
-description: "Trigger: Odoo 19 ACL, record rule, sudo, authentication, controller, company isolation. Protect permission boundaries."
+name: odoo-security
+description: "Trigger: Odoo 15.0 or 19.0 ACL, record rule, sudo, authentication, controller, company isolation. Protect permission boundaries."
 license: Apache-2.0
 metadata:
   author: openalliance
@@ -9,7 +9,9 @@ metadata:
 
 ## Activation Contract
 
-Use when Odoo 19 work touches access control, authentication, controllers, `sudo()`, company isolation, or sensitive records. Not for model logic without a permission change (`odoo19-backend`) or for choosing the test layer (`odoo19-testing`). Project-specific security restrictions still apply.
+Use when Odoo work touches access control, authentication, controllers, `sudo()`, company isolation, or sensitive records. Not for model logic without a permission change (`odoo-backend`) or for choosing the test layer (`odoo-testing`). Project-specific security restrictions still apply.
+
+Common to every series. Also read [15.0](references/15.0.md) or [19.0](references/19.0.md), per `oasis doctor` `series=`, else `odoo_release=`.
 
 ## Hard Rules
 
@@ -17,6 +19,7 @@ Use when Odoo 19 work touches access control, authentication, controllers, `sudo
 - Test representative non-admin users for both allowed and denied paths; administrator success is insufficient.
 - Preserve least privilege, ownership, active-company and allowed-company boundaries.
 - Never weaken a rule to make a test pass. Minimize `sudo()` and prove its privilege boundary.
+- Use the field and method names of the checkout's series; a name from another series fails at install or silently checks nothing.
 - Do not connect to production or disclose credentials, tokens, private data, or database contents.
 
 ## Decision Gates
@@ -40,4 +43,5 @@ Report permission matrix, changed files, positive/negative evidence, skipped che
 
 ## References
 
-- [Project capability contract](../odoo19-environment/references/project-contract.md).
+- [Odoo 15.0 differences](references/15.0.md) and [Odoo 19.0 differences](references/19.0.md).
+- [Project capability contract](../odoo-environment/references/project-contract.md).

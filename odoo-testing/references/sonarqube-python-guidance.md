@@ -1,6 +1,6 @@
 # Compact Python Review Criteria
 
-Use this reusable summary while writing Odoo 19 Python, without querying SonarQube for each edit. These are review prompts, not framework-specific exemptions, an exhaustive catalog, or a fixed quality profile. Activation and thresholds depend on the effective server/profile; follow the [evidence policy](evidence-policy.md) when verifying findings.
+Use this reusable summary while writing Odoo Python, without querying SonarQube for each edit. These are review prompts, not framework-specific exemptions, an exhaustive catalog, or a fixed quality profile. Activation and thresholds depend on the effective server/profile; follow the [evidence policy](evidence-policy.md) when verifying findings.
 
 | Rule | Preventive criterion | Odoo review precaution |
 | --- | --- | --- |
@@ -10,7 +10,7 @@ Use this reusable summary while writing Odoo 19 Python, without querying SonarQu
 | `python:S3358` | Prefer clear statements over nested conditional expressions. | Preserve branch precedence, fallback values, and short-circuit behavior. The rule documents an exception for conditional expressions in comprehensions. |
 | `python:S1854` | Remove local assignments whose values are unused. | Preserve required right-hand-side effects: removing an assignment must not silently remove a write, validation, access check, or other necessary call. |
 | `python:S3516` | Inspect multiple return paths that always return the same value. | Check inherited ORM/public return contracts and caller expectations before changing returns. A framework-required result is not automatically a bug. |
-| `python:S6890` | Prefer standard-library `zoneinfo` over `pytz` for new standalone Python 3.9+ timezone code when compatible. | Do not mechanically replace Odoo timezone objects or `localize`/`normalize` usage. Verify matching Odoo 19 APIs, conversions, ambiguous/nonexistent local times, and relevant date-boundary behavior before migration. |
+| `python:S6890` | Prefer standard-library `zoneinfo` over `pytz` for new standalone Python 3.9+ timezone code when compatible. | Do not mechanically replace Odoo timezone objects or `localize`/`normalize` usage. Verify the APIs of the checkout's Odoo series, conversions, ambiguous/nonexistent local times, and relevant date-boundary behavior before migration. |
 
 ## Use and freshness
 

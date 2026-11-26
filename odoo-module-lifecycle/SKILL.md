@@ -1,6 +1,6 @@
 ---
-name: odoo19-module-lifecycle
-description: "Trigger: Odoo 19 install module, update module, module status, database lifecycle. Operate guarded local tooling only."
+name: odoo-module-lifecycle
+description: "Trigger: Odoo 15.0 or 19.0 install module, update module, module status, database lifecycle. Operate guarded local tooling only."
 license: Apache-2.0
 metadata:
   author: openalliance
@@ -9,11 +9,13 @@ metadata:
 
 ## Activation Contract
 
-Use for authorized local Odoo 19 module installation, updates, test runs, and state inspection. Not for environment diagnostics (`odoo19-environment`) or test design (`odoo19-testing`). Never operate on production or unknown databases.
+Use for authorized local Odoo module installation, updates, test runs, and state inspection. Not for environment diagnostics (`odoo-environment`) or test design (`odoo-testing`). Never operate on production or unknown databases.
+
+Common to every series. Also read [15.0](references/15.0.md) or [19.0](references/19.0.md), per `oasis doctor` `series=`, else `odoo_release=`.
 
 ## Hard Rules
 
-- Confirm Odoo 19 with matching `release.py` and permitted runtime evidence before lifecycle commands.
+- Confirm the series with matching `release.py` and permitted runtime evidence before lifecycle commands.
 - Require an explicitly named local database; never guess a default or derive authorization from a template prefix.
 - Use documented project wrappers and their guards, or the installed `~/.agents/skills/odoo19/oasis --project /absolute/project <command>` entry point (alias: `odoo19`) with its packaged tools and the project's workspace file. Missing project wrappers alone are not a blocker for an authorized global entry point; if neither guarded interface is available, report unavailable. Never bypass guards with raw SQL or guessed commands.
 - Destructive reset requires an exact named disposable test database, a guarded installed interface enforcing the project's namespace, explicit authorization, and an active-session check. Never auto-stop or terminate sessions. Default `test-module`/`verify-module` runs create and drop their own `_r<hex>` databases; `gc --apply` drops orphans (Tier A in the [agent contract](../docs/agent-contract.md): the agent runs it).
@@ -40,5 +42,6 @@ Report module, exact database, commands and exit codes, phase/baseline evidence,
 
 ## References
 
-- [Project capability contract](../odoo19-environment/references/project-contract.md).
+- [Odoo 15.0 differences](references/15.0.md) and [Odoo 19.0 differences](references/19.0.md).
+- [Project capability contract](../odoo-environment/references/project-contract.md).
 - [Checkout resource rules](references/checkout-resources.md).

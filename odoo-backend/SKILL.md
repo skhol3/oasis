@@ -1,6 +1,6 @@
 ---
-name: odoo19-backend
-description: "Trigger: Odoo 19 model, ORM, field, compute, constraint, create, write, cron, controller, backend. Implement batch-safe server behavior."
+name: odoo-backend
+description: "Trigger: Odoo 15.0 or 19.0 model, ORM, field, compute, constraint, create, write, cron, controller, backend. Implement batch-safe server behavior."
 license: Apache-2.0
 metadata:
   author: openalliance
@@ -9,17 +9,19 @@ metadata:
 
 ## Activation Contract
 
-Use for Odoo 19 Python backend changes: models, fields, computes, constraints, `create`/`write`, crons, controllers. Not for ACL or record rules (`odoo19-security`), views or assets (`odoo19-views-frontend`), or test design (`odoo19-testing`). Follow the project's own instructions and permissions; this skill does not authorize file or environment access.
+Use for Odoo Python backend changes: models, fields, computes, constraints, `create`/`write`, crons, controllers. Not for ACL or record rules (`odoo-security`), views or assets (`odoo-views-frontend`), or test design (`odoo-testing`). Follow the project's own instructions and permissions; this skill does not authorize file or environment access.
+
+Common to every series. Also read [15.0](references/15.0.md) or [19.0](references/19.0.md), per `oasis doctor` `series=`, else `odoo_release=`.
 
 ## Hard Rules
 
 - Inspect the module manifest, dependencies, inherited models, security, and nearby tests before editing.
-- Confirm uncertain APIs against matching Odoo 19 source only when access is permitted. Keep upstream read-only.
+- Confirm uncertain APIs against the Odoo source of the checkout's series only when access is permitted. Keep upstream read-only. Never copy an API from another series.
 - Preserve expected recordset cardinality and batch behavior in `create`, `write`, computes, and jobs.
 - Declare accurate `@api.depends` inputs; consider stored recomputation cost.
 - Enforce invariants server-side, never with `onchange` alone. Prefer ORM; justify raw SQL with parameterization and cache/flush handling.
 - Minimize and justify `sudo()`; respect permissions, company context, transactions, and side effects.
-- While writing code, apply concise validated project/Odoo criteria; do not query SonarQube per edit. At verification, follow the [bounded SonarQube workflow](../odoo19-testing/references/evidence-policy.md); static analysis does not replace functional checks.
+- While writing code, apply concise validated project/Odoo criteria; do not query SonarQube per edit. At verification, follow the [bounded SonarQube workflow](../odoo-testing/references/evidence-policy.md); static analysis does not replace functional checks.
 
 ## Decision Gates
 
@@ -33,7 +35,7 @@ Use for Odoo 19 Python backend changes: models, fields, computes, constraints, `
 ## Execution Steps
 
 1. Trace relevant callers, exact field names, and existing tests in the permitted scope. Before opening Odoo source to learn a model, run `oasis --project <root> model-info <model>` (Gentle Shell: `oasis_model_info`); add `--field`, `--module` or `--methods` for detail.
-2. Implement the smallest Odoo-native change consistent with project conventions.
+2. Implement the smallest Odoo-native change consistent with project conventions and the series reference.
 3. Run supported focused tests and applicable installation/update checks; do not invent a runner.
 
 ## Output Contract
@@ -42,5 +44,6 @@ Report changed files, database and command evidence when used, skipped checks, a
 
 ## References
 
-- [Project capability contract](../odoo19-environment/references/project-contract.md).
-- [Verification evidence policy](../odoo19-testing/references/evidence-policy.md).
+- [Odoo 15.0 differences](references/15.0.md) and [Odoo 19.0 differences](references/19.0.md).
+- [Project capability contract](../odoo-environment/references/project-contract.md).
+- [Verification evidence policy](../odoo-testing/references/evidence-policy.md).

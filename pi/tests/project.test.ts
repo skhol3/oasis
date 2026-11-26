@@ -319,20 +319,23 @@ test("projectContext points a session without oasis tools to the guarded CLI", (
   assert.match(none, /Odoo project root: \/work\/coffee/);
   assert.ok(!none.includes("oasis_"), none);
   assert.ok(none.includes("`oasis --project /work/coffee <command>`"), none);
-  assert.ok(none.includes("load the matching Odoo skill first"), none);
+  assert.ok(none.includes("load the odoo-* skill first."), none);
 });
 
-test("projectContext names the configured Odoo series and its skills", () => {
+test("projectContext names the configured Odoo series and its skill reference", () => {
+  // v0.17.0 S2: one odoo-<topic> skill per topic, a references/<series>.md per series.
   const text = projectContext("/work/coffee", null, undefined, "19.0");
   assert.match(text, /^Odoo 19\.0 project root: \/work\/coffee /);
-  assert.ok(text.includes("load the matching odoo19-* skill first"), text);
+  assert.ok(text.includes("load the odoo-* skill (references/19.0.md) first."), text);
   const other = projectContext("/work/coffee", null, undefined, "15.0");
   assert.match(other, /^Odoo 15\.0 project root: /);
-  assert.ok(other.includes("load the matching odoo15-* skill first"), other);
+  assert.ok(other.includes("load the odoo-* skill (references/15.0.md) first."), other);
+  for (const context of [text, other]) assert.ok(!/odoo\d+-\*/.test(context), context);
   // Unknown series (the configuration could not be read): no number is made up.
   const unknown = projectContext("/work/coffee");
   assert.match(unknown, /^Odoo project root: /);
-  assert.ok(!/odoo\d+-\*/.test(unknown), unknown);
+  assert.ok(unknown.includes("load the odoo-* skill first."), unknown);
+  assert.ok(!/odoo\d+-\*|references\//.test(unknown), unknown);
 });
 
 test("projectContext tells the agent which oasis commands are Tier B, and stays compact", () => {

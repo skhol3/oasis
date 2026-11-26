@@ -1,6 +1,6 @@
 # Verification Evidence Policy
 
-Use these rules when recording or reusing Odoo 19 module verification evidence. They guide evidence claims; they do not automatically enforce command execution or authorize database operations.
+Use these rules when recording or reusing Odoo module verification evidence. They guide evidence claims; they do not automatically enforce command execution or authorize database operations.
 
 - Keep one concise evidence entry in the existing task log or delivery report: module, candidate identity (commit plus relevant uncommitted changes), command, database and baseline, phase, exit code, and log location. Do not create another tracking document solely for this entry.
 - Reuse a passing phase only while its relevant source, tests, manifest, XML, security, data, dependencies/runtime, and database baseline remain unchanged. A matching HEAD alone is insufficient when there are uncommitted changes. If validity is uncertain, do not claim the old result covers the current candidate.
@@ -27,7 +27,7 @@ Use the [project-selected Pylint guidance](pylint-odoo-guidance.md) for the stan
 
 - When SonarQube is relevant, use the existing authorized integration to identify the effective quality profile, active rules, and rule parameters for the affected language and scope. Without a project binding, identify the server's default profile rather than assuming IDE parity or inventing a project. Generic rule documentation alone does not establish active configuration. If configuration evidence is unavailable, report the gap; never request credentials in chat.
 - Preserve the candidate identity, analysis scope and tool/version when available, rule key, affected location, effective parameters, and relevant finding evidence. Verify that submitted content faithfully represents the intended file. A successful response with zero findings is not proof that all expected rules ran; investigate discrepancies against known findings before claiming equivalence.
-- Inspect the surrounding implementation and assess the rule against Odoo 19 behavior and project conventions before editing. Consult matching Odoo 19 sources only with permission when framework behavior is uncertain. A finding is evidence to investigate, not authority to replace framework-required patterns or mechanically satisfy a metric.
+- Inspect the surrounding implementation and assess the rule against the behavior of the checkout's Odoo series and project conventions before editing. Consult that series' Odoo sources only with permission when framework behavior is uncertain. A finding is evidence to investigate, not authority to replace framework-required patterns or mechanically satisfy a metric.
 
 ### After correction
 

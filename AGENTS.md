@@ -2,9 +2,9 @@
 
 ## Project
 
-- This repository is the source of the global Odoo 19 agent bundle: the `oasis` entry point
-  (with its `odoo19` alias), its guarded `tools/`, the `odoo19-*` skills, the Gentle Shell
-  layer (`pi/`), project wrapper templates and docs.
+- This repository is the source of the global Odoo agent bundle: the `oasis` entry point
+  (with its `odoo19` alias), its guarded `tools/`, the `odoo-<topic>` skills (a reference per
+  series), the Gentle Shell layer (`pi/`), project wrapper templates and docs.
 - Agents never read this repository directly. `install.sh` copies the committed HEAD to
   `~/.agents/skills/odoo19`; uncommitted edits are never installed.
 - Code, comments, commit messages and documentation are in English.

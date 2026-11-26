@@ -1,6 +1,6 @@
 ---
-name: odoo19-testing
-description: "Trigger: Odoo 19 regression, module tests, fresh install, update, TransactionCase, HttpCase, tour. Verify observable behavior."
+name: odoo-testing
+description: "Trigger: Odoo 15.0 or 19.0 regression, module tests, fresh install, update, TransactionCase, HttpCase, tour. Verify observable behavior."
 license: Apache-2.0
 metadata:
   author: openalliance
@@ -9,7 +9,9 @@ metadata:
 
 ## Activation Contract
 
-Use for Odoo 19 test design, bug reproduction, module install/update verification, and test-layer choice. Not for lifecycle commands outside verification (`odoo19-module-lifecycle`). Project-specific validation requirements remain authoritative.
+Use for Odoo test design, bug reproduction, module install/update verification, and test-layer choice. Not for lifecycle commands outside verification (`odoo-module-lifecycle`). Project-specific validation requirements remain authoritative.
+
+Common to every series. Also read [15.0](references/15.0.md) or [19.0](references/19.0.md), per `oasis doctor` `series=`, else `odoo_release=`.
 
 ## Hard Rules
 
@@ -22,7 +24,7 @@ Use for Odoo 19 test design, bug reproduction, module install/update verificatio
 - Prefer `test-module --compact` or `verify-module --compact` (Gentle Shell: `oasis_test_module`): report exits, the `log:` control line and log paths; inspect relevant failures.
 - For Python/manifest changes, use the authorized standalone `lint-module` command with the project's trusted rcfile and targets; follow the [Pylint guidance](references/pylint-odoo-guidance.md). Do not run it per edit or treat lint as functional proof.
 - Read and apply the [verification evidence policy](references/evidence-policy.md) before reusing a passing phase or claiming evidence for the current candidate.
-- For SonarQube findings, consult active rules and effective parameters, assess Odoo 19 applicability, and compare analysis before and after correction under that policy. Static analysis never replaces functional verification.
+- For SonarQube findings, check active rules and parameters, assess applicability to the series, and compare analysis before and after correction under that policy. Static analysis never replaces functional verification.
 
 ## Decision Gates
 
@@ -46,8 +48,5 @@ Report test files, exact commands and exit codes, named database if used, RED/GR
 
 ## References
 
-- [Project capability contract](../odoo19-environment/references/project-contract.md).
-- [Verification evidence policy](references/evidence-policy.md).
-- [Test targets and compact runs](references/test-targets.md).
+- [Project capability contract](../odoo-environment/references/project-contract.md).
 - [Compact Python review criteria](references/sonarqube-python-guidance.md).
-- [Project-selected Pylint execution and cadence](references/pylint-odoo-guidance.md).

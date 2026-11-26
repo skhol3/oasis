@@ -122,8 +122,8 @@ class PolicyTableTests(unittest.TestCase):
         self.assertIn(policy.as_guard(), guard, 'docs/bash-guard.md: python3 -B tools/policy.py --guard')
 
     def test_skills_follow_the_table_for_gc_apply(self):
-        for path in ('odoo19-environment/references/project-contract.md', 'odoo19-testing/references/test-targets.md',
-                     'odoo19-module-lifecycle/SKILL.md'):
+        for path in ('odoo-environment/references/project-contract.md', 'odoo-testing/references/test-targets.md',
+                     'odoo-module-lifecycle/SKILL.md'):
             text = (ROOT / path).read_text(encoding='utf-8')
             for phrase in ('only the user runs `gc --apply`', 'user-run `gc --apply`'):
                 self.assertNotIn(phrase, text, path)

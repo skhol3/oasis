@@ -5,7 +5,7 @@ the other does.
 
 | Install | What you get | Where it works |
 | --- | --- | --- |
-| [`./install.sh`](#installing-the-skills-and-the-cli-with-installsh) from this repository | The six `odoo19-*` skills and the `oasis` CLI (with its `odoo19` alias) in `~/.agents/skills/odoo19` | Any agent (Claude Code, Codex, Gentle Shell) and the terminal |
+| [`./install.sh`](#installing-the-skills-and-the-cli-with-installsh) from this repository | The six `odoo-<topic>` skills and the `oasis` CLI (with its `odoo19` alias) in `~/.agents/skills/odoo19` | Any agent (Claude Code, Codex, Gentle Shell) and the terminal |
 | [The package](#installing-the-package) from a release tag | The `oasis_*` agent tools, `/oasis`, the `alt+o` panel and the bash guard | Gentle Shell |
 
 - The package does not bring the skills: Gentle Shell finds them in `~/.agents/skills`,
@@ -88,4 +88,4 @@ directory holds, including a branch under development; use it only to try change
 
 ## What gets installed
 
-The `install.sh` target contains the six `odoo19-*` directories, `tools/`, `project-wrappers/`, `tests/`, `docs/`, the `oasis` entry point (and its `odoo19` alias), the Gentle Shell layer (`package.json` and `pi/`), and the [README](../README.md). Restart the agent session or use `/reload` where supported, then check that exactly six skills are discovered. The skill entrypoints are [backend](../odoo19-backend/SKILL.md), [security](../odoo19-security/SKILL.md), [views/frontend](../odoo19-views-frontend/SKILL.md), [testing](../odoo19-testing/SKILL.md), [environment](../odoo19-environment/SKILL.md), and [module lifecycle](../odoo19-module-lifecycle/SKILL.md). See the [project capability contract](../odoo19-environment/references/project-contract.md).
+The `install.sh` target contains the six `odoo-<topic>` skill directories, `tools/`, `project-wrappers/`, `tests/`, `docs/`, the `oasis` entry point (and its `odoo19` alias), the Gentle Shell layer (`package.json` and `pi/`), and the [README](../README.md). Restart the agent session or use `/reload` where supported, then check that exactly six skills are discovered. The skill entrypoints are [backend](../odoo-backend/SKILL.md), [security](../odoo-security/SKILL.md), [views/frontend](../odoo-views-frontend/SKILL.md), [testing](../odoo-testing/SKILL.md), [environment](../odoo-environment/SKILL.md), and [module lifecycle](../odoo-module-lifecycle/SKILL.md). Each SKILL.md is common to every series and sends the agent to its `references/15.0.md` or `references/19.0.md`, the series `oasis doctor` prints (`series=`, else `odoo_release=`). Since 0.17.0 the skills are named `odoo-<topic>`; the `odoo19-*` skills of earlier versions are gone, and installing replaces the whole target, so none is left behind. See the [project capability contract](../odoo-environment/references/project-contract.md).

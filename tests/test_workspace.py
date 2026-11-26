@@ -404,7 +404,7 @@ class WorkspaceTests(unittest.TestCase):
     def shipped_example(self):
         """The shipped example and, in this test's scratch XDG_CONFIG_HOME, the machine file it
         documents (its commented [series."19.0"] block), which gives the source (v0.14.0 S10)."""
-        raw = (ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml').read_text()
+        raw = (ROOT / 'odoo-environment/assets/oasis-workspace.example.toml').read_text()
         block = re.search(r'^#   \[series\."19\.0"\]\n(?:#   [a-z]+ = .*\n)+', raw, re.MULTILINE)
         self.assertIsNotNone(block, raw)
         machine = self.scratch / 'xdg' / 'oasis' / 'config.toml'

@@ -24,7 +24,7 @@ Use the standalone global `lint-module` command for Python/manifest changes. It 
 
 ## Behavior and boundaries
 
-- The selected isolated Python must match the declared Python (`PYTHON_VERSION`: 3.12 by default on Odoo 19.0, or the named environment's `python`). It must already provide Pylint and pylint-odoo; the plugin must advertise support for the workspace's `odoo_version` (19.0). Missing/incompatible prerequisites fail rather than installing or falling back to a global interpreter.
+- The selected isolated Python must match the declared Python (`PYTHON_VERSION`: by default 3.12 on Odoo 19.0 and 3.9 on 15.0, or the named environment's `python`). It must already provide Pylint and pylint-odoo; the plugin must advertise support for the workspace's `odoo_version` (19.0 or 15.0). Missing/incompatible prerequisites fail rather than installing or falling back to a global interpreter.
 - Only a whole technical module under a configured `[tooling].addons_paths` root inside the selected project is accepted. Traversal, module escape and escaping symlinks are refused. This command accepts no arbitrary Pylint arguments or file lists.
 - The command passes the declared Odoo and Python targets and disables Pylint persistence/Python bytecode writes. It does not rewrite the rcfile or override its rules/plugin list. A trusted rcfile and plugins can execute Python hooks: this is not a sandbox or a guarantee that arbitrary plugin code is side-effect-free.
 - No Odoo server/configuration, credentials, Docker, database, package installer or SonarQube connection is needed. `lint-module --help` requires only the normal explicit project selection, not lint configuration or an installed analyzer.
@@ -34,4 +34,4 @@ Use the standalone global `lint-module` command for Python/manifest changes. It 
 
 Establish a baseline before changing a relevant module or correcting a warning. Run after a Python/manifest work unit, before expensive Odoo tests, not after every edit. At closeout, reuse a passing lint phase only while the module, rcfile/plugins, target settings and runtime baseline remain unchanged. Record the command, module, versions/configuration identity, exit code and relevant findings in the existing task evidence; a changed rule configuration invalidates comparability.
 
-Use the [SonarQube evidence policy](evidence-policy.md) separately for applicable authorized analysis, and still run required behavior/security/install/update tests. A clean lint result does not prove correctness or Odoo 19 view installation.
+Use the [SonarQube evidence policy](evidence-policy.md) separately for applicable authorized analysis, and still run required behavior/security/install/update tests. A clean lint result does not prove correctness or Odoo view installation.

@@ -8,9 +8,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NAMES = {
-    'odoo19-backend', 'odoo19-security', 'odoo19-views-frontend',
-    'odoo19-testing', 'odoo19-environment', 'odoo19-module-lifecycle',
+    'odoo-backend', 'odoo-security', 'odoo-views-frontend',
+    'odoo-testing', 'odoo-environment', 'odoo-module-lifecycle',
 }
+# v0.17.0 S2: one skill per topic, its SKILL.md common to every series, a reference per series.
+SERIES = ('15.0', '19.0')
+OLD_NAMES = re.compile(r'odoo19-(?:backend|security|views-frontend|testing|environment|module-lifecycle)\b')
 SECTIONS = ('Activation Contract', 'Hard Rules', 'Decision Gates',
             'Execution Steps', 'Output Contract', 'References')
 # The legacy per-checkout profile: no longer read; only docs/migrating.md describes it (how to
@@ -30,7 +33,7 @@ def documents(root):
 
 def skill_documents(root):
     """Every Markdown file of the skills: each SKILL.md and its references."""
-    return sorted(root.glob('odoo19-*/**/*.md'))
+    return sorted(root.glob('odoo-*/**/*.md'))
 
 
 def headings(text):
@@ -74,7 +77,7 @@ def broken_links(files, root):
     return broken
 
 
-WORKSPACE = ROOT / 'odoo19-environment/assets/oasis-workspace.example.toml'
+WORKSPACE = ROOT / 'odoo-environment/assets/oasis-workspace.example.toml'
 # The Odoo source is the machine file's (v0.14.0 S10): the example sets no community or enterprise.
 WORKSPACE_TOOLING = {
     'environment': str, 'config': str, 'env_file': str, 'compose': str,
@@ -133,9 +136,38 @@ class BundleTests(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)))
         self.assertFalse((ROOT / 'SKILL.md').exists())
 
+    def test_each_skill_is_common_and_points_to_a_reference_per_series(self):
+        # S2: the SKILL.md names both series, holds no series-only claim and sends the agent to the
+        # reference of the series `oasis doctor` prints; each reference is that series' own.
+        for name in sorted(NAMES):
+            with self.subTest(skill=name):
+                text = (ROOT / name / 'SKILL.md').read_text(encoding='utf-8')
+                front, body = text.split('---\n', 2)[1:]
+                self.assertIn('Odoo 15.0 or 19.0', front)
+                self.assertIn('Common to every series.', body)
+                self.assertIn('`oasis doctor` `series=`, else `odoo_release=`', body)
+                self.assertNotRegex(body, r'Odoo 1[59]\b(?!\.0 differences)')
+                for series in SERIES:
+                    self.assertIn(f'(references/{series}.md)', body)
+                    reference = (ROOT / name / 'references' / f'{series}.md').read_text(encoding='utf-8')
+                    title = reference.splitlines()[0]
+                    self.assertRegex(title, rf'^# Odoo {re.escape(series)} ')
+                    other = next(item for item in SERIES if item != series)
+                    self.assertIn(f']({other}.md)', reference)
+                    self.assertIn('](../SKILL.md)', reference)
+
+    def test_the_odoo19_skills_are_gone_and_no_shipped_file_names_them(self):
+        # S2: removed without stubs; the CHANGELOG and task notes keep the history.
+        self.assertEqual(sorted(path.name for path in ROOT.glob('odoo19-*')), [])
+        shipped = [*documents(ROOT), *skill_documents(ROOT), ROOT / 'AGENTS.md', ROOT / 'install.sh',
+                   *sorted((ROOT / 'pi').rglob('*.ts')), *sorted((ROOT / 'tools').glob('*.py'))]
+        named = [path.relative_to(ROOT).as_posix() for path in shipped
+                 if OLD_NAMES.search(path.read_text(encoding='utf-8'))]
+        self.assertEqual(named, [])
+
     def test_the_legacy_profile_example_is_gone_and_only_migrating_describes_the_format(self):
-        self.assertFalse((ROOT / 'odoo19-environment/assets/odoo19-agent.example.toml').exists())
-        shipped = [*documents(ROOT), *skill_documents(ROOT), *sorted(ROOT.glob('odoo19-*/assets/*'))]
+        self.assertFalse((ROOT / 'odoo-environment/assets/odoo19-agent.example.toml').exists())
+        shipped = [*documents(ROOT), *skill_documents(ROOT), *sorted(ROOT.glob('odoo-*/assets/*'))]
         mentions = {path.relative_to(ROOT).as_posix() for path in shipped
                     if LEGACY_PROFILE in path.read_text(encoding='utf-8')}
         self.assertEqual(mentions, LEGACY_MENTIONS)
@@ -146,7 +178,7 @@ class BundleTests(unittest.TestCase):
         documented = re.findall(r"^#\s+checkout_slug = '([^']*)'$", raw, re.MULTILINE)
         self.assertEqual(len(documented), 1)
         self.assertRegex(documented[0], r'^[a-z0-9][a-z0-9_]{0,19}$')
-        contract = (ROOT / 'odoo19-environment/references/project-contract.md').read_text(encoding='utf-8')
+        contract = (ROOT / 'odoo-environment/references/project-contract.md').read_text(encoding='utf-8')
         for phrase in ('`checkout_slug`', '`CHECKOUT_KIND`', '`CHECKOUT_SLUG`'):
             self.assertIn(phrase, contract)
 
@@ -154,7 +186,7 @@ class BundleTests(unittest.TestCase):
         raw = WORKSPACE.read_text(encoding='utf-8')
         self.assertNotIn('logs', tomllib.loads(raw)['tooling'])
         self.assertEqual(re.findall(r"^# logs = '([^']*)'$", raw, re.MULTILINE), ['logs'])
-        contract = (ROOT / 'odoo19-environment/references/project-contract.md').read_text(encoding='utf-8')
+        contract = (ROOT / 'odoo-environment/references/project-contract.md').read_text(encoding='utf-8')
         for phrase in ('`logs`', '`LOGS_DIR`', '`<logs>/<slug, or main for the main checkout>/run-*`'):
             self.assertIn(phrase, contract)
 
@@ -207,10 +239,10 @@ class BundleTests(unittest.TestCase):
         self.assertEqual(re.findall(r"^#\s+checkout_slug = '([^']*)'$", raw, re.MULTILINE), ['acme_07_1'])
         for phrase in ('oasis-checkout.toml', 'addons_paths'):
             self.assertIn(phrase, raw)
-        contract = (ROOT / 'odoo19-environment/references/project-contract.md').read_text(encoding='utf-8')
+        contract = (ROOT / 'odoo-environment/references/project-contract.md').read_text(encoding='utf-8')
         for phrase in ('`oasis-workspace.toml`', '`oasis-checkout.toml`', '`WORKSPACE_ROOT`'):
             self.assertIn(phrase, contract)
-        skill = (ROOT / 'odoo19-environment/SKILL.md').read_text(encoding='utf-8')
+        skill = (ROOT / 'odoo-environment/SKILL.md').read_text(encoding='utf-8')
         self.assertIn('assets/oasis-workspace.example.toml', skill)
         # v0.14.0 S4: a linked worktree outside the workspace reads its main checkout's file through
         # git, and worktree-init takes --path.
@@ -219,7 +251,7 @@ class BundleTests(unittest.TestCase):
         self.assertIn("its main checkout's through git", skill)
 
     def test_reference_and_package_docs(self):
-        reference = ROOT / 'odoo19-environment/references/project-contract.md'
+        reference = ROOT / 'odoo-environment/references/project-contract.md'
         self.assertTrue(reference.is_file())
         text = reference.read_text(encoding='utf-8')
         for phrase in ('optional advisory duplicates', 'rejects conflicts', '[tooling].addons_paths',
@@ -237,7 +269,7 @@ class BundleTests(unittest.TestCase):
     def test_skill_links_resolve_from_their_own_file(self):
         files = skill_documents(ROOT)
         self.assertEqual({path.parent.name for path in files if path.name == 'SKILL.md'}, NAMES)
-        self.assertIn(ROOT / 'odoo19-environment/references/project-contract.md', files)
+        self.assertIn(ROOT / 'odoo-environment/references/project-contract.md', files)
         self.assertEqual(broken_links(files, ROOT), [])
 
     def test_each_topic_file_has_one_h1_and_is_indexed(self):

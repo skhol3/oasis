@@ -41,7 +41,7 @@ One topic per file. Start from the group that matches what you are doing; the
 | [Subagents](subagents.md) | The overlay that gives Gentle Shell subagents the `oasis_*` tools |
 | [Static inspection without starting Odoo](static-inspection.md) | `model-info`, `view-info`, `xmlid-info` and `module-info` |
 | [Lint one module without starting Odoo](lint-module.md) | `lint-module` with the project's Pylint rcfile |
-| [Project capability contract](../odoo19-environment/references/project-contract.md) | What the tools read from `[tooling]` |
+| [Project capability contract](../odoo-environment/references/project-contract.md) | What the tools read from `[tooling]` |
 
 ## Contributor
 
