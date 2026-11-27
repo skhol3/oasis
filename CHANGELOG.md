@@ -9,6 +9,31 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-27
+
+### Added
+
+- `LICENSE`: the Apache-2.0 license the skills already declare in their frontmatter.
+- `recipes/`: one source per recipe; `tools/render_recipes.py` renders the recipes of every supported series
+  into `<skill>/references/<series>/` (`--check` fails when a rendered file is stale), each ending with what
+  changed from the previous series. The suite fails when a supported series lacks its recipes.
+- `tools/recipe_module.py <series> <dir>`: builds the recipes' `library` module of a series and checks it is
+  complete, ready for `oasis test-module --compact library`.
+- `tools/recipe_evals.py <series> <module>` and [docs/recipe-evals.md](docs/recipe-evals.md): flags the forms
+  that are wrong on a series (each with its Odoo source line); the release gate runs agent tasks with it.
+
+### Changed
+
+- Contract change: the recipes of `odoo-backend`, `odoo-views-frontend`, `odoo-security` and `odoo-testing`
+  are written per series: `references/<recipe>.md` (0.18.0) became `references/<series>/<recipe>.md`, with an
+  example that works as written on that series, usual mistakes as rules (why, exceptions, bad and good
+  code), and no *Changed in* table. The SKILL.md files name no series. The `library` example now has
+  `author_id` on `res.partner` and no loan relations on books and partners, so each recipe stands alone.
+- Contract change: when the project's series is known, the Gentle Shell project context also names the
+  recipe directories of that series in the install directory: the line `load the odoo-* skill for series
+  19.0 first.` becomes `load the odoo-* skill for series 19.0 first (recipes:
+  ~/.agents/skills/oasis/odoo-*/references/19.0/).`. With the series unknown the line is unchanged.
+
 ## [0.18.0] - 2026-11-27
 
 ### Added
@@ -1372,7 +1397,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/skhol3/oasis/releases/tag/v0.19.0
 [0.18.0]: https://github.com/skhol3/oasis/releases/tag/v0.18.0
 [0.17.0]: https://github.com/skhol3/oasis/releases/tag/v0.17.0
 [0.16.0]: https://github.com/skhol3/oasis/releases/tag/v0.16.0

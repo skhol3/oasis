@@ -21,12 +21,16 @@ copy) and a scratch install (`./install.sh --target <dir>/oasis`):
    genuine decision: Tier B).
 6. In the worktree: `oasis setup --plan --json`, answer what it asks, `--apply`, `oasis doctor`, and
    `oasis test-module --compact <module>`.
-7. Recipes (since 0.18.0): with only the code skills' recipes (`odoo-backend`, `odoo-views-frontend`,
-   `odoo-security`, `odoo-testing`), build a small module in the checkout: a model with a compute and a
-   constraint, an inherited model, form, list and search views, an action and a menu, access rights and a
-   record rule, a model test and a tour. Then `oasis test-module --compact <module>` (expect `exit=0`).
-   Run it on a 15.0 and a 19.0 checkout. Each point where a recipe was wrong or missing goes into that
-   recipe before the release and is named in the row's Notes.
+7. Recipes (since 0.18.0; per series since 0.19.0), on every supported series' checkout:
+   - `python3 <install>/tools/recipe_module.py <series> <checkout>` builds the `library` module from the
+     recipes of that series (expect `ok`), then `oasis test-module --compact library` (expect `exit=0`,
+     the tour run, no `skipped` test).
+   - The evals of [recipe-evals.md](recipe-evals.md): a fresh agent does each task with only what oasis
+     shows, then `python3 <install>/tools/recipe_evals.py <series> <module>` (expect `hits=0`) and
+     `oasis test-module --compact <module>` (expect `exit=0`).
+   - When a series is added: a fresh agent also builds the module by following the recipes by hand.
+   Each point where a recipe was wrong or missing goes into its source in `recipes/` before the release
+   and is named in the row's Notes, with the evals result per series.
 8. Remove the compose project (`docker compose -p <name> down -v`) and the scratch directory.
 
 ## Results
@@ -37,3 +41,4 @@ copy) and a scratch install (`./install.sh --target <dir>/oasis`):
 | 0.16.0 | openalliance-odoo (Odoo 15.0) | 1 | 1 | the `worktree-init` confirmation; a first run found two more (a `docker compose` command naming the env file, a manual `[development]` edit), fixed by `start-database` and the `development` question before the release |
 | 0.17.0 | openalliance-odoo (Odoo 15.0) | 1 | 1 | the `worktree-init` confirmation; run with the `oasis` install directory and the `odoo-*` skills |
 | 0.18.0 | openalliance-odoo (Odoo 15.0), corpus-cafe (Odoo 19.0) | 1 | 1 | the `worktree-init` Tier B confirmation was not given, steps 5-6 skipped; step 7 builds the `library` module from the recipes: 19.0 as written, 15.0 from the *Changed in* tables after 3 fixes a first run found (`sequence` on res.groups is 19.0 only, Owl 1 templates need `owl="1"`, a 15.0 tour has no `url` and waits for `.o_form_readonly`); that run also needed `websocket-client` by hand (HttpCase skips tours without it), now in setup's `dev.in`; `test-module` exit 0 with 7 tests and the tour on both |
+| 0.19.0 | openalliance-odoo (Odoo 15.0), corpus-cafe (Odoo 19.0) | 1 | 1 | the `worktree-init` Tier B confirmation was not given, steps 5-6 skipped; step 7 with `recipe_module.py` per series: `library` built from the 15.0 and the 19.0 recipes, `test-module` exit 0 (8 tests with the tour) on both; evals ([recipe-evals.md](recipe-evals.md)): 8 of 8 tasks passed (4 per series, `hits=0`, `test-module` exit 0), every agent opened only its own series' recipes; their gaps went into the recipes (archived records, extending modules, record rules that widen access, field selectors); 15.0 `oa_base` runs 0 tests |

@@ -36,6 +36,7 @@ One topic per file. Start from the group that matches what you are doing; the
 | --- | --- |
 | [Agent contract](agent-contract.md) | The policy table (`oasis policy --json`): each operation's tier and why; `--confirm` for Tier B |
 | [Release gate](release-gate.md) | The agent field run before each release and its handoff count |
+| [Recipe evals](recipe-evals.md) | `tools/recipe_evals.py`: whether an agent wrote its series' forms, and the release gate tasks |
 | [Gentle Shell layer](gentle-shell-layer.md) | Agent tools, their output and the prompt context |
 | [Bash guard](bash-guard.md) | Which agent bash commands run, wait for the user's confirmation or are blocked; `agent_destructive` |
 | [Subagents](subagents.md) | The overlay that gives Gentle Shell subagents the `oasis_*` tools |

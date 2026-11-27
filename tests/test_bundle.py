@@ -1,6 +1,7 @@
 """Structural checks for shipped guidance, not a runtime config validator."""
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import ast
+import importlib.util
 import re
 import tomllib
 import unittest
@@ -11,12 +12,23 @@ NAMES = {
     'odoo-backend', 'odoo-security', 'odoo-views-frontend',
     'odoo-testing', 'odoo-environment', 'odoo-module-lifecycle',
 }
+_spec = importlib.util.spec_from_file_location('bundle_odoo_versions', ROOT / 'tools/odoo_versions.py')
+odoo_versions = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(odoo_versions)
 # v0.17.0 S2: one skill per topic, its SKILL.md common to every series, a reference per series.
-SERIES = ('15.0', '19.0')
-# v0.18.0 S6: the code skills hold task recipes for every series (tests/test_skill_recipes.py) instead.
+# v0.19.0 S4: the series are the ones tools/odoo_versions.py supports, oldest first; no test names one.
+SERIES = tuple(sorted(odoo_versions.supported(), key=lambda series: tuple(int(part) for part in series.split('.'))))
+# v0.18.0 S6: the code skills hold task recipes (tests/test_skill_recipes.py) instead; v0.19.0 S2, S4: one
+# directory of recipes per series, rendered from recipes/, and their SKILL.md names no series.
 RECIPE_SKILLS = {'odoo-backend', 'odoo-security', 'odoo-views-frontend', 'odoo-testing'}
-RECIPE_SERIES_LINE = ('Common to every series: the Changed in table of each recipe says what differs, '
-                      'per `oasis doctor` `series=`, else `odoo_release=`.')
+RECIPE_SERIES_LINE = ('Common to every series: run `oasis doctor` and open `references/<series>/` for its '
+                      '`series=`, else `odoo_release=`.')
+
+
+def series_named(text, series):
+    """Whether text names the series: `15.0` as a literal, or `Odoo 15`."""
+    major = re.escape(series.split('.')[0])
+    return re.search(rf'(?<![\d.]){re.escape(series)}(?![\d])|\bOdoo {major}\b', text) is not None
 OLD_NAMES = re.compile(r'odoo19-(?:backend|security|views-frontend|testing|environment|module-lifecycle)\b')
 SECTIONS = ('Activation Contract', 'Hard Rules', 'Decision Gates',
             'Execution Steps', 'Output Contract', 'References')
@@ -152,14 +164,16 @@ class BundleTests(unittest.TestCase):
         self.assertFalse((ROOT / 'SKILL.md').exists())
 
     def test_the_code_skills_hold_recipes_and_no_reference_per_series(self):
-        # v0.18.0 S6: the per-series content moved into the recipes' Changed in tables.
+        # v0.18.0 S6: the per-series content moved into the recipes; v0.19.0 S4: the SKILL.md names no series.
         for name in sorted(RECIPE_SKILLS):
             with self.subTest(skill=name):
                 text = (ROOT / name / 'SKILL.md').read_text(encoding='utf-8')
                 front, body = text.split('---\n', 2)[1:]
-                self.assertIn('Odoo 15.0 or 19.0', front)
-                self.assertIn(RECIPE_SERIES_LINE, body)
-                self.assertNotRegex(body, r'Odoo 1[59]\b')
+                description = next(line for line in front.splitlines() if line.startswith('description: '))
+                problems = [] if RECIPE_SERIES_LINE in body else ['no series line']
+                problems += [f'description names {series}' for series in SERIES if series_named(description, series)]
+                problems += [f'body names {series}' for series in SERIES if series_named(body, series)]
+                self.assertEqual(problems, [])
                 for series in SERIES:
                     self.assertFalse((ROOT / name / 'references' / f'{series}.md').exists())
                     self.assertNotIn(f'references/{series}.md', body)
@@ -171,17 +185,19 @@ class BundleTests(unittest.TestCase):
             with self.subTest(skill=name):
                 text = (ROOT / name / 'SKILL.md').read_text(encoding='utf-8')
                 front, body = text.split('---\n', 2)[1:]
-                self.assertIn('Odoo 15.0 or 19.0', front)
                 self.assertIn('Common to every series.', body)
                 self.assertIn('`oasis doctor` `series=`, else `odoo_release=`', body)
-                self.assertNotRegex(body, r'Odoo 1[59]\b(?!\.0 differences)')
                 for series in SERIES:
+                    self.assertIn(series, front)
+                    major = re.escape(series.split('.')[0])
+                    self.assertNotRegex(body, rf'Odoo {major}\b(?!\.0 differences)')
                     self.assertIn(f'(references/{series}.md)', body)
                     reference = (ROOT / name / 'references' / f'{series}.md').read_text(encoding='utf-8')
                     title = reference.splitlines()[0]
                     self.assertRegex(title, rf'^# Odoo {re.escape(series)} ')
-                    other = next(item for item in SERIES if item != series)
-                    self.assertIn(f']({other}.md)', reference)
+                    for other in SERIES:
+                        if other != series:
+                            self.assertIn(f']({other}.md)', reference)
                     self.assertIn('](../SKILL.md)', reference)
 
     def test_the_odoo19_skills_are_gone_and_no_shipped_file_names_them(self):
