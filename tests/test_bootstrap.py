@@ -4,12 +4,15 @@ It ends with `doctor --environment --full` (check-environment --full); a failure
 PostgreSQL not running yet, is printed as the doctor's results with the command to run next, and
 the exit stays 0 once the sync succeeded. A failure of bootstrap's own work keeps its exit code, and so does
 the doctor's `FAIL locked_environment=drifted` for the environment bootstrap just synced: the sync did not
-produce the locked environment (exit 1, nothing added, as before).
+produce the locked environment (exit 1, nothing added, as before). Exit 0 needs a doctor that completed: exit 1
+and its `environment_failures=<n>` summary on stdout; a doctor that did not run or died (127, a traceback, a
+signal) keeps its exit with one stderr line saying so.
 The fixture harness is test_environment's: fake uv, docker and environment Python.
 """
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import shlex
 import unittest
+from pathlib import Path
 
 import test_environment
 import test_lifecycle as lifecycle
@@ -33,6 +36,63 @@ class BootstrapExitTests(unittest.TestCase):
             'echo "version_mismatches=0"; exit 0 ;;',
             '*/check_environment.py) echo "locked_packages=1"; echo "version_mismatch=psycopg2: expected=2.9.9 '
             'actual=2.9.5"; echo "missing_packages=0"; echo "version_mismatches=1"; exit 3 ;;'))
+
+    def fake_doctor(self, script):
+        """The tools with check-environment (the trailing doctor) replaced by script: links to the others."""
+        tools = Path(self.scratch.name) / 'tools'
+        tools.mkdir()
+        for entry in (lifecycle.STAGE / 'tools').iterdir():
+            if entry.name not in ('check-environment', '__pycache__'):
+                (tools / entry.name).symlink_to(entry)
+        doctor = tools / 'check-environment'
+        doctor.write_text('#!/bin/sh\n' + script)
+        doctor.chmod(0o755)
+        self.env['OASIS_TOOLS_DIR'] = str(tools)
+
+    def header(self):
+        return (f'mode=apply\nproject=a project\nenvironment={self.python.parent.parent}\n'
+                'lockfile=dev/requirements/dev.txt\nmutation=isolated_project_virtualenv\n')
+
+    def incomplete(self, code):
+        return (f'doctor=incomplete exit={code}: the trailing doctor --environment --full did not complete (no '
+                f'environment_failures= summary line); the sync succeeded; run '
+                f'{self.command("doctor", "--environment", "--full")}\n')
+
+    def test_a_doctor_that_did_not_run_keeps_its_exit_127(self):
+        self.prepare()
+        self.running_database()
+        self.fake_doctor('exit 127\n')
+        result = self.invoke('bootstrap', '--apply')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (127, self.header(), self.incomplete(127)))
+        self.assertIn(f'uv pip sync --python {self.python}', self.commands.read_text())
+
+    def test_a_doctor_that_crashed_without_its_summary_keeps_exit_1(self):
+        self.prepare()
+        self.running_database()
+        self.fake_doctor('echo "PASS file:dev/requirements/runtime.in"\n'
+                         'echo "Traceback (most recent call last):" >&2\n'
+                         'echo "KeyError: \'python\'" >&2\nexit 1\n')
+        result = self.invoke('bootstrap', '--apply')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            1, self.header() + 'PASS file:dev/requirements/runtime.in\n',
+            "Traceback (most recent call last):\nKeyError: 'python'\n" + self.incomplete(1)))
+
+    def test_a_doctor_killed_by_a_signal_keeps_exit_143(self):
+        self.prepare()
+        self.running_database()
+        self.fake_doctor('echo "PASS file:dev/requirements/runtime.in"\nkill -TERM $$\n')
+        result = self.invoke('bootstrap', '--apply')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (
+            143, self.header() + 'PASS file:dev/requirements/runtime.in\n', self.incomplete(143)))
+
+    def test_a_summary_with_an_exit_other_than_1_is_not_a_completed_doctor(self):
+        self.prepare()
+        self.running_database()
+        self.fake_doctor('echo "environment_failures=1"\nexit 2\n')
+        result = self.invoke('bootstrap', '--apply')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, self.header() + 'environment_failures=1\n', self.incomplete(2)))
 
     def drifted_output(self, failures):
         return self.expected_apply_output(self.python.parent.parent).replace(

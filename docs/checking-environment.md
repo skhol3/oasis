@@ -24,13 +24,21 @@ Move /home/you/odoo/19.0/environments/acme-next away and run oasis bootstrap --a
 - A failure of its own work: a refusal (exit 2), a failed compile of the locks (exit 2), `uv venv` or `uv pip sync` failing (their exit code). It stops there and runs no doctor.
 - The trailing doctor's `FAIL locked_environment=drifted` (stderr) for the environment it just synced: the sync did not produce the locked environment ([The installed packages](#the-installed-packages): an environment oasis created that still drifts, a lock that cannot be read, a comparison that crashed). It exits with the doctor's code (1) and prints nothing after the doctor's lines, also when other checks failed too.
 
-Any other failure of the trailing doctor is outside the sync, for example `FAIL postgres_service=not_running` because PostgreSQL is not running yet, a failed `postgres_connection`, `compose_config` or `dependency_audit`: the exit is 0, and the doctor's lines are printed as they are, followed on stdout by:
+- A trailing doctor that did not complete: it did not run (exit 126 or 127, a missing or not executable `check-environment`) or died (a Python traceback, a signal, exit 128+n), so it printed no `environment_failures=<n>` summary line, or it exited with a code other than 0 or 1. Its lines are printed as they are, its exit code is bootstrap's, and one line on stderr says so:
+
+  ```text
+  doctor=incomplete exit=127: the trailing doctor --environment --full did not complete (no environment_failures= summary line); the sync succeeded; run oasis --project /home/you/odoo/19.0/projects/acme doctor --environment --full
+  ```
+
+Any other failure of a trailing doctor that completed (exit 1 and its `environment_failures=<n>` summary line on stdout) is outside the sync, for example `FAIL postgres_service=not_running` because PostgreSQL is not running yet, a failed `postgres_connection`, `compose_config` or `dependency_audit`: the exit is 0, and the doctor's lines are printed as they are, followed on stdout by:
 
 ```text
 sync=succeeded
 doctor=failed exit=1: the checks above are the results of the trailing doctor --environment --full; the sync succeeded
   next: fix what they report (their fix: lines), then run oasis --project /home/you/odoo/19.0/projects/acme doctor --environment --full
 ```
+
+bootstrap reads two doctor lines, the drift `FAIL` line and the summary line; both are defined in one place in `tools/bootstrap`, next to the place in `tools/environment_checks.sh` that prints them.
 
 When it passes, the output ends with its `environment_failures=0`, as before; a drift of an adopted environment is a `WARN` there and does not count. Before 0.20.0, `bootstrap --apply` exited with the trailing doctor's code (1 when any check failed, even after a successful sync).
 

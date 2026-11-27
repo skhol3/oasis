@@ -120,33 +120,55 @@ uv pip freeze --python "$PYTHON" > "$snapshot_dir/bootstrap-before.txt"
 uv pip sync --python "$PYTHON" "$lockfile"
 require_runtime
 # The trailing doctor (`doctor --environment --full`, v0.20.0 S4): the exit code reports bootstrap's own work, the
-# locks and the sync, which succeeded by now (any failure above exits with its own code). A failed check outside
-# the sync, such as PostgreSQL not running yet, is printed as a doctor result with the command to run next, and
-# the exit stays 0. The doctor's environment result for the environment just synced, its structured stderr line
-# `FAIL locked_environment=drifted` (an environment oasis created that still drifts, a lock it cannot read, a
-# comparison that crashed), is bootstrap's own result: the doctor's exit, with nothing added, as before.
-# Its stderr is passed through line by line as it comes, and that line is looked for (`drifted` is yes or no).
-doctor_errors() {
-  local line drifted=no
+# locks and the sync, which succeeded by now (any failure above exits with its own code). A doctor that completed
+# and reported failed checks outside the sync, such as PostgreSQL not running yet, is printed as a doctor result
+# with the command to run next, and the exit stays 0. Completed means exit 1 and its summary line on stdout: any
+# other non-zero exit (a doctor that did not run, 126/127, or died, a traceback or a signal 128+n) is bootstrap's
+# exit, with one stderr line saying the doctor did not complete. The doctor's environment result for the
+# environment just synced, its drift line on stderr (an environment oasis created that still drifts, a lock it
+# cannot read, a comparison that crashed), is bootstrap's own result: the doctor's exit, with nothing added.
+# The two doctor lines bootstrap reads, printed by tools/environment_checks.sh (check-environment sources it): the
+# drift line at :89 (`fail "locked_environment=drifted"`, on stderr through fail() at :34) and the summary line
+# at :127 (`environment_failures=<n>`, the last line on stdout). Changing either there changes bootstrap's exit.
+doctor_drift_line='FAIL locked_environment=drifted'
+doctor_summary_pattern='^environment_failures=[0-9]+$'
+# Each stream of the doctor is passed through line by line as it comes (stdout to fd 3, stderr to fd 4) and
+# its marker, when seen, is written to fd 5, which the caller reads: `drifted` on stderr, `summary` on stdout.
+doctor_lines() {
+  local stream=$1 line
   while IFS= read -r line || [[ -n "$line" ]]; do
-    printf '%s\n' "$line" >&2
-    if [[ "$line" == 'FAIL locked_environment=drifted' ]]; then drifted=yes; fi
+    if [[ "$stream" == stdout ]]; then
+      printf '%s\n' "$line" >&3
+      if [[ "$line" =~ $doctor_summary_pattern ]]; then printf 'summary\n' >&5; fi
+    else
+      printf '%s\n' "$line" >&4
+      if [[ "$line" == "$doctor_drift_line" ]]; then printf 'drifted\n' >&5; fi
+    fi
   done
-  printf '%s\n' "$drifted"
 }
 doctor_exit=0
-exec 3>&1
-# stdout goes straight to bootstrap's (fd 3), stderr through doctor_errors; pipefail gives the doctor's exit.
-drifted=$("$(dirname "$0")/check-environment" --full 2>&1 1>&3 3>&- | doctor_errors) || doctor_exit=$?
-exec 3>&-
-if [[ "$drifted" == yes ]]; then
+exec 3>&1 4>&2
+# The doctor's stdout goes through fd 6 to the stdout filter, its stderr to the stderr filter; the doctor gets
+# none of bootstrap's extra descriptors. pipefail gives the doctor's exit (both filters exit 0). The subshell's own
+# stderr is /dev/null: bash's job report for a doctor killed by a signal (`Done ...`) is not a doctor line.
+markers=$( { { "$(dirname "$0")/check-environment" --full 2>&1 1>&6 3>&- 4>&- 5>&- 6>&- \
+  | doctor_lines stderr; } 6>&1 | doctor_lines stdout; } 5>&1 1>/dev/null 2>/dev/null ) || doctor_exit=$?
+exec 3>&- 4>&-
+markers=$'\n'"$markers"$'\n'
+if [[ "$markers" == *$'\ndrifted\n'* ]]; then
   exit "$doctor_exit"
 fi
-if (( doctor_exit != 0 )); then
+if (( doctor_exit == 0 )); then
+  exit 0
+fi
+if (( doctor_exit == 1 )) && [[ "$markers" == *$'\nsummary\n'* ]]; then
   printf 'sync=succeeded\n'
   printf 'doctor=failed exit=%s: the checks above are the results of the trailing doctor --environment --full; the sync succeeded\n' \
     "$doctor_exit"
   printf '  next: fix what they report (their fix: lines), then run %s\n' \
     "$(confirm_command doctor --environment --full)"
+  exit 0
 fi
-exit 0
+printf 'doctor=incomplete exit=%s: the trailing doctor --environment --full did not complete (no environment_failures= summary line); the sync succeeded; run %s\n' \
+  "$doctor_exit" "$(confirm_command doctor --environment --full)" >&2
+exit "$doctor_exit"

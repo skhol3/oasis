@@ -86,7 +86,7 @@ if [[ "$mode" == "--full" ]]; then
     printf 'WARN locked_environment=drifted\n'
     printf '  fix: %s (syncs the adopted environment %s to the locks: it changes the packages installed there)\n' \
       "$(confirm_command bootstrap --apply)" "$PROJECT_ENVIRONMENT"
-  else fail "locked_environment=drifted"
+  else fail "locked_environment=drifted"  # tools/bootstrap reads this line (doctor_drift_line)
   fi
   if "$(dirname "$0")/audit-dependencies"; then pass "dependency_audit=clean"
   else fail "dependency_audit=failed"
@@ -124,5 +124,5 @@ else
   printf 'SKIP postgres_connection=use_--full\n'
 fi
 printf 'environment_mode=%s\n' "${mode#--}"
-printf 'environment_failures=%s\n' "$failures"
+printf 'environment_failures=%s\n' "$failures"  # tools/bootstrap reads it (doctor_summary_pattern)
 exit "$((failures > 0))"
