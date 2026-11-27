@@ -62,7 +62,7 @@ class GeneratedAccountTests(unittest.TestCase):
     existing_workspace = test_setup.SetupTests.existing_workspace
 
     def test_setup_generates_the_account_in_one_0600_file_and_never_prints_it(self):
-        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *test_setup.CREATE)
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         config = self.checkout / '.oasis/config'
         env_file, conf = config / '.env', config / 'odoo.conf'
@@ -86,7 +86,7 @@ class GeneratedAccountTests(unittest.TestCase):
         shutil.copytree(self.checkout, other, symlinks=True,
                         ignore=shutil.ignore_patterns('.oasis', 'oasis-workspace.toml'))
         self.checkout = other
-        again = self.setup_cmd('--apply')
+        again = self.setup_cmd('--apply', *test_setup.CREATE)
         self.assertEqual((again.returncode, again.stderr), (0, ''), again.stdout)
         self.assertNotEqual(account_lines(other / '.oasis/config/.env')[1], password)
 
@@ -401,6 +401,8 @@ class LaunchTests(unittest.TestCase):
             'printf "odoo %s\\n" "$*" >> "$FAKE_LOG"\n'
             'printf "account user=%s password=%s\\n" "${PGUSER-<unset>}" "${PGPASSWORD-<unset>}" >> "$FAKE_LOG"\n'))
         (self.root / 'dev/.env').write_text(f"ODOO_DB_USER=oasis_cc\nODOO_DB_PASSWORD='{MARKER} $x'\n")
+        # install-module runs on an existing database: no --confirm (v0.20.0 S5: only creating one needs it).
+        self.env['FAKE_EXISTS'] = '1'
 
     def accounts(self):
         lines = self.commands.read_text().splitlines()

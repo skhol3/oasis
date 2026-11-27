@@ -83,7 +83,7 @@ class StatusJsonTests(unittest.TestCase):
         self.assertEqual(result.stdout, self.status('--json').stdout)
 
     def test_a_configured_checkout_reports_each_step_and_the_next_command(self):
-        applied = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        applied = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *test_setup.CREATE)
         self.assertEqual(applied.returncode, 0, applied.stderr)
         program = f'oasis --project {self.checkout}'
         status = self.status_json()
@@ -117,8 +117,9 @@ class StatusJsonTests(unittest.TestCase):
         status = self.status_json()
         self.assertEqual(status['checks']['database_service'], {'ready': True, 'detail': 'running'})
         self.assertEqual(status['checks']['databases'], {'ready': False, 'detail': []})
-        # setup wrote [development] (its recommended answer without a terminal): init-dev-database works.
-        self.assertEqual(status['next'], f'{program} init-dev-database shop_sale shop_dev_manual')
+        # setup wrote [development] (its recommended answer without a terminal): init-dev-database works; its plan
+        # asks the user the name, the module and the demo data (v0.20.0 S6: none is chosen here).
+        self.assertEqual(status['next'], f'{program} init-dev-database --plan --json')
         self.env['FAKE_DATABASES'] = 'other_dev_x\nshop_dev_manual\nshop_test_x\n'
         status = self.status_json()
         self.assertEqual(status['checks']['databases'], {'ready': True, 'detail': ['shop_dev_manual', 'shop_test_x']})
@@ -132,7 +133,8 @@ class StatusJsonTests(unittest.TestCase):
         self.assertEqual(status['next'], f'{program} bootstrap --apply')
 
     def configured(self, *answers):
-        applied = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *answers)
+        applied = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *test_setup.CREATE,
+                                 *answers)
         self.assertEqual(applied.returncode, 0, applied.stderr)
         return shlex.join(['oasis', '--project', str(self.checkout)])
 
@@ -140,7 +142,7 @@ class StatusJsonTests(unittest.TestCase):
         program = self.configured()
         start = f'{program} start-database'
         # setup wrote [development] (v0.16.0 S6): the next database command is init-dev-database.
-        init_dev = f'{program} init-dev-database shop_sale shop_dev_manual'
+        init_dev = f'{program} init-dev-database --plan --json'
         for ps, detail, ready, next_command in (
                 ('', 'stopped', False, start),
                 ('{"Service":"db","State":"exited","Health":""}\n', 'stopped', False, start),
@@ -181,12 +183,15 @@ class StatusJsonTests(unittest.TestCase):
     def test_the_next_database_command_follows_the_workspace(self):
         program = self.configured('--answer', 'development=none')
         self.env['FAKE_PS'] = RUNNING
-        self.assertEqual(self.status_json()['next'], f'{program} install-module shop_sale')
+        # v0.20.0 S5, S6: creating a database is the user's decision, its name included: the next command is a
+        # plan that asks it (before: install-module shop_sale, init-dev-database shop_sale shop_dev_manual and
+        # create-database shop_dev_manual, a name chosen for the user).
+        self.assertEqual(self.status_json()['next'], f'{program} create-database --plan --json')
         workspace = self.checkout / 'oasis-workspace.toml'
         workspace.write_text(workspace.read_text() + "\n[development]\nadministrator_login = 'admin'\n")
-        self.assertEqual(self.status_json()['next'], f'{program} init-dev-database shop_sale shop_dev_manual')
+        self.assertEqual(self.status_json()['next'], f'{program} init-dev-database --plan --json')
         (self.checkout / 'shop_sale/__manifest__.py').unlink()
-        self.assertEqual(self.status_json()['next'], f'{program} create-database shop_dev_manual')
+        self.assertEqual(self.status_json()['next'], f'{program} create-database --plan --json')
 
     def test_a_running_server_leaves_nothing_next(self):
         self.configured()

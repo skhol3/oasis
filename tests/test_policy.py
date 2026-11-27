@@ -24,7 +24,7 @@ def tiers():
 class PolicyTableTests(unittest.TestCase):
     def test_tiers_follow_s1(self):
         table = tiers()
-        for operation in ('setup', 'setup --apply', 'bootstrap', 'create-database', 'start', 'stop', 'restart',
+        for operation in ('setup', 'setup --apply', 'bootstrap', 'start', 'stop', 'restart',
                           'start-database',
                           'install-module', 'update-module', 'doctor', 'check-environment', 'gc', 'gc --apply',
                           'test-module', 'verify-module', 'migrate --plan', 'worktree-init --dry-run'):
@@ -33,6 +33,23 @@ class PolicyTableTests(unittest.TestCase):
                           'recreate-database-volume', 'create a branch'):
             self.assertEqual(table[operation], 'B', operation)
         self.assertEqual(table['type a password'], 'C')
+
+    def test_creating_a_database_is_tier_b_v0_20_0(self):
+        # v0.20.0 S5: create-database and init-dev-database always, install-module only in its creating form
+        # (--confirm <database>, which its refusal names when the database does not exist); their plans and dry
+        # runs change nothing. The disposable and the kept test databases of test-module/verify-module stay A.
+        table, rows = tiers(), {row['operation']: row for row in policy.operations()}
+        for operation in ('create-database', 'init-dev-database', 'install-module --confirm'):
+            self.assertEqual((table[operation], rows[operation]['confirm']), ('B', 'database name'), operation)
+        for operation in ('create-database --plan', 'create-database --dry-run', 'init-dev-database --plan',
+                          'init-dev-database --dry-run', 'install-module', 'install-module --dry-run',
+                          'test-module', 'verify-module'):
+            self.assertEqual((table[operation], rows[operation]['confirm']), ('A', None), operation)
+        self.assertEqual(rows['create-database']['example'],
+                         'oasis --project /p create-database cc_dev_x --confirm cc_dev_x')
+        self.assertEqual(rows['create-database --plan']['example'], 'oasis --project /p create-database --plan --json')
+        self.assertEqual(rows['init-dev-database --plan']['example'],
+                         'oasis --project /p init-dev-database --plan --json')
 
     def test_a_deprecated_alias_has_the_tier_of_its_target(self):
         # v0.16.0 S5: check-environment runs doctor --environment; both keep a row of the same tier, and the

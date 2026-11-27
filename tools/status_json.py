@@ -13,8 +13,9 @@ databases, server; `next` is the command of the first one that is not ready (nul
   database_service  start-database, which starts it (stopped or starting) and names no env file (an agent harness
                     may refuse a command that does; list-databases would start it too, but the policy says it only
                     reads), doctor when it is unhealthy or its state cannot be read
-  databases         init-dev-database <module> <name> with [development], else install-module <module>
-                    (create-database <name> without modules); doctor when they cannot be read
+  databases         init-dev-database --plan --json with [development] and a module, else create-database --plan
+                    --json: creating a database is the user's decision, its name included (v0.20.0 S5, S6: the plan
+                    asks it); doctor when they cannot be read
   server            start
 """
 from __future__ import annotations
@@ -158,16 +159,14 @@ def report(root: Path) -> dict:
     if not checks['databases']['ready']:
         if isinstance(checks['databases']['detail'], str):
             return done(command('doctor'))
-        slug = values.get('CHECKOUT_SLUG', '')
-        name = f'{values["DEV_PREFIX"]}{slug + "_" if slug else ""}manual'
-        module = first_module(values)
+        # v0.20.0 S5, S6: the plan asks the user the name (and the kind, the module, the demo data); none is chosen here.
         try:
             development = isinstance(config.read_toml(workspace).get('development'), dict)
         except config.InvalidConfig:
             development = False
-        if module is None:
-            return done(command('create-database', name))
-        return done(command('init-dev-database', module, name) if development else command('install-module', module))
+        if development and first_module(values) is not None:
+            return done(command('init-dev-database', '--plan', '--json'))
+        return done(command('create-database', '--plan', '--json'))
     return done(None if checks['server']['ready'] else command('start'))
 
 

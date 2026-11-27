@@ -1,6 +1,6 @@
 # Fresh development database with role accounts
 
-Use the global `init-dev-database` command for a **new, explicitly authorized development database**. By default it initializes Odoo without demo data, configures the administrator, installs one project module, and creates the project-declared role accounts. Pass `--with-demo` explicitly to use Odoo's native demo loader. The Odoo options come from the series table (`tools/odoo_versions.py`): without demo data `--without-demo` on 19.0 and `--without-demo=all` on 15.0; with it `--with-demo` on 19.0 and nothing on 15.0, which loads demo data by default and has no `--with-demo` option. Role accounts get their groups through the series' `res.users` field (`group_ids` on 19.0, `groups_id` on 15.0). The part that runs inside Odoo uses the project environment's Python (3.7 or later, such as the 3.8 or 3.9 of an Odoo 15 environment) and only its standard library: the configuration is read by oasis's own Python, which passes it the values it needs. `create-database` (empty PostgreSQL database), `install-module`, `update-module`, `start`, and test commands do not provision these users.
+Use the global `init-dev-database` command for a **new, explicitly authorized development database**. By default it initializes Odoo without demo data, configures the administrator, installs one project module, and creates the project-declared role accounts. Pass `--with-demo` explicitly to use Odoo's native demo loader. The Odoo options come from the series table (`tools/odoo_versions.py`): without demo data `--without-demo` on 19.0 and `--without-demo=all` on 15.0; with it `--with-demo` on 19.0 and nothing on 15.0, which loads demo data by default and has no `--with-demo` option. Role accounts get their groups through the series' `res.users` field (`group_ids` on 19.0, `groups_id` on 15.0). The part that runs inside Odoo uses the project environment's Python (3.7 or later, such as the 3.8 or 3.9 of an Odoo 15 environment) and only its standard library: the configuration is read by oasis's own Python, which passes it the values it needs. `create-database` (empty PostgreSQL database), `install-module`, `update-module`, `start`, and test commands do not provision these users. `create-database <name>` is Tier B too (`--confirm <name>`, `--dry-run`, `--plan`), and so is `install-module` when its database does not exist: it creates it only with `--confirm <database>` and otherwise names the exact command; on an existing database it runs as before.
 
 Declare non-secret accounts in the project's `oasis-workspace.toml`. A workspace `oasis setup` creates already has the table, with the administrator alone (the question `development`, recommended `add`; [Setup](setup.md#what-it-infers-and-what-it-asks)): `[development]` and `administrator_login = 'admin'`, so `init-dev-database` runs without editing the file; `--answer development=none` leaves it out, and setup's next steps then name those two lines. Edit it, for example:
 
@@ -16,11 +16,49 @@ groups = ['your_module.group_planner']
 
 Replace the example group with an actual installed `res.groups` XML ID. Additional `[[development.users]]` entries declare other roles; omit them when only the administrator is needed. Every role account receives `base.group_user` plus its declared groups, limited to the initial company. The module must define its roles outside demo data. Logins must be unique and names/groups nonempty; unknown keys, including credentials, are rejected.
 
-Run the full executable path with the actual module and a fresh database name under the project's `[tooling].dev_prefix`, from a terminal or not (an agent runs it too: Tier A in the [agent contract](agent-contract.md)):
+Run the full executable path with the actual module and a fresh database name under the project's `[tooling].dev_prefix`, from a terminal or not. Creating a database is the user's decision (v0.20.0: Tier B in the [agent contract](agent-contract.md)): the command creates it only with `--confirm` naming that database:
 
 ```bash
-~/.agents/skills/oasis/oasis --project /absolute/project init-dev-database your_module project_dev_manual
+~/.agents/skills/oasis/oasis --project /absolute/project init-dev-database your_module project_dev_manual --confirm project_dev_manual
 ```
+
+Without `--confirm`, or with another name, it checks the configuration, then changes nothing, exits 2 and names the exact command:
+
+```text
+ERROR: init-dev-database creates the development database project_dev_manual with its accounts and installs your_module, demo data: no (Tier B: it needs explicit confirmation); nothing changed. Run: oasis --project /absolute/project init-dev-database your_module project_dev_manual --confirm project_dev_manual
+```
+
+`--dry-run` prints what it would create and changes nothing (exit 0):
+
+```text
+database: project_dev_manual
+kind: dev
+module: your_module
+demo: no
+dry run: nothing changed
+```
+
+## The plan of a new database
+
+A database is created only when the user asks for one, and the user chooses its name, its kind, its module and its demo data; oasis chooses none of them. `create-database --plan` and `init-dev-database --plan` list what they need as questions, and `--json` prints them as one JSON object in the shape of [setup's plan](setup.md#questions-and-answers): an agent relays the open questions to the user and passes the answers back with `--answer <id>=<value>` (repeatable) or `--answers <file.json>` (one JSON object of ids and text answers):
+
+| Id | Asked by | Answer | Recommended |
+| --- | --- | --- | --- |
+| `suffix` | both | the part of the name after the prefix (and the checkout slug): letters, digits and underscores | none |
+| `kind` | `create-database` | `dev`, `test` or `both`: `both` creates `<dev_prefix>[<slug>_]<suffix>` and `<test_prefix>[<slug>_]<suffix>` | none |
+| `module` | `init-dev-database` | one of the checkout's addon modules (the options it lists) | none |
+| `demo` | `init-dev-database` | `no` (without demo data) or `yes` (`--with-demo`) | `no`, still asked |
+
+```bash
+~/.agents/skills/oasis/oasis --project /absolute/project create-database --plan --json
+~/.agents/skills/oasis/oasis --project /absolute/project create-database --plan --json --answer kind=both --answer suffix=shop
+```
+
+- The prefixes are the workspace's `[tooling].dev_prefix` and `test_prefix`, shown under `inferred` (with the checkout slug of a linked worktree): changing a prefix is a workspace setting ([Workspace file](workspace-file.md)), not an answer of the plan. `init-dev-database` creates development databases only (`kind` is `dev`, inferred).
+- The document holds `format` (`oasis-database-plan`), `version` (1), `command`, `checkout`, `complete`, `inferred` (`{"<key>": {"value", "origin"}}`), `questions` (each with `id`, `text`, `options` (`[{"value", "label"}]`), `recommended`, `flag`, `answer` and `origin`, as in setup's plan), `open` (the ids still unanswered), `databases` and `lines` (the text plan, which `--plan` without `--json` prints).
+- With an open question the plan lists it (`open question <id>: <text>. Answer with <flag> (no recommended answer).`) and ends with `nothing changed: answer the open questions above (docs/dev-database.md#the-plan-of-a-new-database), then run the plan again` (exit 0).
+- Once every question is answered, the plan runs the command's own `--dry-run` for each database, so the database name guards decide (letters, digits and underscores, the checkout's namespace, at most 63 bytes, no trash or disposable-run suffix), prints it, then `run: <the exact --confirm command>` of each database; `databases` lists `{"database", "kind", "command"}` (and `module` and `demo` for `init-dev-database`). The user confirms each command; the plan itself never creates anything.
+- An unknown id, an answer outside a question's options, an answer given twice, or a name the guards refuse is refused (exit 2) with the reason, and nothing changes.
 
 ## Listing this checkout's databases
 
@@ -33,7 +71,7 @@ Run the full executable path with the actual module and a fresh database name un
 ## Optional native demo loading
 
 ```bash
-~/.agents/skills/oasis/oasis --project /absolute/project init-dev-database --with-demo your_module project_dev_training
+~/.agents/skills/oasis/oasis --project /absolute/project init-dev-database --with-demo your_module project_dev_training --confirm project_dev_training
 ```
 
 This opts in to native Odoo demo loading for base, installed dependencies, and the selected module's manifest `demo` files. It does not generate product records or import custom scenario scripts. Demo data is module-owned; the global tool contains no customer catalog. Without the flag, no demo is loaded and optional demo environment modules are not installed.

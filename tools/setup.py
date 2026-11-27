@@ -39,9 +39,11 @@ odoo_versions.py runtime_requirements, setuptools<81 on 15.0), before the projec
 
 When setup would create the environment (v0.15.0 S8: a new workspace, or a new series section) without
 --environment or --python, a terminal asks to create it or to adopt an existing one (then as --environment),
-and the Python of a new one among those the series supports; --python <x.y> answers that without asking.
-Without a terminal nothing is asked and the plan is the same as before. Every question comes before any
-change: end of input refuses (exit 2), Ctrl-C exits 130, and nothing is changed.
+and the Python of a new one among those the series supports; --python <x.y> answers both without asking.
+Without a terminal both are open questions with a recommended answer until answered (v0.20.0 S1: the field run
+saw an agent's plan choose them silently). Every question comes before any change: end of input refuses
+(exit 2), Ctrl-C exits 130, and nothing is changed. A new series section's environment next to an adopted
+[tooling] one is named after the project, never after that environment (v0.20.0 S2, series_environment).
 
 v0.16.0 S3 (docs/setup.md#questions-and-answers): --plan --json prints the plan as one JSON object
 (plan_document); --answer <id>=<value> and --answers <file.json> answer the questions by id (answered);
@@ -227,21 +229,28 @@ never creates, syncs or deletes it, and bootstrap --apply syncs it to the locks.
 (an environment setup or bootstrap creates is marked .oasis-created, and its drift is a FAIL).
 
 When setup would create the Python environment (a new workspace, or a new series section) and neither
---environment nor --python is given, it asks on a terminal: Enter creates it, or the absolute path of an
-existing environment uses that one, exactly as --environment does; for a new one it then asks its Python
-among those the series supports (Enter: the default; any other answer is asked again). --python <x.y>
-gives that Python without asking: one the series supports, never with --environment, and refused when
-the environment already exists. Without a terminal nothing is asked and the environment gets the
-configuration's Python. End of input or Ctrl-C at a question changes nothing (exit 2 or 130).
+--environment nor --python is given, it asks on a terminal: Enter creates it (recommended), or the absolute
+path of an existing environment uses that one, exactly as --environment does; for a new one it then asks
+its Python among those the series supports (Enter: the recommended one, the configuration's; any other
+answer is asked again). Without a terminal these are the open questions environment (create or a path) and
+python, with the same recommended answers, until answered: --answer environment=create, --environment <dir>
+or --python <x.y>. The question shows the path a new environment gets; another folder is not an answer.
+--python <x.y> answers both, since a Python only makes sense for a new environment: a new environment with
+that Python, one the series supports, never with --environment, and refused when the environment already
+exists. End of input or Ctrl-C at a question changes nothing (exit 2 or 130).
+A new series section whose [tooling] environment is an adopted one (it exists without oasis' .oasis-created
+mark; one oasis created before 0.17.0 has none either) gets an environment named after the project
+(<name><major>, as its prefixes) in that environment's folder when it is in the workspace directory, else in
+the workspace's; otherwise <environment>-<x.y>.
 
 Questions and answers (docs/setup.md#questions-and-answers): every question has a flag, and
 --answer <id>=<value> (repeatable) or --answers <file.json> (a JSON object {"<id>": "<value>"}) answers
 it by its id: series, community, enterprise (a path or none), environment (create or a path), python,
 workspace (the project folder or the clone), series_exceptions (add or no), python_ldap (yes or no),
 development (add or none) and requirement:<name>. Without a terminal and without an answer, a question
-whose answer setup cannot go without (series, community, enterprise) or one of an anticipated problem
-is an open question: the plan lists it with its flag and --apply refuses, changing nothing; the
-environment and its Python take the recommended answers, as before, and so does development.
+whose answer setup cannot go without (series, community, enterprise), the environment and its Python, or
+one of an anticipated problem is an open question: the plan lists it with its flag and --apply refuses,
+changing nothing; development and workspace take their recommended answers.
 A new workspace file gets the [development] table init-dev-database needs (the question development:
 add, recommended, writes administrator_login = 'admin', whose password init-dev-database generates;
 none leaves it out); a workspace file without one gets a next step that names its exact lines.
@@ -314,11 +323,12 @@ def parse_arguments(arguments: list[str]) -> dict | None:
     return options
 
 
-def answered(options: dict) -> dict:
-    """{question id: (answer, where it came from)} of --answers and --answer (v0.16.0 S3), both removed from
-    options; an answer to a question a flag answers becomes that flag (refused when the flag is given too), and
-    environment=create is kept as an answer."""
-    answers = {}
+def answered(options: dict) -> tuple[dict, dict]:
+    """({question id: (answer, where it came from)} of --answers and --answer (v0.16.0 S3), both removed from
+    options; {flag: (question id, where it came from)} of the answers that became a flag): an answer to a question
+    a flag answers becomes that flag (refused when the flag is given too), and environment=create is kept as an
+    answer."""
+    answers, converted = {}, {}
     if '--answers' in options:
         path = options.pop('--answers')
         try:
@@ -352,8 +362,9 @@ def answered(options: dict) -> dict:
             raise Refused(f'The question {key} is answered twice: by {clash} and by {source}.')
         if flag is not None:
             options[flag] = given
+            converted[flag] = (key, source)
             del answers[key]
-    return answers
+    return answers, converted
 
 
 class Open(Exception):
@@ -366,11 +377,20 @@ class Questions:
     answers it (v0.16.0 S3). It also holds what the plan inferred so far and every question it met, answered
     or open, for --json: a plan that stops at an open question still reports them."""
 
-    def __init__(self, answers=None, interactive=None):
+    def __init__(self, answers=None, interactive=None, converted=None):
         self.interactive = (sys.stdin.isatty() and sys.stderr.isatty()) if interactive is None else interactive
         self.answers = answers or {}
+        self.converted = converted or {}
         self.used = set()
         self.lines, self.inferred, self.listed, self.refusals = [], {}, [], {}
+
+    def flag_origin(self, flag: str) -> str:
+        """Where the value of flag came from: `from --answer <id>` (or `from --answers <id>`) when an answer gave
+        it (answered), else `from <flag>`."""
+        if flag in self.converted:
+            key, source = self.converted[flag]
+            return f'from {source.split()[0]} {key}'
+        return f'from {flag}'
 
     def infer(self, key: str, value, origin: str):
         self.inferred[key] = {'value': value if value is None or isinstance(value, int) else str(value),
@@ -566,33 +586,41 @@ def chosen_python(options: dict, series: str) -> str | None:
 def environment_choice(options: dict, questions: Questions, series: str, environment: Path, default: str):
     """(the adopted environment or None, the Python of a new one or None) for the environment setup would
     create at environment with Python default (S8). --python is refused when that environment exists (it is
-    kept: setup creates none). On a terminal, without --environment or --python, setup asks: Enter creates
-    it, else the answer is adopted exactly as --environment adopts one (adopted_environment); for a new one
-    it asks its Python among those the series supports (Enter: default), again after any other answer.
-    Without a terminal nothing is asked: (None, None), the configuration's own Python."""
+    kept: setup creates none). Two questions (v0.20.0 S1): environment, create it (recommended) or adopt an
+    existing one exactly as --environment adopts one (adopted_environment), and python, the Python of a new one
+    among those the series supports (recommended: default). --python answers both (a new environment with that
+    Python), environment=create the first. On a terminal setup asks what is unanswered (Enter: the recommended
+    answer; another Python is asked again). Without a terminal an unanswered question is open: the plan goes on
+    with the recommended answer and --apply refuses it."""
     exists = (environment / 'pyvenv.cfg').is_file()
     if '--python' in options and exists:
         raise Refused(f'--python {options["--python"]}: the environment {environment} exists and is kept; setup '
                       'creates no environment, so drop --python.')
-    if exists or '--environment' in options or '--python' in options:
-        if not exists:
-            questions.used.add('environment')  # environment=create with --python: it is created
+    if exists or '--environment' in options:
         return None, None
     pythons = series_pythons(series)
+    listed = ', '.join(pythons)
     create = questions.answers.get('environment')
     questions.used.add('environment')
-    asked = [({'id': 'environment', 'text': f'Python environment for Odoo {series}: create {environment}, or use an '
-                                            'existing environment',
-               'options': [{'value': 'create', 'label': f'create {environment}'}], 'recommended': 'create',
-               'flag': '--environment <dir>'}, 'create'),
-             ({'id': 'python', 'text': f'Python of the new environment {environment}',
-               'options': [{'value': python, 'label': f'Python {python}'} for python in pythons],
-               'recommended': default, 'flag': '--python <x.y>'}, default)]
+    where = {'id': 'environment', 'text': f'Python environment for Odoo {series}: create {environment}, or use an '
+                                          'existing environment',
+             'options': [{'value': 'create', 'label': f'create {environment}'}], 'recommended': 'create',
+             'flag': '--answer environment=create | --environment <dir>'}
+    which = {'id': 'python', 'text': f'Python of the new environment {environment}',
+             'options': [{'value': python, 'label': f'Python {python}'} for python in pythons],
+             'recommended': default, 'flag': '--python <x.y>'}
+    created = f'from {create[1].split()[0]}' if create else None
+    if '--python' in options:
+        questions.met(where, 'create', created or questions.flag_origin('--python'))
+        questions.met(which, options['--python'], questions.flag_origin('--python'))
+        return None, None
     if not questions.interactive:
-        # Without a terminal the recommended answers apply, as before v0.16.0: the configuration's own Python.
-        for question, answer in asked:
-            questions.met(question, answer, f'from {create[1].split()[0]}' if create and question['id'] == 'environment'
-                          else 'recommended (no terminal)')
+        if created:
+            questions.met(where, 'create', created)
+        else:
+            questions.met(where, None, None, f'{where["text"]}. Answer with {where["flag"]} (recommended: create).')
+        questions.met(which, None, None, f'{which["text"]}, one of {listed}. Answer with {which["flag"]} '
+                                         f'(recommended: {default}).')
         return None, None
     refusal = (f'No answer for the Python environment of Odoo {series} (end of input): nothing changed; pass '
                '--environment <dir> or --python <x.y>.')
@@ -602,12 +630,15 @@ def environment_choice(options: dict, questions: Questions, series: str, environ
     if answer:
         if not os.path.isabs(answer) or not os.path.isdir(answer):
             raise Refused('--environment requires an absolute existing directory.')
-        return adopted_environment(answer, series), None
-    listed = ', '.join(pythons)
+        adopted = adopted_environment(answer, series)
+        questions.met(where, str(adopted[0]), 'answered')
+        return adopted, None
+    questions.met(where, 'create', created or 'answered')
     while True:
         answer = questions.ask(f'Python of the new environment {environment}, one of {listed} [Enter: {default}]: ',
                                refusal)
         if not answer or answer in pythons:
+            questions.met(which, answer or default, 'answered')
             return None, answer or default
         questions.say(f'{answer} is not a Python Odoo {series} supports; answer one of {listed}, or Enter for '
                       f'{default}.\n')
@@ -615,8 +646,7 @@ def environment_choice(options: dict, questions: Questions, series: str, environ
 
 def development_choice(questions: Questions, workspace: Path) -> bool:
     """Whether a new workspace file gets the [development] table init-dev-database needs (v0.16.0 S6): the question
-    development, add (recommended; applied without a terminal and without an answer, as the environment's
-    recommended answers are) or none."""
+    development, add (recommended; applied without a terminal and without an answer) or none."""
     login = migrate.toml_string(DEVELOPMENT['administrator_login'])
     question = {'id': 'development',
                 'text': f'init-dev-database needs a [development] table in {workspace}: add one with '
@@ -736,7 +766,7 @@ def project_folder(root: Path) -> Path | None:
 def workspace_choice(root: Path, questions: Questions) -> Path:
     """The directory of a new workspace without --workspace (v0.16.0 S4.11): the clone itself, or, for a clone in
     a project folder (project_folder), the question workspace: that folder (recommended; without a terminal it
-    applies, as the environment's recommended answers do) or the clone."""
+    applies) or the clone."""
     project = project_folder(root)
     if project is None:
         return root
@@ -959,7 +989,7 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
             except config.InvalidConfig as exc:
                 raise Refused(str(exc)) from exc
         text, values = configured(adopted, chosen)
-        python_origin = 'from --python' if chosen is not None else f'the default of Odoo {series}'
+        python_origin = questions.flag_origin('--python') if chosen is not None else f'the default of Odoo {series}'
         if adopted is None:
             answered_now, chosen_now = environment_choice(options, questions, series,
                                                           Path(values['PROJECT_ENVIRONMENT']), values['PYTHON_VERSION'])
@@ -1174,7 +1204,8 @@ def series_section(document, workspace, series, exceptions, sources, environment
     series folder (series_folder), the environment next to [tooling]'s (<environment>-<x.y>, or
     <environments>/<name><major> with the machine file's environments), logs and data_dir to
     <logs>/<x.y> and <data_dir>/<x.y>, the prefixes to <name><major>_dev_ and _test_ (<name> from the
-    default series' dev_prefix, its own major left out). A source that [tooling] sets is overridden
+    default series' dev_prefix, its own major left out; an adopted [tooling] environment gives a new one named
+    <name><major> instead, series_environment). A source that [tooling] sets is overridden
     with this series' (sources: community and enterprise or None). An adopted environment (adopted: its
     path and Python, S7) is the section's environment, with python when it is not the series' default; so is
     python, the Python of the environment setup creates (S8), and a series that would otherwise use the default
@@ -1219,7 +1250,7 @@ def series_section(document, workspace, series, exceptions, sources, environment
     if (not varying or unsupported) and environments:
         section['environment'] = f'{environments}/{name}'
     elif not varying and isinstance(environment, str) and environment:
-        section['environment'] = (Path(environment).parent / f'{Path(environment).name}-{series}').as_posix()
+        section['environment'] = series_environment(environment, base, name, series, old.get('config'))
     if adopted is not None:
         section['environment'] = relative(adopted[0], base)
         if adopted[1] != config.versions().capability(series, 'python_default'):
@@ -1289,6 +1320,24 @@ def series_section(document, workspace, series, exceptions, sources, environment
     if exceptions:
         section['series_exceptions'] = exceptions
     return {key: section[key] for key in config.SERIES_KEYS if key in section}, lines, adopted
+
+
+def series_environment(environment: str, base: Path, name: str, series: str, conf) -> str:
+    """The environment of a new series section next to [tooling]'s environment (environment, as written): its name
+    with -<x.y> (environments/acme gives environments/acme-15.0). When that environment is an adopted one (it
+    exists without the mark of an environment oasis created, tools/environment_origin.py), it may be another
+    project's: the new one is named after the project, name (the section's prefixes without _dev_, v0.20.0 S2), in
+    the adopted one's folder when that folder is in the workspace directory base, else in the workspace's own
+    folder (.oasis/ when [tooling].config, conf, is there)."""
+    path = Path(environment)
+    resolved = Path(os.path.realpath(base / path))
+    if not (resolved / 'pyvenv.cfg').is_file() or environment_origin.created(resolved):
+        return (path.parent / f'{path.name}-{series}').as_posix()
+    workspace = Path(os.path.realpath(base))
+    if resolved.parent.is_relative_to(workspace):
+        return relative(resolved.parent / name, workspace)
+    layout = isinstance(conf, str) and Path(os.path.normpath(conf)).parts[:1] == (LAYOUT,)
+    return f'{LAYOUT}/{name}' if layout else name
 
 
 def effective(document: dict, workspace: Path, series: str) -> list:
@@ -1465,7 +1514,7 @@ def series_plan(root, kind, options, questions, workspace, machine, target, line
             raise Refused(str(exc)) from exc
         return adoption, folder, new, raw, workspace_lines, base, values
     adoption, folder, new, raw, workspace_lines, base, values = configured(adopted, chosen)
-    python_origin = 'from --python' if chosen is not None else f'the default of Odoo {series}'
+    python_origin = questions.flag_origin('--python') if chosen is not None else f'the default of Odoo {series}'
     if adopted is None:
         answered_now, chosen_now = environment_choice(options, questions, series, Path(values['PROJECT_ENVIRONMENT']),
                                                       values['PYTHON_VERSION'])
@@ -2184,7 +2233,8 @@ def apply_plan(plan: dict) -> int:
         lines = migrate.toml_table('development', DEVELOPMENT).splitlines()
         steps.append(f'add these lines to {workspace_file} (docs/dev-database.md):'
                      + ''.join(f'\n       {line}' for line in lines))
-    steps.append(f'{program} --project {root} init-dev-database <module> {values["DEV_PREFIX"]}manual')
+    # A database is the user's decision (v0.20.0 S6): the step names the plan that asks its name, module and demo.
+    steps.append(f'{program} --project {root} init-dev-database --plan')
     print('next steps:')
     for number, step in enumerate(steps, 1):
         print(f'  {number}. {step}')
@@ -2252,7 +2302,7 @@ def main(arguments: list[str]) -> int:
         print(usage(), file=sys.stderr)
         return 2
     try:
-        answers = answered(options)
+        answers, converted = answered(options)
     except Refused as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 2
@@ -2268,7 +2318,7 @@ def main(arguments: list[str]) -> int:
     if root is None:
         print(f'ERROR: {config.PROJECT_ROOT_REQUIRED}', file=sys.stderr)
         return 2
-    questions = Questions(answers, interactive=False if '--json' in options else None)
+    questions = Questions(answers, interactive=False if '--json' in options else None, converted=converted)
     plan = None
     try:
         plan = make_plan(root, options, questions)

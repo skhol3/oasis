@@ -5,8 +5,10 @@ workspace or of a new series section and neither --environment nor --python is g
 creates it, or the absolute path of an existing environment is adopted as --environment adopts one.
 For a new one it asks the Python, one the series supports, the default marked; a wrong answer is
 asked again. --python <x.y> gives that Python without asking. End of input or Ctrl-C at a question
-changes nothing. Without a terminal setup asks nothing (tests/test_setup.py and
-tests/test_setup_series.py run it with stdin from /dev/null and their plans stay byte for byte).
+changes nothing. Without a terminal setup asks nothing: the two are open questions with the same
+recommended answers until answered (v0.20.0 S1; tests/test_setup.py and tests/test_setup_series.py run it
+with stdin from /dev/null and relay those answers), and Enter, Enter gives the plan of
+--answer environment=create with the recommended --python.
 
 The terminal is a pseudo-terminal (pty) that is the controlling terminal of the setup process, with
 echo off so what is read from it is exactly what setup writes to standard error; every directory is
@@ -457,10 +459,15 @@ class SeriesPromptTests(unittest.TestCase):
 
     def test_over_a_named_environment_of_another_python_the_marked_default_is_its_python(self):
         # The series would use the default named environment with its Python 3.12, not the series' 3.9: that is
-        # the default the question marks, and Enter, Enter gives the plan without a terminal.
+        # the default the question marks (the recommended answer without a terminal too, v0.20.0 S1), and Enter,
+        # Enter gives the plan of those recommended answers.
         self.workspace.write_text(self.named(test_setup_series.V2, 'environments/cc-{series}', '3.12'))
         before = self.tree()
-        plain = self.setup_cmd(*self.sources())
+        unanswered = self.setup_cmd(*self.sources())
+        self.assertEqual((unanswered.returncode, unanswered.stderr), (0, ''))
+        self.assertIn(f'open question python: Python of the new environment {self.venv()}, one of {PYTHONS_15}. Answer '
+                      'with --python <x.y> (recommended: 3.12).\n', unanswered.stdout)
+        plain = self.setup_cmd(*self.sources(), '--answer', 'environment=create', '--answer', 'python=3.12')
         self.assertEqual((plain.returncode, plain.stderr), (0, ''))
         self.assertIn(f'create the environment {self.venv()} with Python 3.12 (uv venv)', plain.stdout)
         prompt = python_prompt(self.venv(), PYTHONS_15, '3.12')

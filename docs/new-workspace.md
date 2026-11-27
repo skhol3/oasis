@@ -55,8 +55,11 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
    It infers the series from the module manifests (`19.0.1.0.0` gives `19.0`) and the source
    from the machine file, and asks only what it cannot infer: on the first project of a machine,
    where the Odoo source is and whether Enterprise is used (`--community <dir>` and
-   `--enterprise <dir>` or `--no-enterprise` answer without a terminal). Each piece is one
-   `create <path>` or `kept <path>` line. Abridged:
+   `--enterprise <dir>` or `--no-enterprise` answer without a terminal), and for the Python
+   environment it would create, whether to create it or use an existing one and its Python
+   (`--answer environment=create` or `--environment <dir>`, and `--python <x.y>`; without a
+   terminal they stay [open questions](setup.md#questions-and-answers) with their recommended
+   answers until answered). Each piece is one `create <path>` or `kept <path>` line. Abridged:
 
    ```text
    checkout: /home/you/src/acme (main)
@@ -77,6 +80,10 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
    ```bash
    ~/.agents/skills/oasis/oasis setup --apply
    ```
+
+   On a terminal it asks the same questions again; without one, pass the answers the plan
+   listed (for example `--answer environment=create --python <x.y>`), or `--apply` refuses with
+   each open question and changes nothing.
 
    It creates only the `create` pieces (an existing file is never replaced), checks that the
    checkout loads its configuration, compiles the dependency locks, creates the Python
@@ -113,8 +120,13 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
    generates it, so typing is only for your own. Then check the installed packages against the
    locks.
 
+   Creating it is your decision (Tier B since v0.20.0): `init-dev-database --plan` asks the name
+   after `acme_dev_`, the module and whether with demo data, then prints the command with
+   `--confirm <database>` ([The plan of a new database](dev-database.md#the-plan-of-a-new-database)).
+
    ```bash
-   ~/.agents/skills/oasis/oasis init-dev-database acme_sale acme_dev_manual
+   ~/.agents/skills/oasis/oasis init-dev-database --plan
+   ~/.agents/skills/oasis/oasis init-dev-database acme_sale acme_dev_manual --confirm acme_dev_manual
    ~/.agents/skills/oasis/oasis doctor --environment --full
    ```
 

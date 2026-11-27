@@ -12,7 +12,7 @@ import tempfile
 import unittest
 
 import test_setup
-from test_setup import DRY_RUN
+from test_setup import CREATE, DRY_RUN
 from test_setup_prompt import on_terminal
 
 OPEN_PLAN = ('nothing changed: answer the open questions above (docs/setup.md#questions-and-answers), then run '
@@ -25,6 +25,8 @@ MANIFEST_15 = ("{'name': 'Shop Sale', 'version': '15.0.1.0.0', 'depends': ['sale
 LDCONFIG_26 = '\tlibldap.so.2 (libc6,x86-64) => /usr/lib/libldap.so.2\n'
 LDCONFIG_24 = ('\tlibldap_r-2.4.so.2 (libc6,x86-64) => /usr/lib/libldap_r-2.4.so.2\n'
                '\tlibldap-2.4.so.2 (libc6,x86-64) => /usr/lib/libldap-2.4.so.2\n')
+# The recommended answers of the environment questions of a new 15.0 workspace (v0.20.0 S1), as an agent relays them.
+CREATE_15 = ('--answer', 'environment=create', '--answer', 'python=3.9')
 
 
 
@@ -76,7 +78,7 @@ class PlanJsonTests(unittest.TestCase):
         self.assertEqual({key: plan[key] for key in ('format', 'version', 'checkout', 'complete', 'open',
                                                      'ready_to_apply')},
                          {'format': 'oasis-setup-plan', 'version': 1, 'checkout': str(self.checkout),
-                          'complete': True, 'open': [], 'ready_to_apply': True})
+                          'complete': True, 'open': ['environment', 'python'], 'ready_to_apply': False})
         self.assertEqual(plan['inferred'], {
             'checkout': {'value': str(self.checkout), 'origin': 'main'},
             'series': {'value': '19.0', 'origin': 'from the module manifests'},
@@ -105,19 +107,28 @@ class PlanJsonTests(unittest.TestCase):
              'summary': f'create the environment {environment} with Python 3.12 (uv venv) and sync dev.txt '
                         '(uv pip sync)'}])
         self.assertNotIn('ODOO_DB_PASSWORD=', json.dumps(plan))
-        # Without a terminal, the environment and its Python take the recommended answers, as before.
+        # v0.20.0 S1: without a terminal, the environment and its Python are open questions with their recommended
+        # answers (the plan shows what those would create); development takes its recommended answer.
         self.assertEqual(plan['questions'], [
             {'id': 'environment', 'text': f'Python environment for Odoo 19.0: create {environment}, or use an '
                                           'existing environment', 'options': [
                 {'value': 'create', 'label': f'create {environment}'}],
-             'recommended': 'create', 'flag': '--environment <dir>', 'answer': 'create',
-             'origin': 'recommended (no terminal)'},
+             'recommended': 'create', 'flag': '--answer environment=create | --environment <dir>', 'answer': None,
+             'origin': None},
             {'id': 'python', 'text': f'Python of the new environment {environment}', 'options': [
                 {'value': python, 'label': f'Python {python}'} for python in ('3.10', '3.11', '3.12', '3.13', '3.14')],
-             'recommended': '3.12', 'flag': '--python <x.y>', 'answer': '3.12', 'origin': 'recommended (no terminal)'},
+             'recommended': '3.12', 'flag': '--python <x.y>', 'answer': None, 'origin': None},
             development_question(self.checkout / 'oasis-workspace.toml', 'add', 'recommended (no terminal)')])
+        # Answered as an agent relays them: ready to apply, each answer with where it came from.
+        plan = self.json_plan('--community', str(self.source), '--no-enterprise', *CREATE)
+        self.assertEqual((plan['open'], plan['ready_to_apply']), ([], True))
+        self.assertEqual([(question['id'], question['answer'], question['origin']) for question in plan['questions']],
+                         [('environment', 'create', 'from --answer'), ('python', '3.12', 'from --answer python'),
+                          ('development', 'add', 'recommended (no terminal)')])
+        self.assertEqual(plan['inferred']['python'], {'value': '3.12', 'origin': 'from --answer python'})
         # v0.16.0 S6: the answer none leaves the table out; an answer is reported with where it came from.
-        plan = self.json_plan('--community', str(self.source), '--no-enterprise', '--answer', 'development=none')
+        plan = self.json_plan('--community', str(self.source), '--no-enterprise', *CREATE, '--answer',
+                              'development=none')
         self.assertEqual(plan['questions'][-1],
                          development_question(self.checkout / 'oasis-workspace.toml', 'none', 'from --answer'))
         self.assertNotIn('  [development]', plan['lines'])
@@ -152,7 +163,7 @@ class PlanJsonTests(unittest.TestCase):
         path = self.answers({'community': str(self.source), 'enterprise': 'none', 'environment': 'create',
                              'python': '3.12'})
         for arguments in (('--answers', str(path)),
-                          ('--answer', f'community={self.source}', '--answer', 'enterprise=none')):
+                          ('--answer', f'community={self.source}', '--answer', 'enterprise=none', *CREATE)):
             with self.subTest(arguments=arguments):
                 result = self.setup_cmd(*arguments)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, self.plan(port) + DRY_RUN, ''))
@@ -203,7 +214,7 @@ class PlanJsonTests(unittest.TestCase):
         before = self.tree()
         requirements = self.checkout / '.oasis/config/requirements'
         overrides, runtime = requirements / 'overrides.txt', requirements / 'runtime.in'
-        plan = self.json_plan('--community', str(self.source), '--no-enterprise')
+        plan = self.json_plan('--community', str(self.source), '--no-enterprise', *CREATE_15)
         self.assertEqual(self.tree(), before)
         self.assertEqual((plan['complete'], plan['ready_to_apply']), (True, False))
         self.assertEqual(plan['open'], ['python_ldap', 'requirement:cryptography', 'requirement:phonenumbers'])
@@ -232,7 +243,7 @@ class PlanJsonTests(unittest.TestCase):
             'recommended': 'add', 'flag': '--answer requirement:phonenumbers=<add|skip>', 'answer': None,
             'origin': None})
         # The human plan lists them too; --apply refuses before any change, naming each flag.
-        text = self.setup_cmd('--community', str(self.source), '--no-enterprise')
+        text = self.setup_cmd('--community', str(self.source), '--no-enterprise', *CREATE_15)
         self.assertEqual(text.returncode, 0)
         self.assertTrue(text.stdout.endswith(
             f'open question python_ldap: {questions["python_ldap"]["text"]} Answer with --answer python_ldap=<yes|no> '
@@ -242,7 +253,7 @@ class PlanJsonTests(unittest.TestCase):
             f'open question requirement:phonenumbers: {questions["requirement:phonenumbers"]["text"]} Answer with '
             '--answer requirement:phonenumbers=<add|skip> (recommended: add).\n' + OPEN_PLAN), text.stdout)
         self.assertEqual(text.stdout.splitlines()[:-4], plan['lines'])
-        refused = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise',
+        refused = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *CREATE_15,
                                  '--answer', 'python_ldap=yes')
         self.assertEqual((refused.returncode, refused.stdout), (2, ''))
         self.assertEqual(refused.stderr, (
@@ -258,7 +269,8 @@ class PlanJsonTests(unittest.TestCase):
         # Answered: the pins go to a new overrides.txt, the missing requirement to the new runtime.in.
         answers = self.answers({'python_ldap': 'yes', 'requirement:cryptography': 'override',
                                 'requirement:phonenumbers': 'add'})
-        applied = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', '--answers', str(answers))
+        applied = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *CREATE_15,
+                                 '--answers', str(answers))
         self.assertEqual((applied.returncode, applied.stderr), (0, ''), applied.stdout)
         self.assertIn(f'create {overrides}: python-ldap==3.4.4, cryptography==3.3.1 (uv pip compile --override)\n',
                       applied.stdout)
@@ -278,7 +290,7 @@ class PlanJsonTests(unittest.TestCase):
 
     def test_no_python_ldap_question_with_libldap_r_or_without_the_pin(self):
         self.use_15(LDCONFIG_24)
-        plan = self.json_plan('--community', str(self.source), '--no-enterprise',
+        plan = self.json_plan('--community', str(self.source), '--no-enterprise', *CREATE_15,
                               '--answer', 'requirement:cryptography=skip', '--answer', 'requirement:phonenumbers=skip')
         self.assertEqual((plan['open'], plan['ready_to_apply']), ([], True))
         self.assertNotIn('python_ldap', [question['id'] for question in plan['questions']])
@@ -288,7 +300,7 @@ class PlanJsonTests(unittest.TestCase):
                           ('requirement:phonenumbers', 'skip', 'from --answer')])
         self.use_15()
         (self.source / 'requirements.txt').write_text('python-ldap==3.4.4\ncryptography==3.4.8\nphonenumbers\n')
-        plan = self.json_plan('--community', str(self.source), '--no-enterprise')
+        plan = self.json_plan('--community', str(self.source), '--no-enterprise', *CREATE_15)
         self.assertEqual((plan['open'], plan['ready_to_apply']), ([], True))
 
     def test_on_a_terminal_an_anticipated_problem_is_asked_and_enter_takes_the_recommended_answer(self):
@@ -312,7 +324,7 @@ class PlanJsonTests(unittest.TestCase):
                                    " 'external_dependencies': {'python': ['cv2', 'yaml']}}\n")
         before = self.tree()
         runtime = self.checkout / '.oasis/config/requirements/runtime.in'
-        flags = ('--community', str(self.source), '--no-enterprise')
+        flags = ('--community', str(self.source), '--no-enterprise', *CREATE)
         plan = self.json_plan(*flags)
         self.assertEqual((plan['open'], plan['ready_to_apply']), (['requirement:cv2', 'requirement:pyyaml'], False))
         questions = {question['id']: question for question in plan['questions']}
@@ -370,7 +382,7 @@ class PlanJsonTests(unittest.TestCase):
         requirements.mkdir(parents=True)
         overrides = requirements / 'overrides.txt'
         overrides.write_text('# mine\n')
-        flags = ('--community', str(self.source), '--no-enterprise')
+        flags = ('--community', str(self.source), '--no-enterprise', *CREATE_15)
         before = self.tree()
         plan = self.json_plan(*flags)
         self.assertEqual(plan['open'], ['requirement:phonenumbers'])
@@ -393,7 +405,7 @@ class PlanJsonTests(unittest.TestCase):
         self.assertTrue((requirements / 'runtime.in').read_text().endswith('phonenumbers\n'))
 
     def test_the_json_plan_of_an_existing_workspace_says_what_it_keeps_and_where_it_came_from(self):
-        applied = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        applied = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *CREATE)
         self.assertEqual(applied.returncode, 0, applied.stderr)
         before = self.tree()
         plan = self.json_plan()

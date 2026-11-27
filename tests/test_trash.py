@@ -399,7 +399,7 @@ class DropToTrashTests(TrashFixture):
                          'cc_dev_coffee_trash'):
             with self.subTest(database=database):
                 self.seed({})
-                result = self.cli('create-database', database)
+                result = self.cli('create-database', database, '--confirm', database)
                 self.assertEqual((result.returncode, result.stdout, result.stderr),
                                  (0, f'Database ready: {database}\n', ''))
 

@@ -16,7 +16,7 @@ import tempfile
 import unittest
 
 import test_setup
-from test_setup import DRY_RUN, MANIFEST, READER, WORKSPACE
+from test_setup import CREATE, DRY_RUN, MANIFEST, READER, WORKSPACE
 from test_setup_prompt import on_terminal
 
 CHECKOUT_FILE = ('# Written by oasis setup: the database namespace of this worktree; its directory name {name} gives '
@@ -47,7 +47,8 @@ class ProjectFolderTests(unittest.TestCase):
         return self.project
 
     def json_plan(self, *args):
-        result = self.setup_cmd('--plan', '--json', '--community', str(self.source), '--no-enterprise', *args)
+        # The environment questions answered as an agent relays them (v0.20.0 S1).
+        result = self.setup_cmd('--plan', '--json', '--community', str(self.source), '--no-enterprise', *CREATE, *args)
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         return json.loads(result.stdout)
 
@@ -67,7 +68,7 @@ class ProjectFolderTests(unittest.TestCase):
                 self.assertEqual(plan['inferred']['workspace'], {'value': str(project), 'origin': 'new'})
                 self.assertEqual(plan['questions'][0], self.question(folder, str(project), 'recommended (no terminal)'))
                 self.assertTrue(plan['ready_to_apply'])
-                result = self.setup_cmd('--community', str(self.source), '--no-enterprise')
+                result = self.setup_cmd('--community', str(self.source), '--no-enterprise', *CREATE)
                 port = self.port_of(result.stdout)
                 expected = self.plan(port, base='', directory=project).replace(
                     f'workspace: {project} (new)\n',
@@ -77,13 +78,13 @@ class ProjectFolderTests(unittest.TestCase):
                 self.assertEqual(self.tree(), before)
                 # --workspace <clone>, or the answer, keeps today's default: the workspace in the clone.
                 for arguments in (('--workspace', str(self.checkout)), ('--answer', f'workspace={self.checkout}')):
-                    result = self.setup_cmd('--community', str(self.source), '--no-enterprise', *arguments)
+                    result = self.setup_cmd('--community', str(self.source), '--no-enterprise', *CREATE, *arguments)
                     port = self.port_of(result.stdout)
                     self.assertEqual((result.returncode, result.stdout, result.stderr),
                                      (0, self.plan(port) + DRY_RUN, ''))
                     self.assertNotIn('workspace', [item['id'] for item in self.json_plan(*arguments)['questions']])
                 # Applied: the workspace file in the project folder, nothing excluded in the clone.
-                result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+                result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *CREATE)
                 self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
                 self.assertEqual((project / 'oasis-workspace.toml').read_text(), WORKSPACE.format(base=''))
                 self.assertFalse((self.checkout / 'oasis-workspace.toml').exists())
@@ -225,7 +226,7 @@ class MoveWorkspaceTests(unittest.TestCase):
         self.setUp_fixture()
         self.clone('shop-project', 'code')
         result = self.setup_cmd('--apply', '--workspace', str(self.checkout), '--community', str(self.source),
-                                '--no-enterprise')
+                                '--no-enterprise', *CREATE)
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         self.old = self.checkout / 'oasis-workspace.toml'
         self.new = self.project / 'oasis-workspace.toml'

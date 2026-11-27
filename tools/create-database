@@ -1,12 +1,72 @@
 #!/usr/bin/env bash
+# Creates an empty managed database. Tier B in the agent policy (tools/policy.py, v0.20.0 S5): it creates it
+# only with --confirm <database>, the database it names; without it, or with another name, it refuses (exit 2)
+# naming the exact command, and nothing changes. --dry-run prints what it would create and changes nothing.
+# --plan (tools/database_plan.py, v0.20.0 S6) asks the name and the kind first, then prints the dry run and the
+# --confirm command of each database.
 set -Eeuo pipefail
 source "$(dirname "$0")/common.sh"
-database=${1:-}
+usage() {
+  printf 'Usage: %s <%s*|%s*> [--dry-run | --confirm <database>]\n' "$(usage_name)" "$DEV_PREFIX" "$TEST_PREFIX"
+  printf '       %s --plan [--json] [--answer <id>=<value>]... [--answers <file.json>]\n' "$(usage_name)"
+}
+if [[ ${1:-} == --help && $# == 1 ]]; then
+  usage
+  printf '%s\n' 'Create an empty managed database. Tier B (oasis policy --json): it creates it only with' \
+    '--confirm <database>, the database it names; without it it refuses naming the exact command and changes' \
+    'nothing. --dry-run prints the database and its kind and changes nothing. --plan asks the name (the suffix' \
+    'after the prefix) and the kind (dev, test or both), then prints the dry run and the --confirm command of each' \
+    'database (docs/dev-database.md#the-plan-of-a-new-database).'
+  exit 0
+fi
+if [[ ${1:-} == --plan ]]; then
+  exec python3 -I -B "$(dirname "$0")/database_plan.py" create-database "${@:2}"
+fi
+database=
+dry_run=false
+confirm=
+confirmed=false
+usage_error=false
+for (( index = 1; index <= $#; index++ )); do
+  argument=${!index}
+  case $argument in
+    --dry-run) "$dry_run" && usage_error=true; dry_run=true ;;
+    --confirm|--confirm=*)
+      "$confirmed" && usage_error=true
+      confirmed=true
+      if [[ "$argument" == --confirm ]]; then
+        index=$(( index + 1 ))
+        confirm=${!index:-}
+      else
+        confirm=${argument#--confirm=}
+      fi
+      [[ -n "$confirm" && "$confirm" != -* ]] || usage_error=true ;;
+    -*) usage_error=true ;;
+    *) [[ -n "$database" ]] && usage_error=true; database=$argument ;;
+  esac
+done
 require_runtime
-if [[ -z "$database" ]]; then
-  printf 'Usage: %s <%s*|%s*>\n' "$(usage_name)" "$DEV_PREFIX" "$TEST_PREFIX" >&2
+if "$usage_error" || [[ -z "$database" ]]; then
+  usage >&2
   exit 2
 fi
 require_working_database_name "$database"
+kind=dev
+if [[ "$database" == "$TEST_PREFIX"* ]]; then kind=test; fi
+if "$dry_run"; then
+  printf 'database: %s\nkind: %s\ndry run: nothing changed\n' "$database" "$kind"
+  exit 0
+fi
+if [[ "$confirm" != "$database" ]]; then
+  command=$(confirm_command create-database "$database" --confirm "$database")
+  if "$confirmed"; then
+    printf 'ERROR: --confirm %s does not name the database %s; nothing changed. Run: %s\n' \
+      "$confirm" "$database" "$command" >&2
+  else
+    printf 'ERROR: create-database creates the %s database %s (Tier B: it needs explicit confirmation); nothing changed. Run: %s\n' \
+      "$kind" "$database" "$command" >&2
+  fi
+  exit 2
+fi
 ensure_database "$database"
 printf 'Database ready: %s\n' "$database"

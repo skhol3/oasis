@@ -108,6 +108,8 @@ class SluggedCheckoutTests(IsolationBase):
                     self.odoo_call('-d', update, '-u', 'coffee', '--stop-after-init')])
 
     def test_install_module_default_gets_the_slug(self):
+        # The database exists: install-module needs no --confirm (v0.20.0 S5: only creating one does).
+        self.env['FAKE_EXISTS'] = '1'
         result = self.invoke('install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertEqual(self.odoo_lines(), [self.odoo_call(
@@ -196,12 +198,13 @@ class SluggedCheckoutTests(IsolationBase):
         fits = 'cc_dev_wt_1_' + 'a' * 51
         too_long = fits + 'a'
         self.assertEqual((len(fits.encode()), len(too_long.encode())), (63, 64))
+        # The database exists: install-module needs no --confirm (v0.20.0 S5: only creating one does).
+        self.env['FAKE_EXISTS'] = '1'
         result = self.invoke('install-module', 'coffee', fits)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertEqual(self.odoo_lines(), [self.odoo_call(
             '-d', fits, '-i', 'coffee', '--without-demo', '--stop-after-init')])
         self.commands.unlink()
-        self.env['FAKE_EXISTS'] = '1'
         for command, args in (('install-module', ('coffee', too_long)),
                               ('update-module', ('coffee', too_long)),
                               ('odoo-shell', (too_long,)),
@@ -259,9 +262,12 @@ class MainCheckoutTests(IsolationBase):
                 ('test-module', '-d cc_test_coffee_r<run> -i coffee --without-demo --test-tags /coffee'),
                 ('install-module', '-d cc_dev_coffee -i coffee --without-demo --stop-after-init')):
             with self.subTest(command=command):
+                # install-module's default database exists: no --confirm (v0.20.0 S5); test-module's is new.
+                self.env['FAKE_EXISTS'] = '1' if command == 'install-module' else '0'
                 result = self.invoke(command, 'coffee')
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
                 self.assertIn(expected, '\n'.join(self.odoo_lines()))
+        self.env['FAKE_EXISTS'] = '0'
         result = self.invoke('verify-module', 'coffee')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertRegex(result.stdout, r'tests_database=(cc_test_coffee_r[0-9a-f]{6})\nupdate_database=\1_update\n')
@@ -310,6 +316,8 @@ class MainCheckoutTests(IsolationBase):
 
     def test_63_byte_limit_applies_without_slug(self):
         fits = 'cc_dev_' + 'a' * 56
+        # The database exists: install-module needs no --confirm (v0.20.0 S5: only creating one does).
+        self.env['FAKE_EXISTS'] = '1'
         result = self.invoke('install-module', 'coffee', fits)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.commands.unlink()

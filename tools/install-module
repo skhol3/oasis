@@ -1,32 +1,91 @@
 #!/usr/bin/env bash
+# Installs a module in a managed database. A database that exists: Tier A, it runs. One that does not exist,
+# which it would create: Tier B in the agent policy (tools/policy.py, v0.20.0 S5), it creates it only with
+# --confirm <database>; without it, or with another name, it refuses (exit 2) naming the exact command, and
+# nothing changes. --dry-run prints whether it would create the database and changes nothing.
 set -Eeuo pipefail
 source "$(dirname "$0")/common.sh"
 usage='Usage: install-module [--with-demo] <module> [database]'
+options='       ... <module> [database] --dry-run | --confirm <database>'
 with_demo=false
+demo_option=()
 if [[ ${1:-} == --help ]]; then
   # The default demo-off options are the Odoo series' (ODOO_DEMO_OFF_ARGS from config.py).
   printf '%s\nDefault: %s. The database must be managed (%s/%s) and defaults to %s.\n' \
     "$usage" "${ODOO_DEMO_OFF_ARGS:-no demo data}" "$DEV_PREFIX" "$TEST_PREFIX" \
     "$(checkout_database_name "$DEV_PREFIX" '<module>')"
-  printf 'In a checkout with a slug it must use that checkout namespace. Creates a missing database.\n'
+  printf 'In a checkout with a slug it must use that checkout namespace. Creates a missing database only with\n'
+  printf '%s\n' '--confirm <database> (Tier B: oasis policy --json); without it it refuses naming the exact command.' \
+    '--dry-run prints the database (new or existing), its kind, the module and the demo data; changes nothing.' \
+    "$options"
   exit 0
 fi
 if [[ ${1:-} == --with-demo ]]; then
   with_demo=true
+  demo_option=("$1")
   shift
-elif [[ ${1:-} == --* ]]; then
-  printf 'Unknown option: %s\n' "$1" >&2
+fi
+arguments=()
+dry_run=false
+confirm=
+confirmed=false
+usage_error=false
+for (( index = 1; index <= $#; index++ )); do
+  argument=${!index}
+  case $argument in
+    --dry-run) "$dry_run" && usage_error=true; dry_run=true ;;
+    --confirm|--confirm=*)
+      "$confirmed" && usage_error=true
+      confirmed=true
+      if [[ "$argument" == --confirm ]]; then
+        index=$(( index + 1 ))
+        confirm=${!index:-}
+      else
+        confirm=${argument#--confirm=}
+      fi
+      [[ -n "$confirm" && "$confirm" != -* ]] || usage_error=true ;;
+    --*)
+      printf 'Unknown option: %s\n' "$argument" >&2
+      exit 2 ;;
+    *) arguments+=("$argument") ;;
+  esac
+done
+if "$usage_error" || (( ${#arguments[@]} > 2 )); then
+  printf '%s\n%s\n' "$usage" "$options" >&2
   exit 2
 fi
-if (( $# > 2 )); then
-  printf '%s\n' "$usage" >&2
-  exit 2
-fi
-module=${1:-}
-database=${2:-$(checkout_database_name "$DEV_PREFIX" "$module")}
+module=${arguments[0]:-}
+database=${arguments[1]:-$(checkout_database_name "$DEV_PREFIX" "$module")}
 require_module "$module"
 require_working_database_name "$database"
 require_runtime
+# Outside the condition, so an unavailable service fails instead of looking missing.
+wait_for_database >/dev/null </dev/null
+exists=false
+if database_exists "$database" </dev/null; then exists=true; fi
+kind=dev
+if [[ "$database" == "$TEST_PREFIX"* ]]; then kind=test; fi
+demo=no
+if "$with_demo"; then demo=yes; fi
+if "$dry_run"; then
+  state=existing
+  if ! "$exists"; then state='new: install-module creates it'; fi
+  printf 'database: %s (%s)\nkind: %s\nmodule: %s\ndemo: %s\ndry run: nothing changed\n' \
+    "$database" "$state" "$kind" "$module" "$demo"
+  exit 0
+fi
+# Creating the missing database is Tier B; an explicit --confirm must name the database in any case.
+if { ! "$exists" || "$confirmed"; } && [[ "$confirm" != "$database" ]]; then
+  command=$(confirm_command install-module "${demo_option[@]}" "$module" "$database" --confirm "$database")
+  if "$confirmed"; then
+    printf 'ERROR: --confirm %s does not name the database %s; nothing changed. Run: %s\n' \
+      "$confirm" "$database" "$command" >&2
+  else
+    printf 'ERROR: install-module creates the missing %s database %s to install %s (Tier B: it needs explicit confirmation); nothing changed. Run: %s\n' \
+      "$kind" "$database" "$module" "$command" >&2
+  fi
+  exit 2
+fi
 ensure_database "$database" </dev/null
 if [[ "$with_demo" == true ]]; then
   # The series' demo-on options (odoo_versions.py demo_on_args; none where demo data is the default).

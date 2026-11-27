@@ -308,7 +308,7 @@ class SetupMarkTests(unittest.TestCase):
     existing_environment = test_setup.SetupTests.existing_environment
 
     def test_setup_marks_the_environment_it_creates(self):
-        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *test_setup.CREATE)
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         self.assertTrue((self.checkout / '.oasis/venv' / MARK).is_file())
 
@@ -316,7 +316,7 @@ class SetupMarkTests(unittest.TestCase):
         uv = self.bindir / 'uv'
         uv.write_text(uv.read_text().replace('    chmod +x "$4/bin/python" ;;',
                                              '    chmod +x "$4/bin/python"\n    mkdir "$4/.oasis-created" ;;'))
-        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *test_setup.CREATE)
         environment = self.checkout / '.oasis/venv'
         self.assertEqual((result.returncode, result.stderr), (0, mark_warning(environment)), result.stdout)
         self.assertIn(f'created the environment {environment}\n', result.stdout)

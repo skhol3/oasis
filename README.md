@@ -202,6 +202,28 @@ for the environment it just synced (exit 1, nothing added). A script that read e
 any failed check runs `doctor --environment --full` after it instead.
 [The exit code of bootstrap](docs/checking-environment.md#the-exit-code-of-bootstrap).
 
+Contract change in v0.20.0: without a terminal, `oasis setup` no longer chooses the Python environment it would
+create (a new workspace or a new series section) and its Python. Both are open questions, `environment` and
+`python`, with their recommended answers (create at the path the question shows; the configuration's Python), in
+the plan and in `--plan --json` (`open`, `ready_to_apply: false`), and `setup --apply` refuses them (exit 2,
+nothing changed) until answered: `--answer environment=create` or `--environment <dir>`, and `--python <x.y>`
+(which answers both: a Python only makes sense for a new environment). A script or agent that ran `setup --apply`
+without a terminal adds `--answer environment=create --python <x.y>`, the recommended answers its plan lists. On a
+terminal setup asks them as before. A new series section next to an adopted `[tooling]` environment gets one named
+after the project (`<name><major>`), no longer `<that environment>-<x.y>`.
+[A new environment and its Python](docs/setup.md#a-new-environment-and-its-python).
+
+Contract change in v0.20.0: creating a database is the user's decision. `create-database` and
+`init-dev-database` are Tier B in `oasis policy --json` and create only with `--confirm <database>`;
+`install-module` needs `--confirm <database>` only when its database does not exist (on an existing one it
+runs as before). Without it they change nothing, exit 2 and name the exact command; `--dry-run` prints what
+would be created. `create-database --plan --json` and `init-dev-database --plan --json` list the questions
+an agent relays (the name after the workspace's prefix; dev, test or both; the module; demo data) and, once
+answered, the dry run and the `--confirm` command of each database. To update a script or wrapper that runs
+`create-database <name>`, `init-dev-database <module> <name>` or `install-module` on a new database, add
+`--confirm <name>`. `status --json` and `setup`'s next steps now name the plan. `test-module` and
+`verify-module` (`--reuse`, `[tooling].test_database`) are unchanged.
+
 ## Documentation
 
 | Documentation | Purpose |

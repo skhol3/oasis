@@ -78,7 +78,7 @@ test("fillTemplate fills words, inputs, options, flags and compact in order", ()
   assert.deepEqual(fillTemplate(action("modules.install"), { module: "coffee", database: "", demo: true }, true),
     [...PREFIX, "install-module", "--with-demo", "coffee"]);
   assert.deepEqual(fillTemplate(action("modules.install"), { module: "coffee", database: "cc_dev_x", demo: false }, true),
-    [...PREFIX, "install-module", "coffee", "cc_dev_x"]);
+    [...PREFIX, "install-module", "coffee", "cc_dev_x", "--confirm", "cc_dev_x"]);
   assert.deepEqual(fillTemplate(action("modules.update"), { module: "coffee", database: "cc_dev_x" }, true),
     [...PREFIX, "update-module", "--compact", "coffee", "cc_dev_x"]);
   assert.deepEqual(fillTemplate(action("modules.update"), { module: "coffee", database: "cc_dev_x" }, false),
@@ -123,7 +123,8 @@ test("shellJoin quotes like shlex.join and terminalCommand shows a terminal-only
   assert.equal(shellJoin(["a", "b c", "", "it's", "-d", "x=1", "/p/a_b.c"]), "a 'b c' '' 'it'\"'\"'s' -d x=1 /p/a_b.c");
   assert.equal(shellJoin(fillTemplate(action("server.stop"), {}, true)), "/opt/oasis/oasis --project '/work/a project' stop");
   assert.equal(terminalCommand(action("modules.init_dev")),
-    "/opt/oasis/oasis --project '/work/a project' init-dev-database [--with-demo] <module> <database>");
+    "/opt/oasis/oasis --project '/work/a project' init-dev-database [--with-demo] <module> <database> " +
+      "[--confirm <database>]");
   assert.equal(terminalCommand(action("tests.class")),
     "/opt/oasis/oasis --project '/work/a project' test-module --compact [--only <only>] <module>");
 });

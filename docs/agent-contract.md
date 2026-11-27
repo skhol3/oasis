@@ -23,8 +23,9 @@ Changing a tier is a contract change: a decision, a note in the README and in th
 
 ## Tier B in the CLI: `--confirm <exact name>`
 
-`drop-database`, `gc --apply --trash`, `migrate --apply`, `worktree-init` and
-`recreate-database-volume` run only with `--confirm` naming exactly what they change:
+`drop-database`, `gc --apply --trash`, `migrate --apply`, `worktree-init`,
+`recreate-database-volume` and, since v0.20.0, the commands that create a database run only with
+`--confirm` naming exactly what they change:
 
 | Command | `--confirm` |
 | --- | --- |
@@ -33,6 +34,9 @@ Changing a tier is a contract change: a decision, a note in the README and in th
 | `migrate [--workspace <dir>] --apply` | the workspace file the plan writes (`write <dir>/oasis-workspace.toml`) |
 | `worktree-init <feature> <branch> [--path <dir>]` | the worktree path the plan names (`worktree: <path>`) |
 | `recreate-database-volume` | the compose project (the top-level `name:` of the compose file, `compose_project=<name>` in the plan); see [The database account](setup.md#the-database-account) |
+| `create-database <name>` | the database name |
+| `init-dev-database [--with-demo] <module> <name>` | the database name |
+| `install-module [--with-demo] <module> [<name>]` on a database that does not exist | the database name (its default `<dev_prefix>[<slug>_]<module>` too) |
 
 Without it, or with another value, the command changes nothing, exits 2 and names the exact
 command to run, for example:
@@ -46,6 +50,17 @@ with `--confirm`. It is not a guarantee against an agent that adds it by itself;
 exists, its dialog is the confirmation (see [Bash guard](bash-guard.md)). `worktree-init --dry-run`,
 `migrate --plan` and resuming an existing worktree need none.
 
+Decision (v0.20.0): a database is created only when the user asks for it, with the name, the kind,
+the module and the demo data the user chose. `create-database` and `init-dev-database` are Tier B;
+`install-module` is Tier B only when its database does not exist (it would create it): on an
+existing database it runs as before, without `--confirm`. Their `--dry-run` prints the database it
+would create and changes nothing; `create-database --plan --json` and `init-dev-database --plan --json`
+list the questions the agent relays to the user (the suffix after the workspace's prefix, dev, test or
+both, the module, demo data or not) and, once answered, the dry run and the exact `--confirm` command
+of each database ([The plan of a new database](dev-database.md#the-plan-of-a-new-database)). The
+disposable databases of `test-module` and `verify-module`, and their kept test database (`--reuse`,
+`[tooling].test_database`), stay Tier A: they are part of testing.
+
 Decision (v0.16.0): `stop --database` stays Tier B. It stops the database service every checkout
 shares, which ends the sessions of a running server on that database (the command already refuses
 while another checkout's server runs). It takes no `--confirm`: the Gentle Shell dialog confirms it.
@@ -58,15 +73,21 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `setup` | A | prints the plan of the configuration; changes nothing |  |
 | `setup --apply` | A | creates only the missing configuration and environment; rebuildable |  |
 | `bootstrap` | A | creates the virtual environment from the lock; rebuildable |  |
-| `create-database` | A | creates a managed database; drop-database moves it to the trash |  |
-| `init-dev-database` | A | creates a development database with role accounts; rebuildable |  |
+| `create-database --plan` | A | prints the questions of a new database (its name and kind) and, once answered, its dry run and --confirm command; changes nothing |  |
+| `create-database --dry-run` | A | prints the database it would create; changes nothing |  |
+| `create-database` | B | creates a managed database: the user decides it and its name (drop-database moves it to the trash) | database name |
+| `init-dev-database --plan` | A | prints the questions of a new development database (its name, module and demo data) and, once answered, its dry run and --confirm command; changes nothing |  |
+| `init-dev-database --dry-run` | A | prints the database it would create; changes nothing |  |
+| `init-dev-database` | B | creates a development database with role accounts: the user decides it, its name, module and demo data | database name |
 | `start` | A | starts this checkout's Odoo server |  |
 | `restart` | A | restarts this checkout's Odoo server |  |
 | `stop` | A | stops this checkout's Odoo server; start runs it again |  |
 | `status` | A | reads and reports; changes nothing |  |
 | `start-database` | A | starts the database service every checkout shares, as every database command does; names no env file |  |
 | `stop --database` | B | stops the database service every checkout shares, ending the sessions of a server on it |  |
-| `install-module` | A | installs a module in a managed database |  |
+| `install-module` | A | installs a module in an existing managed database; one it would create needs --confirm (install-module --confirm) |  |
+| `install-module --dry-run` | A | prints whether it would create the database; changes nothing |  |
+| `install-module --confirm` | B | creates the missing managed database, then installs the module | database name |
 | `update-module` | A | updates a module in a managed database |  |
 | `test-module` | A | runs tests on a disposable database dropped afterwards |  |
 | `verify-module` | A | lints, updates and tests a module on disposable databases |  |

@@ -39,10 +39,22 @@ OPERATIONS = (
      'oasis --project /p setup --apply'),
     ('bootstrap', 'A', 'oasis', 'creates the virtual environment from the lock; rebuildable',
      'oasis --project /p bootstrap'),
-    ('create-database', 'A', 'oasis', 'creates a managed database; drop-database moves it to the trash',
-     'oasis --project /p create-database cc_dev_x'),
-    ('init-dev-database', 'A', 'oasis', 'creates a development database with role accounts; rebuildable',
-     'oasis --project /p init-dev-database coffee cc_dev_x'),
+    ('create-database --plan', 'A', 'oasis',
+     'prints the questions of a new database (its name and kind) and, once answered, its dry run and --confirm '
+     'command; changes nothing', 'oasis --project /p create-database --plan --json'),
+    ('create-database --dry-run', 'A', 'oasis', 'prints the database it would create; changes nothing',
+     'oasis --project /p create-database cc_dev_x --dry-run'),
+    ('create-database', 'B', 'oasis',
+     'creates a managed database: the user decides it and its name (drop-database moves it to the trash)',
+     'oasis --project /p create-database cc_dev_x --confirm cc_dev_x'),
+    ('init-dev-database --plan', 'A', 'oasis',
+     'prints the questions of a new development database (its name, module and demo data) and, once answered, '
+     'its dry run and --confirm command; changes nothing', 'oasis --project /p init-dev-database --plan --json'),
+    ('init-dev-database --dry-run', 'A', 'oasis', 'prints the database it would create; changes nothing',
+     'oasis --project /p init-dev-database coffee cc_dev_x --dry-run'),
+    ('init-dev-database', 'B', 'oasis',
+     'creates a development database with role accounts: the user decides it, its name, module and demo data',
+     'oasis --project /p init-dev-database coffee cc_dev_x --confirm cc_dev_x'),
     ('start', 'A', 'oasis', "starts this checkout's Odoo server", 'oasis --project /p start'),
     ('restart', 'A', 'oasis', "restarts this checkout's Odoo server", 'oasis --project /p restart'),
     ('stop', 'A', 'oasis', "stops this checkout's Odoo server; start runs it again", 'oasis --project /p stop'),
@@ -53,8 +65,13 @@ OPERATIONS = (
     ('stop --database', 'B', 'oasis',
      'stops the database service every checkout shares, ending the sessions of a server on it',
      'oasis --project /p stop --database'),
-    ('install-module', 'A', 'oasis', 'installs a module in a managed database',
-     'oasis --project /p install-module coffee cc_dev_x'),
+    ('install-module', 'A', 'oasis',
+     'installs a module in an existing managed database; one it would create needs --confirm (install-module '
+     '--confirm)', 'oasis --project /p install-module coffee cc_dev_x'),
+    ('install-module --dry-run', 'A', 'oasis', 'prints whether it would create the database; changes nothing',
+     'oasis --project /p install-module coffee cc_dev_x --dry-run'),
+    ('install-module --confirm', 'B', 'oasis', 'creates the missing managed database, then installs the module',
+     'oasis --project /p install-module coffee cc_dev_x --confirm cc_dev_x'),
     ('update-module', 'A', 'oasis', 'updates a module in a managed database',
      'oasis --project /p update-module coffee cc_dev_x'),
     ('test-module', 'A', 'oasis', 'runs tests on a disposable database dropped afterwards',
@@ -125,7 +142,8 @@ ALIASES = {'check-environment': 'doctor --environment'}
 # operation without one is confirmed only by a person or a harness dialog (stop --database).
 CONFIRM = {'drop-database': 'database name', 'gc --apply --trash': 'project root',
            'migrate --apply': 'workspace file', 'worktree-init': 'worktree path',
-           'recreate-database-volume': 'compose project'}
+           'recreate-database-volume': 'compose project', 'create-database': 'database name',
+           'init-dev-database': 'database name', 'install-module --confirm': 'database name'}
 
 
 def operations() -> list[dict]:

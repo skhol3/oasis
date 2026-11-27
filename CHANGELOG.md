@@ -11,6 +11,15 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- Contract change: creating a database needs the user. `create-database` and `init-dev-database` are Tier B
+  (`--confirm <database>`; `--dry-run` and `--plan` are Tier A), and `install-module` is Tier B only when its
+  database does not exist (`install-module --confirm`); without `--confirm` they refuse with exit 2 naming the
+  exact command. New `create-database --plan [--json]` and `init-dev-database --plan [--json]` ask the
+  suffix, the kind (dev, test or both; `init-dev-database` creates dev databases), the module and demo data
+  (recommended off, still asked) in setup's question shape, with `--answer`/`--answers`, then print each dry
+  run and `--confirm` command; nothing is chosen for the user. The bash guard asks for them; the menu passes
+  `--confirm`; `status --json` `next` and `setup`'s next steps name the plan instead of a `<dev_prefix>manual`
+  name.
 - Contract change: `bootstrap --apply` exits with the result of its own work, the locks and the sync: 0 once
   they succeeded, also when its trailing `doctor --environment --full` fails outside the sync (before, exit 1, for
   example with PostgreSQL not running yet). The doctor's lines are printed as they are, then `sync=succeeded`,
@@ -20,6 +29,20 @@ names) may still change in a minor release; every such change is listed here und
   `uv venv` or `uv pip sync` (their code), and the doctor's `FAIL locked_environment=drifted` for the environment
   bootstrap just synced (exit 1, nothing added: the sync did not produce the locked environment). A passing
   doctor leaves the output as before.
+- Contract change: without a terminal, `setup` no longer chooses the Python environment it would create (a new
+  workspace or a new series section) nor its Python (the v0.17.0 field run saw an agent's plan pick both silently).
+  They are open questions, `environment` (`create` at the path the question shows, recommended, or an existing
+  environment) and `python` (recommended: the configuration's), with `open question environment: ...` and `open
+  question python: ...` lines in the plan, `"open": ["environment", "python"]` and `ready_to_apply: false` in
+  `--plan --json`, and `setup --apply` refuses them (exit 2, nothing changed) until answered with `--answer
+  environment=create`, `--environment <dir>` or `--python <x.y>`, which answers both. The JSON question
+  `environment` has the flag `--answer environment=create | --environment <dir>`, and an answer by `--python` or
+  `--answer python=<x.y>` has the origin `from --python` or `from --answer python` (before: `recommended (no
+  terminal)`). On a terminal the questions are asked as before.
+- `setup`: a new series section whose `[tooling]` environment is an adopted one (no `.oasis-created` mark) gets an
+  environment named after the project, `<name><major>` like its prefixes, in that environment's folder when it is
+  in the workspace directory, else in the workspace's; before, `<that environment>-<x.y>`, named after what may be
+  another project's environment.
 
 ## [0.19.0] - 2026-11-27
 

@@ -69,13 +69,13 @@ is not ready with the `detail` `unknown (<reason>)`, and the output is still one
 | `environment` | the environment has a `pyvenv.cfg` and its Python | `bootstrap --apply` |
 | `locks` | `lock.sha256` matches (`detail`: `current`, `missing`, `stale`, `edited`, `unknown (<reason>)`) | `bootstrap --apply` (`doctor` for `edited` and `unknown`) |
 | `database_service` | `docker compose ps` shows it running, and healthy when it has a health check (`detail`: `running`, `starting`, `unhealthy`, `stopped`, `unknown (<reason>)`) | `start-database`, which starts it (and waits until it is healthy), for `stopped` and `starting`; `doctor` for `unhealthy` and `unknown` |
-| `databases` | a development database of this checkout exists (`detail`: this checkout's managed databases, or `unknown (<reason>)`) | `init-dev-database <module> <dev_prefix>manual` with `[development]`, else `install-module <module>` (the first module of the addon roots; `create-database <name>` without modules); `doctor` when they cannot be read |
+| `databases` | a development database of this checkout exists (`detail`: this checkout's managed databases, or `unknown (<reason>)`) | `init-dev-database --plan --json` with `[development]` and an addon module, else `create-database --plan --json`: creating a database is the user's decision, its name included, so `next` is the plan that asks it ([The plan of a new database](dev-database.md#the-plan-of-a-new-database); before v0.20.0 it named `init-dev-database <module> <dev_prefix>manual`, `install-module <module>` or `create-database <dev_prefix>manual`); `doctor` when they cannot be read |
 | `server` | this checkout's server runs (`detail`: `running pid <pid> port <port>`) | `start` |
 
 `next` is `null` when everything is ready, and a shell-quoted command line otherwise (Python's `shlex.join`:
 a checkout path with spaces or quotes is quoted). Every command is `oasis --project <checkout> ...`. The database service gets `start-database` rather than `list-databases`: `list-databases`
 starts the service too, but the [agent policy](agent-contract.md) lists it as one that only reads and reports;
 and rather than the `docker compose ... up -d --wait` it runs, which names the environment file. With the
-`[development]` table setup writes in a new workspace, `databases` is followed by `init-dev-database`.
+`[development]` table setup writes in a new workspace, `databases` is followed by `init-dev-database --plan --json`.
 
 Earlier behaviour of `stop` and of the test databases is recorded in the [changelog](../CHANGELOG.md) (0.3.0, 0.4.0 and 0.8.0, under Changed).

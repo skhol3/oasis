@@ -128,6 +128,7 @@ class VersionNeutralToolsTests(unittest.TestCase):
         ('tools/init-dev-database', "printf 'Usage: init-dev-database [--with-demo] <module> <database>\\n' >&2"),
         ('tools/install-module', "usage='Usage: install-module [--with-demo] <module> [database]'"),
         ('tools/install-module', 'if [[ ${1:-} == --with-demo ]]; then'),
+        ('tools/database_plan.py', "DEMO_OPTION = '--with-demo'"),
     }
 
     def test_no_tool_writes_a_version_specific_odoo_option(self):

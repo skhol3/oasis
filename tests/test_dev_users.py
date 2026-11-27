@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import pty
 import select
+import shlex
 import shutil
 import signal
 import subprocess
@@ -169,13 +170,111 @@ class DevelopmentUsersTests(unittest.TestCase):
             'os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n')
         self.python.chmod(0o755)
 
-    def command(self, *args):
+    def command(self, *args, confirm=True):
+        """init-dev-database through the entry point. A creating call (a module, then a database) confirms its
+        database, as the refusal names it (v0.20.0 S5: Tier B); confirm=False leaves --confirm out."""
+        extra = ['--confirm', args[-1]] if confirm and len(args) >= 2 and not args[-1].startswith('-') else []
         return [sys.executable, '-B', str(ROOT / 'oasis'), '--project', str(self.root),
-                'init-dev-database', *args]
+                'init-dev-database', *args, *extra]
 
-    def invoke(self, *args):
-        return subprocess.run(self.command(*args), input='', text=True,
-                              capture_output=True, env=self.env, timeout=10)
+    def invoke(self, *args, confirm=True):
+        return subprocess.run(self.command(*args, confirm=confirm), input='', text=True,
+                              capture_output=True, env=self.env, timeout=60)
+
+    def confirmation(self, *args):
+        return shlex.join(['oasis', '--project', str(self.root), 'init-dev-database', *args])
+
+    def test_without_confirm_it_refuses_naming_the_exact_command(self):
+        # v0.20.0 S5: Tier B. The configuration is checked first; nothing runs, no password is asked.
+        for args, demo in ((('coffee', 'cc_dev_coffee'), 'no'), (('--with-demo', 'coffee', 'cc_dev_coffee'), 'yes')):
+            with self.subTest(args=args):
+                result = self.invoke(*args, confirm=False)
+                command = self.confirmation(*args, '--confirm', 'cc_dev_coffee')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+                    'ERROR: init-dev-database creates the development database cc_dev_coffee with its accounts and '
+                    f'installs coffee, demo data: {demo} (Tier B: it needs explicit confirmation); nothing changed. '
+                    f'Run: {command}\n')))
+                self.assertFalse(self.state.exists())
+                self.assertFalse(self.commands.exists())
+                self.assertFalse(self.logins_file().exists())
+        result = self.invoke('coffee', 'cc_dev_coffee', '--confirm', 'cc_dev_other', confirm=False)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+            'ERROR: --confirm cc_dev_other does not name the database cc_dev_coffee; nothing changed. Run: '
+            + self.confirmation('coffee', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee') + '\n')))
+        self.assertFalse(self.state.exists())
+        # An invalid configuration is still reported first.
+        self.profile.write_text(test_lifecycle.WORKSPACE + PROFILE + "password = 'not-a-real-secret'\n")
+        result = self.invoke('coffee', 'cc_dev_coffee', confirm=False)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', 'ERROR: Invalid development user configuration.\n'))
+
+    def test_dry_run_prints_the_database_module_and_demo(self):
+        for args, demo in ((('coffee', 'cc_dev_coffee'), 'no'), (('--with-demo', 'coffee', 'cc_dev_coffee'), 'yes')):
+            with self.subTest(args=args):
+                result = self.invoke(*args, '--dry-run')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
+                    f'database: cc_dev_coffee\nkind: dev\nmodule: coffee\ndemo: {demo}\ndry run: nothing changed\n'),
+                    ''))
+                self.assertFalse(self.state.exists())
+                self.assertFalse(self.commands.exists())
+
+    def plan(self, *args):
+        result = self.invoke('--plan', '--json', *args, confirm=False)
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertFalse(self.state.exists())
+        self.assertFalse(self.commands.exists())
+        return json.loads(result.stdout)
+
+    def test_plan_asks_the_name_the_module_and_the_demo_data(self):
+        # v0.20.0 S6: nothing is chosen for the user; demo data is recommended off, and still asked.
+        (self.root / 'tea').mkdir()
+        (self.root / 'tea/__manifest__.py').touch()
+        document = self.plan()
+        self.assertEqual((document['command'], document['complete'], document['open'], document['databases']),
+                         ('init-dev-database', False, ['suffix', 'module', 'demo'], []))
+        self.assertEqual(document['questions'], [
+            {'id': 'suffix', 'text': 'Name of the new database after cc_dev_ (letters, digits and underscores)',
+             'options': [], 'recommended': None, 'flag': '--answer suffix=<name>', 'answer': None, 'origin': None},
+            {'id': 'module', 'text': 'Module init-dev-database installs in the new database',
+             'options': [{'value': 'coffee', 'label': 'coffee'}, {'value': 'tea', 'label': 'tea'}],
+             'recommended': None, 'flag': '--answer module=<module>', 'answer': None, 'origin': None},
+            {'id': 'demo', 'text': "Load Odoo's demo data into the new database",
+             'options': [{'value': 'no', 'label': 'without demo data'},
+                         {'value': 'yes', 'label': "with Odoo's demo data and [development].demo_modules"}],
+             'recommended': 'no', 'flag': '--answer demo=<no|yes>', 'answer': None, 'origin': None}])
+        self.assertEqual(document['inferred']['kind'],
+                         {'value': 'dev', 'origin': 'init-dev-database creates development databases only'})
+        self.assertIn('open question demo: Load Odoo\'s demo data into the new database. Answer with '
+                      '--answer demo=<no|yes> (recommended: no).', document['lines'])
+
+    def test_answered_plan_prints_the_dry_run_and_the_confirm_command(self):
+        for demo, options in (('no', ()), ('yes', ('--with-demo',))):
+            with self.subTest(demo=demo):
+                document = self.plan('--answer', 'suffix=training', '--answer', 'module=coffee',
+                                     '--answer', f'demo={demo}')
+                command = self.confirmation(*options, 'coffee', 'cc_dev_training', '--confirm', 'cc_dev_training')
+                self.assertEqual(document['databases'], [{'database': 'cc_dev_training', 'kind': 'dev',
+                                                          'command': command, 'module': 'coffee',
+                                                          'demo': demo == 'yes'}])
+                tail = document['lines'][document['lines'].index('database: cc_dev_training'):]
+                self.assertEqual(tail, ['database: cc_dev_training', 'kind: dev', 'module: coffee', f'demo: {demo}',
+                                        'dry run: nothing changed', f'run: {command}',
+                                        'nothing changed: creating a database is Tier B (oasis policy --json): '
+                                        'the user confirms the command above'])
+        # An answer outside the options, and the guards of the dry run, refuse.
+        for args, stderr in ((('--answer', 'module=tea'), 'ERROR: Invalid answer tea for module: answer coffee.\n'),
+                             (('--answer', 'demo=maybe'), 'ERROR: Invalid answer maybe for demo: answer no or yes.\n'),
+                             (('--answer', 'kind=test'),
+                              'ERROR: --answer: unknown question kind (this plan asks suffix, module, demo).\n')):
+            with self.subTest(args=args):
+                result = self.invoke('--plan', *args, confirm=False)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', stderr))
+        self.profile.write_text(test_lifecycle.WORKSPACE + PROFILE + "password = 'not-a-real-secret'\n")
+        result = self.invoke('--plan', '--answer', 'suffix=training', '--answer', 'module=coffee',
+                             '--answer', 'demo=no', confirm=False)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', 'ERROR: Invalid development user configuration.\n'))
+        self.assertFalse(self.state.exists())
 
     def terminal(self, *args, generated=()):
         """Run on a terminal, typing a password (twice) for each login but those in generated, which
@@ -237,9 +336,13 @@ class DevelopmentUsersTests(unittest.TestCase):
             self.assertFalse(self.commands.exists())
 
     def test_requires_explicit_module_and_database(self):
-        result = self.invoke('coffee')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', 'Usage: init-dev-database [--with-demo] <module> <database>\n'))
+        usage = ('Usage: init-dev-database [--with-demo] <module> <database>\n'
+                 '       ... <module> <database> --dry-run | --confirm <database>; or init-dev-database --plan [--json]\n')
+        for args in (('coffee',), ('coffee', 'cc_dev_coffee', '--bogus'), ('coffee', 'cc_dev_coffee', '--confirm'),
+                     ('coffee', 'cc_dev_coffee', 'extra')):
+            with self.subTest(args=args):
+                result = self.invoke(*args, confirm=False)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', usage))
         self.assertFalse(self.state.exists())
         self.assertFalse(self.commands.exists())
 

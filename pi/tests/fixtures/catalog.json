@@ -351,6 +351,10 @@
         },
         {
           "input": "database"
+        },
+        {
+          "input": "database",
+          "option": "--confirm"
         }
       ],
       "inputs": [
@@ -530,6 +534,10 @@
         },
         {
           "input": "database"
+        },
+        {
+          "input": "database",
+          "option": "--confirm"
         }
       ],
       "inputs": [
@@ -573,8 +581,8 @@
           "choices": null
         }
       ],
-      "destructive": false,
-      "confirm": null,
+      "destructive": true,
+      "confirm": "database",
       "user_run": false,
       "terminal_only": true,
       "follow": false,
@@ -785,6 +793,10 @@
         "create-database",
         {
           "input": "database"
+        },
+        {
+          "input": "database",
+          "option": "--confirm"
         }
       ],
       "inputs": [
@@ -802,8 +814,8 @@
           "choices": null
         }
       ],
-      "destructive": false,
-      "confirm": null,
+      "destructive": true,
+      "confirm": "database",
       "user_run": false,
       "terminal_only": false,
       "follow": false,

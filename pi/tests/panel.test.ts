@@ -166,7 +166,7 @@ test("a terminal-only action is shown as an entry with its command and never run
   assert.deepEqual(events.slice(1), ["pick", "status -"]);
   assert.deepEqual(entries, [{
     label: "Create a development database with role accounts",
-    command: `${ENTRY} init-dev-database [--with-demo] <module> <database>`,
+    command: `${ENTRY} init-dev-database [--with-demo] <module> <database> [--confirm <database>]`,
     note: "terminal only: run it in a terminal, or use oasis menu there",
     output: "",
   }]);
