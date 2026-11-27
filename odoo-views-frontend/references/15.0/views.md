@@ -19,8 +19,8 @@ another module owns, use [view inheritance](view-inheritance.md); to open the vi
 
 1. `library/models/library_book.py`: the model, from the `model` recipe of `odoo-backend`. Every field a view
    names must exist on it.
-2. `library/models/library_author.py`: the author model with `mail.thread`, from the `inheritance` recipe of
-   `odoo-backend`; only the author form needs it.
+2. `library/models/library_author.py`: the author model with `mail.thread`, the same copy as the `inheritance`
+   recipe of `odoo-backend`, shown here; only the author form needs it.
 3. `library/views/library_book_views.xml`: the form, list and search views of the book, one `ir.ui.view`
    record each.
 4. `library/views/library_author_views.xml`: the author form with the chatter (the same copy as the
@@ -33,7 +33,7 @@ another module owns, use [view inheritance](view-inheritance.md); to open the vi
 
 The book views name these fields of `library.book` (the `model` recipe of `odoo-backend`): `name`, `isbn`,
 `author_id`, `date_published`, `pages`, `copies`, `state`, `borrower_id`, `user_id`, `company_id` and
-`active`. The form shows `copies` with the `library_copies` widget of the [Owl recipe](owl-component.md);
+`active`. The form and the list show `copies` with the `library_copies` widget of the [Owl recipe](owl-component.md);
 building the views without that widget, drop `widget="library_copies"`: an unknown widget only logs "Missing
 widget" in the browser console and falls back to the default widget of the type (15.0
 `addons/web/static/src/legacy/js/views/basic/basic_view.js:87-90`, `:97-99`; 19.0
@@ -53,6 +53,7 @@ widget" in the browser console and falls back to the default widget of the type 
                     <field name="state" widget="statusbar" options="{'clickable': '1'}"/>
                 </header>
                 <sheet>
+                    <widget name="web_ribbon" title="Archived" bg_color="bg-danger" attrs="{'invisible': [('active', '=', True)]}"/>
                     <div class="oe_title">
                         <h1><field name="name" placeholder="e.g. The Odyssey"/></h1>
                     </div>
@@ -86,6 +87,7 @@ widget" in the browser console and falls back to the default widget of the type 
                 <field name="author_id"/>
                 <field name="isbn" optional="show"/>
                 <field name="date_published" optional="hide"/>
+                <field name="copies" widget="library_copies"/>
                 <field name="borrower_id" invisible="context.get('hide_borrower')"/>
                 <field name="state" widget="badge"/>
             </tree>
@@ -113,6 +115,26 @@ widget" in the browser console and falls back to the default widget of the type 
         </field>
     </record>
 </odoo>
+```
+
+`library/models/library_author.py`, the same copy as the `inheritance` recipe of `odoo-backend` (it needs `mail`
+in `depends`, as the manifest has):
+
+```python
+from odoo import fields, models
+
+
+class LibraryAuthor(models.Model):
+    _name = 'library.author'
+    _description = 'Library Author'
+    _inherit = ['mail.thread', 'mail.activity.mixin']
+    _inherits = {'res.partner': 'partner_id'}
+
+    partner_id = fields.Many2one('res.partner', required=True, ondelete='cascade', index=True)
+    genre = fields.Selection(
+        [('fiction', 'Fiction'), ('non_fiction', 'Non-fiction'), ('poetry', 'Poetry')],
+        default='fiction', tracking=True,
+    )
 ```
 
 `library/views/library_author_views.xml`: `name`, `email` and `phone` are the partner's the author delegates
@@ -165,6 +187,16 @@ How it behaves:
 - Every field an `attrs` domain names must be in the view, else "Field ... used in ... must be present in
   view but is missing." (`odoo/addons/base/models/ir_ui_view.py:2283`): `state` is in the header, `active` is
   in the form as an invisible field.
+
+- A model with an `active` field hides its archived records from every search, so from the list, the kanban and
+  the many2one inputs, unless the domain names `active` or the context sets `active_test=False` (15.0
+  `odoo/models.py:4484-4489`; 19.0 `odoo/orm/models.py:5375-5383`): a list that hides inactive records needs no
+  domain, and the `Archived` filter shows them because its domain names `active`.
+
+- The ribbon of an archived record is the `web_ribbon` widget, first inside `<sheet>`, hidden through `attrs`
+  while `active` is true (`addons/lunch/views/lunch_supplier_views.xml:21`,
+  `addons/web/static/src/legacy/js/widgets/ribbon.js:45`); `active` must be in the form, here as an invisible
+  field.
 
 - `<separator/>` splits the filters into blocks: the active filters of one block are OR-ed, the blocks AND-ed
   (15.0 `addons/web/static/src/legacy/js/control_panel/control_panel_model_extension.js:1075`, `:1140`; 19.0

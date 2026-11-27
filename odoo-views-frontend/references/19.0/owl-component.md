@@ -27,8 +27,9 @@ first that a core widget does not already do it (15.0 `addons/web/static/src/leg
 3. `library/static/src/copies_field/copies_field.xml`: its Owl template.
 4. `library/__manifest__.py` `assets`: both files in the bundles of the series. `assets` is a manifest key of
    its own, not a `data` file.
-5. The view that uses it: `<field name="copies" widget="library_copies"/>` in the book form of the
-   [views recipe](views.md). Building the widget alone, put that line in any form of `library.book`.
+5. `library/views/library_book_views.xml`, the same copy as the [views recipe](views.md): the form and the list
+   name the widget, `<field name="copies" widget="library_copies"/>`. Building the widget alone, put that line
+   in any form or list of `library.book`.
 
 ## Example
 
@@ -113,6 +114,83 @@ keep `assets` and drop the `data` files you do not build):
 }
 ```
 
+`library/views/library_book_views.xml`, the same copy as the [views recipe](views.md):
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="library_book_view_form" model="ir.ui.view">
+        <field name="name">library.book.form</field>
+        <field name="model">library.book</field>
+        <field name="arch" type="xml">
+            <form string="Book">
+                <header>
+                    <field name="state" widget="statusbar" options="{'clickable': '1'}"/>
+                </header>
+                <sheet>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_title">
+                        <h1><field name="name" placeholder="e.g. The Odyssey"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="author_id"/>
+                            <field name="isbn"/>
+                            <field name="date_published"/>
+                            <field name="pages"/>
+                        </group>
+                        <group>
+                            <field name="copies" widget="library_copies"/>
+                            <field name="borrower_id" invisible="state != 'borrowed'" required="state == 'borrowed'"/>
+                            <field name="user_id"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="active" invisible="1"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="library_book_view_list" model="ir.ui.view">
+        <field name="name">library.book.list</field>
+        <field name="model">library.book</field>
+        <field name="arch" type="xml">
+            <list string="Books" decoration-muted="state == 'lost'">
+                <field name="name"/>
+                <field name="author_id"/>
+                <field name="isbn" optional="show"/>
+                <field name="date_published" optional="hide"/>
+                <field name="copies" widget="library_copies"/>
+                <field name="borrower_id" column_invisible="context.get('hide_borrower')"/>
+                <field name="state" widget="badge"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="library_book_view_search" model="ir.ui.view">
+        <field name="name">library.book.search</field>
+        <field name="model">library.book</field>
+        <field name="arch" type="xml">
+            <search string="Books">
+                <field name="name"/>
+                <field name="isbn"/>
+                <field name="author_id"/>
+                <separator/>
+                <filter string="Available" name="available" domain="[('state', '=', 'available')]"/>
+                <filter string="Borrowed" name="borrowed" domain="[('state', '=', 'borrowed')]"/>
+                <separator/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group>
+                    <filter string="Author" name="group_by_author" domain="[]" context="{'group_by': 'author_id'}"/>
+                    <filter string="Status" name="group_by_state" domain="[]" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+</odoo>
+```
+
 How it behaves:
 
 - Owl is version 2.8.4 (`addons/web/static/lib/owl/owl.js:5869`), imported from `@odoo/owl`, with
@@ -134,6 +212,20 @@ How it behaves:
 
 - Templates: the XML goes in `web.assets_backend` with the JavaScript (`addons/fleet/__manifest__.py:52-55`);
   any `t-name` of the bundle is an Owl template. `t-out` escapes unless the value is `markup`.
+
+- In a list the same component renders every cell, with `readonly` true unless the row is in edition
+  (`addons/web/static/src/views/fields/field.js:464`), so the buttons stay hidden.
+
+- A display-only widget is this component without the buttons and the method they call; a view can also set
+  `readonly="1"` on the field.
+
+- A widget of a module that extends `library` (say `library_member`) takes names of its own: its registry key
+  (`library_member_badge`; `add` throws on an existing key) and its template (`library_member.MemberBadge`; a
+  second template of one name throws "Template ... already exists", `addons/web/static/src/core/templates.js:166-167`).
+  Its own manifest lists its files with its own paths, `'web.assets_backend': ['library_member/static/src/**/*']`;
+  it imports from `library` as `@library/copies_field/copies_field` (`odoo/tools/js_transpiler.py:68-81`), and its
+  view inherits the `library` one (`inherit_id` `library.library_book_view_form`, the
+  [view inheritance recipe](view-inheritance.md)).
 
 - Besides paths and globs, a bundle list takes the directives `prepend`, `before`, `after`, `replace`, `remove`
   and `include` (15.0 `odoo/addons/base/models/ir_asset.py:24-30`; 19.0 `odoo/addons/base/models/ir_asset.py:17-23`).
@@ -204,6 +296,23 @@ Exceptions: none.
 <span t-out="value"/>
 ```
 
+### Translate the text, then put the value in
+
+Why: a term built with the value (`` _t(`${count} copies`) ``) is never found among the translations; `_t`
+takes the values after the term (`addons/web/static/src/core/l10n/translation.js:95`).
+
+Exceptions: none.
+
+```javascript
+import { _t } from "@web/core/l10n/translation";
+const text = _t(`${count} copies`);
+```
+
+```javascript
+import { _t } from "@web/core/l10n/translation";
+const text = _t("%s copies", count);
+```
+
 ### Read and write the value through the series' field API
 
 Why: `_setValue`, `value` and `mode` belong to the legacy `AbstractFieldOwl`, which no longer exists; a field
@@ -224,28 +333,32 @@ this.props.record.update({ [this.props.name]: this.value + 1 });
 - `node --check` on a copy of each JavaScript file saved as `.mjs` catches syntax errors before Odoo runs (the
   file uses `import`).
 
-- `oasis --project <root> update-module --compact library <database>` loads the module with its manifest and
-  the view that names the widget.
-- `oasis --project <root> view-info library.book --type form` confirms which form names
-  `widget="library_copies"`.
-- `oasis --project <root> test-module --compact library` runs the module's tests; a tour that opens the form
-  proves the widget renders (the `tours` recipe of `odoo-testing`), since a missing widget or template shows
-  only when a view loads it.
+- `oasis --project <root> test-module --compact library` installs the module on a disposable database with
+  its manifest and the views that name the widget, then runs its tests (a new module has no database to
+  update); a tour that opens the list and the form proves the widget renders (the `tours` recipe of
+  `odoo-testing`), since a missing widget or template, or a list that fails on the widget, shows only when a
+  view loads it.
+- `oasis --project <root> view-info library.book` confirms which views name `widget="library_copies"`.
 
 ## Changed from 15.0
 
 - `intro`: The example follows `addons/web/static/src/views/fields/badge/badge_field.js` and
-- `component`: `import { Component } from "@odoo/owl";`
-- `template`: `<?xml version="1.0" encoding="UTF-8"?>`
-- `manifest`: `{`
+- `component`: `export class CopiesField extends Component {`
+- `template`: `<t t-name="library.CopiesField">`
+- `manifest`: `'version': '19.0.1.0.0',`
+- `book-views`: `<widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>`
 - `owl-version`: Owl is version 2.8.4 (`addons/web/static/lib/owl/owl.js:5869`), imported from `@odoo/owl`, with
 - `registration`: Registration: `registry.category("fields")` holds entries `{ component, displayName, supportedTypes,
 - `value-api`: The value: the field component passes `name`, `record`, `id` and `readonly`
 - `modules`: Every file under `<module>/static/src` or `static/tests` is an ES module, with no header needed;
 - `template-bundle`: Templates: the XML goes in `web.assets_backend` with the JavaScript (`addons/fleet/__manifest__.py:52-55`);
+- `list-cell`: In a list the same component renders every cell, with `readonly` true unless the row is in edition
+- `extension-module`: A widget of a module that extends `library` (say `library_member`) takes names of its own: its registry key
 - `registry-rule`: Register an entry object, not the component class
 - `key-rule`: Why: `add` throws "Cannot add key ... it already exists" for a key such as a core widget's
 - `template-rule`: Why: no bundle named `web.assets_qweb` is loaded on this series, so a template listed there never reaches the
 - `output-rule`: Why: `t-raw` is deprecated and warns; `t-out` prints the value escaped unless it is `markup`.
+- `label-rule`: removed
+- `translate-rule`: Why: a term built with the value (`` _t(`${count} copies`) ``) is never found among the translations; `_t`
 - `value-rule`: Why: `_setValue`, `value` and `mode` belong to the legacy `AbstractFieldOwl`, which no longer exists; a field
 - `syntax-check`: `node --check` on a copy of each JavaScript file saved as `.mjs` catches syntax errors before Odoo runs (the

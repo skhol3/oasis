@@ -203,6 +203,21 @@ How the parts behave:
   `models.UniqueIndex(definition, message)` (`odoo/orm/table_objects.py:125`, `:185`, as
   `addons/lunch/models/lunch_order.py:64`); the ORM creates it at install and update.
 
+- A value unique whatever its case (an ISBN, an email): `UNIQUE (isbn)` compares exact values, so either
+  normalize the value in `create` and `write` (as the loan strips its `note`) and keep the plain constraint, or
+  declare a `models.UniqueIndex` on `lower(...)`, which takes an expression and a message
+  (`odoo/orm/table_objects.py:185-205`):
+
+```python
+from odoo import models
+
+
+class LibraryBook(models.Model):
+    _inherit = 'library.book'
+
+    _isbn_lower_unique = models.UniqueIndex('(lower(isbn))', 'An ISBN is unique, whatever its case.')
+```
+
 - A search method gets normalized operators (`=` becomes `in`; a boolean condition arrives as `in` or
   `not in` with `[True]`), returns `NotImplemented` for an operator it does not handle, and builds a `Domain`
   (`odoo/orm/fields.py:145-170`, as `addons/lunch/models/lunch_supplier.py:324-335`).
@@ -525,10 +540,11 @@ class LibraryBook(models.Model):
 
 ## Changed from 15.0
 
-- `loan-sql-objects-search`: `from datetime import timedelta`
-- `book-display-name-search`: `from odoo import api, fields, models`
+- `loan-sql-objects-search`: `_duration_positive = models.Constraint('CHECK (duration > 0)', 'The loan duration must be positive.')`
+- `book-display-name-search`: `_rec_names_search = ['name', 'isbn']`
 - `sql-constraint`: A SQL constraint is a `models.Constraint(definition, message)` class attribute whose name starts with `_`
 - `multi-column-index`: An index on several columns is a `models.Index('(col_a, col_b)')` attribute, a unique one
+- `unique-any-case`: A value unique whatever its case (an ISBN, an email): `UNIQUE (isbn)` compares exact values, so either
 - `search-operators`: A search method gets normalized operators (`=` becomes `in`; a boolean condition arrives as `in` or
 - `domain-combine`: Domains are combined with `Domain` objects (`from odoo.fields import Domain`, `&`, `|`, `~`;
 - `create-api-model`: `@api.model` on `create` turns it into `model_create_multi` (`odoo/orm/decorators.py:322-323`): the method

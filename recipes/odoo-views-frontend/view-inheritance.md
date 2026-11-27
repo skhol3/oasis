@@ -19,13 +19,34 @@ Adding, moving, hiding or changing elements of an existing view (here `base.view
 1. `library/__manifest__.py`: the module that owns the parent view in `depends` (`base` here, through `mail`),
    so it loads first; the manifest is the one of the `module` recipe of `odoo-backend`.
 2. `library/models/res_partner.py`: the fields `library_card`, `library_member_since` and `library_note`,
-   added with `_inherit = 'res.partner'` (the `inheritance` recipe of `odoo-backend` gives the file). A view
+   added with `_inherit = 'res.partner'`, the same copy as the `inheritance` recipe of `odoo-backend`. A view
    that names a field the model lacks stops the update.
 3. `library/views/res_partner_views.xml`: one `ir.ui.view` record per parent view, with `inherit_id` and no
    root element of its own in `arch`.
 4. `library/__manifest__.py` `data`: security first, then `views/res_partner_views.xml`.
 
 ## Example
+
+`library/models/res_partner.py`, the same copy as the `inheritance` recipe of `odoo-backend`:
+
+```python
+from odoo import api, fields, models
+
+
+class ResPartner(models.Model):
+    _inherit = 'res.partner'
+
+    library_card = fields.Char(copy=False)
+    library_member_since = fields.Date()
+    library_note = fields.Text()
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        for vals in vals_list:
+            if vals.get('library_card') and not vals.get('library_member_since'):
+                vals['library_member_since'] = fields.Date.context_today(self)
+        return super().create(vals_list)
+```
 
 `library/views/res_partner_views.xml`. Before writing it, read the parent arch of the checkout's series
 (`oasis --project <root> xmlid-info base.view_partner_form` gives its file and line). Every target below is in
@@ -177,6 +198,10 @@ How it behaves:
   (`odoo/addons/base/models/ir_ui_view.py:148`, `:764`): give yours a higher `priority` to apply after another
   module's extension.
 <!-- end -->
+
+- A module that extends `library` inherits its views the same way, naming the parent with the prefix,
+  `<field name="inherit_id" ref="library.library_book_view_form"/>`, and listing `library` in `depends`; an id
+  without a prefix is looked up in the module whose file is loading ([actions-menus.md](actions-menus.md)).
 
 ## Mistakes
 

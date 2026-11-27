@@ -14,16 +14,18 @@ A test of a flow through the web client: open an action, fill a form, save, and 
 [model test](model-tests.md) for logic that needs no browser; it is faster and more precise.
 
 The example creates a `library.book` of the `library` module the recipes build through the web client. It
-needs:
+needs, from `odoo-backend` (`references/<series>/` of that skill), `module.md` (the manifest and the access CSV)
+and `model.md` (`library.book` with `name` and `pages`), and shows the same copies of the files it uses from the
+other skills:
 
-- from `odoo-backend` (`references/<series>/` of that skill), `module.md` (the manifest and the access CSV)
-  and `model.md` (`library.book` with `name` and `pages`);
-- from `odoo-security`, the groups of the `access` recipe: `admin` is in `library.group_library_manager`, whose
-  access rows and record rule allow every operation on books (without them, give the `base.group_user` row of
-  the CSV create and write);
-- from `odoo-views-frontend`, the window action `library.library_book_action` of the `actions-menus` recipe,
-  which opens the list first, and the book views of the `views` recipe: a list view with its create button
-  and a form view with the fields `name` and `pages`. The tour uses no other element of those views.
+- the groups of the `access` recipe of `odoo-security`: `admin` is in `library.group_library_manager`, whose
+  access rows allow every operation on books (without them, give the `base.group_user` row of the CSV create
+  and write);
+- the book views of the `views` recipe of `odoo-views-frontend`, a list with its create button and a form with
+  the fields `name` and `pages` (the tour uses no other element of them; building without the Owl widget, drop
+  `widget="library_copies"`);
+- the window action `library.library_book_action` of its `actions-menus` recipe, which opens the list first,
+  and its menus.
 
 It follows `crm`'s `crm_rainbowman` tour (`addons/crm/static/tests/tours/crm_rainbowman.js`, run by
 `addons/crm/tests/test_crm_ui.py`).
@@ -36,7 +38,10 @@ It follows `crm`'s `crm_rainbowman` tour (`addons/crm/static/tests/tours/crm_rai
    tour needs no `data` entry.
 3. `library/tests/__init__.py`: imports the test file.
 4. `library/tests/test_ui.py`: the `HttpCase` that starts the tour.
-5. The Python package `websocket-client` in the Odoo environment: without it every `HttpCase` browser test is
+5. `library/security/library_groups.xml`, `library/views/library_book_views.xml` and
+   `library/views/library_menus.xml`: the groups, the book views and the action with its menus, the same copies
+   as their recipes, after the access CSV in `data`.
+6. The Python package `websocket-client` in the Odoo environment: without it every `HttpCase` browser test is
    skipped with "websocket-client module is not installed" (15.0 `odoo/tests/common.py:931-933`; 19.0
    `odoo/tests/common.py:1272-1274`), the run still reports 0 failed and `test-module` exits 0. Neither
    series' `requirements.txt` lists it; check the log for `skipped TestLibraryUi`.
@@ -57,12 +62,12 @@ registry.category("web_tour.tours").add("library_book_tour", {
         },
         {
             content: "type its title",
-            trigger: ".o_field_widget[name=name] input",
+            trigger: ".o_field_widget[name=name] :is(input, textarea)",
             run: "edit Dune",
         },
         {
             content: "type its pages",
-            trigger: ".o_field_widget[name=pages] input",
+            trigger: ".o_field_widget[name=pages] :is(input, textarea)",
             run: "edit 412",
         },
         {
@@ -110,6 +115,133 @@ the pieces you build and the `web.assets_tests` bundle):
     'application': True,
     'installable': True,
 }
+```
+
+`library/security/library_groups.xml`, the same copy as the `access` recipe of `odoo-security`:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="res_groups_privilege_library" model="res.groups.privilege">
+        <field name="name">Library</field>
+        <field name="category_id" ref="base.module_category_services"/>
+    </record>
+    <record id="group_library_user" model="res.groups">
+        <field name="name">User</field>
+        <field name="sequence">10</field>
+        <field name="privilege_id" ref="res_groups_privilege_library"/>
+        <field name="implied_ids" eval="[Command.link(ref('base.group_user'))]"/>
+    </record>
+    <record id="group_library_manager" model="res.groups">
+        <field name="name">Manager</field>
+        <field name="sequence">20</field>
+        <field name="privilege_id" ref="res_groups_privilege_library"/>
+        <field name="implied_ids" eval="[Command.link(ref('group_library_user'))]"/>
+        <field name="user_ids" eval="[Command.link(ref('base.user_root')), Command.link(ref('base.user_admin'))]"/>
+    </record>
+</odoo>
+```
+
+`library/views/library_book_views.xml`, the same copy as the `views` recipe of `odoo-views-frontend`:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="library_book_view_form" model="ir.ui.view">
+        <field name="name">library.book.form</field>
+        <field name="model">library.book</field>
+        <field name="arch" type="xml">
+            <form string="Book">
+                <header>
+                    <field name="state" widget="statusbar" options="{'clickable': '1'}"/>
+                </header>
+                <sheet>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_title">
+                        <h1><field name="name" placeholder="e.g. The Odyssey"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="author_id"/>
+                            <field name="isbn"/>
+                            <field name="date_published"/>
+                            <field name="pages"/>
+                        </group>
+                        <group>
+                            <field name="copies" widget="library_copies"/>
+                            <field name="borrower_id" invisible="state != 'borrowed'" required="state == 'borrowed'"/>
+                            <field name="user_id"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="active" invisible="1"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="library_book_view_list" model="ir.ui.view">
+        <field name="name">library.book.list</field>
+        <field name="model">library.book</field>
+        <field name="arch" type="xml">
+            <list string="Books" decoration-muted="state == 'lost'">
+                <field name="name"/>
+                <field name="author_id"/>
+                <field name="isbn" optional="show"/>
+                <field name="date_published" optional="hide"/>
+                <field name="copies" widget="library_copies"/>
+                <field name="borrower_id" column_invisible="context.get('hide_borrower')"/>
+                <field name="state" widget="badge"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="library_book_view_search" model="ir.ui.view">
+        <field name="name">library.book.search</field>
+        <field name="model">library.book</field>
+        <field name="arch" type="xml">
+            <search string="Books">
+                <field name="name"/>
+                <field name="isbn"/>
+                <field name="author_id"/>
+                <separator/>
+                <filter string="Available" name="available" domain="[('state', '=', 'available')]"/>
+                <filter string="Borrowed" name="borrowed" domain="[('state', '=', 'borrowed')]"/>
+                <separator/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group>
+                    <filter string="Author" name="group_by_author" domain="[]" context="{'group_by': 'author_id'}"/>
+                    <filter string="Status" name="group_by_state" domain="[]" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+</odoo>
+```
+
+`library/views/library_menus.xml`, the same copy as the `actions-menus` recipe of `odoo-views-frontend`:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="library_book_action" model="ir.actions.act_window">
+        <field name="name">Books</field>
+        <field name="res_model">library.book</field>
+        <field name="path">library-books</field>
+        <field name="view_mode">list,form</field>
+        <field name="context">{'search_default_available': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Add your first book</p>
+        </field>
+    </record>
+
+    <!-- root menu: no parent, the app in the main menu -->
+    <menuitem id="library_menu_root" name="Library" sequence="200" groups="group_library_user"/>
+    <!-- section menu: a parent and no action -->
+    <menuitem id="library_menu_catalog" name="Catalog" parent="library_menu_root" sequence="10"/>
+    <!-- action menu: its name defaults to the action name -->
+    <menuitem id="library_book_menu" action="library_book_action" parent="library_menu_catalog" sequence="10"/>
+</odoo>
 ```
 
 `library/tests/__init__.py`, the file of the [model test](model-tests.md) (building only this piece, keep the
@@ -162,13 +294,40 @@ class TestLibraryUi(HttpCase):
 
 - Typing is `run: "edit Dune"` (`addons/web_tour/static/src/js/tour_automatic/tour_helpers_hoot.js:130-133`).
 
-- A field renders as `.o_field_widget[name=<field>]` around its `<input>`, so a field is
-  `.o_field_widget[name=<field>] input` (`addons/crm/static/tests/tours/crm_rainbowman.js:19`).
+- A field renders as `.o_field_widget[name=<field>]` (`addons/web/static/src/views/fields/field.js:375`) around
+  the element its widget draws: an `<input>` for a char or number field
+  (`addons/crm/static/tests/tours/crm_rainbowman.js:19`), a `<textarea>` for `widget="text"`
+  (`addons/web/static/src/views/fields/text/text_field.xml:10`), as the partner's `name` is in
+  `base.view_partner_form` (`odoo/addons/base/views/res_partner_views.xml:140-141`). So write
+  `.o_field_widget[name=<field>] :is(input, textarea)`; `:is()` is plain CSS, which the tour's query passes to the
+  browser when the trigger has no hoot pseudo-class such as `:contains`
+  (`addons/web/static/lib/hoot-dom/helpers/dom.js:1037-1040`). A many2one is the same `input`
+  (`addons/account/static/tests/tours/tax_group_tests.js:30`).
 
 - A saved record without changes gets `.o_form_saved` (`addons/web/static/src/views/form/form_compiler.js:227`).
 
 - The step schema has no `extra_trigger` (`addons/web_tour/static/src/js/tour_service.js:26-49`): put both
   conditions in one `trigger`.
+
+- An action that opens a kanban first has its create button at `.o-kanban-button-new` (15.0
+  `addons/web/static/src/legacy/xml/kanban.xml:5`; 19.0 `addons/web/static/src/views/kanban/kanban_controller.xml:8`),
+  where `crm_rainbowman.js` starts (line 14 in both); with `on_create="quick_create"` and quick create enabled it
+  opens a quick-create card instead of the form (15.0
+  `addons/web/static/src/legacy/js/views/kanban/kanban_controller.js:340`; 19.0
+  `addons/web/static/src/views/kanban/kanban_controller.js:446`).
+
+- A many2one is typed in its input with `edit`, then its suggestion is clicked with `run: "click"` on
+  `.ui-menu-item a:contains(Dune)`, as `addons/account/static/tests/tours/tax_group_tests.js:28-37` does.
+
+- A list is checked on its cells: a step on `.o_data_row .o_data_cell:contains(Dune)` waits for a row that shows
+  the text, `:contains` being hoot's (`addons/web/static/lib/hoot-dom/helpers/dom.js:1217`, as
+  `addons/hr_skills/static/tests/tours/skills_tour.js:117` writes it). A display-only widget is checked the same
+  way, on the text of its cell or field.
+
+- Records the test creates in `setUpClass` or `setUp` with `cls.env` reach the browser: the server's requests
+  run on the test's cursor (15.0 `odoo/tests/common.py:1599-1603`; 19.0 `odoo/tests/common.py:2241-2244`), and
+  the browser call flushes it before opening the URL (15.0 `odoo/tests/common.py:1724-1728`; 19.0
+  `odoo/tests/common.py:2542-2546`). They are rolled back with the test, like the records the tour creates.
 
 - JavaScript unit tests are Hoot, bundled in `web.assets_unit_tests` (`addons/web/__manifest__.py:471`); a tour
   is not one.
@@ -253,8 +412,9 @@ registry.category("web_tour.tours").add("library_book_tour", {
 
 ### Write the field steps the way the series renders and types them
 
-Why: the 19.0 input sits inside `.o_field_widget`, which carries the `name`, and `text` is not an action, so a
-step written for 15.0 waits for an element that never appears or fails on its `run`.
+Why: the 19.0 input sits inside `.o_field_widget`, which carries the `name`, the inner element depends on the
+widget (`<textarea>` for `widget="text"`), and `text` is not an action, so a step written for 15.0 or for one
+widget waits for an element that never appears or fails on its `run`.
 
 Exceptions: buttons such as `.o_list_button_add` and `.o_form_button_save` have the same class in every series.
 
@@ -263,7 +423,7 @@ const step = { trigger: "input[name=name]", run: "text Dune" };
 ```
 
 ```javascript
-const step = { trigger: ".o_field_widget[name=name] input", run: "edit Dune" };
+const step = { trigger: ".o_field_widget[name=name] :is(input, textarea)", run: "edit Dune" };
 ```
 
 ### End on a check of the saved form, then assert in Python
@@ -304,12 +464,19 @@ self.start_tour(self.url, 'library_book_tour', login=user.login)
 
 ## Verify
 
+`<root>` is the project's absolute path: `--project` refuses a relative one.
+
 - `oasis --project <root> test-module --compact library`: the tour runs in the `post_install` phase of a
-  disposable database; report the result line, the `log:` line and failures. The tour ran only when the log
-  shows it succeeded; a log line `skipped TestLibraryUi` means it did not run (no `websocket-client`) even
-  though the run exits 0.
+  disposable database. Report the `phase=tests database=<name> exit=<code>` line, the `stdout_log=` and
+  `stderr_log=` paths and the failures; the number of tests is only in the Odoo log (`stderr_log`), the line
+  `<N> failed, <M> error(s) of <K> tests when loading database ...` (15.0 `odoo/service/server.py:566-568`;
+  19.0 `odoo/service/server.py:722-725`). The tour ran only when the log shows it succeeded; a log line
+  `skipped TestLibraryUi` means it did not run (no `websocket-client`) even though the run exits 0.
 - `oasis --project <root> test-module --compact --only TestLibraryUi.test_create_book_tour library`: the tour
-  alone while iterating (`--reuse` keeps the database; run once without it at the end).
+  alone while iterating. `--reuse` keeps the test database (`test_prefix`, the checkout slug, then `library`)
+  between runs; run once without it at the end. The kept database stays afterwards (`gc` drops only disposable
+  `_r<hex>` ones): `oasis --project <root> drop-database <name>` moves it to the trash, and it runs only with
+  `--confirm <name>`.
 - `oasis --project <root> view-info library.book` and
   `oasis --project <root> xmlid-info library.library_book_action`: the fields and the action the tour depends
   on.
@@ -318,21 +485,26 @@ self.start_tour(self.url, 'library_book_tour', login=user.login)
 
 ## Changed from 15.0
 
-- `tour-js`: `import { registry } from "@web/core/registry";`
-- `manifest-version-bundles`: `{`
-- `test-ui`: `from odoo.tests import HttpCase, tagged`
+- `tour-js`: `registry.category("web_tour.tours").add("library_book_tour", {`
+- `manifest-version-bundles`: `'version': '19.0.1.0.0',`
+- `groups-xml`: `<record id="res_groups_privilege_library" model="res.groups.privilege">`
+- `book-views`: `<widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>`
+- `menus`: `<field name="path">library-books</field>`
+- `test-ui`: `self.start_tour('/odoo/action-library.library_book_action', 'library_book_tour', login='admin')`
 - `tour-registration`: The tour is added to the `web_tour.tours` registry, the category the tour service reads
 - `module-header`: Every file under `static/src` and `static/tests` is a module, so the file needs no `/** @odoo-module **/`
 - `tour-url`: `start_tour` opens the action; the tour has no `url`, because a `url` that differs from the start URL makes
 - `web-url`: The web client URL of an action is `/odoo/action-<xml id>` (`addons/web/static/src/core/browser/router.js:206-209`).
 - `step-without-run`: A step without `run` only waits for its trigger (`addons/web_tour/static/src/js/tour_automatic/tour_step_automatic.js:191-193`):
 - `typing`: Typing is `run: "edit Dune"` (`addons/web_tour/static/src/js/tour_automatic/tour_helpers_hoot.js:130-133`).
-- `field-selector`: A field renders as `.o_field_widget[name=<field>]` around its `<input>`, so a field is
+- `field-selector`: A field renders as `.o_field_widget[name=<field>]` (`addons/web/static/src/views/fields/field.js:375`) around
 - `saved-form`: A saved record without changes gets `.o_form_saved` (`addons/web/static/src/views/form/form_compiler.js:227`).
 - `extra-trigger`: The step schema has no `extra_trigger` (`addons/web_tour/static/src/js/tour_service.js:26-49`): put both
+- `many2one-step`: A many2one is typed in its input with `edit`, then its suggestion is clicked with `run: "click"` on
+- `list-cell`: A list is checked on its cells: a step on `.o_data_row .o_data_cell:contains(Dune)` waits for a row that shows
 - `js-unit-tests`: JavaScript unit tests are Hoot, bundled in `web.assets_unit_tests` (`addons/web/__manifest__.py:471`); a tour
 - `docs-form`: The official 19.0 testing page still shows the older form, `import tour from 'web_tour.tour'; tour.register(...)`;
 - `post-install-why`: Why: at install time the registry is not fully loaded, and the browser run warns "HttpCase test should be in
 - `register-rule`: Why: `web_tour.tour` and `tour.register` no longer exist, and the service calls `steps()`, so a tour written
-- `field-step-rule`: Why: the 19.0 input sits inside `.o_field_widget`, which carries the `name`, and `text` is not an action, so a
+- `field-step-rule`: Why: the 19.0 input sits inside `.o_field_widget`, which carries the `name`, the inner element depends on the
 - `end-check-rule`: Why: a tour that ends on the save click can finish before the server saved, so the Python assertion races the

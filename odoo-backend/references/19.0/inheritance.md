@@ -427,8 +427,8 @@ Exceptions: none.
 
 ## Changed from 15.0
 
-- `manifest-version-bundles`: `{`
-- `chatter`: `<?xml version="1.0" encoding="utf-8"?>`
+- `manifest-version-bundles`: `'version': '19.0.1.0.0',`
+- `chatter`: `<chatter/>`
 - `chatter-form`: The chatter of a `mail.thread` form is `<chatter/>` after `</sheet>`
 - `inherit-list`: Only a string `_inherit` sets `_name` to the extended model; a list without `_name` takes `_name` from the
 - `inherits-field`: `_inherits` without its `Many2one` field, or with one that is not required with `ondelete='cascade'` or

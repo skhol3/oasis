@@ -36,8 +36,11 @@ nothing.
   supported series and renders as `Official docs: [<series>](<url>)`.
 - Do not write `## Changed from`: the renderer appends it. The oldest series gets
   `## Changed from earlier series` with `Oldest supported series.`; a later one gets
-  `## Changed from <previous supported series>` listing, as `` - `<id>`: <first line> ``, each id whose
-  content differs from that series (`removed` when it is gone), else `No change from <previous>.`
+  `## Changed from <previous supported series>` listing, as `` - `<id>`: <label> ``, each id whose
+  content differs from that series (`removed` when it is gone), else `No change from <previous>.` The
+  label of a fence is its first informative line (not blank, punctuation only, an XML declaration, a
+  root `<odoo>`/`<templates>`/`<data>` tag, an import or a module header), preferring a line the previous
+  series' block lacks; without one the entry is `` - `<id>` ``. A prose block's label is its first line.
   Choose ids that name the change (`display-name`, `list-tag`).
 - Links are relative to the rendered file: `[model](model.md)` is the same series' recipe,
   `../../SKILL.md` the skill.

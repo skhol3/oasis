@@ -208,6 +208,10 @@ What each part does:
   `odoo/fields.py:3002`; 19.0 `odoo/fields/__init__.py:19`).
 - `author_id` and `borrower_id` point to contacts (`res.partner`), so the book needs no model of another
   recipe; an author of [inheritance.md](inheritance.md) owns such a contact.
+- `active = fields.Boolean(default=True)` makes the book archivable: every search leaves out the records whose
+  `active` is false unless its domain names `active` or the context sets `active_test=False` (15.0
+  `odoo/models.py:4484-4489`; 19.0 `odoo/orm/models.py:5375-5383`), so lists, many2one inputs and `search` in
+  code skip archived books with no domain of their own.
 - `Selection` takes a list of `(value, label)` pairs; extend it from another module with `selection_add`
   ([inheritance.md](inheritance.md)).
 - `company_id` with `default=lambda self: self.env.company` and the `with_company`, `check_company=True` and
@@ -364,6 +368,77 @@ class LibraryBook(models.Model):
 ```
 <!-- end -->
 
+### Depend on every field the label reads
+
+<!-- since=15.0 id=label-depends-rule -->
+Why: `display_name` is computed from `name_get` but depends only on `_rec_name` (`odoo/models.py:1828`), so a
+`name_get` that also reads `isbn` leaves the label stale in the cache after the ISBN changes, in the form and
+the many2one fields of the same request; an `_compute_display_name` override with `@api.depends('isbn')` adds
+the dependency, since dependencies are collected along the class hierarchy (`odoo/fields.py:516-527`).
+
+Exceptions: a label built from `_rec_name` alone.
+
+```python
+from odoo import models
+
+
+class LibraryBook(models.Model):
+    _inherit = 'library.book'
+
+    def name_get(self):
+        return [(book.id, f'[{book.isbn}] {book.name}' if book.isbn else book.name) for book in self]
+```
+
+```python
+from odoo import api, models
+
+
+class LibraryBook(models.Model):
+    _inherit = 'library.book'
+
+    def name_get(self):
+        return [(book.id, f'[{book.isbn}] {book.name}' if book.isbn else book.name) for book in self]
+
+    @api.depends('isbn')
+    def _compute_display_name(self):
+        super()._compute_display_name()
+```
+<!-- end -->
+
+<!-- since=19.0 id=label-depends-rule -->
+Why: an override of `_compute_display_name` without `@api.depends` keeps only the dependency of the base
+method, `_rec_name` (`odoo/orm/models.py:1437`; dependencies are collected along the class hierarchy,
+`odoo/orm/fields.py:585-596`), so the label stays stale in the cache after the ISBN changes, in the form and the
+many2one fields of the same request.
+
+Exceptions: a label built from `_rec_name` alone.
+
+```python
+from odoo import models
+
+
+class LibraryBook(models.Model):
+    _inherit = 'library.book'
+
+    def _compute_display_name(self):
+        for book in self:
+            book.display_name = f'[{book.isbn}] {book.name}' if book.isbn else book.name
+```
+
+```python
+from odoo import api, models
+
+
+class LibraryBook(models.Model):
+    _inherit = 'library.book'
+
+    @api.depends('name', 'isbn')
+    def _compute_display_name(self):
+        for book in self:
+            book.display_name = f'[{book.isbn}] {book.name}' if book.isbn else book.name
+```
+<!-- end -->
+
 ### Write the field attributes of the checkout's series
 
 <!-- since=15.0 id=attributes-rule -->
@@ -495,6 +570,56 @@ company_id = fields.Many2one('res.company', required=True, ondelete='set null')
 from odoo import fields
 
 company_id = fields.Many2one('res.company', required=True, ondelete='restrict')
+```
+
+### Give a `One2many` the `Many2one` it is the inverse of
+
+<!-- since=15.0 id=one2many-why -->
+Why: a `One2many` finds its records through the comodel field named second, so when the comodel has no field
+of that name the registry setup fails with a `KeyError` (`odoo/fields.py:3381-3382`) and the module does not
+load.
+<!-- end -->
+
+<!-- since=19.0 id=one2many-why -->
+Why: a `One2many` finds its records through the comodel field named second, so when the comodel has no field
+of that name the registry setup fails with "'book_id' declared in ... does not exist on 'library.loan'"
+(`odoo/orm/fields_relational.py:884-891`) and the module does not load.
+<!-- end -->
+
+Exceptions: none; the `Many2one` points back to this model.
+
+```python
+from odoo import fields, models
+
+
+class LibraryLoan(models.Model):
+    _name = 'library.loan'
+    _description = 'Library Loan'
+
+    book = fields.Char()
+
+
+class LibraryBook(models.Model):
+    _inherit = 'library.book'
+
+    loan_ids = fields.One2many('library.loan', 'book_id')
+```
+
+```python
+from odoo import fields, models
+
+
+class LibraryLoan(models.Model):
+    _name = 'library.loan'
+    _description = 'Library Loan'
+
+    book_id = fields.Many2one('library.book', required=True)
+
+
+class LibraryBook(models.Model):
+    _inherit = 'library.book'
+
+    loan_ids = fields.One2many('library.loan', 'book_id')
 ```
 
 ### Give a new model a name of its own

@@ -28,6 +28,10 @@ PROSE_OPEN = re.compile(r'<!--((?:\s+[\w-]+=\S+)+)\s+-->$')
 PROSE_END = '<!-- end -->'
 OLDEST_TITLE = 'earlier series'
 OLDEST_TEXT = 'Oldest supported series.'
+# Lines of a fenced block that say nothing about it in the Changed from section: blank or punctuation
+# only, an XML declaration, a root <odoo>, <templates> or <data> tag, an import, a module header.
+UNINFORMATIVE = re.compile(r'''[\W_]*$|<\?xml\b|</?(?:odoo|templates|data)\b[^<]*$|(?:from\s+\S+\s+)?import\b
+                               |/\*\*\s*@odoo-module|["']use\ strict["'];?$''', re.X)
 
 
 class RecipeError(ValueError):
@@ -61,13 +65,20 @@ class Variant:
             return None
         return ''.join(self.lines)
 
-    def label(self):
-        """The first line of the content, for the Changed from section."""
-        body = self.lines[1:-1] if self.kind == 'fence' else self.lines
-        first = next((line.strip() for line in body if line.strip()), '')
-        if self.kind == 'fence':
-            return f'`` {first} ``' if '`' in first else f'`{first}`'
-        return re.sub(r'^(?:#+|[-*]|\d+\.)\s+', '', first)
+    def label(self, previous=None):
+        """What the Changed from section shows after the id, or '' for the id alone. Prose: its first line.
+        A fence: its first informative line (not UNINFORMATIVE), preferring one the block of the previous
+        series lacks, so a manifest is labelled by its changed `version` line rather than by `{`."""
+        if self.kind == 'prose':
+            first = next((line.strip() for line in self.lines if line.strip()), '')
+            return re.sub(r'^(?:#+|[-*]|\d+\.)\s+', '', first)
+        informative = [line.strip() for line in self.lines[1:-1]
+                       if line.strip() and not UNINFORMATIVE.match(line.strip())]
+        before = {line.strip() for line in previous.lines} if previous is not None else set()
+        first = next((line for line in informative if line not in before), informative[0] if informative else '')
+        if not first:
+            return ''
+        return f'`` {first} ``' if '`' in first else f'`{first}`'
 
 
 def attributes(tokens, where):
@@ -204,7 +215,8 @@ def changed_section(items, series, previous):
         new_text = new.text() if new else None
         if new_text == (old.text() if old else None):
             continue
-        entries.append(f'- `{block_id}`: {new.label() if new_text is not None else "removed"}\n')
+        label = new.label(old if old is not None and old.text() is not None else None) if new_text is not None else 'removed'
+        entries.append(f'- `{block_id}`' + (f': {label}' if label else '') + '\n')
     return f'## Changed from {previous}\n\n' + (''.join(entries) or f'No change from {previous}.\n')
 
 

@@ -29,8 +29,9 @@ first that a core widget does not already do it (15.0 `addons/web/static/src/leg
 3. `library/static/src/copies_field/copies_field.xml`: its Owl template.
 4. `library/__manifest__.py` `assets`: both files in the bundles of the series. `assets` is a manifest key of
    its own, not a `data` file.
-5. The view that uses it: `<field name="copies" widget="library_copies"/>` in the book form of the
-   [views recipe](views.md). Building the widget alone, put that line in any form of `library.book`.
+5. `library/views/library_book_views.xml`, the same copy as the [views recipe](views.md): the form and the list
+   name the widget, `<field name="copies" widget="library_copies"/>`. Building the widget alone, put that line
+   in any form or list of `library.book`.
 
 ## Example
 
@@ -117,6 +118,84 @@ keep `assets` and drop the `data` files you do not build):
 }
 ```
 
+`library/views/library_book_views.xml`, the same copy as the [views recipe](views.md):
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="library_book_view_form" model="ir.ui.view">
+        <field name="name">library.book.form</field>
+        <field name="model">library.book</field>
+        <field name="arch" type="xml">
+            <form string="Book">
+                <header>
+                    <field name="state" widget="statusbar" options="{'clickable': '1'}"/>
+                </header>
+                <sheet>
+                    <widget name="web_ribbon" title="Archived" bg_color="bg-danger" attrs="{'invisible': [('active', '=', True)]}"/>
+                    <div class="oe_title">
+                        <h1><field name="name" placeholder="e.g. The Odyssey"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="author_id"/>
+                            <field name="isbn"/>
+                            <field name="date_published"/>
+                            <field name="pages"/>
+                        </group>
+                        <group>
+                            <field name="copies" widget="library_copies"/>
+                            <field name="borrower_id"
+                                   attrs="{'invisible': [('state', '!=', 'borrowed')], 'required': [('state', '=', 'borrowed')]}"/>
+                            <field name="user_id"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="active" invisible="1"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="library_book_view_list" model="ir.ui.view">
+        <field name="name">library.book.list</field>
+        <field name="model">library.book</field>
+        <field name="arch" type="xml">
+            <tree string="Books" decoration-muted="state == 'lost'">
+                <field name="name"/>
+                <field name="author_id"/>
+                <field name="isbn" optional="show"/>
+                <field name="date_published" optional="hide"/>
+                <field name="copies" widget="library_copies"/>
+                <field name="borrower_id" invisible="context.get('hide_borrower')"/>
+                <field name="state" widget="badge"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="library_book_view_search" model="ir.ui.view">
+        <field name="name">library.book.search</field>
+        <field name="model">library.book</field>
+        <field name="arch" type="xml">
+            <search string="Books">
+                <field name="name"/>
+                <field name="isbn"/>
+                <field name="author_id"/>
+                <separator/>
+                <filter string="Available" name="available" domain="[('state', '=', 'available')]"/>
+                <filter string="Borrowed" name="borrowed" domain="[('state', '=', 'borrowed')]"/>
+                <separator/>
+                <filter string="Archived" name="inactive" domain="[('active', '=', False)]"/>
+                <group>
+                    <filter string="Author" name="group_by_author" domain="[]" context="{'group_by': 'author_id'}"/>
+                    <filter string="Status" name="group_by_state" domain="[]" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+</odoo>
+```
+
 How it behaves:
 
 - Owl is version 1.4.11 (`addons/web/static/lib/owl/owl.js:5604`), the global `owl`: no `@odoo/owl` import;
@@ -147,6 +226,23 @@ How it behaves:
   Owl 1 prints with `t-esc` (escaped) or `t-raw`, and has no `t-out` (`addons/web/static/lib/owl/owl.js:2316`,
   `:2325`); `t-on-click="increment(-1)"` calls the method with its arguments, as
   `addons/web/static/src/legacy/xml/base.xml:324` does.
+
+- In a list the same class renders every cell in read mode (`addons/web/static/src/legacy/js/views/list/list_renderer.js:973`,
+  wrapped as in a form by `addons/web/static/src/legacy/js/views/basic/basic_renderer.js:748`), so the buttons stay
+  hidden. The list builds the column header from the class: it reads `label` and `noLabel` on its prototype
+  (`list_renderer.js:929-932`), so the class names no getter so (a rule below).
+
+- A display-only widget is this component without the buttons and the method they call; a view can also set
+  `readonly="1"` on the field.
+
+- A widget of a module that extends `library` (say `library_member`) takes names of its own: its registry key
+  (`library_member_badge`; the legacy registry replaces a key silently), its template
+  (`library_member.MemberBadge`; Owl throws "Template ... already defined", `addons/web/static/lib/owl/owl.js:1657-1658`)
+  and its `odoo.define` module (`library_member.MemberBadge`; "Service ... already defined",
+  `addons/web/static/src/boot.js:146`). Its own manifest lists its files with its own paths,
+  `'web.assets_backend': ['library_member/static/src/**/*.js']` and
+  `'web.assets_qweb': ['library_member/static/src/**/*.xml']`, and its view inherits the `library` one
+  (`inherit_id` `library.library_book_view_form`, the [view inheritance recipe](view-inheritance.md)).
 
 - Besides paths and globs, a bundle list takes the directives `prepend`, `before`, `after`, `replace`, `remove`
   and `include` (15.0 `odoo/addons/base/models/ir_asset.py:24-30`; 19.0 `odoo/addons/base/models/ir_asset.py:17-23`).
@@ -241,6 +337,47 @@ Exceptions: none.
 <span t-esc="copies"/>
 ```
 
+### Name no getter `label` or `noLabel` on a widget class
+
+Why: the list reads `label` and `noLabel` on the widget's prototype to build the column header
+(`addons/web/static/src/legacy/js/views/list/list_renderer.js:929-932`), so a getter of that name runs without a
+record, throws, and the whole list fails to render; the form never reads them, so the widget seems to work.
+
+Exceptions: none; give the getter another name.
+
+```javascript
+class CopiesField extends AbstractFieldOwl {
+    get label() {
+        return `${this.value || 0} copies`;
+    }
+}
+```
+
+```javascript
+class CopiesField extends AbstractFieldOwl {
+    get copiesLabel() {
+        return `${this.value || 0} copies`;
+    }
+}
+```
+
+### Translate the text, then put the value in
+
+Why: the 15.0 `_t` takes one argument (`addons/web/static/src/legacy/js/core/translation.js:41-46`), so
+`_t("%s copies", n)` shows `%s copies`, and a term built with the value is never found among the translations.
+
+Exceptions: none.
+
+```javascript
+const { _t } = require('web.core');
+const text = _t(`${count} copies`);
+```
+
+```javascript
+const { _t } = require('web.core');
+const text = _.str.sprintf(_t("%s copies"), count);
+```
+
 ### Read and write the value through the series' field API
 
 Why: a legacy field component has no `props.record.update`; it changes its value with `_setValue`, which
@@ -261,13 +398,12 @@ this._setValue(String(this.copies + 1));
 - `node --check library/static/src/copies_field/copies_field.js` catches syntax errors before Odoo runs (an
   `odoo.define` file is plain JavaScript).
 
-- `oasis --project <root> update-module --compact library <database>` loads the module with its manifest and
-  the view that names the widget.
-- `oasis --project <root> view-info library.book --type form` confirms which form names
-  `widget="library_copies"`.
-- `oasis --project <root> test-module --compact library` runs the module's tests; a tour that opens the form
-  proves the widget renders (the `tours` recipe of `odoo-testing`), since a missing widget or template shows
-  only when a view loads it.
+- `oasis --project <root> test-module --compact library` installs the module on a disposable database with
+  its manifest and the views that name the widget, then runs its tests (a new module has no database to
+  update); a tour that opens the list and the form proves the widget renders (the `tours` recipe of
+  `odoo-testing`), since a missing widget or template, or a list that fails on the widget, shows only when a
+  view loads it.
+- `oasis --project <root> view-info library.book` confirms which views name `widget="library_copies"`.
 
 ## Changed from earlier series
 

@@ -17,7 +17,7 @@ that reach it (a root menu for a new app, a section menu, and the action menu).
 ## Files
 
 1. `library/models/library_book.py`: the model the action opens, from the `model` recipe of `odoo-backend`.
-2. `library/security/library_groups.xml` (the `access` recipe of `odoo-security`): the group
+2. `library/security/library_groups.xml`, the same copy as the `access` recipe of `odoo-security`: the group
    `group_library_user` the root menu names. Building without it, drop `groups` from the root menu.
 3. `library/security/ir.model.access.csv`: the access rows; a menu shows only to users who can read its
    action's model.
@@ -88,6 +88,29 @@ access_library_author_user,library.author.user,model_library_author,group_librar
 access_library_author_manager,library.author.manager,model_library_author,group_library_manager,1,1,1,1
 ```
 
+`library/security/library_groups.xml`, the same copy as the `access` recipe of `odoo-security`:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="module_category_library" model="ir.module.category">
+        <field name="name">Library</field>
+        <field name="parent_id" ref="base.module_category_services"/>
+    </record>
+    <record id="group_library_user" model="res.groups">
+        <field name="name">User</field>
+        <field name="category_id" ref="module_category_library"/>
+        <field name="implied_ids" eval="[Command.link(ref('base.group_user'))]"/>
+    </record>
+    <record id="group_library_manager" model="res.groups">
+        <field name="name">Manager</field>
+        <field name="category_id" ref="module_category_library"/>
+        <field name="implied_ids" eval="[Command.link(ref('group_library_user'))]"/>
+        <field name="users" eval="[Command.link(ref('base.user_root')), Command.link(ref('base.user_admin'))]"/>
+    </record>
+</odoo>
+```
+
 `library/views/library_menus.xml`:
 
 ```xml
@@ -135,6 +158,23 @@ How it behaves:
 
 - `target` is `current` (the default), `new` (a dialog), `inline`, `fullscreen` or `main`
   (`odoo/addons/base/models/ir_actions.py:237`).
+
+A module that extends `library` (its manifest `depends` on `library`) names the ids of `library` with their
+prefix: an id without one is looked up in the module whose file is loading (15.0 `odoo/tools/convert.py:669-672`;
+19.0 `odoo/tools/convert.py:236-239`), so `parent="library_menu_root"` there stops the install with "External ID
+not found". Its own ids take no prefix. A menu of a `library_member` module, under the Library app and for its
+users (`view_mode` left to the series' default):
+
+```xml
+<odoo>
+    <record id="library_member_action" model="ir.actions.act_window">
+        <field name="name">Members</field>
+        <field name="res_model">library.member</field>
+    </record>
+    <menuitem id="library_member_menu" action="library_member_action" parent="library.library_menu_root"
+              groups="library.group_library_user" sequence="20"/>
+</odoo>
+```
 
 ## Mistakes
 

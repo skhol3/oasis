@@ -348,7 +348,7 @@ Exceptions: none.
 
 ## Changed from 15.0
 
-- `manifest-version-bundles`: `{`
+- `manifest-version-bundles`: `'version': '19.0.1.0.0',`
 - `template-bundle`: `assets` on this series: the JavaScript and the Owl templates together in `web.assets_backend`, the test
 - `version`: `version` starts with the series, `19.0.1.0.0`, and has 2 to 5 parts (`odoo/modules/module.py:550-554`). A
 - `missing-author`: A missing `author` logs "Missing `author` key in manifest" (`odoo/modules/module.py:428-430`), and an empty

@@ -38,9 +38,9 @@ give a fresh agent (a subagent) each of these tasks, one per run, with no hint o
 oasis shows:
 
 1. Add a model `library.member` with a unique email and a list view that hides inactive members.
-2. Add a record rule so members see only the books of their company.
+2. Add a record rule so library users can edit only the loans they created, while managers edit all loans.
 3. Add a field widget that shows the number of copies of a book.
-4. Add a tour that creates a member.
+4. Add a tour that creates a loan for a book.
 
 After each task, run:
 

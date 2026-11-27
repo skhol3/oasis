@@ -27,13 +27,14 @@ the rest.
    anything that refers to them.
 2. `library/security/ir.model.access.csv`: one row per model and group; it names the groups, so it comes
    after them. The file is the one of `module.md`, shown here unchanged.
-3. `library/security/library_rules.xml` ([record-rules.md](record-rules.md)), then views, menus and data.
+3. The record rules of [record-rules.md](record-rules.md), then views, menus and data.
 4. `library/__manifest__.py` `data`: in that order, security first, as `addons/fleet/__manifest__.py:32-33`
    does in both series.
 
 The model XML id `model_<model with dots as underscores>` (`model_library_book`) exists as soon as the model
 is loaded, before the `data` files; a model of another module takes that module's prefix
-(`sale.model_sale_order`).
+(`sale.model_sale_order`). So a module that extends `library` writes `library.group_library_user` in
+`group_id:id` and `library.model_library_book` in `model_id:id` for the `library` ones, its own without a prefix.
 
 ## Example
 

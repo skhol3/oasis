@@ -161,6 +161,94 @@ def shared_copy_problems(texts):
     return sorted(path for path, versions in copies.items() if len(versions) > 1)
 
 
+recipe_module = load('recipe_module')
+# Files that list the entries of every piece (module.md gives them final): an agent building one piece keeps
+# that piece's entries, so the references in them are not the recipe's own.
+INDEX = re.compile(r'library/(?:__manifest__\.py|(?:[\w/]+/)?__init__\.py|security/ir\.model\.access\.csv)$')
+BASE = ('odoo-backend/module.md', 'odoo-backend/model.md')
+TOKEN = re.compile(r'\blibrary\.(\w+)')
+XML_REFS = re.compile(r'''\b(?:ref|parent|action)="([\w.]+)"|\bref\(\s*['"]([\w.]+)['"]|\bgroups="([\w.,!-]+)"''')
+
+
+def labelled_files(text):
+    """{library/<path>: content} of the blocks a rendered recipe labels (tools/recipe_module.py label_of)."""
+    files = {}
+    for match in FENCE.finditer(text):
+        label = recipe_module.label_of(text, match.start())
+        if label:
+            files.setdefault(label, match[2])
+    return files
+
+
+def defined_names(files):
+    """What labelled files define: `library.<model>` and `model_<model>` per `_name`, the fields of the Python
+    classes, the XML ids (`library.<id>`), Owl template names and odoo.define module names."""
+    names = set()
+    for path, content in files.items():
+        if path.endswith('.py'):
+            for model in re.findall(r'''^\s+_name = ['"]([\w.]+)['"]''', content, re.M):
+                names |= {model, 'library.model_' + model.replace('.', '_')}
+            names |= {'field ' + field for field in re.findall(r'^\s+(\w+) = fields\.\w+\(', content, re.M)}
+        elif path.endswith('.xml'):
+            names |= {'library.' + xml_id for xml_id in re.findall(r'\bid="(\w+)"', content)}
+            names |= set(re.findall(r'\bt-name="([\w.]+)"', content))
+        names |= set(re.findall(r'''\bodoo\.define\(\s*['"]([\w.]+)['"]''', content))
+    return names
+
+
+def used_names(path, content):
+    """What a labelled file uses of the module: `library.<name>` tokens, the unprefixed or `library.` XML ids
+    of its refs, parents, actions and groups, and the fields its view archs name."""
+    used = {match[0] for match in TOKEN.finditer(content)}
+    if path.endswith('.xml'):
+        for groups in XML_REFS.findall(content):
+            for item in ','.join(groups).split(','):
+                item = item.strip().lstrip('!-')
+                if item and '.' not in item:
+                    used.add('library.' + item)
+                elif item.startswith('library.'):
+                    used.add(item)
+        root = ElementTree.fromstring(content)
+        for arch in root.iter('field'):
+            if arch.get('name') == 'arch':
+                used |= {'field ' + node.get('name') for node in arch.iter('field') if node is not arch and node.get('name')}
+    return used
+
+
+def self_containment_problems(texts):
+    """S1: a recipe can be built from itself plus module.md and model.md of its series. texts maps
+    `<skill>/<recipe>.md` to the rendered recipes of one series. Rule, per recipe:
+
+    - every name a labelled file uses that some recipe of the series defines (a model, a field of a view arch,
+      an XML id, an Owl template, an odoo.define module) is defined by a file the recipe, module.md or model.md
+      labels; a `library.` name or an unprefixed XML id that no recipe defines is an error too (a typo);
+    - every `library/<path>` its `## Files` names is labelled there (module.md, the index, names them all).
+
+    The files INDEX matches (manifest, `__init__.py`, access CSV) list every piece's entries, so the names they
+    use are not checked; a name no recipe defines and that is not `library.` (`base.group_user`, `vat`) is
+    Odoo's."""
+    files = {name: labelled_files(text) for name, text in texts.items()}
+    everywhere = defined_names({f'{name}:{path}': content for name, labelled in files.items()
+                                for path, content in labelled.items()})
+    problems = []
+    for name, labelled in files.items():
+        available = {**{path: content for base in BASE for path, content in files.get(base, {}).items()}, **labelled}
+        defined = defined_names(available)
+        for path, content in labelled.items():
+            if INDEX.match(path):
+                continue
+            for used in sorted(used_names(path, content) - defined):
+                if used in everywhere:
+                    problems.append(f'{name}: {path} uses {used}, which another recipe defines')
+                elif not used.startswith('field '):
+                    problems.append(f'{name}: {path} uses {used}, which no recipe defines')
+        if name not in BASE[:1]:
+            listed = re.findall(r'`(library/[\w./-]+)`', sections(texts[name]).get('Files', ''))
+            problems += [f'{name}: Files names {path}, which it does not show'
+                         for path in dict.fromkeys(listed) if path not in available]
+    return problems
+
+
 GOOD = '''# Recipe: a model
 
 Checked against: 19.0.
@@ -266,6 +354,45 @@ class RecipeCheckTests(unittest.TestCase):
             'rule Give every model a description: no Why',
             'rule Give every model a description: no Exceptions',
             'rule Give every model a description: no bad and good blocks'])
+
+
+class SelfContainmentTests(unittest.TestCase):
+    """The S1 check on synthetic rendered recipes: what a piece uses must be shown beside module and model."""
+
+    BOOK = "`library/models/library_book.py`:\n\n```python\nclass Book:\n    _name = 'library.book'\n\n    name = fields.Char()\n```\n"
+    GROUPS = '`library/security/library_groups.xml`:\n\n```xml\n<odoo><record id="group_library_user" model="res.groups"/></odoo>\n```\n'
+    MENU = ('## Files\n\n1. `library/views/library_menus.xml`\n\n## Example\n\n`library/views/library_menus.xml`:\n\n'
+            '```xml\n<odoo><menuitem id="library_menu_root" groups="group_library_user"/></odoo>\n```\n')
+    TEST = ("`library/tests/test_ui.py`:\n\n```python\nURL = '/web#action=library.library_book_action'\n```\n")
+
+    def problems(self, **recipes):
+        texts = {'odoo-backend/module.md': '# Module\n', 'odoo-backend/model.md': self.BOOK}
+        texts.update({name.replace('__', '/') + '.md': text for name, text in recipes.items()})
+        return self_containment_problems(texts)
+
+    def test_a_piece_that_shows_what_it_uses_has_no_problem(self):
+        self.assertEqual(self.problems(security__access=self.GROUPS, views__menus=self.MENU + self.GROUPS), [])
+
+    def test_an_id_another_recipe_defines_and_an_undefined_one_are_named(self):
+        self.assertEqual(self.problems(security__access=self.GROUPS, views__menus=self.MENU, testing__tours=self.TEST), [
+            'views/menus.md: library/views/library_menus.xml uses library.group_library_user, which another recipe defines',
+            'testing/tours.md: library/tests/test_ui.py uses library.library_book_action, which no recipe defines'])
+
+    def test_a_view_field_or_a_model_of_another_recipe_and_a_file_the_files_section_names_are_named(self):
+        partner = "`library/models/res_partner.py`:\n\n```python\nclass Partner:\n    library_card = fields.Char()\n```\n"
+        view = ('## Files\n\n1. `library/models/res_partner.py`\n\n## Example\n\n`library/views/res_partner_views.xml`:\n\n'
+                '```xml\n<odoo><record id="view" model="ir.ui.view"><field name="name">library.author.form</field>'
+                '<field name="arch" type="xml"><field name="vat" position="after"><field name="library_card"/>'
+                '</field></field></record></odoo>\n```\n')
+        author = "`library/models/library_author.py`:\n\n```python\nclass Author:\n    _name = 'library.author'\n```\n"
+        self.assertEqual(self.problems(backend__inheritance=partner + author, views__inheritance=view), [
+            'views/inheritance.md: library/views/res_partner_views.xml uses field library_card, which another recipe defines',
+            'views/inheritance.md: library/views/res_partner_views.xml uses library.author, which another recipe defines',
+            'views/inheritance.md: Files names library/models/res_partner.py, which it does not show'])
+
+    def test_the_index_files_list_every_piece_and_are_not_checked(self):
+        manifest = "`library/__init__.py`:\n\n```python\nfrom . import controllers\nX = 'library.anything'\n```\n"
+        self.assertEqual(self.problems(backend__extra=manifest), [])
 
 
 class SharedCopyTests(unittest.TestCase):
@@ -404,6 +531,50 @@ class Thing:
 '''
 
 
+# A synthetic source whose 19.0 blocks start with lines that say nothing (render_recipes.Variant.label).
+LABELS = '''# Recipe: labels
+
+Checked against: every series.
+
+Official docs: {docs}
+
+## Example
+
+```python id=manifest since=15.0
+{
+    'name': 'Thing',
+    'version': '15.0.1.0.0',
+}
+```
+
+```python id=manifest since=19.0
+{
+    'name': 'Thing',
+    'version': '19.0.1.0.0',
+}
+```
+
+```xml id=view since=19.0
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <list/>
+</odoo>
+```
+
+```python id=imports since=19.0
+from datetime import timedelta
+
+import json
+```
+
+```xml id=template since=19.0
+<templates xml:space="preserve">
+    <t t-name="x.Thing"/>
+</templates>
+```
+'''
+
+
 class RenderTests(unittest.TestCase):
     """tools/render_recipes.py on synthetic sources (S2)."""
 
@@ -449,6 +620,18 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn('HELPER', text)
         self.assertNotIn('<!--', text.replace('<odoo><!-- since=19.0 id=kept --></odoo>', ''))
         self.assertTrue(text.endswith('- `model`: `class New:`\n- `helper`: removed\n'))
+
+    def test_a_changed_block_is_labelled_by_its_first_informative_line(self):
+        # A blank or punctuation-only line, an XML declaration, a root <odoo> or <templates> tag and an import say
+        # nothing; a line the previous series' block lacks comes first; without any other line the id stands alone.
+        source = LABELS.replace('{docs}', docs_map(['15.0', '19.0']))
+        text = self.render('19.0', source, ['15.0', '19.0'])
+        self.assertEqual(text[text.index('## Changed from'):], (
+            '## Changed from 15.0\n\n'
+            "- `manifest`: `'version': '19.0.1.0.0',`\n"
+            '- `view`: `<list/>`\n'
+            '- `imports`\n'
+            '- `template`: `<t t-name="x.Thing"/>`\n'))
 
     def test_checked_and_official_lines_name_the_rendered_series(self):
         text = self.render('17.0')
@@ -551,6 +734,13 @@ class SkillRecipeTests(unittest.TestCase):
                     with self.subTest(recipe=f'{skill}/references/{series}/{name}'):
                         self.assertTrue(path.is_file())
                         self.assertEqual(recipe_problems(path.read_text(encoding='utf-8'), [series]), [])
+
+    def test_every_recipe_shows_the_files_it_uses_beside_module_and_model(self):
+        for series in ascending():
+            with self.subTest(series=series):
+                texts = {f'{skill}/{name}': (ROOT / skill / 'references' / series / name).read_text(encoding='utf-8')
+                         for skill, names in RECIPES.items() for name in names}
+                self.assertEqual(self_containment_problems(texts), [])
 
     def test_every_shared_file_is_the_same_copy_in_every_recipe_of_a_series(self):
         for series in ascending():

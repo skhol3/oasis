@@ -254,6 +254,7 @@ from . import test_ui
 
 ```python id=rules-test since=15.0
 from odoo.exceptions import AccessError
+from odoo.fields import Command
 from odoo.tests import TransactionCase, new_test_user, tagged
 
 
@@ -286,10 +287,21 @@ class TestLibraryRules(TransactionCase):
         other = self.env['res.company'].create({'name': 'Other company'})
         hidden = self.env['library.book'].create({'name': 'Elsewhere', 'company_id': other.id})
         self.assertFalse(self.env['library.book'].with_user(self.manager).search([('id', '=', hidden.id)]))
+
+    def test_enabled_companies_filter_the_books(self):
+        main = self.env.company
+        branch = self.env['res.company'].create({'name': 'Branch'})
+        user = new_test_user(self.env, login='library_branch', groups='library.group_library_user',
+                             company_id=main.id, company_ids=[Command.set([main.id, branch.id])])
+        there = self.env['library.book'].create({'name': 'Branch book', 'company_id': branch.id})
+        books = self.env['library.book'].with_user(user)
+        self.assertIn(there, books.search([]))
+        self.assertNotIn(there, books.with_context(allowed_company_ids=[main.id]).search([]))
 ```
 
 ```python id=rules-test since=19.0
 from odoo.exceptions import AccessError
+from odoo.fields import Command
 from odoo.tests import TransactionCase, new_test_user, tagged
 
 
@@ -321,7 +333,24 @@ class TestLibraryRules(TransactionCase):
         other = self.env['res.company'].create({'name': 'Other company'})
         hidden = self.env['library.book'].create({'name': 'Elsewhere', 'company_id': other.id})
         self.assertFalse(self.env['library.book'].with_user(self.manager).search([('id', '=', hidden.id)]))
+
+    def test_enabled_companies_filter_the_books(self):
+        main = self.env.company
+        branch = self.env['res.company'].create({'name': 'Branch'})
+        user = new_test_user(self.env, login='library_branch', groups='library.group_library_user',
+                             company_id=main.id, company_ids=[Command.set([main.id, branch.id])])
+        there = self.env['library.book'].create({'name': 'Branch book', 'company_id': branch.id})
+        books = self.env['library.book'].with_user(user)
+        self.assertIn(there, books.search([]))
+        self.assertNotIn(there, books.with_context(allowed_company_ids=[main.id]).search([]))
 ```
+
+`test_enabled_companies_filter_the_books` gives a user two companies (`new_test_user` passes `company_id` and
+`company_ids` to the user's create, 15.0 `odoo/tests/common.py:136-137`; 19.0 `odoo/tests/common.py:221-222`)
+and enables one with `allowed_company_ids` in the context, as the company switcher does. Without that key
+`company_ids` holds every company of the user (15.0 `odoo/api.py:676-693`; 19.0
+`odoo/orm/environments.py:266-283`), so a test that never sets it never sees a book hidden by the companies
+the user disabled.
 
 The manager test writes `pages`, not `name`: the unique title of `model.md` refuses one title on two books. The
 books are created by the superuser of the test (`cls.env`); `with_user` runs each check as the user it names,
@@ -388,6 +417,11 @@ warns (`odoo/http.py:812-818`).
 
 `check_access`, `has_access` and `_filtered_access` are not on the official security page of either series;
 those points rely on the source.
+
+A rule of a module that extends `library` names the `library` ids with their prefix,
+`<field name="model_id" ref="library.model_library_book"/>` and `ref('library.group_library_user')`; an id without
+one is looked up in that module. It is OR-ed with the `library` rules of the same groups like any other (the rule
+on widening below).
 
 ## Mistakes
 
@@ -475,6 +509,39 @@ Exceptions: a manager that should be restricted like the user.
         <field name="model_id" ref="model_library_book"/>
         <field name="groups" eval="[Command.link(ref('group_library_manager'))]"/>
         <field name="domain_force">[(1, '=', 1)]</field>
+    </record>
+</odoo>
+```
+
+### Narrow a group's access in its existing rule, not with another group rule
+
+Why: the rules of a user's groups are OR-ed for each operation, so a second rule of `group_library_user` that
+grants write on the books of the user's companies matches the books the ownership rule left out, and users then
+edit every librarian's books: a new group rule widens access, it never narrows it.
+
+Exceptions: widening is the point (a manager rule); a condition that must hold for everyone goes in a global
+rule, which is AND-ed.
+
+```xml
+<odoo>
+    <record id="library_book_rule_user_company" model="ir.rule">
+        <field name="name">Books: users change the books of their companies</field>
+        <field name="model_id" ref="model_library_book"/>
+        <field name="groups" eval="[Command.link(ref('group_library_user'))]"/>
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        <field name="perm_read" eval="False"/>
+    </record>
+</odoo>
+```
+
+```xml
+<odoo>
+    <record id="library_book_rule_user" model="ir.rule">
+        <field name="name">Books: users change their books of their companies</field>
+        <field name="model_id" ref="model_library_book"/>
+        <field name="groups" eval="[Command.link(ref('group_library_user'))]"/>
+        <field name="domain_force">[('user_id', '=', user.id), ('company_id', 'in', company_ids)]</field>
+        <field name="perm_read" eval="False"/>
     </record>
 </odoo>
 ```

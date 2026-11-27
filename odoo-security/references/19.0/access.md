@@ -27,13 +27,14 @@ the rest.
    anything that refers to them.
 2. `library/security/ir.model.access.csv`: one row per model and group; it names the groups, so it comes
    after them. The file is the one of `module.md`, shown here unchanged.
-3. `library/security/library_rules.xml` ([record-rules.md](record-rules.md)), then views, menus and data.
+3. The record rules of [record-rules.md](record-rules.md), then views, menus and data.
 4. `library/__manifest__.py` `data`: in that order, security first, as `addons/fleet/__manifest__.py:32-33`
    does in both series.
 
 The model XML id `model_<model with dots as underscores>` (`model_library_book`) exists as soon as the model
 is loaded, before the `data` files; a model of another module takes that module's prefix
-(`sale.model_sale_order`).
+(`sale.model_sale_order`). So a module that extends `library` writes `library.group_library_user` in
+`group_id:id` and `library.model_library_book` in `model_id:id` for the `library` ones, its own without a prefix.
 
 ## Example
 
@@ -370,9 +371,9 @@ if self.env.user.has_group('library.group_library_manager'):
 
 ## Changed from 15.0
 
-- `manifest-version-bundles`: `{`
+- `manifest-version-bundles`: `'version': '19.0.1.0.0',`
 - `groups-application`: `library/security/library_groups.xml`: a group's application is its `privilege_id`, a `res.groups.privilege`
-- `groups-xml`: `<?xml version="1.0" encoding="utf-8"?>`
+- `groups-xml`: `<record id="res_groups_privilege_library" model="res.groups.privilege">`
 - `acl-sum`: The rows of a user's groups add up: an operation is allowed when an active row of one of the user's groups,
 - `group-spec`: A group specification such as `'library.group_library_user,!library.group_library_manager'` is checked with
 - `group-order`: `sequence` orders the groups of a privilege (`_order = 'privilege_id, sequence, name, id'`,

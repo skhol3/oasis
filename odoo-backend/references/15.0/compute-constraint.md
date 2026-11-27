@@ -218,6 +218,23 @@ How the parts behave:
   `tools.create_index` creates it unless it exists (`odoo/tools/sql.py:223-229`), as
   `addons/lunch/models/lunch_order.py:79-81` writes `CREATE INDEX IF NOT EXISTS`.
 
+- A value unique whatever its case (an ISBN, an email): `UNIQUE (isbn)` compares exact values and a `UNIQUE`
+  constraint takes columns only, so either normalize the value in `create` and `write` (as the loan strips its
+  `note`) and keep the plain constraint, or create a unique index on `lower(...)` in `init()` with
+  `tools.create_unique_index` (`odoo/tools/sql.py:231-237`, which core calls on columns, as
+  `odoo/addons/base/models/ir_model.py:1933` does):
+
+```python
+from odoo import models, tools
+
+
+class LibraryBook(models.Model):
+    _inherit = 'library.book'
+
+    def init(self):
+        tools.create_unique_index(self.env.cr, 'library_book_isbn_lower_uniq', self._table, ['lower(isbn)'])
+```
+
 - A search method gets the operator as written (`=`, `!=`, ...) and must handle each one itself, returning a
   domain list (`addons/lunch/models/lunch_supplier.py:286-303`); for a condition it cannot handle it raises,
   as `addons/fleet/models/fleet_vehicle.py:206` asserts and `addons/account/models/account_account.py:283-285`

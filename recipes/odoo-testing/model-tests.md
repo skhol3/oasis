@@ -475,11 +475,17 @@ from odoo.tests import Form
 
 ## Verify
 
+`<root>` is the project's absolute path: `--project` refuses a relative one.
+
 - `oasis --project <root> test-module --compact library`: installs on a disposable database and runs the
-  tests; report the result line, the `log:` line and failures.
+  tests. Report the `phase=tests database=<name> exit=<code>` line, the `stdout_log=` and `stderr_log=` paths
+  and the failures; the number of tests is only in the Odoo log (`stderr_log`), the line
+  `<N> failed, <M> error(s) of <K> tests when loading database ...` (15.0 `odoo/service/server.py:566-568`;
+  19.0 `odoo/service/server.py:722-725`), and `0 tests` there means none ran.
 - `oasis --project <root> test-module --compact --only TestLibraryBook.test_name_is_unique library`: one
   class or method while iterating; add `--reuse` to keep the test database between runs, then run once
-  without it.
+  without it. The kept database stays afterwards: `oasis --project <root> drop-database <name>` moves it to the
+  trash, and it runs only with `--confirm <name>`.
 - `oasis --project <root> model-info library.book`: the fields and constraints the test relies on.
 - `oasis --project <root> verify-module --compact library`: lint, update and test when stored fields,
   data or security changed with the test.
