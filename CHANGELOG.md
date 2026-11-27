@@ -21,6 +21,9 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- `oasis setup` writes `websocket-client` into a new `requirements/dev.in`: Odoo's HttpCase tests (tours)
+  need it, and without it Odoo skips them while the run still passes. An existing workspace adds the line
+  `websocket-client` to its `dev.in` and runs `oasis bootstrap --apply`.
 - The `references/15.0.md` and `references/19.0.md` of `odoo-backend`, `odoo-views-frontend`,
   `odoo-security` and `odoo-testing` are removed: their content is in the recipes' *Changed in* tables.
   `odoo-environment` and `odoo-module-lifecycle` keep theirs.

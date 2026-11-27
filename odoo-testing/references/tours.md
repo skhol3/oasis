@@ -181,6 +181,8 @@ Unchanged: the `web.assets_tests` bundle under `assets` (15.0 `addons/crm/__mani
 
 - `oasis --project <root> test-module --compact library`: the tour runs in the `post_install` phase of a
   disposable database; report the result line, the `log:` line and failures.
+  The tour ran only when the log shows it succeeded; a log line `skipped TestLibraryUi` means it
+  did not run (no `websocket-client`) even though the run exits 0.
 - `oasis --project <root> test-module --compact --only TestLibraryUi.test_create_book_tour library`: the
   tour alone while iterating (`--reuse` keeps the database; run once without it at the end).
 - `oasis --project <root> view-info library.book` and

@@ -277,7 +277,11 @@ class SetupTests(unittest.TestCase):
         # 19.0 needs nothing besides the source's requirements (v0.15.0 S9: only 15.0 adds setuptools<81).
         self.assertEqual((requirements / 'runtime.in').read_text(), '# Written by oasis setup: the requirements of the '
                          f'Odoo source.\n-r {self.source}/requirements.txt\n')
-        self.assertEqual((requirements / 'dev.in').read_text().splitlines()[-2:], ['-c runtime.txt', '-r runtime.in'])
+        # v0.18.0: HttpCase tours need websocket-client (Odoo skips them without it and the run passes).
+        self.assertEqual((requirements / 'dev.in').read_text().splitlines()[1:], [
+            '-c runtime.txt', '-r runtime.in',
+            '# HttpCase browser tests (tours) need it: without it Odoo skips them and the run still passes.',
+            'websocket-client'])
         self.assertTrue((self.checkout / '.oasis/logs').is_dir() and (self.checkout / '.oasis/data').is_dir())
         # S9: the locks through the code bootstrap uses, then the environment.
         self.assertEqual(self.log.read_text().splitlines(), [
