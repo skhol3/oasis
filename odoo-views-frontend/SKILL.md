@@ -11,7 +11,7 @@ metadata:
 
 Use for Odoo views, actions, menus, templates, reports, Owl components, and asset bundles. Not for Python model logic (`odoo-backend`) or groups and record rules (`odoo-security`). Obey project-specific boundaries first.
 
-Common to every series. Also read [15.0](references/15.0.md) or [19.0](references/19.0.md), per `oasis doctor` `series=`, else `odoo_release=`.
+The recipes cover every supported series. Common to every series: the Changed in table of each recipe says what differs, per `oasis doctor` `series=`, else `odoo_release=`.
 
 ## Hard Rules
 
@@ -20,6 +20,7 @@ Common to every series. Also read [15.0](references/15.0.md) or [19.0](reference
 - Write the view syntax of the checkout's series; never port a view, modifier or widget from another series unchecked.
 - Preserve manifest ordering, asset bundle registration, groups, visibility, translations, and accessibility.
 - Check JavaScript, Owl templates, services, registries, and assets as one behavior unit.
+- In server QWeb, write `t-out`; `t-esc` and `t-raw` are deprecated in every supported series.
 - XML parsing alone cannot prove inherited views work; use actual installation/update when available and authorized.
 - While writing code, apply concise validated project/Odoo criteria; do not query SonarQube per edit. At verification, follow the [bounded SonarQube workflow](../odoo-testing/references/evidence-policy.md); static analysis does not replace functional checks.
 
@@ -27,7 +28,10 @@ Common to every series. Also read [15.0](references/15.0.md) or [19.0](reference
 
 | Situation | Action |
 | --- | --- |
-| Inherited view | Confirm the XPath target against the parent of the checkout's series |
+| New form, list or search view | Follow [views](references/views.md) |
+| Window action or menu | Follow [actions and menus](references/actions-menus.md) |
+| Inherited view | Read the parent of the checkout's series, then follow [view inheritance](references/view-inheritance.md) |
+| Owl component or field widget | Follow [Owl field widget](references/owl-component.md) |
 | New asset | Verify bundle membership and loading |
 | Service or state change | Trace registry dependencies and affected flows |
 | Report or template change | Render affected output when feasible |
@@ -44,6 +48,6 @@ Report changed files, verified parent IDs, installation/update and UI evidence, 
 
 ## References
 
-- [Odoo 15.0 differences](references/15.0.md) and [Odoo 19.0 differences](references/19.0.md).
+- Recipes: [views](references/views.md), [actions and menus](references/actions-menus.md), [view inheritance](references/view-inheritance.md), [Owl field widget](references/owl-component.md).
 - [Project capability contract](../odoo-environment/references/project-contract.md).
 - [Verification evidence policy](../odoo-testing/references/evidence-policy.md).

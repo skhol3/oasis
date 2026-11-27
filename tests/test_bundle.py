@@ -13,6 +13,10 @@ NAMES = {
 }
 # v0.17.0 S2: one skill per topic, its SKILL.md common to every series, a reference per series.
 SERIES = ('15.0', '19.0')
+# v0.18.0 S6: the code skills hold task recipes for every series (tests/test_skill_recipes.py) instead.
+RECIPE_SKILLS = {'odoo-backend', 'odoo-security', 'odoo-views-frontend', 'odoo-testing'}
+RECIPE_SERIES_LINE = ('Common to every series: the Changed in table of each recipe says what differs, '
+                      'per `oasis doctor` `series=`, else `odoo_release=`.')
 OLD_NAMES = re.compile(r'odoo19-(?:backend|security|views-frontend|testing|environment|module-lifecycle)\b')
 SECTIONS = ('Activation Contract', 'Hard Rules', 'Decision Gates',
             'Execution Steps', 'Output Contract', 'References')
@@ -147,10 +151,23 @@ class BundleTests(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)))
         self.assertFalse((ROOT / 'SKILL.md').exists())
 
+    def test_the_code_skills_hold_recipes_and_no_reference_per_series(self):
+        # v0.18.0 S6: the per-series content moved into the recipes' Changed in tables.
+        for name in sorted(RECIPE_SKILLS):
+            with self.subTest(skill=name):
+                text = (ROOT / name / 'SKILL.md').read_text(encoding='utf-8')
+                front, body = text.split('---\n', 2)[1:]
+                self.assertIn('Odoo 15.0 or 19.0', front)
+                self.assertIn(RECIPE_SERIES_LINE, body)
+                self.assertNotRegex(body, r'Odoo 1[59]\b')
+                for series in SERIES:
+                    self.assertFalse((ROOT / name / 'references' / f'{series}.md').exists())
+                    self.assertNotIn(f'references/{series}.md', body)
+
     def test_each_skill_is_common_and_points_to_a_reference_per_series(self):
         # S2: the SKILL.md names both series, holds no series-only claim and sends the agent to the
         # reference of the series `oasis doctor` prints; each reference is that series' own.
-        for name in sorted(NAMES):
+        for name in sorted(NAMES - RECIPE_SKILLS):
             with self.subTest(skill=name):
                 text = (ROOT / name / 'SKILL.md').read_text(encoding='utf-8')
                 front, body = text.split('---\n', 2)[1:]
