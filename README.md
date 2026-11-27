@@ -218,3 +218,7 @@ stay where they are and are no longer read by `oasis_test_summary` (the runs bef
 | [Portable verification](docs/verification.md) | Running the bundle's fixture tests |
 | [Troubleshooting](docs/troubleshooting.md) | Tool-manager shims and known failures |
 | [Changelog](CHANGELOG.md) | Releases and contract changes |
+
+## License
+
+Apache-2.0 ([LICENSE](LICENSE)). The recipes link to the official Odoo documentation and cite Odoo source lines; they copy no Odoo text.

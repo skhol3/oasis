@@ -9,6 +9,10 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Added
+
+- `LICENSE`: the Apache-2.0 license the skills already declare in their frontmatter.
+
 ## [0.18.0] - 2026-11-27
 
 ### Added
