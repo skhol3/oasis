@@ -90,6 +90,22 @@ def recipe_problems(text, supported):
     return problems
 
 
+LABEL = re.compile(r'^`(library/[\w./-]+)`')
+
+
+def shared_copy_problems(texts):
+    """S1: a file several recipes show (labelled `library/<path>` on the line before its block) is the
+    same copy everywhere, so following one recipe never leaves another's manifest or CSV stale."""
+    copies = {}
+    for name, text in texts.items():
+        for match in FENCE.finditer(text):
+            before = [line for line in text[:match.start()].splitlines() if line.strip()]
+            label = LABEL.match(before[-1]) if before else None
+            if label:
+                copies.setdefault(label[1], {}).setdefault(match[2], []).append(name)
+    return sorted(path for path, versions in copies.items() if len(versions) > 1)
+
+
 GOOD = '''# Recipe: a model
 
 Checked against: 15.0, 19.0.
@@ -168,6 +184,14 @@ class RecipeCheckTests(unittest.TestCase):
             'since 14.0', 'source somewhere'])
 
 
+class SharedCopyTests(unittest.TestCase):
+    def test_a_stale_copy_of_a_shared_file_is_named(self):
+        same = '`library/__init__.py`:\n\n```python\nfrom . import models\n```\n'
+        stale = '`library/__init__.py`:\n\n```python\nfrom . import models, wizard\n```\n'
+        self.assertEqual(shared_copy_problems({'a.md': same, 'b.md': same}), [])
+        self.assertEqual(shared_copy_problems({'a.md': same, 'b.md': stale}), ['library/__init__.py'])
+
+
 class SkillRecipeTests(unittest.TestCase):
     """The shipped recipes: every one complete, checked against every series oasis supports, routed."""
 
@@ -179,6 +203,11 @@ class SkillRecipeTests(unittest.TestCase):
                 with self.subTest(recipe=f'{skill}/references/{name}'):
                     self.assertTrue(path.is_file())
                     self.assertEqual(recipe_problems(path.read_text(encoding='utf-8'), supported), [])
+
+    def test_every_shared_file_is_the_same_copy_in_every_recipe(self):
+        texts = {f'{skill}/{name}': (ROOT / skill / 'references' / name).read_text(encoding='utf-8')
+                 for skill, names in RECIPES.items() for name in names}
+        self.assertEqual(shared_copy_problems(texts), [])
 
     def test_the_decision_gates_of_each_skill_send_the_agent_to_its_recipes(self):
         for skill, names in RECIPES.items():

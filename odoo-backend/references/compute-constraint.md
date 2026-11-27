@@ -90,6 +90,8 @@ class LibraryLoan(models.Model):
             loan.is_due_today = loan.date_due == today
 
     def _search_is_due_today(self, operator, value):
+        # A boolean condition arrives as `in` or `not in` with [True] (`is_due_today = False` is
+        # `not in [True]`); for `not in` the ORM negates this `in` domain (odoo/orm/fields.py:148-156).
         if operator != 'in':
             return NotImplemented
         return Domain('date_due', '=', fields.Date.context_today(self))
