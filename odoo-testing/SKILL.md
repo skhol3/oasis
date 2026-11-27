@@ -21,10 +21,10 @@ Common to every series: run `oasis doctor` and open `references/<series>/` for i
 - XML parsing, import success or a current-code update never prove a historical migration.
 - Never assume undocumented test selectors work; `--project` takes an absolute path.
 - Default runs use a disposable database. Reuse `[tooling].test_database` or explicit targets sequentially, with exact-target reset authorization; configuration is not consent. See [test targets](references/test-targets.md).
-- Prefer `test-module --compact` or `verify-module --compact` (Gentle Shell: `oasis_test_module`): report each `phase=... exit=` line and the `stdout_log=`/`stderr_log=` paths; the test count (`N failed, M error(s) of K tests`) and failures are in the log.
+- Prefer `test-module --compact` or `verify-module --compact`: report each `phase=... exit=` line, log paths; the test count (`N failed, M error(s) of K tests`) and failures are in the log (Gentle Shell's `oasis_test_module` returns them and a `log:` line).
 - For Python/manifest changes, use the authorized standalone `lint-module` command with the project's trusted rcfile; follow the [Pylint guidance](references/pylint-odoo-guidance.md). Without `tooling.lint_rcfile` it exits 2: skip lint and report that. Never lint per edit or treat lint as functional proof.
 - Apply the [verification evidence policy](references/evidence-policy.md) before reusing a passing phase or claiming evidence for the current candidate.
-- For SonarQube findings, check active rules and parameters, their applicability to the series, and the analysis before and after correction under that policy; it never replaces functional verification.
+- For SonarQube findings, check active rules, their applicability to the series, and the analysis before and after correction under that policy; it never replaces functional verification.
 
 ## Decision Gates
 
@@ -38,8 +38,8 @@ Common to every series: run `oasis doctor` and open `references/<series>/` for i
 
 ## Execution Steps
 
-1. Identify existing test conventions, database policy, and authorized project commands.
-2. Add narrow tests, reproduce failure when applicable, then verify fix.
+1. Identify test conventions, database policy and authorized commands.
+2. Add narrow tests, reproduce the failure when applicable, verify the fix.
 3. Keep install, update, test and manual UI evidence separate; rerun affected phases after changes.
 
 ## Output Contract
