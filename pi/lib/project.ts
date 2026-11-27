@@ -192,9 +192,10 @@ const TOOL_LINES: Record<string, string> = {
  * (or omitted) for a root that holds a legacy profile, which no command reads any more.
  * `tools` are the session's tools: only the oasis tools among them are named, and a session with
  * none (a subagent without the overlay) is pointed to the CLI. Omitted: every oasis tool.
- * `version` is the configured Odoo series ("19.0"); it names the project and the series the odoo-<topic>
- * skills are read for: their recipes (odoo-<topic>/references/*.md) cover every series and say what
- * differs in a Changed in table (v0.18.0 S6). The last
+ * `version` is the configured Odoo series ("19.0"); it names the project, the series the odoo-<topic>
+ * skills are read for and the recipe directories of that series in the install directory
+ * (odoo-<topic>/references/<series>/, v0.19.0 S5), so the route is visible before any skill is opened.
+ * The last
  * line names the commands the bash guard asks the user about (docs/bash-guard.md).
  */
 export function projectContext(
@@ -224,7 +225,9 @@ export function projectContext(
   return [
     `${odoo} project root: ${root} (${source}).`,
     ...routing,
-    `framework APIs; load the ${skills} first.`,
+    version
+      ? `framework APIs; load the ${skills} first (recipes: ~/.agents/skills/oasis/odoo-*/references/${version}/).`
+      : `framework APIs; load the ${skills} first.`,
     "Tier B commands (oasis policy --json) wait for the user's confirmation; never bypass a refusal.",
   ].join("\n");
 }

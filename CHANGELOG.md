@@ -13,6 +13,11 @@ names) may still change in a minor release; every such change is listed here und
 
 - `LICENSE`: the Apache-2.0 license the skills already declare in their frontmatter.
 
+### Changed
+
+- Contract change: the Gentle Shell project context names the recipe directories of the project's series,
+  `load the odoo-* skill for series 19.0 first (recipes: ~/.agents/skills/oasis/odoo-*/references/19.0/).`
+
 ## [0.18.0] - 2026-11-27
 
 ### Added

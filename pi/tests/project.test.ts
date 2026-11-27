@@ -16,6 +16,11 @@ function scratch(): string {
 
 // tools/config.py no longer reads a legacy profile but refuses a checkout that has one: outside a
 // workspace the directory holding it stays the root, so every command shows that refusal.
+
+// The context goes into every prompt: it stays compact. v0.19.0 S5 adds the recipe directory of the
+// series (about 60 characters), so the bound moved from 1200 to 1300.
+const COMPACT = 1300;
+
 test("findProjectRoot without a workspace file walks up to a legacy profile, so its refusal shows", () => {
   const root = scratch();
   try {
@@ -285,7 +290,7 @@ test("projectContext names the root and routes the agent to the oasis tools", ()
   }
   // No tool name before 0.17.0 (odoo19_*) is advertised.
   assert.ok(!text.includes("odoo19_"), text);
-  assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
+  assert.ok(text.length < COMPACT, `context must stay compact, got ${text.length} chars`);
 });
 
 test("projectContext keeps the guidance of the test tools: what to pass, and where the logs are", () => {
@@ -295,14 +300,14 @@ test("projectContext keeps the guidance of the test tools: what to pass, and whe
   assert.ok(summary.includes("pass what test-module --compact printed"), summary);
   const tests = lines.find((line) => line.startsWith("- oasis_test_module: ")) ?? "";
   assert.ok(tests.includes("full logs stay on disk"), tests);
-  assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
+  assert.ok(text.length < COMPACT, `context must stay compact, got ${text.length} chars`);
 });
 
 test("projectContext names the workspace file of the checkout", () => {
   const text = projectContext("/work/acme/codigo/acme", "/work/acme/oasis-workspace.toml");
   assert.match(text, /Odoo project root: \/work\/acme\/codigo\/acme \(workspace \/work\/acme\/oasis-workspace\.toml\)/);
   assert.ok(!text.includes(".odoo19-agent.toml"), text);
-  assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
+  assert.ok(text.length < COMPACT, `context must stay compact, got ${text.length} chars`);
 });
 
 test("projectContext names only the oasis tools the session has", () => {
@@ -322,15 +327,18 @@ test("projectContext points a session without oasis tools to the guarded CLI", (
   assert.ok(none.includes("load the odoo-* skill first."), none);
 });
 
-test("projectContext names the configured Odoo series for the odoo-* skills", () => {
-  // v0.18.0 S6: the code skills hold recipes for every series, so the line names the series only.
+test("projectContext names the configured Odoo series and its recipe directories", () => {
+  // v0.19.0 S5: the recipes of the project's series are named in the context, so an agent sees the
+  // route without opening a skill first.
   const text = projectContext("/work/coffee", null, undefined, "19.0");
   assert.match(text, /^Odoo 19\.0 project root: \/work\/coffee /);
-  assert.ok(text.includes("load the odoo-* skill for series 19.0 first."), text);
+  assert.ok(text.includes("load the odoo-* skill for series 19.0 first "
+    + "(recipes: ~/.agents/skills/oasis/odoo-*/references/19.0/)."), text);
   const other = projectContext("/work/coffee", null, undefined, "15.0");
   assert.match(other, /^Odoo 15\.0 project root: /);
-  assert.ok(other.includes("load the odoo-* skill for series 15.0 first."), other);
-  for (const context of [text, other]) assert.ok(!context.includes("references/"), context);
+  assert.ok(other.includes("load the odoo-* skill for series 15.0 first "
+    + "(recipes: ~/.agents/skills/oasis/odoo-*/references/15.0/)."), other);
+  assert.ok(!other.includes("references/19.0/"), other);
   for (const context of [text, other]) assert.ok(!/odoo\d+-\*/.test(context), context);
   // Unknown series (the configuration could not be read): no number is made up.
   const unknown = projectContext("/work/coffee");
@@ -344,7 +352,7 @@ test("projectContext tells the agent which oasis commands are Tier B, and stays 
   for (const tools of [undefined, ["read", "bash"]]) {
     const text = projectContext("/work/acme/codigo/acme", "/work/acme/oasis-workspace.toml", tools, "19.0");
     assert.ok(text.split("\n").includes(line), text);
-    assert.ok(text.length < 1200, `context must stay compact, got ${text.length} chars`);
+    assert.ok(text.length < COMPACT, `context must stay compact, got ${text.length} chars`);
   }
 });
 
