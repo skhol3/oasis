@@ -323,13 +323,14 @@ test("projectContext points a session without oasis tools to the guarded CLI", (
 });
 
 test("projectContext names the configured Odoo series and its skill reference", () => {
-  // v0.17.0 S2: one odoo-<topic> skill per topic, a references/<series>.md per series.
+  // v0.18.0 S6: the code skills hold recipes for every series, so the line names the series only.
   const text = projectContext("/work/coffee", null, undefined, "19.0");
   assert.match(text, /^Odoo 19\.0 project root: \/work\/coffee /);
-  assert.ok(text.includes("load the odoo-* skill (references/19.0.md) first."), text);
+  assert.ok(text.includes("load the odoo-* skill for series 19.0 first."), text);
   const other = projectContext("/work/coffee", null, undefined, "15.0");
   assert.match(other, /^Odoo 15\.0 project root: /);
-  assert.ok(other.includes("load the odoo-* skill (references/15.0.md) first."), other);
+  assert.ok(other.includes("load the odoo-* skill for series 15.0 first."), other);
+  for (const context of [text, other]) assert.ok(!context.includes("references/"), context);
   for (const context of [text, other]) assert.ok(!/odoo\d+-\*/.test(context), context);
   // Unknown series (the configuration could not be read): no number is made up.
   const unknown = projectContext("/work/coffee");
