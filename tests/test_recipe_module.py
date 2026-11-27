@@ -156,6 +156,23 @@ class RecipeModuleTests(unittest.TestCase):
                    f'and odoo-security/references/{SERIES}/access.md.\n'))
         self.assertFalse(self.destination.exists())
 
+    def test_refuses_a_label_that_leaves_the_module(self):
+        for label in ('library/../x.py', 'library/.'):
+            with self.subTest(label=label):
+                texts = recipes()
+                texts['odoo-backend/module.md'] += '\n' + block(f'`{label}`:', 'python', 'x = 1\n')
+                self.write_recipes(texts)
+                self.destination.mkdir(exist_ok=True)
+                (self.destination / 'keep.txt').write_text('mine\n', encoding='utf-8')
+                result = self.run_tool(SERIES, str(self.destination))
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (
+                    2, '', f'ERROR: odoo-backend/references/{SERIES}/module.md: '
+                           f'the label {label} leaves library/.\n'))
+                self.assertEqual(tree(self.destination), ['keep.txt'])
+                self.assertEqual((self.destination / 'keep.txt').read_text(encoding='utf-8'), 'mine\n')
+                self.assertEqual(tree(self.temp), ['bundle', *(f'bundle/{path}' for path in tree(self.root)),
+                                                   'out', 'out/keep.txt'])
+
     def test_refuses_a_series_without_rendered_recipes(self):
         self.write_recipes(recipes(), series='1.0')
         result = self.run_tool(SERIES, str(self.destination))

@@ -22,10 +22,14 @@ hits=1
 ```
 
 Exit codes: 0 no hit, 1 hits, 2 usage error (a series `tools/odoo_versions.py` does not support, a
-supported series without forms, a missing directory). The forms are the `FORMS` table in the script:
-per series, each form with its regular expression, the file kinds it applies to, the reason and the
-line of the Odoo source of that series that proves it. Adding a series to `tools/odoo_versions.py`
-makes the checker refuse it until its forms are added.
+supported series without forms, a missing directory, a missing or broken `recipes/eval_forms.py`). The
+forms are the `FORMS` table of `recipes/eval_forms.py`, beside the recipes rather than in `tools/`: per
+series, each form with its regular expression, the file kinds it applies to, the reason, the line of
+the Odoo source of that series that proves it, and per file kind a sample where the form is wrong
+(reported at the sample's last line) and a nearby negative that is right on the series. The suite scans
+every sample and negative of every series, so each form is proven to fire and the negatives to stay
+clean. Adding a series to `tools/odoo_versions.py` makes the checker refuse it until its forms are
+added.
 
 ## In the release gate
 

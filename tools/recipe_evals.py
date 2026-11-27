@@ -7,11 +7,12 @@ given one, such as a list view root or a modifier syntax another series uses.
 
 The forms come from recipes/eval_forms.py (FORMS, per series; series knowledge stays with the recipes).
 Every series tools/odoo_versions.py supports needs an entry: a supported series without one is a usage
-error, so adding a series means adding its forms.
+error, so adding a series means adding its forms. The file is read when a scan starts: a missing or broken
+recipes/eval_forms.py is a usage error too.
 
 Output: one `wrong=<path>:<line>: <form> (<reason>)` line per hit (path relative to the module directory,
 sorted by path and line), then `hits=<n>`. Exit codes: 0 no hit, 1 hits, 2 usage error (unknown or
-unlisted series, missing directory). Standard library only.
+unlisted series, missing directory, missing or broken recipes/eval_forms.py). Standard library only.
 """
 import importlib.util
 import os
@@ -29,20 +30,27 @@ KINDS = ('py', 'xml', 'js', 'csv')
 SKIPPED_DIRECTORIES = {'__pycache__', 'node_modules'}
 
 
-def load_forms():
-    """FORMS of recipes/eval_forms.py, beside the tools directory in the repository and the install."""
-    path = Path(__file__).resolve().parent.parent / 'recipes' / 'eval_forms.py'
-    spec = importlib.util.spec_from_file_location('eval_forms', path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.FORMS
-
-
-FORMS = load_forms()
-
-
 class UsageError(Exception):
     """A reason to stop before scanning (exit 2)."""
+
+
+def load_forms():
+    """FORMS of recipes/eval_forms.py, beside the tools directory in the repository and the install;
+    UsageError naming the file when it is missing, fails to load or holds no FORMS dictionary."""
+    path = Path(__file__).resolve().parent.parent / 'recipes' / 'eval_forms.py'
+    if not path.is_file():
+        raise UsageError(f'Cannot load {path} (missing).')
+    try:
+        spec = importlib.util.spec_from_file_location('eval_forms', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except Exception as error:  # any failure of the file is the maintainer's to fix, not a hit
+        reason = ' '.join(f'{type(error).__name__}: {error}'.split())
+        raise UsageError(f'Cannot load {path} ({reason}).') from None
+    forms = getattr(module, 'FORMS', None)
+    if not isinstance(forms, dict):
+        raise UsageError(f'Cannot load {path} (no FORMS dictionary).')
+    return forms
 
 
 def supported_series():
@@ -91,9 +99,9 @@ def parse(arguments):
     supported = supported_series()
     if series not in supported:
         raise UsageError(f'Unknown series {series}; supported: {", ".join(supported)}.')
-    forms = FORMS.get(series)
+    forms = load_forms().get(series)
     if not forms:
-        raise UsageError(f'No forms for series {series} in tools/recipe_evals.py: '
+        raise UsageError(f'No forms for series {series} in recipes/eval_forms.py: '
                          f'add the forms that are wrong on it to FORMS.')
     path = Path(directory)
     if not path.is_dir():
