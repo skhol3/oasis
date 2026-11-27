@@ -9,6 +9,8 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-27
+
 ### Added
 
 - Task recipes in the code skills: `odoo-backend` (module, model, computes and constraints,
@@ -1370,7 +1372,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/skhol3/oasis/releases/tag/v0.18.0
 [0.17.0]: https://github.com/skhol3/oasis/releases/tag/v0.17.0
 [0.16.0]: https://github.com/skhol3/oasis/releases/tag/v0.16.0
 [0.15.1]: https://github.com/skhol3/oasis/releases/tag/v0.15.1
