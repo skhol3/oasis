@@ -1,0 +1,549 @@
+# Recipe: a web tour run by an HttpCase
+
+Checked against: every series.
+
+Official docs: 15.0=https://www.odoo.com/documentation/15.0/developer/reference/backend/testing.html#integration-testing, 19.0=https://www.odoo.com/documentation/19.0/developer/reference/backend/testing.html#integration-testing
+
+Part of the [testing skill](../../SKILL.md). A path in `path:line` is relative to the Odoo source root of the
+series written before it (15.0 at commit 3a28e5b0, 19.0 at commit 8a2481dfc), or of this series when none is
+written.
+
+## When to use
+
+A test of a flow through the web client: open an action, fill a form, save, and check the result. Use a
+[model test](model-tests.md) for logic that needs no browser; it is faster and more precise.
+
+The example creates a `library.book` of the `library` module the recipes build through the web client. It
+needs:
+
+- from `odoo-backend` (`references/<series>/` of that skill), `module.md` (the manifest and the access CSV)
+  and `model.md` (`library.book` with `name` and `pages`);
+- from `odoo-security`, the groups of the `access` recipe: `admin` is in `library.group_library_manager`, whose
+  access rows and record rule allow every operation on books (without them, give the `base.group_user` row of
+  the CSV create and write);
+- from `odoo-views-frontend`, the window action `library.library_book_action` of the `actions-menus` recipe,
+  which opens the list first, and the book views of the `views` recipe: a list view with its create button
+  and a form view with the fields `name` and `pages`. The tour uses no other element of those views.
+
+It follows `crm`'s `crm_rainbowman` tour (`addons/crm/static/tests/tours/crm_rainbowman.js`, run by
+`addons/crm/tests/test_crm_ui.py`).
+
+## Files
+
+1. `library/static/tests/tours/library_book_tour.js`: the tour.
+2. `library/__manifest__.py`: the tour file in the `web.assets_tests` bundle under `assets` (15.0
+   `addons/crm/__manifest__.py:91`; 19.0 `addons/crm/__manifest__.py:83`). `data` keeps its usual order; the
+   tour needs no `data` entry.
+3. `library/tests/__init__.py`: imports the test file.
+4. `library/tests/test_ui.py`: the `HttpCase` that starts the tour.
+5. The Python package `websocket-client` in the Odoo environment: without it every `HttpCase` browser test is
+   skipped with "websocket-client module is not installed" (15.0 `odoo/tests/common.py:931-933`; 19.0
+   `odoo/tests/common.py:1272-1274`), the run still reports 0 failed and `test-module` exits 0. Neither
+   series' `requirements.txt` lists it; check the log for `skipped TestLibraryUi`.
+
+## Example
+
+`library/static/tests/tours/library_book_tour.js`:
+
+```javascript id=tour-js since=15.0
+/** @odoo-module **/
+
+import tour from 'web_tour.tour';
+
+tour.register('library_book_tour', {
+    test: true,
+}, [
+    {
+        content: "create a book from the list",
+        trigger: ".o_list_button_add",
+        run: "click",
+    },
+    {
+        content: "type its title",
+        trigger: "input[name=name]",
+        run: "text Dune",
+    },
+    {
+        content: "type its pages",
+        trigger: "input[name=pages]",
+        run: "text 412",
+    },
+    {
+        content: "save it",
+        trigger: ".o_form_button_save",
+        run: "click",
+    },
+    {
+        content: "the record is saved",
+        trigger: ".o_form_readonly",
+    },
+]);
+```
+
+```javascript id=tour-js since=19.0
+import { registry } from "@web/core/registry";
+
+registry.category("web_tour.tours").add("library_book_tour", {
+    steps: () => [
+        {
+            content: "create a book from the list",
+            trigger: ".o_list_button_add",
+            run: "click",
+        },
+        {
+            content: "type its title",
+            trigger: ".o_field_widget[name=name] input",
+            run: "edit Dune",
+        },
+        {
+            content: "type its pages",
+            trigger: ".o_field_widget[name=pages] input",
+            run: "edit 412",
+        },
+        {
+            content: "save it",
+            trigger: ".o_form_button_save",
+            run: "click",
+        },
+        {
+            content: "the record is saved",
+            trigger: ".o_form_saved",
+        },
+    ],
+});
+```
+
+`library/__manifest__.py`, the manifest of `module.md` (building only this piece, keep the `data` entries of
+the pieces you build and the `web.assets_tests` bundle):
+
+```python id=manifest-version-bundles since=15.0
+{
+    'name': 'Library',
+    'version': '15.0.1.0.0',
+    'summary': 'Books, authors and loans',
+    'category': 'Services',
+    'author': 'Your Company',
+    'license': 'LGPL-3',
+    'depends': ['mail', 'web'],
+    'data': [
+        'security/library_groups.xml',
+        'security/ir.model.access.csv',
+        'security/library_rules.xml',
+        'views/library_book_views.xml',
+        'views/library_author_views.xml',
+        'views/res_partner_views.xml',
+        'views/library_menus.xml',
+    ],
+    'assets': {
+        'web.assets_backend': [
+            'library/static/src/**/*.js',
+        ],
+        'web.assets_qweb': [
+            'library/static/src/**/*.xml',
+        ],
+        'web.assets_tests': [
+            'library/static/tests/tours/**/*',
+        ],
+    },
+    'application': True,
+    'installable': True,
+}
+```
+
+```python id=manifest-version-bundles since=19.0
+{
+    'name': 'Library',
+    'version': '19.0.1.0.0',
+    'summary': 'Books, authors and loans',
+    'category': 'Services',
+    'author': 'Your Company',
+    'license': 'LGPL-3',
+    'depends': ['mail', 'web'],
+    'data': [
+        'security/library_groups.xml',
+        'security/ir.model.access.csv',
+        'security/library_rules.xml',
+        'views/library_book_views.xml',
+        'views/library_author_views.xml',
+        'views/res_partner_views.xml',
+        'views/library_menus.xml',
+    ],
+    'assets': {
+        'web.assets_backend': [
+            'library/static/src/**/*',
+        ],
+        'web.assets_tests': [
+            'library/static/tests/tours/**/*',
+        ],
+    },
+    'application': True,
+    'installable': True,
+}
+```
+
+`library/tests/__init__.py`, the file of the [model test](model-tests.md) (building only this piece, keep the
+`test_ui` import):
+
+```python
+from . import test_library_book
+from . import test_library_rules
+from . import test_ui
+```
+
+`library/tests/test_ui.py`:
+
+```python id=test-ui since=15.0
+from odoo.tests import HttpCase, tagged
+
+
+@tagged('post_install', '-at_install')
+class TestLibraryUi(HttpCase):
+
+    def test_create_book_tour(self):
+        self.start_tour('/web#action=library.library_book_action', 'library_book_tour', login='admin')
+        book = self.env['library.book'].search([('name', '=', 'Dune')])
+        self.assertEqual(book.pages, 412)
+```
+
+```python id=test-ui since=19.0
+from odoo.tests import HttpCase, tagged
+
+
+@tagged('post_install', '-at_install')
+class TestLibraryUi(HttpCase):
+
+    def test_create_book_tour(self):
+        self.start_tour('/odoo/action-library.library_book_action', 'library_book_tour', login='admin')
+        book = self.env['library.book'].search([('name', '=', 'Dune')])
+        self.assertEqual(book.pages, 412)
+```
+
+- `start_tour(url, name, login=...)` opens the URL in a headless Chrome as that user, waits for the tour to be
+  ready and runs it (15.0 `odoo/tests/common.py:1767`; 19.0 `odoo/tests/common.py:2590`). The browser's
+  requests use the test's transaction, so the Python test sees what the tour created.
+- A step waits for its `trigger`, then performs its `run`. End the tour with a step that only checks the saved
+  form, so it ends after the save, not before, and assert the record in Python.
+- `web_tour` depends on `web` and installs itself with it (15.0 `addons/web_tour/__manifest__.py:44`; 19.0
+  `addons/web_tour/__manifest__.py:70`), and `mail` depends on it (15.0 `addons/mail/__manifest__.py:11`; 19.0
+  `addons/mail/__manifest__.py:63`), so the manifest does not list it.
+
+<!-- since=15.0 id=tour-registration -->
+- The tour is registered with `tour.register(name, options, steps)` from `web_tour.tour`
+  (`addons/web_tour/static/src/js/tour_manager.js:74`), with `test: true` so it is never offered to users, as
+  `addons/crm/static/tests/tours/crm_rainbowman.js:3-7` does; `steps` is an array, the last argument.
+<!-- end -->
+
+<!-- since=19.0 id=tour-registration -->
+- The tour is added to the `web_tour.tours` registry, the category the tour service reads
+  (`addons/web_tour/static/src/js/tour_service.js:58`, `:67`); `steps` is a function that returns the steps
+  (`:53`, called at `:95`), and the schema has no `test` key (`:51-56`).
+<!-- end -->
+
+<!-- since=15.0 id=module-header -->
+- `/** @odoo-module **/` on the first line lets the file use `import`; without it the file is not transpiled
+  (`odoo/tools/js_transpiler.py:585-594`).
+<!-- end -->
+
+<!-- since=19.0 id=module-header -->
+- Every file under `static/src` and `static/tests` is a module, so the file needs no `/** @odoo-module **/`
+  header (`odoo/tools/js_transpiler.py:725-727`).
+<!-- end -->
+
+<!-- since=15.0 id=tour-url -->
+- `start_tour` opens the action; the tour has no `url`, because a `url` option makes the run load that URL
+  instead (`addons/web_tour/static/src/js/tour_manager.js:208-215`): with `url: '/web'` the tour starts on the
+  home menu and fails waiting for `.o_list_button_add`.
+<!-- end -->
+
+<!-- since=19.0 id=tour-url -->
+- `start_tour` opens the action; the tour has no `url`, because a `url` that differs from the start URL makes
+  the run redirect to it (`addons/web_tour/static/src/js/tour_service.js:157-158`).
+<!-- end -->
+
+<!-- since=15.0 id=web-url -->
+- The web client URL of an action is `/web#action=<xml id>` (`addons/web/controllers/main.py:816`); the hash
+  takes the XML id as well as the number, as `addons/test_website_modules/tests/test_configurator.py:17` starts
+  its tour (`addons/web/static/src/webclient/actions/action_service.js:256-267`).
+<!-- end -->
+
+<!-- since=19.0 id=web-url -->
+- The web client URL of an action is `/odoo/action-<xml id>` (`addons/web/static/src/core/browser/router.js:206-209`).
+<!-- end -->
+
+<!-- since=15.0 id=step-without-run -->
+- A step without `run` performs a default action, a click or typing in an input, except on the last step
+  (`addons/web_tour/static/src/js/tour_manager.js:516-525`): write `run` on every action step and only the
+  last step without it.
+<!-- end -->
+
+<!-- since=19.0 id=step-without-run -->
+- A step without `run` only waits for its trigger (`addons/web_tour/static/src/js/tour_automatic/tour_step_automatic.js:191-193`):
+  write `run: "click"` to click.
+<!-- end -->
+
+<!-- since=15.0 id=typing -->
+- Typing is `run: "text Dune"` (`addons/web_tour/static/src/js/running_tour_action_helper.js:28-29`), which
+  replaces the value of the input (`:85-96`).
+<!-- end -->
+
+<!-- since=19.0 id=typing -->
+- Typing is `run: "edit Dune"` (`addons/web_tour/static/src/js/tour_automatic/tour_helpers_hoot.js:130-133`).
+<!-- end -->
+
+<!-- since=15.0 id=field-selector -->
+- In an editable form the field widget is the `<input>` itself, with the field's `name`
+  (`addons/web/static/src/legacy/js/fields/abstract_field.js:223`), so a field is `input[name=<field>]`, as
+  `addons/crm/static/tests/tours/crm_rainbowman.js:17` writes it.
+<!-- end -->
+
+<!-- since=19.0 id=field-selector -->
+- A field renders as `.o_field_widget[name=<field>]` around its `<input>`, so a field is
+  `.o_field_widget[name=<field>] input` (`addons/crm/static/tests/tours/crm_rainbowman.js:19`).
+<!-- end -->
+
+<!-- since=15.0 id=saved-form -->
+- After a save the form goes back to read mode, `.o_form_readonly`
+  (`addons/web/static/src/legacy/js/views/form/form_renderer.js:1189-1190`), the check
+  `addons/crm/static/tests/tours/crm_email_and_phone_propagation.js:29` ends on.
+<!-- end -->
+
+<!-- since=19.0 id=saved-form -->
+- A saved record without changes gets `.o_form_saved` (`addons/web/static/src/views/form/form_compiler.js:227`).
+<!-- end -->
+
+<!-- since=15.0 id=extra-trigger -->
+- `extra_trigger` is a second selector the step also waits for (`addons/crm/static/tests/tours/crm_rainbowman.js:33`).
+<!-- end -->
+
+<!-- since=19.0 id=extra-trigger -->
+- The step schema has no `extra_trigger` (`addons/web_tour/static/src/js/tour_service.js:26-49`): put both
+  conditions in one `trigger`.
+<!-- end -->
+
+<!-- since=15.0 id=js-unit-tests -->
+- JavaScript unit tests are QUnit, bundled in `web.qunit_suite_tests` (`addons/web/__manifest__.py:498`); a tour
+  is not one.
+<!-- end -->
+
+<!-- since=19.0 id=js-unit-tests -->
+- JavaScript unit tests are Hoot, bundled in `web.assets_unit_tests` (`addons/web/__manifest__.py:471`); a tour
+  is not one.
+<!-- end -->
+
+<!-- since=19.0 id=docs-form -->
+The official 19.0 testing page still shows the older form, `import tour from 'web_tour.tour'; tour.register(...)`;
+the 19.0 source registers with `registry.category("web_tour.tours").add(...)`, and this recipe follows the
+source.
+<!-- end -->
+
+## Mistakes
+
+### Put the tour in `static/tests/tours` and `web.assets_tests`
+
+Why: a tour in `static/src` or in `web.assets_backend` is loaded for every user of the web client, not only for
+the test browser.
+
+Exceptions: none.
+
+```python
+{'assets': {'web.assets_backend': ['library/static/src/tours/library_book_tour.js']}}
+```
+
+```python
+{'assets': {'web.assets_tests': ['library/static/tests/tours/**/*']}}
+```
+
+### Start the tour by the name it is registered with
+
+Why: `start_tour` waits for a tour of that name to be ready, so a different name fails the test after the
+timeout without running a step.
+
+Exceptions: none.
+
+```python
+self.start_tour(self.url, 'library_tour', login='admin')
+```
+
+```python
+self.start_tour(self.url, 'library_book_tour', login='admin')
+```
+
+### Tag an `HttpCase` `post_install`
+
+<!-- since=15.0 id=post-install-why -->
+Why: at install time the registry is not fully loaded, and the browser run warns "HttpCase test should be in
+post_install only" (`odoo/tests/common.py:1713-1714`).
+<!-- end -->
+
+<!-- since=19.0 id=post-install-why -->
+Why: at install time the registry is not fully loaded, and the browser run warns "HttpCase test should be in
+post_install only" (`odoo/tests/common.py:2507-2508`).
+<!-- end -->
+
+Exceptions: none.
+
+```python
+@tagged('at_install')
+class TestLibraryUi(HttpCase):
+    pass
+```
+
+```python
+@tagged('post_install', '-at_install')
+class TestLibraryUi(HttpCase):
+    pass
+```
+
+### Register the tour in the form of the checkout's series
+
+<!-- since=15.0 id=register-rule -->
+Why: the 15.0 tour manager reads only the tours of `tour.register`, so a tour added to a registry category is
+never found and `start_tour` times out.
+
+Exceptions: none.
+
+```javascript
+import { registry } from "@web/core/registry";
+
+registry.category("web_tour.tours").add("library_book_tour", {
+    steps: () => [{ trigger: ".o_list_button_add", run: "click" }],
+});
+```
+
+```javascript
+/** @odoo-module **/
+
+import tour from 'web_tour.tour';
+
+tour.register('library_book_tour', { test: true }, [
+    { trigger: ".o_list_button_add", run: "click" },
+]);
+```
+<!-- end -->
+
+<!-- since=19.0 id=register-rule -->
+Why: `web_tour.tour` and `tour.register` no longer exist, and the service calls `steps()`, so a tour written
+for 15.0 either fails to load or has an array where a function is expected.
+
+Exceptions: none.
+
+```javascript
+import tour from 'web_tour.tour';
+
+tour.register('library_book_tour', { test: true }, [
+    { trigger: ".o_list_button_add", run: "click" },
+]);
+```
+
+```javascript
+import { registry } from "@web/core/registry";
+
+registry.category("web_tour.tours").add("library_book_tour", {
+    steps: () => [{ trigger: ".o_list_button_add", run: "click" }],
+});
+```
+<!-- end -->
+
+### Write the field steps the way the series renders and types them
+
+<!-- since=15.0 id=field-step-rule -->
+Why: the 15.0 form has no `<input>` inside `.o_field_widget` (the input is the widget) and no `edit` action, so
+a step written for 19.0 waits for an element that never appears.
+
+Exceptions: buttons such as `.o_list_button_add` and `.o_form_button_save` have the same class in every series.
+
+```javascript
+const step = { trigger: ".o_field_widget[name=name] input", run: "edit Dune" };
+```
+
+```javascript
+const step = { trigger: "input[name=name]", run: "text Dune" };
+```
+<!-- end -->
+
+<!-- since=19.0 id=field-step-rule -->
+Why: the 19.0 input sits inside `.o_field_widget`, which carries the `name`, and `text` is not an action, so a
+step written for 15.0 waits for an element that never appears or fails on its `run`.
+
+Exceptions: buttons such as `.o_list_button_add` and `.o_form_button_save` have the same class in every series.
+
+```javascript
+const step = { trigger: "input[name=name]", run: "text Dune" };
+```
+
+```javascript
+const step = { trigger: ".o_field_widget[name=name] input", run: "edit Dune" };
+```
+<!-- end -->
+
+### End on a check of the saved form, then assert in Python
+
+<!-- since=15.0 id=end-check-rule -->
+Why: a tour that ends on the save click can finish before the server saved, so the Python assertion races the
+browser; a last step on `.o_form_readonly` waits for the save.
+
+Exceptions: none.
+
+```javascript
+const steps = [
+    { trigger: ".o_form_button_save", run: "click" },
+];
+```
+
+```javascript
+const steps = [
+    { trigger: ".o_form_button_save", run: "click" },
+    { trigger: ".o_form_readonly" },
+];
+```
+<!-- end -->
+
+<!-- since=19.0 id=end-check-rule -->
+Why: a tour that ends on the save click can finish before the server saved, so the Python assertion races the
+browser; a last step on `.o_form_saved` waits for the save.
+
+Exceptions: none.
+
+```javascript
+const steps = [
+    { trigger: ".o_form_button_save", run: "click" },
+];
+```
+
+```javascript
+const steps = [
+    { trigger: ".o_form_button_save", run: "click" },
+    { trigger: ".o_form_saved" },
+];
+```
+<!-- end -->
+
+### Log in as a user with the groups the flow needs
+
+Why: a user without the library groups cannot create books, so the tour stops at the first step the access
+rows forbid.
+
+Exceptions: `admin`, when the module puts it in the manager group as the `access` recipe does.
+
+```python
+self.start_tour(self.url, 'library_book_tour', login='reader')
+```
+
+```python
+user = new_test_user(self.env, login='librarian', groups='library.group_library_manager')
+self.start_tour(self.url, 'library_book_tour', login=user.login)
+```
+
+## Verify
+
+- `oasis --project <root> test-module --compact library`: the tour runs in the `post_install` phase of a
+  disposable database; report the result line, the `log:` line and failures. The tour ran only when the log
+  shows it succeeded; a log line `skipped TestLibraryUi` means it did not run (no `websocket-client`) even
+  though the run exits 0.
+- `oasis --project <root> test-module --compact --only TestLibraryUi.test_create_book_tour library`: the tour
+  alone while iterating (`--reuse` keeps the database; run once without it at the end).
+- `oasis --project <root> view-info library.book` and
+  `oasis --project <root> xmlid-info library.library_book_action`: the fields and the action the tour depends
+  on.
+- `oasis --project <root> verify-module --compact library`: the separate update check after a manifest
+  `assets` or `data` change.

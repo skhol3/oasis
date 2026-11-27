@@ -8,9 +8,13 @@ database prefix guards.
 Odoo 19.0 and 15.0 are supported; [`tools/odoo_versions.py`](tools/odoo_versions.py) is the one
 table of what differs between them for the tools. The skills are named `odoo-<topic>` and each SKILL.md
 is common to every series. The code skills (backend, views and frontend, security, testing) send the agent
-to task recipes, such as a new model, a view, an access rule or a tour: one working example each, a
-*Changed in* table of what differs per series and the official Odoo page of each series. The environment
-and module lifecycle skills keep a `references/15.0.md` and `references/19.0.md`.
+to task recipes, such as a new model, a view, an access rule or a tour, written for each series in
+`references/<series>/` (since 0.19.0): on a 15.0 checkout the agent follows the 15.0 recipe, whose example
+works as written there. Each recipe ends with what changed from the previous series and links the official
+Odoo page of its series. The recipes are rendered from one source per recipe in `recipes/`
+([format](recipes/README.md)). The environment and module lifecycle skills keep a `references/<series>.md`.
+Contract change in 0.19.0: the 0.18.0 files `references/<recipe>.md` of the code skills moved to
+`references/<series>/<recipe>.md`.
 
 *Odoo Agent Skills & Infrastructure Scripts.* This repository is the source of the reusable global package installed at `~/.agents/skills/oasis`, **not a seventh skill** and not a project staging directory. Contributor rules are in `AGENTS.md` in the source repository (not installed).
 

@@ -1,6 +1,6 @@
 ---
 name: odoo-backend
-description: "Trigger: Odoo 15.0 or 19.0 model, ORM, field, compute, constraint, create, write, cron, controller, backend. Implement batch-safe server behavior."
+description: "Trigger: Odoo model, ORM, field, compute, constraint, create, write, cron, controller, backend. Implement batch-safe server behavior."
 license: Apache-2.0
 metadata:
   author: openalliance
@@ -11,7 +11,7 @@ metadata:
 
 Use for Odoo Python backend changes: modules, models, fields, computes, constraints, `create`/`write`, inheritance, crons, controllers. Not for ACL or record rules (`odoo-security`), views or assets (`odoo-views-frontend`), or test design (`odoo-testing`). Follow the project's own instructions and permissions; this skill does not authorize file or environment access.
 
-Common to every series: the Changed in table of each recipe says what differs, per `oasis doctor` `series=`, else `odoo_release=`.
+Common to every series: run `oasis doctor` and open `references/<series>/` for its `series=`, else `odoo_release=`.
 
 ## Hard Rules
 
@@ -21,17 +21,17 @@ Common to every series: the Changed in table of each recipe says what differs, p
 - Declare accurate `@api.depends`; weigh stored recomputation cost.
 - Enforce invariants server-side, never with `onchange` alone. Prefer ORM; justify raw SQL with parameterization and cache/flush handling.
 - Minimize and justify `sudo()`; respect permissions, company context, transactions and side effects.
-- Outside the recipes: 19.0 uses `@route(type='jsonrpc')` and `check_access`/`has_access`, 15.0 `type='json'` and `check_access_rights`/`check_access_rule`.
+- Take controller route types and access checks from the series' `module.md` and `model.md`.
 - While writing code, apply validated project/Odoo criteria; do not query SonarQube per edit. At verification, follow the [bounded SonarQube workflow](../odoo-testing/references/evidence-policy.md); static analysis does not replace functional checks.
 
 ## Decision Gates
 
 | Situation | Action |
 | --- | --- |
-| New module, manifest, `__init__` or hook | [module](references/module.md) |
-| New model, fields, display name | [model](references/model.md) |
-| Compute, constraint, index, `create`/`write` override | [compute-constraint](references/compute-constraint.md) |
-| `_inherit`, `_inherits` or a mixin | [inheritance](references/inheritance.md) |
+| New module, manifest, `__init__`, hook or controller | `references/<series>/module.md` |
+| New model, fields, display name, access check | `references/<series>/model.md` |
+| Compute, constraint, index, `create`/`write` override | `references/<series>/compute-constraint.md` |
+| `_inherit`, `_inherits` or a mixin | `references/<series>/inheritance.md` |
 | Behavior change with a deterministic test | Observe the failure first, then verify the fix |
 | Stored field added or changed | Plan a fresh installation and a separate module update |
 | Cron or external call | Address idempotency, timeout, failure visibility and retries |
@@ -49,6 +49,6 @@ Report changed files, database and command evidence when used, skipped checks, a
 
 ## References
 
-- Recipes: [module](references/module.md), [model](references/model.md), [compute-constraint](references/compute-constraint.md), [inheritance](references/inheritance.md).
+- Recipes in `references/<series>/`: `module.md`, `model.md`, `compute-constraint.md`, `inheritance.md`.
 - [Project capability contract](../odoo-environment/references/project-contract.md).
 - [Verification evidence policy](../odoo-testing/references/evidence-policy.md).

@@ -1,6 +1,6 @@
 ---
 name: odoo-testing
-description: "Trigger: Odoo 15.0 or 19.0 regression, module tests, fresh install, update, TransactionCase, HttpCase, tour. Verify observable behavior."
+description: "Trigger: Odoo regression, module tests, fresh install, update, TransactionCase, HttpCase, tour. Verify observable behavior."
 license: Apache-2.0
 metadata:
   author: openalliance
@@ -11,7 +11,7 @@ metadata:
 
 Use for Odoo test design, bug reproduction, module install/update verification, and test-layer choice. Not for lifecycle commands outside verification (`odoo-module-lifecycle`). Project-specific validation requirements remain authoritative.
 
-Common to every series: the Changed in table of each recipe says what differs, per `oasis doctor` `series=`, else `odoo_release=`.
+Common to every series: run `oasis doctor` and open `references/<series>/` for its `series=`, else `odoo_release=`.
 
 ## Hard Rules
 
@@ -31,7 +31,7 @@ Common to every series: the Changed in table of each recipe says what differs, p
 | Situation | Action |
 | --- | --- |
 | Meaningful behavior change | Capture a failing test first when a deterministic runner exists; passive documentation has no meaningful RED |
-| Test layer | Model logic: [`TransactionCase`](references/model-tests.md); UI flow: [`HttpCase` tour](references/tours.md) |
+| Test layer | Model logic: `TransactionCase`, `references/<series>/model-tests.md`; UI flow: `HttpCase` tour, `references/<series>/tours.md` |
 | Manifest, model, security, data or view change | Fresh install when the project requires it |
 | Stored fields, XML, data, security or migrations | Separate update check |
 | Missing runner | Mark unavailable; never substitute unguarded database commands |
@@ -48,6 +48,6 @@ Report test files, exact commands and exit codes, named database if used, RED/GR
 
 ## References
 
-- [Model tests](references/model-tests.md), [tours](references/tours.md).
+- Recipes in `references/<series>/`: `model-tests.md`, `tours.md`.
 - [Project capability contract](../odoo-environment/references/project-contract.md).
 - [Compact Python review criteria](references/sonarqube-python-guidance.md).
