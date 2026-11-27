@@ -53,10 +53,9 @@ class BootstrapExitTests(unittest.TestCase):
         return (f'mode=apply\nproject=a project\nenvironment={self.python.parent.parent}\n'
                 'lockfile=dev/requirements/dev.txt\nmutation=isolated_project_virtualenv\n')
 
-    def incomplete(self, code):
-        return (f'doctor=incomplete exit={code}: the trailing doctor --environment --full did not complete (no '
-                f'environment_failures= summary line); the sync succeeded; run '
-                f'{self.command("doctor", "--environment", "--full")}\n')
+    def incomplete(self, code, cause='no environment_failures= summary line'):
+        return (f'doctor=incomplete exit={code}: the trailing doctor --environment --full did not complete ({cause}); '
+                f'the sync succeeded; run {self.command("doctor", "--environment", "--full")}\n')
 
     def test_a_doctor_that_did_not_run_keeps_its_exit_127(self):
         self.prepare()
@@ -92,7 +91,8 @@ class BootstrapExitTests(unittest.TestCase):
         self.fake_doctor('echo "environment_failures=1"\nexit 2\n')
         result = self.invoke('bootstrap', '--apply')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, self.header() + 'environment_failures=1\n', self.incomplete(2)))
+                         (2, self.header() + 'environment_failures=1\n',
+                          self.incomplete(2, 'it printed its summary but exited 2, not a check result')))
 
     def drifted_output(self, failures):
         return self.expected_apply_output(self.python.parent.parent).replace(

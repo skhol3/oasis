@@ -169,6 +169,10 @@ if (( doctor_exit == 1 )) && [[ "$markers" == *$'\nsummary\n'* ]]; then
     "$(confirm_command doctor --environment --full)"
   exit 0
 fi
-printf 'doctor=incomplete exit=%s: the trailing doctor --environment --full did not complete (no environment_failures= summary line); the sync succeeded; run %s\n' \
-  "$doctor_exit" "$(confirm_command doctor --environment --full)" >&2
+cause='no environment_failures= summary line'
+if [[ "$markers" == *$'\nsummary\n'* ]]; then
+  cause="it printed its summary but exited $doctor_exit, not a check result"
+fi
+printf 'doctor=incomplete exit=%s: the trailing doctor --environment --full did not complete (%s); the sync succeeded; run %s\n' \
+  "$doctor_exit" "$cause" "$(confirm_command doctor --environment --full)" >&2
 exit "$doctor_exit"
