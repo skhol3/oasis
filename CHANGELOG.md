@@ -9,6 +9,24 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Added
+
+- Task recipes in the code skills: `odoo-backend` (module, model, computes and constraints,
+  inheritance), `odoo-views-frontend` (views, actions and menus, view inheritance, Owl component),
+  `odoo-security` (access rights and groups, record rules) and `odoo-testing` (model tests, tours).
+  Each recipe gives the files in order, one working example, a *Changed in* table of what differs per
+  series with its source line, the usual mistakes, the oasis command that verifies it, a
+  `Checked against:` line and the official Odoo page of each series. The suite fails when
+  `tools/odoo_versions.py` supports a series a recipe is not checked against.
+
+### Changed
+
+- The `references/15.0.md` and `references/19.0.md` of `odoo-backend`, `odoo-views-frontend`,
+  `odoo-security` and `odoo-testing` are removed: their content is in the recipes' *Changed in* tables.
+  `odoo-environment` and `odoo-module-lifecycle` keep theirs.
+- The Gentle Shell project context says "load the odoo-* skill for series 19.0 first." instead of naming
+  `references/19.0.md`.
+
 ## [0.17.0] - 2026-11-26
 
 ### Changed

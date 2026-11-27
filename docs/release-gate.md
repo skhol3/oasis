@@ -21,7 +21,13 @@ copy) and a scratch install (`./install.sh --target <dir>/oasis`):
    genuine decision: Tier B).
 6. In the worktree: `oasis setup --plan --json`, answer what it asks, `--apply`, `oasis doctor`, and
    `oasis test-module --compact <module>`.
-7. Remove the compose project (`docker compose -p <name> down -v`) and the scratch directory.
+7. Recipes (since 0.18.0): with only the code skills' recipes (`odoo-backend`, `odoo-views-frontend`,
+   `odoo-security`, `odoo-testing`), build a small module in the checkout: a model with a compute and a
+   constraint, an inherited model, form, list and search views, an action and a menu, access rights and a
+   record rule, a model test and a tour. Then `oasis test-module --compact <module>` (expect `exit=0`).
+   Run it on a 15.0 and a 19.0 checkout. Each point where a recipe was wrong or missing goes into that
+   recipe before the release and is named in the row's Notes.
+8. Remove the compose project (`docker compose -p <name> down -v`) and the scratch directory.
 
 ## Results
 

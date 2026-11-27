@@ -193,7 +193,8 @@ const TOOL_LINES: Record<string, string> = {
  * `tools` are the session's tools: only the oasis tools among them are named, and a session with
  * none (a subagent without the overlay) is pointed to the CLI. Omitted: every oasis tool.
  * `version` is the configured Odoo series ("19.0"); it names the project and the series the odoo-<topic>
- * skills are read for: their recipes cover every series (v0.18.0 S6). The last
+ * skills are read for: their recipes (odoo-<topic>/references/*.md) cover every series and say what
+ * differs in a Changed in table (v0.18.0 S6). The last
  * line names the commands the bash guard asks the user about (docs/bash-guard.md).
  */
 export function projectContext(

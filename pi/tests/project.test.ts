@@ -322,7 +322,7 @@ test("projectContext points a session without oasis tools to the guarded CLI", (
   assert.ok(none.includes("load the odoo-* skill first."), none);
 });
 
-test("projectContext names the configured Odoo series and its skill reference", () => {
+test("projectContext names the configured Odoo series for the odoo-* skills", () => {
   // v0.18.0 S6: the code skills hold recipes for every series, so the line names the series only.
   const text = projectContext("/work/coffee", null, undefined, "19.0");
   assert.match(text, /^Odoo 19\.0 project root: \/work\/coffee /);
