@@ -26,6 +26,10 @@ are relative to the Odoo source root.
    that the tour opens); the tour needs no `data` entry.
 3. `library/tests/__init__.py`: imports the test file.
 4. `library/tests/test_ui.py`: the `HttpCase` that starts the tour.
+5. The Python package `websocket-client` in the Odoo environment: without it every `HttpCase` browser test
+   is skipped with "websocket-client module is not installed" (`odoo/tests/common.py:1273-1274`; 15.0
+   `odoo/tests/common.py:932-933`), the run still reports 0 failed and `test-module` exits 0. Neither
+   series' `requirements.txt` lists it; check the log for `skipped TestLibraryUi`.
 
 ## Example
 
@@ -133,12 +137,13 @@ class TestLibraryUi(HttpCase):
 
 | Point | Since | Before | Source |
 |---|---|---|---|
-| Tour registration | 19.0 | `import tour from 'web_tour.tour'; tour.register('name', { test: true, url: '/web' }, [steps])` (15.0 `addons/web_tour/static/src/js/tour_manager.js:74`) | `addons/web_tour/static/src/js/tour_service.js:51` |
+| Tour registration | 19.0 | `import tour from 'web_tour.tour'; tour.register('name', { test: true }, [steps])` (15.0 `addons/web_tour/static/src/js/tour_manager.js:74`); a `url` option makes the run reload that URL, replacing the one `start_tour` opened, so leave it out when `start_tour` opens the action (15.0 `addons/web_tour/static/src/js/tour_manager.js:208-215`) | `addons/web_tour/static/src/js/tour_service.js:51` |
 | `steps` | 19.0 | an array, the last argument of `tour.register` | `addons/web_tour/static/src/js/tour_service.js:53` |
 | Step without `run` | 19.0 | performs the default action, a click or typing in an input, except on the last step (15.0 `addons/web_tour/static/src/js/tour_manager.js:524`) | `addons/web_tour/static/src/js/tour_automatic/tour_step_automatic.js:191` |
 | Typing in a field | 19.0 | `run: 'text Dune'` (15.0 `addons/web_tour/static/src/js/running_tour_action_helper.js:28`) | `addons/web_tour/static/src/js/tour_automatic/tour_helpers_hoot.js:130` |
 | `extra_trigger` | 19.0 | a second selector the step also waits for (15.0 `addons/crm/static/tests/tours/crm_rainbowman.js:33`); the 19.0 step schema has no such key | `addons/web_tour/static/src/js/tour_service.js:26` |
 | Field input selector | 19.0 | `input[name=name]` (15.0 `addons/crm/static/tests/tours/crm_rainbowman.js:17`) | `addons/crm/static/tests/tours/crm_rainbowman.js:19` |
+| A saved form: `.o_form_saved` | 19.0 | no such class: after the save the form goes back to read mode, `.o_form_readonly` (15.0 `addons/crm/static/tests/tours/crm_email_and_phone_propagation.js:29`) | `addons/web/static/src/views/form/form_compiler.js:227` |
 | `/** @odoo-module **/` header | 19.0 | required for `import` syntax in any file (15.0 `odoo/tools/js_transpiler.py:593`); 19.0 treats every file under `static/src` and `static/tests` as a module | `odoo/tools/js_transpiler.py:726` |
 | Web client URL | 19.0 | `/web`, `/web#action=<xmlid>` (15.0 `addons/web/controllers/main.py:816`) | `addons/web/static/src/core/browser/router.js:206` |
 | JavaScript unit tests | 19.0 | QUnit, bundled in `web.qunit_suite_tests` (15.0 `addons/web/__manifest__.py:498`); 19.0 uses Hoot in `web.assets_unit_tests` | `addons/web/__manifest__.py:471` |
@@ -168,6 +173,8 @@ Unchanged: the `web.assets_tests` bundle under `assets` (15.0 `addons/crm/__mani
 - Ending on an action step and asserting nothing in Python: the tour can end before the server saved.
   End with a check step and assert the records after `start_tour`.
 - Logging in as a user without the groups the flow needs: create it with `new_test_user` and pass its login.
+- On 15.0, `url: '/web'` in `tour.register` with `start_tour('/web#action=...')`: the tour reloads `/web`
+  (the home menu) and fails at its first step, waiting for `.o_list_button_add`.
 - Selectors guessed from memory: read the view first; a field renders as `.o_field_widget[name=<field>]`.
 
 ## Verify

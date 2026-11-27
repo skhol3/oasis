@@ -126,6 +126,7 @@ In code, test membership with `self.env.user.has_group('library.group_library_ma
 | Point | Since | Before | Source |
 |---|---|---|---|
 | A group's application: `privilege_id` (`res.groups.privilege`), whose `category_id` is the `ir.module.category`; `res.groups` has no `category_id` | 19.0 | `category_id` on `res.groups` (`ir.module.category`, 15.0 `odoo/addons/base/models/res_users.py:208`); no privileges | `odoo/addons/base/models/res_groups.py:36`, `odoo/addons/base/models/res_groups_privilege.py:13` |
+| A group's order in its application: `sequence` on `res.groups` (`_order = 'privilege_id, sequence, name, id'`) | 19.0 | no `sequence` field: writing one fails with "Invalid field 'sequence' on model 'res.groups'"; leave it out, the order of an application's groups comes from `implied_ids` (15.0 `odoo/addons/base/models/res_users.py:197`, `:1400`) | `odoo/addons/base/models/res_groups.py:14`, `odoo/addons/base/models/res_groups.py:35` |
 | A group's users: `res.groups.user_ids` | 19.0 | `users` (15.0 `odoo/addons/base/models/res_users.py:201`) | `odoo/addons/base/models/res_groups.py:17` |
 | A user's groups: `res.users.group_ids` (given explicitly; write this in data and tests) and `all_group_ids` (adds the implied ones) | 19.0 | `groups_id` (15.0 `odoo/addons/base/models/res_users.py:367`); `group_ids` and `all_group_ids` do not exist | `odoo/addons/base/models/res_users.py:257-258` |
 | Group name unique per privilege: `UNIQUE (privilege_id, name)` | 19.0 | unique per application, `unique (category_id, name)` (15.0 `odoo/addons/base/models/res_users.py:214`) | `odoo/addons/base/models/res_groups.py:39` |
@@ -144,7 +145,7 @@ source.
 - `model_id:id` written as the model name (`library.book`) instead of `model_library_book`, or a model of
   another module without its module prefix.
 - Writing 15.0 names on 19.0 or the reverse: `category_id` or `users` on `res.groups`, `groups_id` on
-  `res.users` in 19.0; `privilege_id`, `user_ids` or `group_ids` in 15.0. Either fails at install.
+  `res.users` in 19.0; `privilege_id`, `sequence`, `user_ids` or `group_ids` in 15.0. Either fails at install.
 - An empty `group_id` "to make it work": the row applies to every user, portal and public included.
 - No row for a new model or wizard: the loader warning is easy to miss, and every non-superuser gets an
   access error.

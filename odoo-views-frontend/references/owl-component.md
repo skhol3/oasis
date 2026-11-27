@@ -113,6 +113,7 @@ The view's field component passes `name`, `record`, `id` and `readonly` (`addons
 | ES modules: every file under `<module>/static/src` or `static/tests` is one, no header needed (`/** @odoo-module ignore **/` opts out) | 19.0 | Only a file whose first comment is `/** @odoo-module **/` may use `import`/`export`; others are `odoo.define` modules (`odoo/tools/js_transpiler.py:585-594`) | `odoo/tools/js_transpiler.py:713-728` |
 | Owl template output: `t-out` (escapes unless the value is `markup`); `t-raw` warns as deprecated | 19.0 | Owl 1 has `t-esc` and `t-raw` and no `t-out`: write `t-esc` (`addons/web/static/lib/owl/owl.js:2313`, `:2322`) | `addons/web/static/lib/owl/owl.js:5281-5290` |
 | Templates in the bundle: the XML templates go in `web.assets_backend` with the JavaScript | 19.0 | XML templates in `web.assets_qweb`, JavaScript and styles in `web.assets_backend` (`addons/web/__manifest__.py:41`, `addons/account/__manifest__.py:93-125`) | `addons/fleet/__manifest__.py:52-55` |
+| An Owl template is any `t-name` of the bundle | 19.0 | `web.assets_qweb` feeds the legacy QWeb and Owl: only a template with `owl="1"` (`<t t-name="library.CopiesField" owl="1">`) reaches Owl, any other fails at render with "Template library.CopiesField does not exist" (`addons/web/static/src/legacy/js/core/session.js:240-243`, `addons/account/static/src/xml/account_resequence.xml:17`) | `addons/web/static/src/views/fields/badge/badge_field.xml:4` |
 
 A *Since* the source does not state is 19.0: the point changed after 15.0, by 19.0 at the latest.
 
@@ -124,7 +125,7 @@ The official Owl components page of both series says "all Odoo versions (startin
 - A key that already exists, such as a core widget name: `add` throws `Cannot add key ... it already exists` unless `{ force: true }` (`addons/web/static/src/core/registry.js:103-107`). Prefix keys with the module name.
 - The JavaScript is not in the bundle (wrong path or glob, the module not updated, or `web.assets_frontend` instead of `web.assets_backend`): the view logs `Missing widget: library_copies for field of type integer` and falls back to the default widget of the type (`addons/web/static/src/views/fields/field.js:140-142`).
 - The widget on a field of a type missing from `supportedTypes`: a console warning (`field.js:135-136`).
-- `static template` naming a template that no bundled XML defines (the `t-name` and the module prefix must match).
+- `static template` naming a template that no bundled XML defines (the `t-name` and the module prefix must match), or on 15.0 an Owl template without `owl="1"`.
 - Writing a 15.0 widget with 19.0 code, or the reverse: on 15.0 a form or list widget registered in `registry.category("fields")` is never used by the legacy views; on 19.0 `odoo.define`, `web.AbstractFieldOwl` and `web.field_registry_owl` do not exist.
 - On 15.0, `t-out` in an Owl template: Owl 1 has no such directive.
 - Checking only that the JavaScript parses: a missing widget or template shows only when a view loads it; open the view in a tour.
