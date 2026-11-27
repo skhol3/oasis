@@ -14,12 +14,12 @@ function scratch(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "oasis-pi-")));
 }
 
+// The context goes into every prompt: it stays compact. v0.19.0 S5 adds the recipe directory of the
+// series, so the bound moved from 1200 to 1300 characters.
+const COMPACT = 1300;
+
 // tools/config.py no longer reads a legacy profile but refuses a checkout that has one: outside a
 // workspace the directory holding it stays the root, so every command shows that refusal.
-
-// The context goes into every prompt: it stays compact. v0.19.0 S5 adds the recipe directory of the
-// series (about 60 characters), so the bound moved from 1200 to 1300.
-const COMPACT = 1300;
 
 test("findProjectRoot without a workspace file walks up to a legacy profile, so its refusal shows", () => {
   const root = scratch();
