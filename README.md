@@ -193,6 +193,15 @@ without `[tooling].logs` keeps its logs in `logs` next to `oasis-workspace.toml`
 stay where they are and are no longer read by `oasis_test_summary` (the runs before 0.8.0 under
 `<logs>/odoo19/` still are). The legacy `.odoo19-agent.toml` is still refused naming `oasis migrate`.
 
+Contract change in v0.20.0: the exit code of `bootstrap --apply` reports its own work, the locks and the sync: 0
+once they succeeded, also when its trailing `doctor --environment --full` fails outside the sync (for example
+PostgreSQL not running yet), whose failures it prints as doctor results followed by `sync=succeeded`,
+`doctor=failed exit=<n>: ...` and the command to run next. Non-zero, as before: a failure of its own work (a refusal
+or a failed compile, exit 2; `uv venv` or `uv pip sync`, their code) and the doctor's `FAIL locked_environment=drifted`
+for the environment it just synced (exit 1, nothing added). A script that read exit 1 from `bootstrap --apply` as
+any failed check runs `doctor --environment --full` after it instead.
+[The exit code of bootstrap](docs/checking-environment.md#the-exit-code-of-bootstrap).
+
 ## Documentation
 
 | Documentation | Purpose |

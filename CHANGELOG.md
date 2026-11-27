@@ -9,6 +9,18 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Changed
+
+- Contract change: `bootstrap --apply` exits with the result of its own work, the locks and the sync: 0 once
+  they succeeded, also when its trailing `doctor --environment --full` fails outside the sync (before, exit 1, for
+  example with PostgreSQL not running yet). The doctor's lines are printed as they are, then `sync=succeeded`,
+  `doctor=failed exit=<n>: the checks above are the results of the trailing doctor --environment --full; the sync
+  succeeded` and `  next: fix what they report (their fix: lines), then run oasis --project <checkout> doctor
+  --environment --full`. These keep the exit non-zero, as before: a refusal or a failed compile (exit 2), a failed
+  `uv venv` or `uv pip sync` (their code), and the doctor's `FAIL locked_environment=drifted` for the environment
+  bootstrap just synced (exit 1, nothing added: the sync did not produce the locked environment). A passing
+  doctor leaves the output as before.
+
 ## [0.19.0] - 2026-11-27
 
 ### Added

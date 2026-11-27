@@ -17,6 +17,23 @@ Move /home/you/odoo/19.0/environments/acme-next away and run oasis bootstrap --a
 
 `bootstrap --apply` saves the packages it found before the sync as `bootstrap-before.txt` in the checkout's log directory, `<logs>/<slug, or main>/`: `[tooling].logs`, else `logs` next to the workspace file (before 0.17.0 that default was `dev/logs/odoo19/`; before 0.12.0 it went to `dev/runtime/`, which a workspace checkout does not have). When the mark of an environment it just created cannot be written, it prints `WARNING: cannot mark <environment> as created by oasis (<environment>/.oasis-created: <reason>): its drift from the locks is reported as a WARN, as for an adopted environment; create that file to have it reported as a FAIL.` to stderr and goes on (`setup --apply` too).
 
+### The exit code of bootstrap
+
+`bootstrap --apply` ends with `doctor --environment --full` (the trailing doctor), and its exit code reports its own work, the locks and the sync (v0.20.0). These keep it non-zero, as before:
+
+- A failure of its own work: a refusal (exit 2), a failed compile of the locks (exit 2), `uv venv` or `uv pip sync` failing (their exit code). It stops there and runs no doctor.
+- The trailing doctor's `FAIL locked_environment=drifted` (stderr) for the environment it just synced: the sync did not produce the locked environment ([The installed packages](#the-installed-packages): an environment oasis created that still drifts, a lock that cannot be read, a comparison that crashed). It exits with the doctor's code (1) and prints nothing after the doctor's lines, also when other checks failed too.
+
+Any other failure of the trailing doctor is outside the sync, for example `FAIL postgres_service=not_running` because PostgreSQL is not running yet, a failed `postgres_connection`, `compose_config` or `dependency_audit`: the exit is 0, and the doctor's lines are printed as they are, followed on stdout by:
+
+```text
+sync=succeeded
+doctor=failed exit=1: the checks above are the results of the trailing doctor --environment --full; the sync succeeded
+  next: fix what they report (their fix: lines), then run oasis --project /home/you/odoo/19.0/projects/acme doctor --environment --full
+```
+
+When it passes, the output ends with its `environment_failures=0`, as before; a drift of an adopted environment is a `WARN` there and does not count. Before 0.20.0, `bootstrap --apply` exited with the trailing doctor's code (1 when any check failed, even after a successful sync).
+
 ## Dependency locks
 
 `lock.sha256` lists the dependency inputs and locks (`runtime.in`, `runtime.txt`, `dev.in`, `dev.txt`, and `overrides.txt` last when it [exists](#overridestxt)) with their SHA-256, in `sha256sum` format, relative to its own directory: regenerate it there with `sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256` (`... dev.txt overrides.txt > lock.sha256` with that file). `doctor --environment` (`dependency_locks`) and `bootstrap` run `sha256sum --check --strict lock.sha256` from that directory first and, for a legacy lock whose entries are relative to the project root (the checkout), from the project root next; either one passing is enough. `oasis migrate` rewrites a legacy lock relative to its directory with the same hashes.
@@ -94,7 +111,8 @@ working and stays deprecated: through either entry point, from a project wrapper
 before; only its usage line differs (`Usage: <program> [--quick|--full]`, as before, against
 `Usage: <program> doctor [--environment [--quick|--full]]`). Both are refused where the other is: in a
 checkout without a workspace file or with a legacy profile, where `doctor` alone still runs (one
-`FAIL configuration`). `bootstrap --apply` still ends with these checks in `--full` mode. Use
+`FAIL configuration`). `bootstrap --apply` still ends with these checks in `--full` mode (since 0.20.0 only their
+`FAIL locked_environment=drifted` makes it exit 1: [The exit code of bootstrap](#the-exit-code-of-bootstrap)). Use
 `doctor --environment` in new scripts and instructions; the agent tool `oasis_check_environment`
 runs it. The policy table lists both, Tier A ([Agent contract](agent-contract.md)).
 
