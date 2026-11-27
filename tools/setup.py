@@ -37,6 +37,11 @@ includes the second, which tools/locks.py passes to uv pip compile as --override
 requires what the series needs that its source's requirements do not list (v0.15.0 S9:
 odoo_versions.py runtime_requirements, setuptools<81 on 15.0), before the project's own.
 
+v0.20.0 S3: when setup adopts an environment or plans a new one, the checkout's code is parsed with the grammar of
+its Python (code_warning, tools/code_python.py parse_check, best-effort; the adopted Python is never run): a file
+that does not parse is a WARN line of the plan with the lowest Python the code needs, a syntax error in the code
+one that says so; neither blocks --apply. doctor compiles the code with the environment's own Python.
+
 When setup would create the environment (v0.15.0 S8: a new workspace, or a new series section) without
 --environment or --python, a terminal asks to create it or to adopt an existing one (then as --environment),
 and the Python of a new one among those the series supports; --python <x.y> answers both without asking.
@@ -227,6 +232,10 @@ directory with a pyvenv.cfg whose version is a Python the series supports (read,
 never creates, syncs or deletes it, and bootstrap --apply syncs it to the locks. Until then, doctor
 --environment --full reports packages that do not match the locks as WARN locked_environment=drifted
 (an environment setup or bootstrap creates is marked .oasis-created, and its drift is a FAIL).
+The checkout's .py files are parsed with the grammar of the Python of the environment setup adopts or
+creates (best-effort: ast feature_version): a file it cannot parse is a WARN line of the plan naming the
+file, the message and the lowest Python the code needs, and a file no Python compiles a WARN syntax
+error in the code; neither blocks --apply. doctor compiles the code with the environment's own Python.
 
 When setup would create the Python environment (a new workspace, or a new series section) and neither
 --environment nor --python is given, it asks on a terminal: Enter creates it (recommended), or the absolute
@@ -287,6 +296,7 @@ def sibling(name: str):
 
 config, migrate, locks, db_account = sibling('config'), sibling('migrate'), sibling('locks'), sibling('db_account')
 known_problems, environment_origin = sibling('known_problems'), sibling('environment_origin')
+code_python = sibling('code_python')
 
 
 def usage() -> str:
@@ -1997,6 +2007,7 @@ def gaps(plan: dict, directory: Path, planned: set):
     if 'adopted_environment' in plan:
         lines.append(f'adopt the environment {environment} ({plan["adopted_origin"]}): Python '
                      f'{plan["adopted_environment"]} (its pyvenv.cfg); setup never creates, syncs or deletes it')
+        lines.extend(code_warning(root, python, environment, 'the adopted environment'))
     elif (environment / 'pyvenv.cfg').is_file():
         lines.append(f'kept the environment {environment}')
     elif not usable:
@@ -2004,7 +2015,29 @@ def gaps(plan: dict, directory: Path, planned: set):
     else:
         lines.append(f'create the environment {environment} with Python {python} (uv venv) and sync dev.txt '
                      '(uv pip sync)')
+        lines.extend(code_warning(root, python, environment, 'the new environment'))
         plan['after'].append(('environment', environment, python, requirements / 'dev.txt'))
+
+
+def code_warning(root: Path, python: str, environment: Path, which: str) -> list[str]:
+    """v0.20.0 S3: a WARN line when Python python of the environment setup adopts or creates (which) may not load
+    the checkout's code, or when the code has a syntax error; nothing otherwise. Best-effort: the code is parsed with
+    that Python's grammar (tools/code_python.py parse_check), since setup runs no environment's Python (an adopted
+    one's is read from its pyvenv.cfg); doctor compiles the code with the environment's own Python. Never a
+    refusal: --apply goes on."""
+    result = code_python.parse_check(root, python, environment)
+    if result['status'] == 'ok':
+        return []
+    where = result['path'] + (f':{result["line"]}' if result['line'] is not None else '')
+    if result['status'] == 'syntax_error':
+        return [f"WARN: syntax error in the code: {where}: {result['message']} (oasis' own Python rejects it too, so "
+                'no environment loads it): correct it']
+    needs = (f'the code needs Python {result["needs"]} or newer' if result['needs']
+             else 'the lowest Python it needs is unknown')
+    return [f'WARN: Python {python} of {which} {environment} cannot load the code (best-effort: parsed with its '
+            f'grammar): {where}: {result["message"]}; {needs}: use --environment <dir> with an environment whose '
+            f'Python can load it, or --python <x.y> for a new one; {config.program_name()} doctor compiles the code '
+            "with the environment's own Python"]
 
 
 def anticipated(plan: dict, source: Path, requirements: Path, extra, overrides, needed) -> tuple[list, list]:

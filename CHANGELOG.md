@@ -9,6 +9,17 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Added
+
+- `doctor` checks that the environment's Python can load the checkout's code (`code_python`). The
+  environment's own interpreter compiles every `.py` file once, with a time limit that scales with the number
+  of files. It reports the first file it cannot load, the lowest Python the code needs (best-effort) and the
+  fix; a syntax error in the code is a WARN that does not blame the environment. Every doctor report gains a
+  `code_python` line.
+- `setup` warns in its plan when the code does not parse with the grammar of the Python of an environment it
+  adopts or plans (best-effort; the adopted Python is not run). It also reports syntax errors in the code;
+  neither blocks `--apply`.
+
 ### Changed
 
 - Contract change: `init-dev-database` no longer writes `<database>.logins` and never asks the administrator's

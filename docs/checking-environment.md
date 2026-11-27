@@ -147,6 +147,7 @@ FAIL python=missing
 | `docker`, `docker_compose` | `install Docker with its compose plugin on PATH`; `install the Docker Compose plugin: docker compose version must succeed` |
 | `python=missing` | `oasis bootstrap --apply` |
 | `python=unavailable`, `python=<found> expected=<version>` | `move <environment> away, then oasis bootstrap --apply` |
+| `code_python=<x.y> <file>:<line>: <message>; needs Python <a.b> or newer (best-effort)` | `use an environment whose Python can load the code (Python <a.b> or newer): set that Python for the environment in <workspace file> (docs/workspace-file.md), move <environment> away, then oasis bootstrap --apply; where setup plans an environment, --environment <dir> or --python <x.y> chooses it` ([The environment's Python and the code](#the-environments-python-and-the-code)) |
 | `odoo_release=missing`, `odoo_release=<found> expected=<x.y>` | `set community under [series."<x.y>"] in <machine file> to an Odoo <x.y> source`, or `set [tooling].community in <workspace file> ...`: the file the source came from |
 | `module_series` | `run oasis in a checkout of an Odoo <x.y> branch, or set the version of <module> to <x.y>.x.y.z ...` (see [Workspace file](workspace-file.md#discovery-precedence-and-versions)); with `workspace_version = 2` also `..., or list <module> in series_exceptions under [series."<x.y>"] in <workspace file>`. Where setup would propose the exception (the checkout stays an Odoo `<x.y>` one and the workspace file has no `[series."<x.y>"]` table), the oasis action comes first (v0.16.0): `oasis --project <checkout> setup --answer series_exceptions=add --apply lists <module> in series_exceptions under [series."<x.y>"] in <workspace file> (setup proposes the exception), or run oasis in ...` ([Modules of another series](setup.md#modules-of-another-series)) |
 | `series_isolation=db_port`, `series_isolation=compose_project` | `publish another port to 5432 in <compose file> and set db_port in <odoo.conf> to it`; `set another top-level name: in <compose file>`; both `set compose under [series."<x.y>"] in <workspace file> to a compose file of its own` when the series share one compose file |
@@ -175,6 +176,7 @@ The commands the fix lines name start with `oasis`. `doctor` and `setup` are the
 | `flock` | `flock` is on PATH | `WARN flock=missing`: the database service starts without the cross-checkout lock |
 | `proc` | `/proc` is mounted | `WARN proc=missing`: server records cannot tell a live server |
 | `python` | the environment's Python exists and reports the expected version (3.12, or the named environment's) | `FAIL python=missing`, `FAIL python=unavailable` (it does not run or prints no version), `FAIL python=<found> expected=<version>` |
+| `code_python` | the environment's Python compiles every `.py` file of the checkout: `PASS code_python=<x.y> files=<n>` ([below](#the-environments-python-and-the-code)). Left out when `python` failed | `FAIL code_python=<x.y> <file>:<line>: <message>; needs Python <a.b> or newer (best-effort)` (`the lowest Python it needs is unknown` when oasis cannot tell); `WARN code_python=syntax_error <file>:<line>: <message>` (oasis' own Python rejects the file too); `WARN code_python=timeout files=<n> seconds=<s>`; `WARN code_python=unchecked` (the environment's Python did not answer) |
 | `odoo_release` | `odoo/release.py` of the Odoo source declares `odoo_version` | `FAIL odoo_release=missing` (no `odoo/release.py`), `FAIL odoo_release=<found> expected=<version>` (`unknown` when it declares none) |
 | `module_series` | no line when no module of the `addons_paths` declares another series than `odoo_version` (manifests without a series-style version are ignored) | `FAIL module_series=<found> module=<module> expected=<version>`; every other command refuses such a checkout (see [Workspace file](workspace-file.md#discovery-precedence-and-versions)) |
 | `odoo_conf` | odoo.conf exists and parses | `FAIL odoo_conf=missing\|unreadable\|invalid`; in a workspace checkout, `WARN odoo_conf=addons_path,data_dir` (the options it still holds that oasis passes on the command line) |
@@ -185,4 +187,36 @@ The commands the fix lines name start with `oasis`. `doctor` and `setup` are the
 | `http_port` | the port `start` would use is free, or is this checkout's running server (`server=this_checkout`) | `WARN http_port=<port> in_use` |
 | `postgres_connection` | the environment's Python logs in to the PostgreSQL `odoo.conf` names (`db_host` and `db_port`, each left to libpq when empty, as Odoo does) with the account Odoo uses: the `db_user` and `db_password` of `odoo.conf`, else `ODOO_DB_USER` and `ODOO_DB_PASSWORD` of the env file (`tools/db_account.py probe`, psycopg2). Left out when `python`, `odoo_conf` or `env_file` failed. Only one word is reported, never a value or the server's message | `FAIL postgres_connection=authentication_failed` (a server answered and refused the account: a volume initialized with other credentials, or `odoo.conf` values that differ from the env file); `WARN postgres_connection=not_running` (nothing answered: every database command starts the service), followed by `  fix: oasis --project <checkout> start-database` (v0.16.0: it names no env file); `WARN postgres_connection=unchecked` (no psycopg2 in the environment, or another error) |
 
-Tools are found on PATH, as `command -v` finds them, never through a tool manager; the only programs doctor runs are `git --version`, `docker compose version` and the environment's Python (for its version and the connection probe). A tool-manager shim on PATH can still install on first use (see [Tool-manager side effects](troubleshooting.md#tool-manager-side-effects)). No agent tool runs this report; the agent tool `oasis_check_environment` runs `doctor --environment`.
+Tools are found on PATH, as `command -v` finds them, never through a tool manager; the only programs doctor runs are `git --version`, `docker compose version` and the environment's Python (for its version, the compile of the code and the connection probe). A tool-manager shim on PATH can still install on first use (see [Tool-manager side effects](troubleshooting.md#tool-manager-side-effects)). No agent tool runs this report; the agent tool `oasis_check_environment` runs `doctor --environment`.
+
+### The environment's Python and the code
+
+An environment's Python can be one the series supports and still not load the checkout's code (v0.20.0; in the
+v0.17.0 field run an environment of Python 3.8 was adopted for a 15.0 checkout whose code uses `match`, which
+needs 3.10). After `python`, doctor runs the environment's Python once, `<python> -I -B tools/code_python.py
+compile`, with every `.py` file of the checkout on its stdin (not in `.git`, `node_modules` or `__pycache__`, nor in
+a directory holding a `pyvenv.cfg`, such as the environment itself when it is inside the checkout; symbolic links
+are left out). It compiles the bytes of each file (`compile(source, path, 'exec')`: a coding cookie applies,
+nothing is executed and no `.pyc` is written) and answers with the files that do not compile. Its time limit grows
+with the files: 20 seconds plus 1 second per 20 files.
+
+```text
+FAIL code_python=3.8 /home/you/odoo/15.0/projects/acme/acme_sale/models.py:3: Pattern matching is only supported in Python 3.10 and greater; needs Python 3.10 or newer (best-effort)
+  fix: use an environment whose Python can load the code (Python 3.10 or newer): set that Python for the environment in /home/you/odoo/oasis-workspace.toml (docs/workspace-file.md), move /home/you/odoo/environments/acme-15 away, then oasis bootstrap --apply; where setup plans an environment, --environment <dir> or --python <x.y> chooses it
+```
+
+- The file is the first one the environment's Python cannot load, with its line and the compiler's message.
+- The lowest Python the code needs is best-effort: oasis' own Python parses the code with the grammar of each
+  newer Python (`ast.parse(feature_version=...)`), which knows `match`, `except*` and type parameters but not
+  every change, such as parenthesized context managers. The FAIL itself always comes from the environment's own
+  Python.
+- A file that oasis' own Python does not compile either is a syntax error in the code, not a limit of the
+  environment's Python: `WARN code_python=syntax_error <file>:<line>: <message>`, followed by `  fix: correct
+  <file>: it does not compile with oasis' own Python either, so it is a syntax error in the code, not a limit of the
+  environment's Python`. It is not counted, and a file the environment's Python cannot load still fails first.
+- The Python of an environment is set in the workspace file: `python` of its `[environments.<name>]` table or of
+  its `[series."<x.y>"]` section, else the series' default ([The declared Python](#the-declared-python)).
+  `bootstrap` refuses an existing environment of another Python, hence the move before `bootstrap --apply`.
+
+[`oasis setup`](setup.md#the-python-of-the-environment-and-the-code) warns in its plan when the Python of the
+environment it adopts or creates may not load the code.

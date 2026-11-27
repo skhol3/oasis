@@ -624,6 +624,8 @@ options: `--environment: <checkout> is already configured by <file>; setup only 
 - On a terminal, the path can also be the answer to the environment question
   ([below](#a-new-environment-and-its-python)): it is checked and adopted exactly as `--environment`, with
   the same refusals, and the plan line says `(answered)` instead of `(from --environment)`.
+- When its Python may not load the checkout's code, the plan says so after the `adopt` line
+  ([The Python of the environment and the code](#the-python-of-the-environment-and-the-code)).
 
 ### A new environment and its Python
 
@@ -674,6 +676,29 @@ would use a default named environment of another Python also gets that environme
 section's `environment`, so the section's `python` applies); in a new workspace as the
 `[environments.default]` table with the environment's `path` and that `python`, instead of
 `[tooling].environment`.
+
+### The Python of the environment and the code
+
+A Python the series supports may still not load the checkout's code (v0.20.0; in the v0.17.0 field run an
+environment of Python 3.8 was adopted for a 15.0 checkout whose code uses `match`, which needs 3.10). When setup
+adopts an environment or plans a new one, it parses the checkout's `.py` files with the grammar of that Python
+(the version of the adopted environment's `pyvenv.cfg`, or the Python of the new one), skipping `.git`,
+`node_modules`, `__pycache__` and directories holding a `pyvenv.cfg`. When a file does not parse, the plan says so
+after the `adopt` or `create the environment` line:
+
+```text
+adopt the environment <environments>/billing-o15 (from --environment): Python 3.8 (its pyvenv.cfg); setup never creates, syncs or deletes it
+WARN: Python 3.8 of the adopted environment <environments>/billing-o15 cannot load the code (best-effort: parsed with its grammar): <checkout>/cafe_sale/models.py:3: Pattern matching is only supported in Python 3.10 and greater; the code needs Python 3.10 or newer: use --environment <dir> with an environment whose Python can load it, or --python <x.y> for a new one; oasis doctor compiles the code with the environment's own Python
+```
+
+For a new environment the line says `of the new environment <dir>`. A file that oasis' own Python does not
+compile either is a syntax error in the code, not a limit of that Python: `WARN: syntax error in the code:
+<file>:<line>: <message> (oasis' own Python rejects it too, so no environment loads it): correct it`. The line is
+a warning, also in the `lines` of the [JSON plan](#the-plan-as-json): it never blocks `--apply`, and a plan
+whose code parses has no line. The check is best-effort, since setup never runs the adopted environment's Python:
+the grammar of a Python knows `match`, `except*` and type parameters, not every change.
+[`oasis doctor`](checking-environment.md#the-environments-python-and-the-code) compiles the code with the
+environment's own Python (`code_python`).
 
 ## The database account
 

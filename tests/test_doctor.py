@@ -8,6 +8,8 @@ may appear. Every FAIL line is followed by `  fix: <command or action>` (v0.14.0
 origins follow the configuration lines (S2).
 """
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
+import contextlib
+import io
 import os
 from pathlib import Path
 import re
@@ -18,6 +20,7 @@ import subprocess
 import sys
 import unittest
 
+import test_code_python as code_python
 import test_lifecycle as lifecycle
 
 ROOT = lifecycle.STAGE
@@ -79,13 +82,22 @@ class DoctorTests(unittest.TestCase):
         executable(self.bindir / 'flock', '#!/bin/sh\nexit 0\n')
         executable(self.bindir / 'python3', f'#!/bin/sh\nexec {sys.executable!r} "$@"\n')
         # The connection probe (tools/db_account.py, v0.16.0 S2) answers FAKE_CONNECTION, by default a
-        # service that does not answer; it runs no docker.
+        # service that does not answer; it runs no docker. The compile of the code (tools/code_python.py, v0.20.0
+        # S3) runs with the host Python (code_case replaces it).
         self.python.write_text(self.python.read_text().replace(
             '#!/bin/sh\n', '#!/bin/sh\ncase "$3" in */db_account.py) echo "${FAKE_CONNECTION:-not_running}"; '
-            'exit 0 ;; esac\n', 1))
+            f'exit 0 ;; {self.code_case(sys.executable)} esac\n', 1))
         (self.bindir / 'dirname').symlink_to(shutil.which('dirname'))
         self.env['PATH'] = str(self.bindir)
         self.workspace = self.root / 'oasis-workspace.toml'
+
+    @staticmethod
+    def code_case(python):
+        """The case of the fake environment Python that runs the compile of the code with python."""
+        return f'*/code_python.py) exec {str(python)!r} "$@" ;;'
+
+    def code_files(self):
+        return len(list(self.root.rglob('*.py')))
 
     def origins(self):
         return (f'PASS odoo_source_from=workspace:{self.workspace}\n'
@@ -108,13 +120,16 @@ class DoctorTests(unittest.TestCase):
         lines = [f'PASS configuration={mode}', 'PASS odoo_version=19.0', 'PASS agent_destructive=ask',
                  *self.origins().splitlines(), 'PASS git=2.47.1', 'PASS docker',
                  'PASS docker_compose=2.29.1', 'PASS flock', 'PASS proc', 'PASS python=3.12',
-                 'PASS odoo_release=19.0', 'PASS odoo_conf', 'PASS compose', 'PASS env_file', 'PASS logs_dir',
+                 f'PASS code_python=3.12 files={self.code_files()}', 'PASS odoo_release=19.0', 'PASS odoo_conf', 'PASS compose', 'PASS env_file', 'PASS logs_dir',
                  *extra, f'PASS http_port={self.port}', self.not_running()]
         replacements = {re.split(r'[ =]', line, maxsplit=2)[1]: line for line in changed}
-        # The connection check needs the checks it reads: python, odoo_conf and env_file.
+        # The connection check needs the checks it reads: python, odoo_conf and env_file; the compile of the code
+        # (v0.20.0 S3) needs python.
         if any(line.startswith('FAIL ') and name in ('python', 'odoo_conf', 'env_file')
                for name, line in replacements.items()):
             omit = (*omit, 'postgres_connection')
+        if replacements.get('python', '').startswith('FAIL '):
+            omit = (*omit, 'code_python')
         report = []
         for line in lines:
             name = re.split(r'[ =]', line, maxsplit=2)[1]
@@ -168,7 +183,8 @@ class DoctorTests(unittest.TestCase):
                            f'PASS project_environment_from=workspace:{self.root}/oasis-workspace.toml\n'
                            'PASS git=2.47.1\n'
                            'PASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
-                           'PASS python=3.12\nPASS odoo_release=19.0\nPASS odoo_conf\nPASS compose\n'
+                           'PASS python=3.12\nPASS code_python=3.12 files=1\nPASS odoo_release=19.0\n'
+                           'PASS odoo_conf\nPASS compose\n'
                            f'PASS env_file\nPASS logs_dir\nPASS http_port={self.port}\n'
                            f'{self.not_running()}\ndoctor_failures=0\n')
         self.assertEqual(os.listdir(self.runtime.name), [])
@@ -180,7 +196,8 @@ class DoctorTests(unittest.TestCase):
                            f'PASS project_environment_from=workspace:{self.root.parents[1]}/oasis-workspace.toml\n'
                            'PASS git=2.47.1\n'
                            'PASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
-                           'PASS python=3.12\nPASS odoo_release=19.0\nPASS odoo_conf\nPASS compose\n'
+                           'PASS python=3.12\nPASS code_python=3.12 files=1\nPASS odoo_release=19.0\n'
+                           'PASS odoo_conf\nPASS compose\n'
                            'PASS env_file\nPASS logs_dir\nPASS data_dir\n'
                            f'PASS http_port={self.port}\n{self.not_running()}\n'
                            'doctor_failures=0\n')
@@ -599,6 +616,7 @@ class DoctorTests(unittest.TestCase):
         self.python.write_text(self.python.read_text().replace('echo 3.12', 'echo 3.11'))
         result = self.doctor()
         self.assertNotIn('postgres_connection', result.stdout)
+        self.assertNotIn('code_python', result.stdout)
         self.assertIn('FAIL python=3.11 expected=3.12\n', result.stdout)
 
     @unittest.skipIf(os.getuid() == 0, 'root reads any file')
@@ -642,6 +660,65 @@ class DoctorTests(unittest.TestCase):
             'the exception), or run oasis in a checkout of an Odoo 19.0 branch, or set the version of tea to '
             '19.0.x.y.z if it is an Odoo 19.0 module; for Odoo 15.0 here, run oasis setup to add a [series."15.0"] '
             f'section to {self.workspace}')}))
+
+    # -- the environment's Python and the code (v0.20.0 S3) -------------------------------------
+
+    def test_code_the_environment_python_cannot_load_fails_naming_the_file_the_lowest_python_and_the_fix(self):
+        # The field run: billing-o15, Python 3.8, adopted for a 15.0 checkout whose code uses match.
+        self.workspace.write_text(self.workspace.read_text().replace("odoo_version = '19.0'", "odoo_version = '15.0'")
+                                  .replace("environment = '../../environments/example'\n", '')
+                                  + "\n[environments.default]\npath = '../../environments/example'\npython = '3.8'\n")
+        (self.source / 'odoo/release.py').write_text('version_info = (15, 0, 0, "final", 0)\n')
+        python38 = code_python.fake_interpreter(self.root.parents[1] / 'python3.8', 8, self.root)
+        self.python.write_text(self.python.read_text().replace('echo 3.12', 'echo 3.8')
+                               .replace(self.code_case(sys.executable), self.code_case(python38)))
+        models = self.root / 'coffee/models.py'
+        models.write_text(code_python.MATCH)
+        error = code_python.feature_error(code_python.MATCH, models, 8)
+        fix = (f'use an environment whose Python can load the code (Python 3.10 or newer): set that Python for the '
+               f'environment in {self.workspace} (docs/workspace-file.md), move {self.python.parent.parent} away, then '
+               'oasis bootstrap --apply; where setup plans an environment, --environment <dir> or --python <x.y> '
+               'chooses it')
+        self.assert_report(self.expected(
+            'PASS odoo_version=15.0', 'PASS python=3.8', 'PASS odoo_release=15.0',
+            f'FAIL code_python=3.8 {models}:{error.lineno}: {error.msg}; needs Python 3.10 or newer (best-effort)\n'
+            f'  fix: {fix}'))
+        # With Python 3.10's grammar the same code loads.
+        self.commands.unlink()
+        python310 = code_python.fake_interpreter(self.root.parents[1] / 'python3.10', 10, self.root)
+        self.workspace.write_text(self.workspace.read_text().replace("python = '3.8'", "python = '3.10'"))
+        self.python.write_text(self.python.read_text().replace('echo 3.8', 'echo 3.10')
+                               .replace(self.code_case(python38), self.code_case(python310)))
+        self.assert_report(self.expected('PASS odoo_version=15.0', 'PASS python=3.10', 'PASS odoo_release=15.0',
+                                         'PASS code_python=3.10 files=2'))
+
+    def test_a_syntax_error_in_the_code_is_a_warn_that_does_not_blame_the_environment(self):
+        broken = self.root / 'coffee/broken.py'
+        broken.write_text('def broken(:\n    pass\n')
+        error = code_python.host_error('def broken(:\n    pass\n', broken)
+        self.assert_report(self.expected(
+            f'WARN code_python=syntax_error {broken}:{error.lineno}: {error.msg}\n'
+            f"  fix: correct {broken}: it does not compile with oasis' own Python either, so it is a syntax error in "
+            "the code, not a limit of the environment's Python"))
+
+    def test_a_compile_that_times_out_or_does_not_answer_is_a_warn(self):
+        doctor = code_python.load_tool('doctor')
+        slow = self.root.parents[1] / 'slow-python'
+        slow.write_text('#!/bin/sh\nexec sleep 30\n')
+        slow.chmod(0o755)
+        silent = self.root.parents[1] / 'silent-python'
+        silent.write_text('#!/bin/sh\nexit 0\n')
+        silent.chmod(0o755)
+        values = {'PROJECT_ROOT': str(self.root), 'PYTHON_VERSION': '3.12', 'PROJECT_ENVIRONMENT': str(self.python.parent.parent),
+                  'WORKSPACE_ROOT': str(self.root)}
+        for python, timeout, line in ((slow, 0.5, 'WARN code_python=timeout files=1 seconds=0.5\n'),
+                                      (silent, None, 'WARN code_python=unchecked\n')):
+            with self.subTest(python=python.name):
+                report, output = doctor.Report(), io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertTrue(doctor.check_code_python(report, {**values, 'PYTHON': str(python)}, 'oasis',
+                                                             timeout=timeout))
+                self.assertEqual((output.getvalue(), report.failures), (line, 0))
 
     # -- project wrappers (v0.17.0 S3) ----------------------------------------------------------
 

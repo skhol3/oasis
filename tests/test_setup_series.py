@@ -24,6 +24,7 @@ import tempfile
 import unittest
 
 from test_setup import ADD_DEVELOPMENT, GIT, UV
+import test_code_python
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'oasis'
@@ -1012,6 +1013,26 @@ series_exceptions = ['report_xlsx']
         self.assert_refused(self.setup_cmd('--environment', str(environment)),
                             f'--environment: {self.checkout} is already configured by {self.workspace}; setup only '
                             'fills what is missing.', before)
+
+    def test_an_adopted_python_3_8_that_cannot_load_match_is_a_warn_of_the_plan(self):
+        # The field run (v0.20.0 S3): billing-o15, Python 3.8, adopted for a 15.0 checkout whose code uses match.
+        _folder, environment = self.billing_o15()
+        models = self.checkout / 'cafe_sale/models.py'
+        models.write_text(test_code_python.MATCH)
+        error = test_code_python.feature_error(test_code_python.MATCH, models, 8)
+        adopt = (f'adopt the environment {environment} (from --environment): Python 3.8 (its pyvenv.cfg); setup never '
+                 'creates, syncs or deletes it\n')
+        warning = (f'WARN: Python 3.8 of the adopted environment {environment} cannot load the code (best-effort: '
+                   f'parsed with its grammar): {models}:{error.lineno}: {error.msg}; the code needs Python 3.10 or '
+                   'newer: use --environment <dir> with an environment whose Python can load it, or --python <x.y> '
+                   "for a new one; oasis doctor compiles the code with the environment's own Python\n")
+        result = self.setup_cmd('--environment', str(environment), '--exception', 'report_xlsx')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.endswith(adopt + warning + DRY_RUN), result.stdout)
+        applied = self.setup_cmd('--apply', '--environment', str(environment), '--exception', 'report_xlsx')
+        self.assertEqual((applied.returncode, applied.stderr), (0, ''), applied.stdout)
+        self.assertIn(adopt + warning + f'verified: {self.checkout} loads', applied.stdout)
+        self.assertFalse((self.scratch / 'python-ran').exists())
 
     def test_the_documented_billing_o15_example_plans_the_documented_lines(self):
         _folder, environment = self.billing_o15()

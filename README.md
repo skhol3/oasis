@@ -225,6 +225,14 @@ answered, the dry run and the `--confirm` command of each database. To update a 
 `--confirm <name>`. `status --json` and `setup`'s next steps now name the plan. `test-module` and
 `verify-module` (`--reuse`, `[tooling].test_database`) are unchanged.
 
+v0.20.0: `oasis doctor` has a new check, `code_python`, right after `python`: the environment's Python
+compiles the checkout's `.py` files (none of the code runs, no `.pyc` is written). Every report has a
+`PASS code_python=<x.y> files=<n>` line; a file that Python cannot load is `FAIL code_python=<x.y>
+<file>:<line>: <message>; needs Python <a.b> or newer (best-effort)` with its fix; a file oasis' own Python
+rejects too is `WARN code_python=syntax_error`; a timeout or no answer is a `WARN`. `oasis setup` warns in its
+plan when the Python of an environment it adopts or creates may not parse the code; it never blocks
+`--apply`.
+
 ## Documentation
 
 | Documentation | Purpose |

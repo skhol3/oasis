@@ -20,6 +20,8 @@ import tempfile
 import time
 import unittest
 
+import test_code_python
+
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'oasis'
 READER = ROOT / 'tools' / 'config.py'
@@ -631,6 +633,63 @@ class SetupTests(unittest.TestCase):
                                            '--no-enterprise'),
                             f'--environment {other} has Python 3.9, which Odoo 19.0 does not support (3.10 to 3.14).',
                             before)
+
+    # -- the environment's Python and the code (v0.20.0 S3) -------------------------------------
+
+    def code_warning(self, python, which, environment, path, source, minor, needs):
+        """The plan's WARN line for a Python whose grammar does not parse source (best-effort)."""
+        error = test_code_python.feature_error(source, path, minor)
+        return (f'WARN: Python {python} of {which} {environment} cannot load the code (best-effort: parsed with its '
+                f'grammar): {path}:{error.lineno}: {error.msg}; the code needs Python {needs} or newer: use '
+                '--environment <dir> with an environment whose Python can load it, or --python <x.y> for a new one; '
+                "oasis doctor compiles the code with the environment's own Python\n")
+
+    def test_a_new_or_adopted_python_that_cannot_load_the_code_is_a_warn_of_the_plan_that_does_not_block(self):
+        source = 'type Amount = float\n'
+        types = self.checkout / 'shop_sale/types.py'
+        types.write_text(source)
+        flags = ('--community', str(self.source), '--no-enterprise')
+        venv = self.checkout / '.oasis/venv'
+        created = f'create the environment {venv} with Python {{python}} (uv venv) and sync dev.txt (uv pip sync)\n'
+        before = self.tree()
+        # A new environment of Python 3.11: PEP 695 needs 3.12.
+        result = self.setup_cmd(*flags, '--python', '3.11')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.endswith(created.format(python='3.11') + self.code_warning(
+            '3.11', 'the new environment', venv, types, source, 11, '3.12') + DRY_RUN), result.stdout)
+        # The recommended 3.12 loads it: no line.
+        result = self.setup_cmd(*flags, *CREATE)
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.endswith(created.format(python='3.12') + DRY_RUN), result.stdout)
+        self.assertEqual(self.tree(), before)
+        # An adopted Python 3.11: the same WARN; the JSON plan holds it, and it does not block --apply.
+        environment = self.existing_environment('shop-311', '3.11.9')
+        adopt = (f'adopt the environment {environment} (from --environment): Python 3.11 (its pyvenv.cfg); setup never '
+                 'creates, syncs or deletes it\n')
+        warning = self.code_warning('3.11', 'the adopted environment', environment, types, source, 11, '3.12')
+        result = self.setup_cmd(*flags, '--environment', str(environment))
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.endswith(adopt + warning + DRY_RUN), result.stdout)
+        plan = json.loads(self.setup_cmd('--plan', '--json', *flags, '--environment', str(environment)).stdout)
+        self.assertEqual((plan['ready_to_apply'], plan['lines'][-1]), (True, warning.rstrip('\n')))
+        self.assertFalse(self.log.exists())
+        applied = self.setup_cmd('--apply', *flags, '--environment', str(environment))
+        self.assertEqual((applied.returncode, applied.stderr), (0, ''), applied.stdout)
+        self.assertIn(adopt + warning + f'verified: {self.checkout} loads', applied.stdout)
+        # Setup reads the adopted environment's Python from its pyvenv.cfg and never runs it.
+        self.assertFalse((self.scratch / 'python-ran').exists())
+
+    def test_a_syntax_error_in_the_code_is_a_warn_that_does_not_blame_the_environment(self):
+        broken = self.checkout / 'shop_sale/broken.py'
+        broken.write_text('def broken(:\n')
+        error = test_code_python.host_error('def broken(:\n', broken)
+        result = self.setup_cmd('--community', str(self.source), '--no-enterprise', *CREATE)
+        venv = self.checkout / '.oasis/venv'
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.endswith(
+            f'create the environment {venv} with Python 3.12 (uv venv) and sync dev.txt (uv pip sync)\n'
+            f'WARN: syntax error in the code: {broken}:{error.lineno}: {error.msg} (oasis\' own Python rejects it too, '
+            'so no environment loads it): correct it\n' + DRY_RUN), result.stdout)
 
     # -- the environment and its Python, open until answered (v0.20.0 S1) -----------------------
 
