@@ -161,7 +161,9 @@ volumes:
 '''
 RUNTIME_IN = '# Written by oasis setup: the requirements of the Odoo source.\n-r {source}/requirements.txt\n'
 DEV_IN = ('# Written by oasis setup: the runtime requirements within their lock; add development tools '
-          'below.\n-c runtime.txt\n-r runtime.in\n')
+          'below.\n-c runtime.txt\n-r runtime.in\n'
+          '# HttpCase browser tests (tours) need it: without it Odoo skips them and the run still passes.\n'
+          'websocket-client\n')
 # What the series needs that its source's requirements do not list (odoo_versions.py runtime_requirements,
 # v0.15.0 S9): each below a comment with its reason.
 RUNTIME_SERIES = '# {reason}\n{requirement}\n'

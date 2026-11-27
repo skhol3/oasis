@@ -349,7 +349,7 @@ steps write [the example tree](#the-example-tree); any other folders work the sa
    python=3.12
    cd ~/odoo/19.0/projects/acme/config/requirements
    printf -- '-r /home/you/odoo/19.0/source/odoo/requirements.txt\n' > runtime.in
-   printf -- '-c runtime.txt\n-r runtime.in\npylint\n' > dev.in
+   printf -- '-c runtime.txt\n-r runtime.in\nwebsocket-client\npylint\n' > dev.in
    uv pip compile --python-version "$python" runtime.in -o runtime.txt
    uv pip compile --python-version "$python" dev.in -o dev.txt
    sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256

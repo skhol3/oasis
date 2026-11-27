@@ -6,8 +6,11 @@ output. It runs tests, databases and servers per checkout without letting an age
 database prefix guards.
 
 Odoo 19.0 and 15.0 are supported; [`tools/odoo_versions.py`](tools/odoo_versions.py) is the one
-table of what differs between them for the tools. The skills are named `odoo-<topic>`: each SKILL.md
-is common to every series and points to its `references/15.0.md` and `references/19.0.md`.
+table of what differs between them for the tools. The skills are named `odoo-<topic>` and each SKILL.md
+is common to every series. The code skills (backend, views and frontend, security, testing) send the agent
+to task recipes, such as a new model, a view, an access rule or a tour: one working example each, a
+*Changed in* table of what differs per series and the official Odoo page of each series. The environment
+and module lifecycle skills keep a `references/15.0.md` and `references/19.0.md`.
 
 *Odoo Agent Skills & Infrastructure Scripts.* This repository is the source of the reusable global package installed at `~/.agents/skills/oasis`, **not a seventh skill** and not a project staging directory. Contributor rules are in `AGENTS.md` in the source repository (not installed).
 

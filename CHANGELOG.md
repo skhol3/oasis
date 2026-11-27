@@ -9,6 +9,29 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-27
+
+### Added
+
+- Task recipes in the code skills: `odoo-backend` (module, model, computes and constraints,
+  inheritance), `odoo-views-frontend` (views, actions and menus, view inheritance, Owl component),
+  `odoo-security` (access rights and groups, record rules) and `odoo-testing` (model tests, tours).
+  Each recipe gives the files in order, one working example, a *Changed in* table of what differs per
+  series with its source line, the usual mistakes, the oasis command that verifies it, a
+  `Checked against:` line and the official Odoo page of each series. The suite fails when
+  `tools/odoo_versions.py` supports a series a recipe is not checked against.
+
+### Changed
+
+- `oasis setup` writes `websocket-client` into a new `requirements/dev.in`: Odoo's HttpCase tests (tours)
+  need it, and without it Odoo skips them while the run still passes. An existing workspace adds the line
+  `websocket-client` to its `dev.in` and runs `oasis bootstrap --apply`.
+- The `references/15.0.md` and `references/19.0.md` of `odoo-backend`, `odoo-views-frontend`,
+  `odoo-security` and `odoo-testing` are removed: their content is in the recipes' *Changed in* tables.
+  `odoo-environment` and `odoo-module-lifecycle` keep theirs.
+- The Gentle Shell project context says "load the odoo-* skill for series 19.0 first." instead of naming
+  `references/19.0.md`.
+
 ## [0.17.0] - 2026-11-26
 
 ### Changed
@@ -1349,7 +1372,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/skhol3/oasis/releases/tag/v0.18.0
 [0.17.0]: https://github.com/skhol3/oasis/releases/tag/v0.17.0
 [0.16.0]: https://github.com/skhol3/oasis/releases/tag/v0.16.0
 [0.15.1]: https://github.com/skhol3/oasis/releases/tag/v0.15.1
