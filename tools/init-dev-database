@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Creates a new development database with its accounts (tools/dev_users.py). Tier B in the agent policy
+# Creates a new development database with its accounts (tools/dev_users.py: the administrator keeps Odoo's default
+# password or the env file's ODOO_ADMIN_PASSWORD, v0.20.0 S7; no password file, S8). Tier B in the agent policy
 # (tools/policy.py, v0.20.0 S5): it creates it only with --confirm <database>, the database it names; without
 # it, or with another name, it refuses (exit 2) naming the exact command once the configuration is checked, and
 # nothing changes. --dry-run prints what it would create and changes nothing. --plan (tools/database_plan.py,
@@ -14,9 +15,10 @@ if [[ ${1:-} == --help && $# == 1 ]]; then
     'without it it refuses naming the exact command and changes nothing. --dry-run prints the database, its kind,' \
     'the module and the demo data and changes nothing. --plan asks the name (the suffix after the dev prefix), the' \
     'module and the demo data, then prints the dry run and the --confirm command (docs/dev-database.md).' \
-    'Requires [development] configuration; excludes tests. On a terminal it asks each password with the echo' \
-    'off (Enter generates one); otherwise it generates them. Generated passwords go to <database>.logins next' \
-    'to the env file (mode 0600), never to the output.' \
+    "Requires [development] configuration; excludes tests. The administrator keeps Odoo's default password" \
+    '(admin), or ODOO_ADMIN_PASSWORD of the env file when it sets one; it is never asked. On a terminal each' \
+    '[[development.users]] password is asked with the echo off (Enter generates one); otherwise it is generated.' \
+    'No password is written to a file or printed: the output says what each account uses.' \
     '--with-demo opts in to the native Odoo demo loader and project development.demo_modules.'
   exit 0
 fi

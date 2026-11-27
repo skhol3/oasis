@@ -1,62 +1,61 @@
 #!/usr/bin/env python3
 """Validate project account declarations and get the passwords of the new database's accounts.
 
-On a terminal each password is asked with the echo off; Enter at its first prompt generates it. Without a
-terminal every password is generated (v0.16.0 S2: no oasis workflow requires typing one). Generated
-passwords (secrets.token_urlsafe(24)) are stored, never printed, in <database>.logins next to the env file
-(mode 0600), once the database exists: written to a 0600 temporary file in that directory first (removed when
-it cannot be written), then renamed into place only when the runner says the database was created (exit 0, or
-4: created, then a later step failed), so a refused existing database keeps its file (exit 3). When the outcome
-is unknown (another exit, such as 1 for an uncaught error, or an interrupt after the runner started) or the
-rename fails, the temporary file is kept and its path printed, never a password.
+The administrator keeps Odoo's default password (admin), or ODOO_ADMIN_PASSWORD of the env file
+([tooling].env_file, the file of ODOO_DB_USER and ODOO_DB_PASSWORD) when it sets a non-empty one (v0.20.0 S7);
+it is never asked. On a terminal each [[development.users]] password is asked with the echo off; Enter at its
+first prompt generates it. Without a terminal every declared user's password is generated
+(token_urlsafe(24); v0.16.0 S2: no oasis workflow requires typing one). No password is written to a file or
+printed (v0.20.0 S8): the output says what each account's password is ("Odoo's default", "from <env file>
+ODOO_ADMIN_PASSWORD", typed, or generated and not stored), never a value. A <database>.logins file an earlier
+version wrote next to the env file is left as it is, with one WARN line.
 """
-import contextlib
 import getpass
 import json
-import os
 from pathlib import Path
 import re
 import secrets
 import shlex
 import subprocess
 import sys
-import tempfile
 import warnings
 
 from config import InvalidConfig, configuration, load, program_name, versions
+from db_account import UNSUPPORTED, AccountError, UnsupportedValue, env_values
 from dev_users_runtime import CREATED_THEN_FAILED
 from odoo_addons_path import ConfError, config_arguments
 
 INVALID = 'ERROR: Invalid development user configuration.'
 TERMINAL = 'ERROR: Password entry failed on the terminal; no database was created.'
-LOGINS_HEADER = ('# Written by oasis init-dev-database: the generated passwords of {database} (docs/dev-database.md).\n'
-                 '# One "<login> <password>" per line. Never commit this file.\n')
+# The administrator's password (v0.20.0 S7): Odoo's own default, unless the env file sets this variable.
+ADMIN_VARIABLE = 'ODOO_ADMIN_PASSWORD'
+ODOO_DEFAULT_PASSWORD = 'admin'
+TYPED = 'typed on the terminal'
+GENERATED = 'generated, not stored or shown ({administrator} can set one in Odoo)'
 
 
-def logins_file(values, database) -> Path:
-    """Where the generated passwords of database go: <database>.logins next to the env file."""
+def legacy_logins(values, database) -> Path:
+    """Where versions before 0.20.0 wrote the generated passwords of database: <database>.logins next to the
+    env file. oasis no longer writes or reads it."""
     return Path(values['ENV_FILE']).parent / f'{database}.logins'
 
 
-def staged(path: Path, database, generated) -> Path:
-    """A 0600 temporary file next to path with the generated passwords; renamed to path once the database
-    exists. Removed again when it cannot be written (OSError raised)."""
-    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f'.{path.name}.')
-    try:
-        with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            stream.write(LOGINS_HEADER.format(database=database)
-                         + ''.join(f'{login} {password}\n' for login, password in generated))
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(name)
-        raise
-    return Path(name)
+def administrator_password(values):
+    """(the administrator's password, what the output says of it): ODOO_ADMIN_PASSWORD of the env file when it
+    sets a non-empty value (db_account.env_values: the last assignment wins), else Odoo's default. Raises
+    AccountError when the env file cannot be read, UnsupportedValue when its value is one oasis does not read."""
+    env_file = values['ENV_FILE']
+    value = env_values(env_file, [ADMIN_VARIABLE]).get(ADMIN_VARIABLE)
+    if value is UNSUPPORTED:
+        raise UnsupportedValue(env_file, [ADMIN_VARIABLE])
+    if value:
+        return value, f'from {env_file} {ADMIN_VARIABLE}'
+    return ODOO_DEFAULT_PASSWORD, "Odoo's default"
 
 
-def kept(pending: Path, note, generated) -> str:
-    """The line that names a staged logins file left in place (never a password)."""
-    return f'Generated passwords: {pending} (mode 0600; {note}): {", ".join(login for login, _password in generated)}'
+def account_line(login, source, administrator=False) -> str:
+    """What the output says of an account's password: where it comes from, never its value."""
+    return f'Account {login}{" (administrator)" if administrator else ""}, password: {source}'
 
 
 def created(result) -> bool:
@@ -126,10 +125,16 @@ def main():
     except (OSError, ValueError, TypeError, InvalidConfig):
         print(INVALID, file=sys.stderr)
         return 2
-    target = logins_file(values, database)
-    if not target.parent.is_dir():
-        print(f'ERROR: {target.parent} does not exist: run {program_name()} setup --apply; no '
+    env_directory = Path(values['ENV_FILE']).parent
+    if not env_directory.is_dir():
+        print(f'ERROR: {env_directory} does not exist: run {program_name()} setup --apply; no '
               'database was created.', file=sys.stderr)
+        return 2
+    try:
+        admin_password, admin_source = administrator_password(values)
+    except (AccountError, UnsupportedValue) as error:
+        # The message names the file and the variable, never a value (db_account.py).
+        print(f'ERROR: {error}', file=sys.stderr)
         return 2
     with_demo = args[3] == 'true'
     try:
@@ -140,23 +145,30 @@ def main():
         return 2
     if validate_only:
         return 0
-    passwords, generated = [], []
-    # Only a terminal is asked (getpass never falls back to visible piped input); otherwise every password
-    # is generated.
-    interactive = sys.stdin.isatty() and sys.stderr.isatty()
+    legacy = legacy_logins(values, database)
+    if legacy.exists():
+        print(f'WARN: {legacy} is from an earlier oasis version: oasis no longer writes or reads it; it is left as '
+              'it is.', file=sys.stderr)
+    administrator = account_line(logins[0], admin_source, administrator=True)
+    passwords, sources = [admin_password], [administrator]
+    # Only a terminal is asked, and only for the declared users (getpass never falls back to visible piped
+    # input); otherwise their passwords are generated.
+    interactive = len(logins) > 1 and sys.stdin.isatty() and sys.stderr.isatty()
     try:
         with warnings.catch_warnings():
             warnings.simplefilter('error', getpass.GetPassWarning)
             if interactive:
-                print(f'Enter at a password prompt generates one into {target} (mode 0600).', file=sys.stderr)
-            for login in logins:
+                print('Enter at a password prompt generates one, which is not stored or shown.', file=sys.stderr)
+            for login in logins[1:]:
                 password = getpass.getpass(f'Password for {login}: ') if interactive else ''
                 if not password:
                     password = secrets.token_urlsafe(24)
-                    generated.append((login, password))
+                    sources.append(account_line(login, GENERATED.format(administrator=logins[0])))
                 elif password != getpass.getpass(f'Confirm password for {login}: '):
                     print('ERROR: Passwords must match; no database was created.', file=sys.stderr)
                     return 2
+                else:
+                    sources.append(account_line(login, TYPED))
                 passwords.append(password)
     except (EOFError, KeyboardInterrupt, getpass.GetPassWarning, OSError):
         print(TERMINAL, file=sys.stderr)
@@ -170,67 +182,36 @@ def main():
         return 1
     payload = {'declaration': section, 'passwords': passwords, 'with_demo': with_demo, 'runtime': runtime}
     runner = Path(__file__).with_name('dev_users_runtime.py')
-    # Typed passwords exist only in process memory and the anonymous stdin pipe; generated ones also in the
-    # 0600 logins file, staged before the database exists so that none is lost once it does.
-    try:
-        pending = staged(target, database, generated) if generated else None
-    except OSError:
-        print(f'ERROR: Cannot write the generated passwords next to {target}; no database was created.',
-              file=sys.stderr)
-        return 2
-    unknown = f'rename it to {target} if {database} exists'
+    # The passwords exist only in process memory and the anonymous stdin pipe: no file holds them.
     try:
         result = subprocess.run([values['PYTHON'], '-B', str(runner), str(root), module, database],
                                 input=json.dumps(payload), text=True, capture_output=True)
     except KeyboardInterrupt:
-        # The runner may have created the database already: its generated passwords stay where they are.
+        # The runner may have created the database already, with the administrator's password set.
         print(f'ERROR: Interrupted while creating {database}; it may exist: {program_name()} list-databases shows it.',
               file=sys.stderr)
-        if pending is not None:
-            print(kept(pending, unknown, generated))
+        print(administrator)
         return 130
-    except BaseException:
-        if pending is not None:
-            pending.unlink(missing_ok=True)
-        raise
     if result.returncode != 3 and not created(result):
         # Never relay the child's output; whether the database exists is unknown.
         print(f'ERROR: Development setup stopped unexpectedly (exit {result.returncode}); {database} may exist: '
               f'{program_name()} list-databases shows it.', file=sys.stderr)
-        if pending is not None:
-            print(kept(pending, unknown, generated))
+        print(administrator)
         return 1
-    stored = renamed = ''
-    if pending is not None:
-        if result.returncode == 3:
-            # No database was created: an existing one keeps its logins file.
-            pending.unlink(missing_ok=True)
-        else:
-            try:
-                os.replace(pending, target)
-                stored = (f'Generated passwords: {target} (mode 0600): '
-                          f'{", ".join(login for login, _password in generated)}')
-            except OSError:
-                renamed = f'ERROR: Cannot rename {pending} to {target}; the generated passwords stay in {pending}.'
-                stored = kept(pending, f'it could not be renamed to {target}', generated)
-    if result.returncode:
+    if result.returncode == 3:
         # Never relay Odoo exceptions, SQL logs, or an unexpected child traceback.
-        message = ('Could not create a fresh development database; existing data was not modified.'
-                   if result.returncode == 3 else
-                   'Development setup failed; the new database was retained.')
-        print('ERROR: ' + message, file=sys.stderr)
-        if renamed:
-            print(renamed, file=sys.stderr)
-        if stored:
-            print(stored)
+        print('ERROR: Could not create a fresh development database; existing data was not modified.',
+              file=sys.stderr)
+        return 1
+    if result.returncode:
+        # Created, then a later step failed: the administrator's password is already set.
+        print('ERROR: Development setup failed; the new database was retained.', file=sys.stderr)
+        print(administrator)
         return 1
     print(f'Development database initialized: {database}')
     print(f'Accounts ready: {len(logins)}')
-    if stored:
-        print(stored)
-    if renamed:
-        print(renamed, file=sys.stderr)
-        return 1
+    for line in sources:
+        print(line)
     return 0
 
 

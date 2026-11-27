@@ -11,6 +11,14 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- Contract change: `init-dev-database` no longer writes `<database>.logins` and never asks the administrator's
+  password: the administrator keeps Odoo's default password (`admin`), or `ODOO_ADMIN_PASSWORD` of the env file
+  when it sets a non-empty one (read as `ODOO_DB_PASSWORD` is; a value with compose interpolation or a
+  double-quoted escape is refused, exit 2, before anything runs). `[[development.users]]` passwords are still
+  asked on a terminal (Enter generates one) and generated otherwise, but are no longer stored. The output names
+  what each account uses, never a value (`Account <login> (administrator), password: Odoo's default`, or `from
+  <env file> ODOO_ADMIN_PASSWORD`, `typed on the terminal`, `generated, not stored or shown`). An existing
+  `<database>.logins` from an earlier version is left as it is, with a WARN line.
 - Contract change: creating a database needs the user. `create-database` and `init-dev-database` are Tier B
   (`--confirm <database>`; `--dry-run` and `--plan` are Tier A), and `install-module` is Tier B only when its
   database does not exist (`install-module --confirm`); without `--confirm` they refuse with exit 2 naming the

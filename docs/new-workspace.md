@@ -115,10 +115,10 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
    development=none` leaves it out, and the next steps then name the two lines to add; see
    [the example tree](#the-example-tree) and [Development database](dev-database.md)), and the
    name must start with the `dev_prefix` (`acme_dev_`, from the checkout's name or
-   `setup --name`). The passwords are generated into `.oasis/config/acme_dev_manual.logins`
-   (mode 0600, never printed); on a terminal it asks each one with the echo off, and Enter
-   generates it, so typing is only for your own. Then check the installed packages against the
-   locks.
+   `setup --name`). The administrator keeps Odoo's default password, `admin`, or
+   `ODOO_ADMIN_PASSWORD` of `.oasis/config/.env` when you set one there; it is never asked. No
+   password file is written and no password is printed: the output says what each account uses.
+   Then check the installed packages against the locks.
 
    Creating it is your decision (Tier B since v0.20.0): `init-dev-database --plan` asks the name
    after `acme_dev_`, the module and whether with demo data, then prints the command with

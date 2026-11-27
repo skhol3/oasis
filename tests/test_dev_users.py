@@ -1,7 +1,6 @@
 """Fresh development initialization through the public CLI, isolated from Odoo/PG."""
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -14,7 +13,6 @@ import subprocess
 import sys
 import time
 import unittest
-from unittest import mock
 
 import test_lifecycle
 
@@ -109,24 +107,16 @@ class Environment:
 api = SimpleNamespace(Environment=Environment, SUPERUSER_ID=1)
 '''
 
+# What the output says of each account's password (v0.20.0 S7, S8): never a value.
+ADMIN_DEFAULT = "Account local_admin (administrator), password: Odoo's default\n"
+GENERATED = 'password: generated, not stored or shown (local_admin can set one in Odoo)'
+TYPED = 'password: typed on the terminal'
+USERS_GENERATED = f'Account planner, {GENERATED}\nAccount manager, {GENERATED}\n'
+ACCOUNTS = ADMIN_DEFAULT + USERS_GENERATED
 
-class FailingWrite:
-    """os.fdopen's stream whose write fails (a full disk)."""
 
-    def __init__(self, descriptor, *args, **kwargs):
-        self.stream = open(descriptor, *args, **kwargs)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.stream.close()
-
-    def fileno(self):
-        return self.stream.fileno()
-
-    def write(self, text):
-        raise OSError('no space left on device')
+def digest(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
 
 class DevelopmentUsersTests(unittest.TestCase):
@@ -276,17 +266,18 @@ class DevelopmentUsersTests(unittest.TestCase):
                          (2, '', 'ERROR: Invalid development user configuration.\n'))
         self.assertFalse(self.state.exists())
 
-    def terminal(self, *args, generated=()):
+    def terminal(self, *args, generated=(), logins=('planner', 'manager')):
         """Run on a terminal, typing a password (twice) for each login but those in generated, which
-        get Enter at their first prompt."""
+        get Enter at their first prompt. Only the declared users are asked, never the administrator (v0.20.0
+        S7); the typed passwords are kept in self.typed."""
         master, slave = pty.openpty()
         process = subprocess.Popen(self.command(*args), stdin=slave, stdout=slave,
                                    stderr=slave, env=self.env, start_new_session=True)
         os.close(slave)
         output = b''
         pending = b''
-        logins = ('local_admin', 'planner', 'manager')
-        secrets = [hashlib.sha256(os.urandom(32)).hexdigest() for _ in range(3)]
+        secrets = [hashlib.sha256(os.urandom(32)).hexdigest() for _ in logins]
+        self.typed = {login: secret for login, secret in zip(logins, secrets) if login not in generated}
         prompts, replies = [], []
         for login, secret in zip(logins, secrets):
             kinds = ('Password',) if login in generated else ('Password', 'Confirm password')
@@ -315,6 +306,7 @@ class DevelopmentUsersTests(unittest.TestCase):
             os.close(master)
         self.assertTrue(all(secret.encode() not in output for secret in secrets),
                         'A password was exposed in terminal output.')
+        self.assertNotIn(b'Password for local_admin', output)
         return code, output.decode().replace('\r\n', '\n')
 
     def test_rejects_test_unmanaged_empty_and_unsafe_names_without_effects(self):
@@ -359,64 +351,138 @@ class DevelopmentUsersTests(unittest.TestCase):
             self.assertFalse(self.commands.exists())
 
     def logins_file(self, database='cc_dev_coffee'):
-        """Where the generated passwords of database go: next to the env file (v0.16.0 S2)."""
+        """Where versions before 0.20.0 wrote the generated passwords of database: next to the env file."""
         return self.root / 'dev' / f'{database}.logins'
 
-    def assert_generated(self, result, logins, database='cc_dev_coffee'):
-        """The passwords of logins were generated into the logins file (0600), never printed, and are the
-        ones the database accepts."""
-        path = self.logins_file(database)
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-        lines = path.read_text().splitlines()
-        self.assertEqual(lines[:2], [
-            f'# Written by oasis init-dev-database: the generated passwords of {database} (docs/dev-database.md).',
-            '# One "<login> <password>" per line. Never commit this file.'])
-        found = dict(line.split(' ') for line in lines[2:])
-        self.assertEqual(list(found), list(logins))
-        state = json.loads(self.state.read_text())
-        for login, password in found.items():
-            self.assertRegex(password, r'\A[A-Za-z0-9_-]{32}\Z')
-            self.assertEqual(state['users'][login]['password'], hashlib.sha256(password.encode()).hexdigest())
-            self.assertNotIn(password, result)
-            if self.commands.exists():
-                self.assertNotIn(password, self.commands.read_text())
+    def assert_no_password_file(self):
+        """No password file (v0.20.0 S8): nothing named for logins next to the env file, nor a temporary one."""
+        self.assertEqual([item.name for item in self.logins_file().parent.iterdir() if 'logins' in item.name], [])
 
-    def test_without_a_terminal_every_password_is_generated_into_a_0600_file(self):
+    def assert_passwords(self, admin='admin', **typed):
+        """The database's administrator has the password admin (Odoo's default unless the env file sets one),
+        typed users theirs, and every other declared user a generated one, which is neither admin's nor
+        another's."""
+        users = json.loads(self.state.read_text())['users']
+        self.assertEqual(users['local_admin']['password'], digest(admin))
+        for login, password in typed.items():
+            self.assertEqual(users[login]['password'], digest(password))
+        hashes = [user['password'] for user in users.values()]
+        self.assertEqual(len(hashes), len(set(hashes)))
+
+    def test_without_a_terminal_the_administrator_keeps_odoos_default_and_users_get_generated_ones(self):
+        # v0.20.0 S7, S8: Odoo's default administrator password; no password file; no value in the output.
         result = self.invoke('coffee', 'cc_dev_coffee')
-        path = self.logins_file()
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         self.assertEqual(result.stdout, 'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
-                                        f'Generated passwords: {path} (mode 0600): local_admin, planner, manager\n')
-        self.assert_generated(result.stdout, ('local_admin', 'planner', 'manager'))
+                         + ACCOUNTS)
+        self.assert_passwords()
         self.assertEqual(set(json.loads(self.state.read_text())['users']), {'local_admin', 'planner', 'manager'})
-        # An existing database is refused, and its logins file stays as it was.
-        before = path.read_bytes()
+        self.assert_no_password_file()
+        # An existing database is refused, as before.
         result = self.invoke('coffee', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', (
             'ERROR: Could not create a fresh development database; existing data was not modified.\n')))
-        self.assertEqual(path.read_bytes(), before)
-        self.assertEqual(sorted(item.name for item in path.parent.iterdir() if 'logins' in item.name),
-                         ['cc_dev_coffee.logins'])
+        self.assert_no_password_file()
 
-    def test_on_a_terminal_enter_generates_that_password_and_typed_ones_are_not_stored(self):
-        code, output = self.terminal('coffee', 'cc_dev_coffee', generated=('planner',))
-        self.assertEqual(code, 0, output)
-        path = self.logins_file()
-        self.assertIn(f'Enter at a password prompt generates one into {path} (mode 0600).\n', output)
-        self.assertTrue(output.endswith('Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
-                                        f'Generated passwords: {path} (mode 0600): planner\n'), output)
-        self.assert_generated(output, ('planner',))
-        # Every password typed: no file.
+    def test_the_env_file_administrator_password_is_used_and_never_printed(self):
+        secret = hashlib.sha256(os.urandom(32)).hexdigest()
+        env_file = self.root / 'dev/.env'
+        env_file.write_text(f"ODOO_ADMIN_PASSWORD=not-this-one\nODOO_ADMIN_PASSWORD='{secret}'\n")
+        result = self.invoke('coffee', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertEqual(result.stdout, (
+            'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
+            f'Account local_admin (administrator), password: from {env_file} ODOO_ADMIN_PASSWORD\n' + USERS_GENERATED))
+        self.assert_passwords(admin=secret)
+        self.assertNotIn(secret, self.commands.read_text())
+        self.assert_no_password_file()
+        # On a terminal it is not asked either, and never shown.
         self.state.unlink()
         code, output = self.terminal('coffee', 'cc_dev_other')
         self.assertEqual(code, 0, output)
-        self.assertTrue(output.endswith('Accounts ready: 3\n'), output)
-        self.assertFalse(self.logins_file('cc_dev_other').exists())
+        self.assertNotIn(secret, output)
+        self.assertTrue(output.endswith(
+            f'Account local_admin (administrator), password: from {env_file} ODOO_ADMIN_PASSWORD\n'
+            f'Account planner, {TYPED}\nAccount manager, {TYPED}\n'), output)
+        self.assert_passwords(admin=secret, **self.typed)
+        # An empty value keeps Odoo's default.
+        self.state.unlink()
+        env_file.write_text('ODOO_ADMIN_PASSWORD=\n')
+        result = self.invoke('coffee', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertTrue(result.stdout.endswith(ACCOUNTS), result.stdout)
+        self.assert_passwords()
+
+    def test_an_env_file_administrator_password_oasis_cannot_read_is_refused_before_anything(self):
+        env_file = self.root / 'dev/.env'
+        env_file.write_text('ODOO_ADMIN_PASSWORD="a$b"\n')
+        for confirm in (True, False):
+            with self.subTest(confirm=confirm):
+                result = self.invoke('coffee', 'cc_dev_coffee', confirm=confirm)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+                    f'ERROR: {env_file} sets ODOO_ADMIN_PASSWORD with compose interpolation ($) or a double-quoted '
+                    'escape (\\), which oasis does not read: write the value literally in single quotes.\n')))
+                self.assertFalse(self.state.exists())
+                self.assertFalse(self.commands.exists())
+        if os.geteuid() != 0:
+            env_file.chmod(0)
+            self.addCleanup(env_file.chmod, 0o600)
+            result = self.invoke('coffee', 'cc_dev_coffee')
+            self.assertEqual((result.returncode, result.stdout, result.stderr),
+                             (2, '', f'ERROR: Cannot read {env_file}.\n'))
+            self.assertFalse(self.state.exists())
+
+    def test_an_earlier_logins_file_is_left_alone_with_one_warning(self):
+        path = self.logins_file()
+        path.write_text('# earlier\nlocal_admin earlier-generated-value\n')
+        path.chmod(0o600)
+        before = path.read_bytes()
+        result = self.invoke('coffee', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
+            'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n' + ACCOUNTS), (
+            f'WARN: {path} is from an earlier oasis version: oasis no longer writes or reads it; it is left as '
+            'it is.\n')))
+        self.assertEqual((path.read_bytes(), path.stat().st_mode & 0o777), (before, 0o600))
+        self.assert_passwords()
+        # A refusal runs nothing, and says nothing of it.
+        result = self.invoke('coffee', 'cc_dev_coffee', confirm=False)
+        self.assertEqual((result.returncode, result.stdout), (2, ''))
+        self.assertNotIn('WARN', result.stderr)
+
+    def test_on_a_terminal_only_declared_users_are_asked_and_nothing_is_stored(self):
+        code, output = self.terminal('coffee', 'cc_dev_coffee', generated=('planner',))
+        self.assertEqual(code, 0, output)
+        self.assertIn('Enter at a password prompt generates one, which is not stored or shown.\n', output)
+        self.assertTrue(output.endswith('Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
+                                        + ADMIN_DEFAULT + f'Account planner, {GENERATED}\n'
+                                        f'Account manager, {TYPED}\n'), output)
+        self.assert_passwords(**self.typed)
+        self.assert_no_password_file()
+        # Every password typed: no file either.
+        self.state.unlink()
+        code, output = self.terminal('coffee', 'cc_dev_other')
+        self.assertEqual(code, 0, output)
+        self.assertTrue(output.endswith(f'Accounts ready: 3\n{ADMIN_DEFAULT}Account planner, {TYPED}\n'
+                                        f'Account manager, {TYPED}\n'), output)
+        self.assert_passwords(**self.typed)
+        self.assert_no_password_file()
+
+    def test_with_the_administrator_alone_a_terminal_asks_nothing(self):
+        self.profile.write_text(test_lifecycle.WORKSPACE + "[development]\nadministrator_login = 'local_admin'\n")
+        code, output = self.terminal('coffee', 'cc_dev_coffee', logins=())
+        self.assertEqual(code, 0, output)
+        self.assertNotIn('Password', output)
+        self.assertNotIn('Enter at a password prompt', output)
+        self.assertTrue(output.endswith('Development database initialized: cc_dev_coffee\nAccounts ready: 1\n'
+                                        + ADMIN_DEFAULT), output)
+        self.assert_passwords()
+        self.assert_no_password_file()
 
     def test_initializes_explicit_admin_and_project_roles_without_demo(self):
         code, output = self.terminal('coffee', 'cc_dev_coffee')
         self.assertEqual(code, 0, output)
-        self.assertTrue(output.endswith('Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'))
+        self.assertTrue(output.endswith('Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
+                                        + ADMIN_DEFAULT + f'Account planner, {TYPED}\nAccount manager, {TYPED}\n'))
         state = json.loads(self.state.read_text())
         self.assertFalse(state['demo'])
         self.assertTrue(state['installed'])
@@ -439,6 +505,9 @@ class DevelopmentUsersTests(unittest.TestCase):
         self.assertEqual(result.stderr, '')
         self.assertIn('Usage: init-dev-database [--with-demo] <module> <database>', result.stdout)
         self.assertIn('native Odoo demo loader', result.stdout)
+        self.assertIn("The administrator keeps Odoo's default password", result.stdout)
+        self.assertIn('ODOO_ADMIN_PASSWORD', result.stdout)
+        self.assertNotIn('.logins', result.stdout)
         self.assertFalse(self.state.exists())
         self.assertFalse(self.commands.exists())
 
@@ -513,7 +582,7 @@ class DevelopmentUsersTests(unittest.TestCase):
                 self.state.unlink(missing_ok=True)
                 code, output = self.terminal(*(['--with-demo'] if demo else []), 'coffee', 'cc_dev_coffee')
                 self.assertEqual(code, 0, output)
-                self.assertTrue(output.endswith('Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'))
+                self.assertIn('Development database initialized: cc_dev_coffee\nAccounts ready: 3\n', output)
                 state = json.loads(self.state.read_text())
                 self.assertIs(state['demo'], demo)
                 self.assertEqual(json.loads(Path(str(self.state) + '.config').read_text()),
@@ -548,13 +617,13 @@ test_prefix = 'cc_test_'
         workspace.write_text(self.WORKSPACE + development)
         return workspace
 
-    def test_workspace_without_a_terminal_generates_the_passwords_next_to_its_env_file(self):
+    def test_workspace_without_a_terminal_keeps_the_default_and_writes_no_password_file(self):
         self.use_workspace()
         result = self.invoke('coffee', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
-        self.assertTrue(result.stdout.endswith(
-            f'Generated passwords: {self.logins_file()} (mode 0600): local_admin, planner, manager\n'))
-        self.assert_generated(result.stdout, ('local_admin', 'planner', 'manager'))
+        self.assertTrue(result.stdout.endswith('Accounts ready: 3\n' + ACCOUNTS), result.stdout)
+        self.assert_passwords()
+        self.assert_no_password_file()
 
     def test_workspace_rejects_invalid_or_secret_declaration_before_runtime(self):
         for development in ('', PROFILE + "password = 'not-a-real-secret'\n",
@@ -573,25 +642,13 @@ test_prefix = 'cc_test_'
         self.use_workspace()
         code, output = self.terminal('coffee', 'cc_dev_coffee')
         self.assertEqual(code, 0, output)
-        self.assertTrue(output.endswith('Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'))
+        self.assertIn('Development database initialized: cc_dev_coffee\nAccounts ready: 3\n', output)
         state = json.loads(self.state.read_text())
         self.assertFalse(state['demo'])
         self.assertEqual(set(state['users']), {'local_admin', 'planner', 'manager'})
         self.assertEqual(state['users']['manager']['groups'], [1, 4])
 
-    def staged_files(self, database='cc_dev_coffee'):
-        """The temporary logins files left next to the env file."""
-        return sorted(self.logins_file(database).parent.glob(f'.{database}.logins.*'))
-
-    def assert_kept(self, path, logins=('local_admin', 'planner', 'manager'), database='cc_dev_coffee'):
-        """A staged logins file that holds the generated passwords of logins (0600)."""
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-        lines = path.read_text().splitlines()
-        self.assertEqual(lines[0], f'# Written by oasis init-dev-database: the generated passwords of {database} '
-                                   '(docs/dev-database.md).')
-        self.assertEqual([line.split(' ')[0] for line in lines[2:]], list(logins))
-
-    def test_a_missing_logins_directory_stops_before_any_service_or_prompt(self):
+    def test_a_missing_env_file_directory_stops_before_any_service_or_prompt(self):
         self.profile.write_text(self.profile.read_text().replace("env_file = 'dev/.env'", "env_file = 'gone/.env'"))
         result = self.invoke('coffee', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
@@ -600,68 +657,40 @@ test_prefix = 'cc_test_'
         self.assertFalse(self.commands.exists())
 
     @unittest.skipIf(os.geteuid() == 0, 'root writes into a read-only directory')
-    def test_generated_passwords_that_cannot_be_staged_create_no_database(self):
+    def test_a_read_only_env_file_directory_still_creates_the_database(self):
+        # Nothing is written next to the env file (v0.20.0 S8).
         directory = self.logins_file().parent
         directory.chmod(0o555)
         self.addCleanup(directory.chmod, 0o755)
         result = self.invoke('coffee', 'cc_dev_coffee')
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
-            f'ERROR: Cannot write the generated passwords next to {self.logins_file()}; no database was created.\n')))
-        self.assertFalse(self.state.exists())
-        self.assertEqual(self.staged_files(), [])
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
+            'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n' + ACCOUNTS), ''))
+        self.assert_passwords()
+        self.assert_no_password_file()
 
-    def test_a_staged_file_that_cannot_be_written_is_removed(self):
-        spec = importlib.util.spec_from_file_location('oasis_test_dev_users', ROOT / 'tools/dev_users.py')
-        module = importlib.util.module_from_spec(spec)
-        sys.path.insert(0, str(ROOT / 'tools'))
-        try:
-            spec.loader.exec_module(module)
-        finally:
-            sys.path.remove(str(ROOT / 'tools'))
-        target = self.logins_file()
-        for name in ('fchmod', 'write'):
-            with self.subTest(failing=name):
-                if name == 'fchmod':
-                    patch = mock.patch.object(module.os, 'fchmod', side_effect=OSError('no'))
-                else:
-                    patch = mock.patch.object(module.os, 'fdopen', FailingWrite)
-                with patch, self.assertRaises(OSError):
-                    module.staged(target, 'cc_dev_coffee', [('local_admin', 'x')])
-                self.assertEqual(self.staged_files(), [])
-                self.assertFalse(target.exists())
-
-    def test_a_runner_failure_it_does_not_report_keeps_the_staged_passwords(self):
+    def test_a_runner_failure_it_does_not_report_names_the_administrator_password(self):
         # Exit 1 is any uncaught error of the interpreter, with or without a traceback: never the runner's answer.
         for variable, value, code in (('FAKE_RUNNER_EXIT', '9', 9), ('FAKE_RUNNER_EXIT', '2', 2),
                                       ('FAKE_RUNNER_EXIT', '1', 1), ('FAKE_RUNNER_RAISE', '1', 1)):
             with self.subTest(variable=variable, value=value):
-                for path in self.staged_files():
-                    path.unlink()
                 result = subprocess.run(self.command('coffee', 'cc_dev_coffee'), input='', text=True,
                                         capture_output=True, env={**self.env, variable: value}, timeout=10)
-                [pending] = self.staged_files()
                 self.assertEqual((result.returncode, result.stderr), (1, (
                     f'ERROR: Development setup stopped unexpectedly (exit {code}); cc_dev_coffee may exist: '
                     'oasis list-databases shows it.\n')))
-                self.assertEqual(result.stdout, (
-                    f'Generated passwords: {pending} (mode 0600; rename it to {self.logins_file()} if cc_dev_coffee '
-                    'exists): local_admin, planner, manager\n'))
-                self.assert_kept(pending)
-                self.assertFalse(self.logins_file().exists())
+                self.assertEqual(result.stdout, ADMIN_DEFAULT)
+                self.assert_no_password_file()
                 self.assertFalse(self.state.exists())
 
-    def test_a_database_the_runner_created_before_a_later_step_failed_keeps_its_passwords(self):
+    def test_a_database_the_runner_created_before_a_later_step_failed_names_the_administrator_password(self):
         # Exit 4: the runner created the database, then a later step failed (dev_users_runtime.py).
         result = subprocess.run(self.command('coffee', 'cc_dev_coffee'), input='', text=True, capture_output=True,
                                 env={**self.env, 'FAKE_RUNNER_EXIT': '4'}, timeout=10)
-        self.assertEqual((result.returncode, result.stderr),
-                         (1, 'ERROR: Development setup failed; the new database was retained.\n'))
-        self.assertEqual(result.stdout, f'Generated passwords: {self.logins_file()} (mode 0600): local_admin, planner, '
-                                        'manager\n')
-        self.assertEqual(self.staged_files(), [])
-        self.assert_kept(self.logins_file())
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (1, ADMIN_DEFAULT, 'ERROR: Development setup failed; the new database was retained.\n'))
+        self.assert_no_password_file()
 
-    def test_an_interrupt_after_the_runner_started_keeps_the_staged_passwords(self):
+    def test_an_interrupt_after_the_runner_started_names_the_administrator_password(self):
         marker = self.root / 'runner.pid'
         process = subprocess.Popen(self.command('coffee', 'cc_dev_coffee'), stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -680,36 +709,17 @@ test_prefix = 'cc_test_'
             if process.poll() is None:
                 process.kill()
                 process.communicate()
-        [pending] = self.staged_files()
-        self.assertEqual((process.returncode, stderr), (130, (
+        self.assertEqual((process.returncode, stdout, stderr), (130, ADMIN_DEFAULT, (
             'ERROR: Interrupted while creating cc_dev_coffee; it may exist: oasis list-databases shows it.\n')))
-        self.assertEqual(stdout, (
-            f'Generated passwords: {pending} (mode 0600; rename it to {self.logins_file()} if cc_dev_coffee exists): '
-            'local_admin, planner, manager\n'))
-        self.assert_kept(pending)
-        self.assertFalse(self.logins_file().exists())
-
-    def test_a_logins_file_that_cannot_be_renamed_into_place_is_kept_and_named(self):
-        self.logins_file().mkdir()
-        result = self.invoke('coffee', 'cc_dev_coffee')
-        [pending] = self.staged_files()
-        self.assertEqual((result.returncode, result.stderr), (1, (
-            f'ERROR: Cannot rename {pending} to {self.logins_file()}; the generated passwords stay in {pending}.\n')))
-        self.assertEqual(result.stdout, (
-            'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
-            f'Generated passwords: {pending} (mode 0600; it could not be renamed to {self.logins_file()}): '
-            'local_admin, planner, manager\n'))
-        self.assertNotIn('Traceback', result.stderr)
-        self.assert_kept(pending)
-        self.assertEqual(set(json.loads(self.state.read_text())['users']), {'local_admin', 'planner', 'manager'})
+        self.assert_no_password_file()
 
     def test_a_typed_password_that_does_not_match_its_confirmation_creates_nothing(self):
         master, slave = pty.openpty()
         process = subprocess.Popen(self.command('coffee', 'cc_dev_coffee'), stdin=slave, stdout=slave,
                                    stderr=slave, env=self.env, start_new_session=True)
         os.close(slave)
-        output, replies = b'', [(b'Password for local_admin: ', b'first-typed\n'),
-                                (b'Confirm password for local_admin: ', b'second-typed\n')]
+        output, replies = b'', [(b'Password for planner: ', b'first-typed\n'),
+                                (b'Confirm password for planner: ', b'second-typed\n')]
         try:
             while True:
                 if not select.select([master], [], [], 15)[0]:
@@ -736,8 +746,7 @@ test_prefix = 'cc_test_'
         self.assertNotIn('typed', text)
         self.assertFalse(self.state.exists())
         self.assertFalse(self.commands.exists())
-        self.assertFalse(self.logins_file().exists())
-        self.assertEqual(self.staged_files(), [])
+        self.assert_no_password_file()
 
     # The runner runs with the environment's Python (3.7+ for Odoo 15), not the host's: it imports nothing that
     # needs 3.11 (tomllib, through config.py).
@@ -752,8 +761,7 @@ test_prefix = 'cc_test_'
                                 capture_output=True, env={**self.env, **variables}, timeout=30)
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         self.assertEqual(result.stdout, 'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
-                                        f'Generated passwords: {self.logins_file()} (mode 0600): local_admin, '
-                                        'planner, manager\n')
+                         + ACCOUNTS)
         state = json.loads(self.state.read_text())
         self.assertEqual(set(state['users']), {'local_admin', 'planner', 'manager'})
         self.assertEqual(state['users']['planner']['groups'], [1, 3])
@@ -783,7 +791,6 @@ test_prefix = 'cc_test_'
         for version, python in found:
             with self.subTest(version=version):
                 self.state.unlink(missing_ok=True)
-                self.logins_file().unlink(missing_ok=True)
                 self.assert_initialized_with(FAKE_RUNNER_PYTHON=python)
 
     def run_runner(self, declaration, payload_changes=None):
@@ -824,7 +831,8 @@ test_prefix = 'cc_test_'
         self.profile.write_text(self.profile.read_text().replace('example.group_manager', 'example.missing'))
         code, output = self.terminal('coffee', 'cc_dev_coffee')
         self.assertEqual(code, 1)
-        self.assertTrue(output.endswith('ERROR: Development setup failed; the new database was retained.\n'))
+        self.assertTrue(output.endswith('ERROR: Development setup failed; the new database was retained.\n'
+                                        + ADMIN_DEFAULT), output)
         state = json.loads(self.state.read_text())
         self.assertEqual(set(state['users']), {'local_admin'})
         self.assertEqual(state['commits'], 0)

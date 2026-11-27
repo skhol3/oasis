@@ -117,8 +117,9 @@ and by Odoo; `odoo.conf` stays password-free), so no oasis workflow requires rea
 typing a password, and no command takes or prints one. An existing project keeps its files: setup
 fills an env file's empty account variables in place (never adds absent ones) and moves `db_user` and `db_password` out of `odoo.conf`
 only when the env file holds the same values (otherwise it warns and changes nothing), and
-`init-dev-database` generates the development passwords into `<database>.logins` (mode 0600) unless
-you type your own on a terminal. [Docs →](docs/setup.md#the-database-account)
+`init-dev-database` gives the administrator Odoo's default password (`admin`), or
+`ODOO_ADMIN_PASSWORD` of the env file when you set one, and writes no password file (an earlier
+`<database>.logins` is left alone with a WARN line). [Docs →](docs/setup.md#the-database-account)
 
 No command needs a terminal: `oasis setup --plan --json` prints the plan as one JSON object (what it
 inferred and from where, the changes, the questions with their options, the recommended answer and the
