@@ -1,6 +1,6 @@
 {
   "name": "oasis",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "private": true,
   "license": "Apache-2.0",
   "description": "Odoo layer for Gentle Shell (Pi): guarded oasis tools with compact, token-saving output.",

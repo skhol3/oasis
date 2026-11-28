@@ -9,6 +9,8 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-28
+
 ### Removed
 
 - Contract change: the `.odoo19-agent.toml` profile is no longer read nor refused, anywhere (the entry point's
@@ -1507,7 +1509,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/skhol3/oasis/releases/tag/v0.21.0
 [0.20.0]: https://github.com/skhol3/oasis/releases/tag/v0.20.0
 [0.19.0]: https://github.com/skhol3/oasis/releases/tag/v0.19.0
 [0.18.0]: https://github.com/skhol3/oasis/releases/tag/v0.18.0
