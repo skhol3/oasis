@@ -33,7 +33,7 @@ Common to every series. Also read [15.0](references/15.0.md) or [19.0](reference
 
 ## Execution Steps
 
-1. Read project instructions and discover permitted runtime, database, and guarded wrapper or global-entry-point capabilities.
+1. Read project instructions and discover permitted runtime, database, and installed entry point capabilities.
 2. Check version, target name, interface guards, and active sessions where destructive work is explicitly authorized.
 3. Run only the authorized narrow operation; retain failed databases for inspection unless cleanup is separately approved.
 

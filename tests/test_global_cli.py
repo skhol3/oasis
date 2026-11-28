@@ -366,7 +366,8 @@ class GlobalCliTests(unittest.TestCase):
         # v0.21.0 S11: no wrapper templates to copy; a project's existing copies keep working.
         self.assertNotIn('Alternatively, if the project wants legacy local CLI entrypoints', setup)
         self.assertIn('oasis ships no project wrapper templates since v0.21.0', setup)
-        self.assertIn('Missing project wrappers alone are not a blocker', lifecycle)
+        self.assertIn('Use the installed `~/.agents/skills/oasis/oasis --project /absolute/project <command>` entry point', lifecycle)
+        self.assertNotIn('project wrappers', lifecycle)
         self.assertIn('mise', troubleshooting)
 
     def test_existing_config_guards_reject_bad_workspace_before_effects(self):
