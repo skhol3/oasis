@@ -3,8 +3,6 @@
 import { POLICY, type PolicyEntry, type Tier } from "./policy.generated.ts";
 
 export type { PolicyEntry, Tier } from "./policy.generated.ts";
-/** A: the agent runs it alone; B: the user confirms it (the dialog); C: only the user runs it. */
-export const HARNESS: Readonly<Record<Tier, "allow" | "ask" | "deny">> = { A: "allow", B: "ask", C: "deny" };
 
 const STRICTNESS: Record<Tier, number> = { A: 0, B: 1, C: 2 };
 const BY_OPERATION = new Map<string, PolicyEntry>(POLICY.map((entry) => [entry.operation, entry]));

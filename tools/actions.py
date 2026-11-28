@@ -95,13 +95,10 @@ stdin and exits 2 without one.
 '''
 
 
-@functools.cache
-def sibling(name: str):
-    """A packaged helper loaded from its file (python3 -I keeps the tools directory off sys.path)."""
-    spec = importlib.util.spec_from_file_location(f'oasis_actions_{name}', Path(__file__).with_name(f'{name}.py'))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+_spec = importlib.util.spec_from_file_location('oasis_siblings', Path(__file__).with_name('siblings.py'))
+_spec.loader.exec_module(siblings := importlib.util.module_from_spec(_spec))
+# A packaged helper, loaded once per name (tools/siblings.py).
+sibling = functools.cache(siblings.loader('oasis_actions_'))
 
 
 def field(id, label, kind, *, source=None, required=True, allow_new=False, pattern=None, error=None,

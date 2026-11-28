@@ -2,7 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { classifyBash } from "../lib/bash-guard.ts";
 import { POLICY } from "../lib/policy.generated.ts";
-import { HARNESS, tierOf } from "../lib/policy.ts";
+import { tierOf } from "../lib/policy.ts";
+
+// What the guard does with each tier (tools/policy.py HARNESS): A runs, B asks, C is denied.
+const HARNESS = { A: "allow", B: "ask", C: "deny" } as const;
 
 // v0.16.0 S1: the guard takes its tiers from the core policy table (tools/policy.py, generated into
 // lib/policy.generated.ts; tests/test_policy.py fails when that module drifts from the table).

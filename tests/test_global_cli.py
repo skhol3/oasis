@@ -43,8 +43,9 @@ class GlobalCliTests(unittest.TestCase):
             shutil.copyfile(ROOT / program, self.bundle / program)
         self.project = self.temp / 'a project'
         self.project.mkdir()
-        # The entry point finds the workspace file with the packaged tools/config.py.
-        shutil.copyfile(ROOT / 'tools' / 'config.py', tools / 'config.py')
+        # The entry point finds the workspace file with the packaged tools/config.py (and the loader it uses).
+        for name in ('config.py', 'siblings.py'):
+            shutil.copyfile(ROOT / 'tools' / name, tools / name)
         (self.project / 'oasis-workspace.toml').write_text('workspace_version = 1\n')
         self.log = self.temp / 'calls.json'
         self.fake = ('#!/bin/bash\nFAKE_TOOL="$0" exec python3 -c '\
@@ -369,7 +370,7 @@ class GlobalCliTests(unittest.TestCase):
         self.assertIn('mise', troubleshooting)
 
     def test_existing_config_guards_reject_bad_workspace_before_effects(self):
-        for name in ('common.sh', 'oasis_env.sh', 'config.py', 'odoo_versions.py', 'status'):
+        for name in ('common.sh', 'oasis_env.sh', 'config.py', 'siblings.py', 'odoo_versions.py', 'status'):
             shutil.copyfile(ROOT / 'tools' / name, self.bundle / 'tools' / name)
         workspace = self.project / 'oasis-workspace.toml'
         for text, error in (

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { blockedEverywhere, blockedProgram, blockReason, classifyBash } from "../lib/bash-guard.ts";
+import { blockedEverywhere, blockReason, classifyBash } from "../lib/bash-guard.ts";
 import { readFileSync } from "node:fs";
 
 test("blocks odoo-bin, dropdb and psql in command position", () => {
@@ -22,7 +22,7 @@ test("blocks odoo-bin, dropdb and psql in command position", () => {
     ["echo $(psql -Atc 'select 1')", "psql"],
   ];
   for (const [command, program] of blocked) {
-    assert.equal(blockedProgram(command), program, command);
+    assert.equal(classifyBash(command).program, program, command);
   }
 });
 
@@ -41,7 +41,7 @@ test("allows guarded tools, reading and searching that only mention the names", 
     "pg_dump --help",
   ];
   for (const command of allowed) {
-    assert.equal(blockedProgram(command), null, command);
+    assert.equal(classifyBash(command).program, null, command);
   }
 });
 
@@ -120,7 +120,7 @@ test("blocks combined shell flags, control keywords, eval and launchers", () => 
     ["find . -name '*.sql' -exec psql -f {} \\;", "psql"],
   ];
   for (const [command, program] of blocked) {
-    assert.equal(blockedProgram(command), program, command);
+    assert.equal(classifyBash(command).program, program, command);
   }
 });
 
@@ -148,7 +148,7 @@ test("worktree-init asks through any launcher; its literal dry run runs", () => 
     "timeout 60 oasis --project /p worktree-init feat x",
   ];
   for (const command of blocked) {
-    assert.equal(blockedProgram(command), null, command);
+    assert.equal(classifyBash(command).program, null, command);
     assert.deepEqual(asked(command), command.includes("--dry-run") ? [] : ["worktree-init"], command);
   }
 });
@@ -167,7 +167,7 @@ test("allows other oasis commands and reading or testing worktree-init", () => {
     "git log --grep=worktree-init",
   ];
   for (const command of allowed) {
-    assert.equal(blockedProgram(command), null, command);
+    assert.equal(classifyBash(command).program, null, command);
   }
 });
 
@@ -180,7 +180,7 @@ test("migrate is no oasis command: none of its forms asks", () => {
     "tools/migrate --apply",
     "python3 -I -B ~/.agents/skills/oasis/tools/migrate.py --apply",
   ]) {
-    assert.equal(blockedProgram(command), null, command);
+    assert.equal(classifyBash(command).program, null, command);
     assert.deepEqual(asked(command), [], command);
   }
 });
@@ -199,7 +199,7 @@ test("allows other commands that only mention migrate", () => {
     "git log --grep=migrate",
   ];
   for (const command of allowed) {
-    assert.equal(blockedProgram(command), null, command);
+    assert.equal(classifyBash(command).program, null, command);
   }
 });
 
@@ -231,7 +231,7 @@ test("text that bash would not run is not a command", () => {
     "oasis --project /p worktree-init -h",
   ];
   for (const command of allowed) {
-    assert.equal(blockedProgram(command), null, command);
+    assert.equal(classifyBash(command).program, null, command);
   }
 });
 
@@ -279,7 +279,7 @@ test("text that bash does run stays blocked", () => {
     ["doas su - postgres <<'EOF'\npsql -l\nEOF", "psql"],
   ];
   for (const [command, program] of blocked) {
-    assert.equal(blockedProgram(command), program, command);
+    assert.equal(classifyBash(command).program, program, command);
   }
 });
 
@@ -294,14 +294,14 @@ test("worktree-init forms that may apply ask; literal dry runs run", () => {
     ["oasis --project /p worktree-init f b --dry-run > plan.txt", []],
   ];
   for (const [command, asks] of cases) {
-    assert.equal(blockedProgram(command), null, command);
+    assert.equal(classifyBash(command).program, null, command);
     assert.deepEqual(asked(command), asks, command);
   }
 });
 
 test("command -v / -V and which only look up the program", () => {
   for (const command of ["command -v psql", "command -V odoo-bin", "which dropdb", "type psql"]) {
-    assert.equal(blockedProgram(command), null, command);
+    assert.equal(classifyBash(command).program, null, command);
   }
 });
 
@@ -327,7 +327,7 @@ test("blocks agents from running the menu through the entry points or its tool, 
     "python3 -I -B ~/.agents/skills/oasis/tools/actions.py",
   ];
   for (const command of blocked) {
-    assert.equal(blockedProgram(command), "menu", command);
+    assert.equal(classifyBash(command).program, "menu", command);
   }
 });
 
@@ -346,7 +346,7 @@ test("allows the menu's help and commands that only mention menu", () => {
     "git log --grep=menu",
   ];
   for (const command of allowed) {
-    assert.equal(blockedProgram(command), null, command);
+    assert.equal(classifyBash(command).program, null, command);
   }
 });
 
@@ -372,9 +372,9 @@ test("the pre-0.17.0 odoo19 names are not oasis's", () => {
     "~/.agents/skills/odoo19/tools/menu",
     "$HOME/.agents/skills/odoo19/tools/actions.py --catalog",
   ]) {
-    assert.equal(blockedProgram(command), null, command);
+    assert.equal(classifyBash(command).program, null, command);
   }
-  assert.equal(blockedProgram("~/.agents/skills/odoo19/oasis --project /p menu"), "menu");
+  assert.equal(classifyBash("~/.agents/skills/odoo19/oasis --project /p menu").program, "menu");
   assert.deepEqual(asked("odoo19 --project /p drop-database cc_dev_x"), []);
   // An old install still on disk: its tool scripts are plain programs that ask nothing, and odoo-bin, dropdb and
   // psql stay blocked wherever they run from (v0.21.0 L5).
@@ -388,7 +388,7 @@ test("the pre-0.17.0 odoo19 names are not oasis's", () => {
     ["bash ~/.agents/skills/odoo19/tools/start; dropdb x", "dropdb"],
     ["~/.agents/skills/odoo19/tools/odoo-shell x | psql x", "psql"],
   ]) {
-    assert.equal(blockedProgram(command), program, command);
+    assert.equal(classifyBash(command).program, program, command);
   }
 });
 
@@ -402,7 +402,7 @@ test("menu's script forms are blocked only in the installed bundle, not in unrel
     "/opt/oasis/tools/menu",
   ];
   for (const command of allowed) {
-    assert.equal(blockedProgram(command), null, command);
+    assert.equal(classifyBash(command).program, null, command);
   }
   const blocked = [
     "oasis menu",
@@ -413,7 +413,7 @@ test("menu's script forms are blocked only in the installed bundle, not in unrel
     "python3 -I -B ~/.agents/skills/oasis/tools/actions.py --catalog",
   ];
   for (const command of blocked) {
-    assert.equal(blockedProgram(command), "menu", command);
+    assert.equal(classifyBash(command).program, "menu", command);
   }
 });
 
@@ -423,7 +423,7 @@ test("worktree-init script forms count in any directory (unchanged), and ask", (
     ["python3 /work/shop/worktree_init.py feat x", ["worktree-init"]],
   ];
   for (const [command, asks] of cases) {
-    assert.equal(blockedProgram(command), null, command);
+    assert.equal(classifyBash(command).program, null, command);
     assert.deepEqual(asked(command), asks, command);
   }
 });
@@ -468,7 +468,7 @@ test("menu scripts are blocked by what they resolve to, also relative or after a
     [BUNDLE, "cd $(mktemp -d) && tools/menu"],
   ];
   for (const [cwd, command] of blocked) {
-    assert.equal(blockedProgram(command, at(cwd)), "menu", `${cwd}: ${command}`);
+    assert.equal(classifyBash(command, at(cwd)).program, "menu", `${cwd}: ${command}`);
   }
 });
 
@@ -479,7 +479,7 @@ test("an unresolved path spelled like the installed bundle stays blocked from an
     "python3 $HOME/.agents/skills/oasis/tools/actions.py",
     "~other/.agents/skills/oasis/tools/menu",
   ]) {
-    assert.equal(blockedProgram(command, at("/work/shop")), "menu", command);
+    assert.equal(classifyBash(command, at("/work/shop")).program, "menu", command);
   }
 });
 
@@ -500,7 +500,7 @@ test("unrelated tools/menu scripts stay allowed with the session context", () =>
     [SOURCE, "python3 -B -m unittest tests.test_menu"],
   ];
   for (const [cwd, command] of allowed) {
-    assert.equal(blockedProgram(command, at(cwd)), null, `${cwd}: ${command}`);
+    assert.equal(classifyBash(command, at(cwd)).program, null, `${cwd}: ${command}`);
   }
 });
 
@@ -515,7 +515,7 @@ test("with the session context the entry points and worktree-init are unchanged"
   ];
   for (const cwd of ["/work/shop", BUNDLE, SOURCE]) {
     for (const [command, program] of cases) {
-      assert.equal(blockedProgram(command, at(cwd)), program, `${cwd}: ${command}`);
+      assert.equal(classifyBash(command, at(cwd)).program, program, `${cwd}: ${command}`);
     }
     for (const [command, asks] of [
       ["tools/worktree-init feat x", ["worktree-init"]],
@@ -789,20 +789,20 @@ test("agents may run start and restart --print-command: neither tier blocks or a
   ]) {
     for (const context of [undefined, at("/work/shop")]) {
       assert.deepEqual(classifyBash(command, context), { program: null, programs: [], asks: [] }, command);
-      assert.equal(blockedProgram(command, context), null, command);
+      assert.equal(classifyBash(command, context).program, null, command);
     }
   }
 });
 
-test("the deny tier is unchanged: blockedProgram ignores the ask commands and still finds the denied ones", () => {
+test("the deny tier is unchanged: classifyBash's program ignores the ask commands and still finds the denied ones", () => {
   for (const command of [
     "oasis --project /p drop-database cc_dev_x",
     "oasis --project /p stop --database",
     "oasis --project /p gc --apply --trash",
     "~/.agents/skills/oasis/tools/drop-database cc_dev_x",
   ]) {
-    assert.equal(blockedProgram(command), null, command);
-    assert.equal(blockedProgram(command, at("/work/shop")), null, command);
+    assert.equal(classifyBash(command).program, null, command);
+    assert.equal(classifyBash(command, at("/work/shop")).program, null, command);
   }
   const denied: [string, string][] = [
     ["oasis --project /p drop-database cc_dev_x; psql -l", "psql"],
@@ -811,7 +811,7 @@ test("the deny tier is unchanged: blockedProgram ignores the ask commands and st
     ["oasis --project /p gc --apply --trash | oasis --project /p menu", "menu"],
   ];
   for (const [command, program] of denied) {
-    assert.equal(blockedProgram(command), program, command);
+    assert.equal(classifyBash(command).program, program, command);
     assert.equal(classifyBash(command).program, program, command);
   }
   assert.deepEqual(classifyBash("oasis --project /p drop-database cc_dev_x; psql -l").asks, [AT(DROP("cc_dev_x"), "/p")]);
@@ -831,7 +831,7 @@ test("classifyBash lists every denied program of a line, in order; program stays
     const found = classifyBash(command);
     assert.deepEqual(found.programs, programs, command);
     assert.equal(found.program, programs[0] ?? null, command);
-    assert.equal(blockedProgram(command), programs[0] ?? null, command);
+    assert.equal(classifyBash(command).program, programs[0] ?? null, command);
   }
 });
 

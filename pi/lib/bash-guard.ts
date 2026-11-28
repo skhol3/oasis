@@ -10,15 +10,15 @@ import { COMMANDS, findEntry, operationOf, policyEntry, type PolicyEntry, PROGRA
 // oasis command is denied, a Tier B one asks, a Tier A one runs.
 const BLOCKED = new Set([...PROGRAMS].filter((program) => tierOf(program) !== "A"));
 // worktree-init's scripts count in any directory (unchanged).
-export const WORKTREE_INIT = "worktree-init";
+const WORKTREE_INIT = "worktree-init";
 const WORKTREE_INIT_SCRIPTS = new Set([WORKTREE_INIT, "worktree_init.py"]);
 // create-database's Python scripts create the database themselves (v0.20.0 L19): in any directory, with any
 // arguments, they ask like create-database (its Tier B row, never its plan's or dry run's).
-export const CREATE_DATABASE = "create-database";
+const CREATE_DATABASE = "create-database";
 const CREATE_DATABASE_SCRIPTS = new Set(["dev_users.py", "dev_users_runtime.py"]);
 // The interactive action menu (its catalog included) is for the user, in a terminal or the Gentle
 // Shell panel; agents run the commands it lists directly.
-export const MENU = "menu";
+const MENU = "menu";
 // Its scripts are blocked by what they are, not by their spelling: `tools/menu` and
 // `tools/actions.py` are common names in other projects, and the menu itself refuses to run
 // without a terminal. With a GuardContext, a script word is resolved against the session's
@@ -754,16 +754,8 @@ export function blockedEverywhere(program: string): boolean {
 }
 
 /**
- * The blocked program a bash command would run directly, or null. With the session context, the
- * menu's scripts are judged by the file they resolve to (see menuScript).
- */
-export function blockedProgram(command: string, context?: GuardContext): string | null {
-  return classifyBash(command, context).program;
-}
-
-/**
  * The tiers of a bash command: `programs` are the denied programs it runs, in order, and `program`
- * the first of them (blockedProgram), or null; `asks` lists the ask commands it runs, in order, a
+ * the first of them, or null; `asks` lists the ask commands it runs, in order, a
  * setting file once (see GuardContext.settingFile). Neither: allowed.
  */
 export function classifyBash(

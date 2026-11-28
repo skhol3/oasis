@@ -286,12 +286,9 @@ class Interrupted(Exception):
     """Ctrl-C at a question, before any change: exit 130."""
 
 
-def sibling(name: str):
-    """A packaged helper loaded from its file (python3 -I keeps the tools directory off sys.path)."""
-    spec = importlib.util.spec_from_file_location(f'oasis_setup_{name}', Path(__file__).with_name(f'{name}.py'))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+_spec = importlib.util.spec_from_file_location('oasis_siblings', Path(__file__).with_name('siblings.py'))
+_spec.loader.exec_module(siblings := importlib.util.module_from_spec(_spec))
+sibling = siblings.loader('oasis_setup_')
 
 
 config, locks, db_account = sibling('config'), sibling('locks'), sibling('db_account')
@@ -300,11 +297,6 @@ code_python = sibling('code_python')
 
 
 # -- files and git ---------------------------------------------------------------------------------
-
-def git_env():
-    return {key: value for key, value in os.environ.items()
-            if key not in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_PREFIX')}
-
 
 def untrusted(directory: Path) -> str:
     """Why a file written in directory would be refused by tools/config.py (trusted), or ''."""
@@ -900,7 +892,7 @@ def free_port(taken=()) -> int:
 
 def git_exclude(root: Path) -> tuple[Path, list[str]]:
     """The checkout's info/exclude file and the EXCLUDES git does not ignore yet."""
-    env = git_env()
+    env = config.git_env()
     try:
         result = subprocess.run(['git', '-C', str(root), 'rev-parse', '--path-format=absolute', '--git-path',
                                  'info/exclude'], capture_output=True, text=True, env=env, timeout=30)
@@ -1162,7 +1154,7 @@ def move_plan(root: Path, workspace: Path, target: Path, options: dict, question
     if reason:
         raise Refused(f'Refusing to write {destination}: {reason}.')
     tracked = subprocess.run(['git', '-C', str(root), 'ls-files', '--error-unmatch', '--', config.WORKSPACE_NAME],
-                             capture_output=True, env=git_env(), timeout=30)
+                             capture_output=True, env=config.git_env(), timeout=30)
     if tracked.returncode == 0:
         raise Refused(f'Refusing to move {workspace}: git tracks it; move it yourself.')
     try:
@@ -1684,7 +1676,7 @@ def worktree_slugs(root: Path, main: Path) -> set[str]:
     one their directory name gives, as tools/gc.py checkout_slugs reads them; those it cannot read are left out."""
     try:
         result = subprocess.run(['git', '-C', str(root), 'worktree', 'list', '--porcelain'], capture_output=True,
-                                text=True, env=git_env(), timeout=30)
+                                text=True, env=config.git_env(), timeout=30)
     except (OSError, subprocess.SubprocessError):
         return set()
     slugs = set()

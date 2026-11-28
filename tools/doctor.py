@@ -58,12 +58,9 @@ ISOLATION = (('db_port', ('db_port',)), ('compose_project', ('compose_project',)
              ('prefixes', ('dev_prefix', 'test_prefix')), ('env_file', ('env_file',)))
 
 
-def sibling(name: str):
-    """A packaged helper loaded from its file (python3 -I keeps the tools directory off sys.path)."""
-    spec = importlib.util.spec_from_file_location(f'oasis_doctor_{name}', Path(__file__).with_name(f'{name}.py'))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+_spec = importlib.util.spec_from_file_location('oasis_siblings', Path(__file__).with_name('siblings.py'))
+_spec.loader.exec_module(siblings := importlib.util.module_from_spec(_spec))
+sibling = siblings.loader('oasis_doctor_')
 
 
 class Report:

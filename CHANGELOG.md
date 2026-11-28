@@ -39,6 +39,11 @@ names) may still change in a minor release; every such change is listed here und
   `check_environment.py` and `audit_dependencies.py`), which ran `~/.agents/skills/oasis/tools/<command>` without the
   entry point; the bundle no longer ships them. A project's existing copies in `dev/scripts/` keep working while the
   tool names exist: call `oasis --project <checkout> <command>` instead and delete the copies when convenient.
+- `install.sh` no longer installs the plans of released versions (`odd/`) nor the test suites (`tests/`,
+  `pi/tests/`): nothing installed reads them. Run the suites from this repository; the bundle's
+  `<install>/tests` (the removed `docs/verification.md`) is gone.
+- `docs/verification.md` and the 19.0 headless Chromium incident note: its cause and diagnosis are in
+  `docs/troubleshooting.md`.
 
 ## [0.20.0] - 2026-11-27
 

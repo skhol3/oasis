@@ -5,13 +5,13 @@ import { abbreviateCommand, type NativeSource, printCommandArgv } from "./native
 import { limitLines } from "./output.ts";
 import { type CoreResult, formatTestRun, formatUpdateRun } from "./tools.ts";
 
-export const CATALOG_VERSION = 1;
+const CATALOG_VERSION = 1;
 export const MENU_KEY_DEFAULT = "alt+o";
 /** The start / restart flow (S3): the panel asks it in one form (RunForm). */
 export const RUN_ACTION = "server.run";
 const SERVER_COMMANDS = ["start", "restart"] as const;
 /** The select option that switches a choice to typing a value (allow_new). */
-export const TYPE_OPTION = "(type a name)";
+const TYPE_OPTION = "(type a name)";
 const NO_OUTPUT = "(no output)";
 // Panel output is for the user, not the model: bounded only to keep the session file reasonable.
 const OUTPUT_MAX_LINES = 1000;
@@ -63,7 +63,7 @@ export interface CatalogAction {
 }
 
 /** What the headers show and the start / restart flow needs (v0.12.0). */
-export interface CheckoutInfo {
+interface CheckoutInfo {
   name: string;
   server: { state: "running" | "stopped" | "unknown"; pid: number | null; port: number | null;
     database: string | null; error: string | null };
@@ -72,7 +72,7 @@ export interface CheckoutInfo {
 }
 
 /** The last action run from a menu in this checkout, still valid (v0.12.0). */
-export interface LastAction {
+interface LastAction {
   action: string;
   answers: Answers;
   label: string;
@@ -94,8 +94,8 @@ export interface Catalog {
 }
 
 export type Answers = Record<string, string | boolean>;
-export type Level = "info" | "warning" | "error";
-export type Source = "modules" | "databases";
+type Level = "info" | "warning" | "error";
+type Source = "modules" | "databases";
 
 /** The dialogs the panel asks with (ctx.ui select, input, confirm and notify). */
 export interface Prompter {

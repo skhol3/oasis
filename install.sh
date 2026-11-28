@@ -20,7 +20,8 @@ repo=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 default_target="$HOME/.agents/skills/oasis"
 target=$default_target
 state=${OASIS_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/oasis}
-repo_only=(AGENTS.md .gitignore install.sh)
+# The plans (odd/) and the test suites stay in the repository: nothing installed reads them.
+repo_only=(AGENTS.md .gitignore install.sh odd tests pi/tests)
 
 while (($#)); do
   case $1 in
@@ -66,7 +67,7 @@ trap 'rm -rf "$staging"' EXIT
 
 git -C "$repo" archive --format=tar "$commit" | tar -xf - -C "$staging"
 for name in "${repo_only[@]}"; do
-  rm -f "$staging/$name"
+  rm -rf "${staging:?}/$name"
 done
 # The installed version is the committed package.json version (SemVer).
 version=$(python3 -I -B - "$staging/package.json" <<'PY'

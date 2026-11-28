@@ -19,6 +19,9 @@ import os
 from pathlib import Path
 import sys
 
+_spec = importlib.util.spec_from_file_location('oasis_siblings', Path(__file__).resolve().with_name('siblings.py'))
+_spec.loader.exec_module(siblings := importlib.util.module_from_spec(_spec))
+
 USAGE = 'Usage: recipe_evals.py <series> <module-dir>'
 HELP = USAGE + '''
 
@@ -54,11 +57,7 @@ def load_forms():
 
 
 def supported_series():
-    path = Path(__file__).resolve().parent / 'odoo_versions.py'
-    spec = importlib.util.spec_from_file_location('odoo_versions', path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.supported()
+    return siblings.load('odoo_versions', 'odoo_versions').supported()
 
 
 def module_files(directory):

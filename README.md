@@ -47,6 +47,10 @@ Releases are listed in the [changelog](CHANGELOG.md).
 
 CI: `.github/workflows/tests.yml` runs `node --test pi/tests/*.test.ts` and `python3 -B -m unittest discover -s tests` on Python 3.12 for every pull request and push to `main`, plus a short job that runs the tests of what executes inside Odoo 15 environments (`tools/audit_dependencies.py`, `tools/dev_users_runtime.py`, `tools/check_environment.py`) with Python 3.8 and 3.9, both installed in that job, which fails when one of those tests skips.
 
+The suites (`tests/`, `pi/tests/`) are in this repository only: `install.sh` does not install them. They use
+synthetic projects and fake tools under `tests/fixturesroot`, removed after each test, and need no project
+checkout, database or install; passing them does not authorize an operation on a real environment or database.
+
 [Docs →](docs/install.md) · [Gentle Shell package →](docs/gentle-shell-layer.md#installing-the-package)
 
 ## Five-minute start
@@ -320,7 +324,6 @@ delete the copies from `dev/scripts/` when convenient.
 | [Static inspection](docs/static-inspection.md) | `model-info`, `view-info`, `xmlid-info`, `module-info` |
 | [Lint one module](docs/lint-module.md) | `lint-module` with the project's Pylint rcfile |
 | [Action menu](docs/action-menu.md) | `oasis menu` and the Gentle Shell panel |
-| [Portable verification](docs/verification.md) | Running the bundle's fixture tests |
 | [Troubleshooting](docs/troubleshooting.md) | Tool-manager shims and known failures |
 | [Changelog](CHANGELOG.md) | Releases and contract changes |
 

@@ -6,7 +6,17 @@ Before diagnostics, account for executable shims managed by tools such as mise. 
 
 ## Headless Chromium aborts in browser tests
 
-When the browser tests of a module fail because headless Chromium aborts at startup, the path of
-its socket is too long; see [Headless Chromium aborts because of its socket path](odoo19-chromium-socket-path-too-long.md).
+When the browser tests of a module fail because headless Chromium aborts at startup (one SIGABRT core per
+browser test), the path of its singleton socket is too long and Chromium aborts on purpose:
+
+```
+FATAL:chrome/browser/process_singleton_posix.cc:313] Socket path too long:
+/tmp/gpB6f7cC/gachADTC/tmp.bumyjLXJec/tmp/tmp5uwjifu1_chrome_odoo/org.chromium.Chromium.B3vxqV/SingletonSocket
+```
+
+The path of a Unix socket (`sun_path`) holds at most 107 bytes plus the NUL; that one, seen on 19.0 in November
+2026, is 110. Odoo builds the `*_chrome_odoo` profile under `tempfile`, that is, under `$TMPDIR`, so a deeply nested
+`TMPDIR` (the temporary directory of an agent or a sandbox) is the likely cause. To read the message of a core:
+`coredumpctl dump <pid> --output=<file>`, then `strings <file> | grep FATAL`, and delete the core when done.
 Test runs now give the Odoo test process a short private `TMPDIR` (see
 [Ports, temporary directory and browser evidence](testing.md#ports-temporary-directory-and-browser-evidence)).

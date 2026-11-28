@@ -47,8 +47,6 @@ One topic per file. Start from the group that matches what you are doing; the
 
 | Documentation | Purpose |
 | --- | --- |
-| [Portable verification](verification.md) | Running the bundle's fixture tests |
 | [Changelog](../CHANGELOG.md) | Releases and contract changes |
-| [Headless Chromium socket path](odoo19-chromium-socket-path-too-long.md) | Incident note: browser tests and a long `TMPDIR` |
 
 Contributor rules are in `AGENTS.md` in the source repository; it is not installed.

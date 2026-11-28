@@ -10,6 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INSTALL = ROOT / 'install.sh'
 REPO_ONLY = {'AGENTS.md', '.gitignore', 'install.sh'}
+# v0.21.0 S1/S8: the plans (odd/) and the test suites stay in the repository; nothing installed reads them.
+REPO_ONLY_DIRS = ('odd/', 'tests/', 'pi/tests/')
 
 
 def committed_files():
@@ -54,8 +56,11 @@ class InstallTest(unittest.TestCase):
     def test_installs_committed_bundle_without_repo_only_files(self):
         result = self.run_install('--target', str(self.target))
         self.assertEqual(result.returncode, 0, result.stderr)
-        expected = {path for path in committed_files() if path not in REPO_ONLY}
+        expected = {path for path in committed_files()
+                    if path not in REPO_ONLY and not path.startswith(REPO_ONLY_DIRS)}
         self.assertEqual(self.installed_files() - {'.oasis-install.json'}, expected)
+        for name in REPO_ONLY_DIRS:
+            self.assertFalse((self.target / name).exists(), name)
         self.assertTrue(os.access(self.target / 'oasis', os.X_OK))
         self.assertTrue(os.access(self.target / 'tools' / 'test-module', os.X_OK))
         record = json.loads((self.target / '.oasis-install.json').read_text())

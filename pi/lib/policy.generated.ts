@@ -9,7 +9,6 @@ export interface PolicyEntry {
   example: string | null;
   confirm: string | null;
 }
-export const POLICY_VERSION = 1;
 export const POLICY: readonly PolicyEntry[] = [
   {"operation": "setup", "tier": "A", "kind": "oasis", "reason": "prints the plan of the configuration; changes nothing", "example": "oasis --project /p setup", "confirm": null},
   {"operation": "setup --apply", "tier": "A", "kind": "oasis", "reason": "creates only the missing configuration and environment; rebuildable", "example": "oasis --project /p setup --apply", "confirm": null},

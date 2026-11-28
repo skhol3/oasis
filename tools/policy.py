@@ -153,7 +153,6 @@ def as_typescript() -> str:
             '  example: string | null;\n'
             '  confirm: string | null;\n'
             '}\n'
-            f'export const POLICY_VERSION = {VERSION};\n'
             f'export const POLICY: readonly PolicyEntry[] = [\n{data}];\n')
 
 

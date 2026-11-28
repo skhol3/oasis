@@ -179,10 +179,6 @@ export function runLogRealPath(path: string, locations: RunLogLocations, realpat
   return logs !== null && runLogShape(real, logs) ? real : null;
 }
 
-export function isRunLog(path: string, locations: RunLogLocations, realpath: RealPath): boolean {
-  return runLogRealPath(path, locations, realpath) !== null;
-}
-
 /**
  * Summary of a compact test run that was started outside the tool (for example in the
  * background): `output` is what `oasis ... test-module --compact` printed and `config` the

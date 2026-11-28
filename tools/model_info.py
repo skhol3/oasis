@@ -11,6 +11,9 @@ from pathlib import Path
 import re
 import sys
 
+_spec = importlib.util.spec_from_file_location('oasis_siblings', Path(__file__).with_name('siblings.py'))
+_spec.loader.exec_module(siblings := importlib.util.module_from_spec(_spec))
+
 USAGE = 'Usage: model-info <model> [--field <name>] [--module <technical>] [--methods] [--all-fields]'
 HELP = USAGE + '''
 
@@ -397,10 +400,7 @@ def main():
         return fail('Invalid field name.')
     if options['module'] is not None and not MODULE.fullmatch(options['module']):
         return fail('Module must use only letters, numbers, and underscores.')
-    # Load the packaged parser by its own path; never import project Python code.
-    spec = importlib.util.spec_from_file_location('oasis_config', Path(__file__).with_name('config.py'))
-    config = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(config)
+    config = siblings.load('config', 'oasis_config')
     root = config.selected_root()
     if root is None:
         return fail(config.PROJECT_ROOT_REQUIRED)

@@ -40,15 +40,14 @@ LEGACY_MENTIONS = {'README.md', 'docs/bash-guard.md', 'docs/install.md'}
 
 # v0.17.0 S3: the `odoo19` name is gone; v0.21.0 S6: so is its transition (install.sh, doctor and the bash guard
 # no longer handle it). These files still name it: the README and AGENTS.md contract notes, the upgrade section,
-# the guard's and the Gentle Shell layer's notes of the removed names, an incident note of that time.
+# the guard's and the Gentle Shell layer's notes of the removed names (v0.21.0 S5: the incident note of that time
+# is folded into docs/troubleshooting.md).
 # Not counted: the legacy profile .odoo19-agent.toml, the default log directory before 0.17.0 dev/logs/odoo19 and the
-# runs before 0.8.0 under <logs>/odoo19/ (only named where their removal is explained), and the incident note's file
-# name.
-ODOO19_KEPT = re.compile(r'\.odoo19-agent|logs/odoo19|logs>/odoo19|odoo19-chromium-socket-path-too-long')
-ODOO19_MENTIONS = {'AGENTS.md', 'README.md', 'docs/bash-guard.md', 'docs/gentle-shell-layer.md', 'docs/install.md',
-                   'docs/odoo19-chromium-socket-path-too-long.md'}
+# runs before 0.8.0 under <logs>/odoo19/ (only named where their removal is explained).
+ODOO19_KEPT = re.compile(r'\.odoo19-agent|logs/odoo19|logs>/odoo19')
+ODOO19_MENTIONS = {'AGENTS.md', 'README.md', 'docs/bash-guard.md', 'docs/gentle-shell-layer.md', 'docs/install.md'}
 # Repository-only paths: install.sh does not install them, so no installed document may link to them.
-NOT_INSTALLED = ('AGENTS.md', '.gitignore', 'install.sh', 'odd')
+NOT_INSTALLED = ('AGENTS.md', '.gitignore', 'install.sh', 'odd', 'tests', 'pi/tests')
 
 
 def documents(root):
@@ -92,7 +91,7 @@ def broken_links(files, root):
             except ValueError:
                 broken.append(f'{here}: {link} (outside the bundle)')
                 continue
-            if relative.parts and relative.parts[0] in NOT_INSTALLED:
+            if any(relative.parts[:len(Path(name).parts)] == Path(name).parts for name in NOT_INSTALLED):
                 broken.append(f'{here}: {link} (not installed)')
             elif not target.is_file():
                 broken.append(f'{here}: {link} (missing)')

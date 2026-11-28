@@ -30,7 +30,7 @@ import tomllib
 
 
 def variable(name: str) -> str:
-    """OASIS_<name>, else '' (since 0.17.0 the legacy ODOO19_<name> is not read).
+    """OASIS_<name>, else ''.
 
     For the variables a user, a project wrapper or a test may set (PROJECT_ROOT, ENTRYPOINT,
     TOOLS_DIR, COMPOSE_LOCK_TIMEOUT); tools/oasis_env.sh oasis_variable in the shell tools.
@@ -61,16 +61,15 @@ def usage_name() -> str:
     return variable('ENTRYPOINT') or 'oasis'
 
 
+_spec = importlib.util.spec_from_file_location('oasis_siblings', Path(__file__).with_name('siblings.py'))
+_spec.loader.exec_module(siblings := importlib.util.module_from_spec(_spec))
+
+
 @functools.cache
 def versions():
-    """tools/odoo_versions.py, loaded from its file when first needed: callers import this file
-    by location (python3 -I does not put the script directory on sys.path), and the entry
-    point's workspace finder must not depend on it."""
-    spec = importlib.util.spec_from_file_location('oasis_odoo_versions',
-                                                  Path(__file__).with_name('odoo_versions.py'))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    """tools/odoo_versions.py, loaded when first needed: the entry point's workspace finder must not
+    depend on it."""
+    return siblings.load('odoo_versions', 'oasis_odoo_versions')
 
 PATHS = {
     'community': 'ODOO_SOURCE', 'enterprise': 'ENTERPRISE_SOURCE',
@@ -120,6 +119,13 @@ GIT_TIMEOUT_SECONDS = 5
 
 class GitFailed(Exception):
     """git could not report the checkout; the message is the reason."""
+
+
+def git_env() -> dict[str, str]:
+    """The environment of a git command a tool runs on a checkout (setup, worktree-init): without the
+    variables that would point it at another repository, index or prefix."""
+    return {key: value for key, value in os.environ.items()
+            if key not in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_PREFIX')}
 
 
 def git_checkout(root: Path) -> tuple[str, Path, Path]:
@@ -850,7 +856,7 @@ DEFAULT_LOGS = 'logs'
 def default_logs(document: dict, tooling: dict) -> str:
     """The logs directory of a workspace without [tooling].logs, relative to its directory: DEFAULT_LOGS as setup
     writes it, and DEFAULT_LOGS/<x.y> with workspace_version 2 (setup writes logs/<x.y> in each series section), so
-    two series never share one server.log. Before 0.17.0 it was each checkout's dev/logs/odoo19."""
+    two series never share one server.log."""
     if document.get('workspace_version') == 2:
         return f'{DEFAULT_LOGS}/{tooling["version"]}'
     return DEFAULT_LOGS

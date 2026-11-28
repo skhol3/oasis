@@ -29,7 +29,6 @@ unknown id, an answer that is not one of the options, a name the guards refuse).
 Usage (through create-database --plan):
   database_plan.py create-database [--json] [--answer <id>=<value>]... [--answers <file.json>]
 """
-import importlib.util
 import json
 from pathlib import Path
 import shlex
@@ -40,6 +39,7 @@ TOOLS = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOLS))
 import config  # noqa: E402
 import dev_users  # noqa: E402
+import siblings  # noqa: E402
 
 COMMANDS = ('create-database',)
 # The oasis options of create-database (tools/create-database).
@@ -116,10 +116,7 @@ def answered(options: dict, ids: tuple[str, ...]) -> dict:
 
 def addon_modules(roots: str) -> list[str]:
     """The checkout's addon modules, as the menu lists them (tools/actions.py addon_modules)."""
-    spec = importlib.util.spec_from_file_location('oasis_plan_actions', TOOLS / 'actions.py')
-    actions = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(actions)
-    return actions.addon_modules(roots)
+    return siblings.load('actions', 'oasis_plan_actions').addon_modules(roots)
 
 
 def namespace(prefix: str, slug: str) -> str:

@@ -8,6 +8,9 @@ import subprocess
 import sys
 import tomllib
 
+_spec = importlib.util.spec_from_file_location('oasis_siblings', Path(__file__).with_name('siblings.py'))
+_spec.loader.exec_module(siblings := importlib.util.module_from_spec(_spec))
+
 USAGE = 'Usage: lint-module <module>'
 HELP = USAGE + '''
 
@@ -56,10 +59,7 @@ def main():
     module_name = arguments[0]
     if not re.fullmatch(r'[A-Za-z0-9_]+', module_name):
         return fail('Module must use only letters, numbers, and underscores.')
-    # Load the packaged parser by its own path; never import project Python code.
-    spec = importlib.util.spec_from_file_location('oasis_config', Path(__file__).with_name('config.py'))
-    config = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(config)
+    config = siblings.load('config', 'oasis_config')
     root = config.selected_root()
     if root is None:
         return fail(config.PROJECT_ROOT_REQUIRED)
