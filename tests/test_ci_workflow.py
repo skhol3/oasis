@@ -1,5 +1,5 @@
-"""The GitHub Actions workflow (v0.17.0 S4): the Odoo 15 Python job runs tests that exist; every job has a
-timeout. Read as text: no YAML parser is needed. v0.21.0 S2: the wording of its steps is not compared."""
+"""The GitHub Actions workflow (v0.17.0 S4): the Odoo 15 Python job runs tests that exist and fails when one
+of them skips; every job has a timeout. Read as text: no YAML parser is needed."""
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import importlib
 from pathlib import Path
@@ -32,6 +32,9 @@ class WorkflowTests(unittest.TestCase):
         for name, body in self.jobs.items():
             with self.subTest(job=name):
                 self.assertRegex(body, r'(?m)^    timeout-minutes: [1-9][0-9]*$')
+
+    def test_the_odoo15_job_fails_when_a_test_skips(self):
+        self.assertIn("if grep -n 'skipped' \"$RUNNER_TEMP/odoo15-python.log\"; then", self.jobs['odoo15-python'])
 
     def test_the_odoo15_job_runs_tests_that_exist(self):
         body = self.jobs['odoo15-python']

@@ -812,7 +812,6 @@ test("the deny tier is unchanged: classifyBash's program ignores the ask command
   ];
   for (const [command, program] of denied) {
     assert.equal(classifyBash(command).program, program, command);
-    assert.equal(classifyBash(command).program, program, command);
   }
   assert.deepEqual(classifyBash("oasis --project /p drop-database cc_dev_x; psql -l").asks, [AT(DROP("cc_dev_x"), "/p")]);
 });

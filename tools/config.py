@@ -61,14 +61,12 @@ def usage_name() -> str:
     return variable('ENTRYPOINT') or 'oasis'
 
 
-_spec = importlib.util.spec_from_file_location('oasis_siblings', Path(__file__).with_name('siblings.py'))
-_spec.loader.exec_module(siblings := importlib.util.module_from_spec(_spec))
-
-
 @functools.cache
 def versions():
     """tools/odoo_versions.py, loaded when first needed: the entry point's workspace finder must not
-    depend on it."""
+    depend on it (nor on tools/siblings.py, loaded here too)."""
+    spec = importlib.util.spec_from_file_location('oasis_siblings', Path(__file__).with_name('siblings.py'))
+    spec.loader.exec_module(siblings := importlib.util.module_from_spec(spec))
     return siblings.load('odoo_versions', 'oasis_odoo_versions')
 
 PATHS = {
