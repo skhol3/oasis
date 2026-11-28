@@ -325,6 +325,7 @@ delete the copies from `dev/scripts/` when convenient.
 | [Lint one module](docs/lint-module.md) | `lint-module` with the project's Pylint rcfile |
 | [Action menu](docs/action-menu.md) | `oasis menu` and the Gentle Shell panel |
 | [Troubleshooting](docs/troubleshooting.md) | Tool-manager shims and known failures |
+| [How oasis is built](docs/architecture.md) | Layers, commands by job, shared modules, the policy and the known growth problems |
 | [Changelog](CHANGELOG.md) | Releases and contract changes |
 
 ## License

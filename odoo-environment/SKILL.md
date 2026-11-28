@@ -31,7 +31,7 @@ Common to every series. Also read [15.0](references/15.0.md) or [19.0](reference
 | Choosing an operation | Consult installed help and the project's declarations; prefer supported end-to-end capabilities |
 | Precondition unmet (target, namespace, existing resource, human interaction) | Never delete or replace resources without explicit authorization; explain the gap first |
 | Before module lifecycle work | Confirm the series with matching `release.py` and permitted runtime checks |
-| Project wrapper missing | Use the installed `~/.agents/skills/oasis/oasis` entry point; with no guarded interface, report unavailable |
+| No `oasis` on PATH | Use the installed `~/.agents/skills/oasis/oasis` entry point; with no guarded interface, report unavailable |
 | Environment mutation | Preview first, then seek explicit authorization for the exact isolated target and operation |
 
 Apply the full [operation selection rules](references/operation-selection.md).

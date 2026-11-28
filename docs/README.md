@@ -47,6 +47,7 @@ One topic per file. Start from the group that matches what you are doing; the
 
 | Documentation | Purpose |
 | --- | --- |
+| [How oasis is built](architecture.md) | The layers and who calls whom, the commands by job, the shared modules, where the policy lives, how to add a command and the known growth problems |
 | [Changelog](../CHANGELOG.md) | Releases and contract changes |
 
 Contributor rules are in `AGENTS.md` in the source repository; it is not installed.
