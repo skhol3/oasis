@@ -17,6 +17,7 @@ import shlex
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 import test_lifecycle as lifecycle
 
 
@@ -188,6 +189,28 @@ class ServerDatabaseTests(ServerBase):
         result = self.invoke('start', '-d', 'cc_dev_x', '--version')
         self.assertEqual(result.returncode, 0)
         self.assertNotIn('pg_database', self.log())
+
+
+class SeriesAnswerTests(unittest.TestCase):
+    """Review review-5cfcc5c198b45a72: a series table that cannot be read warns once and answers unknown, which
+    checks PGDATABASE (fails closed) and keeps a -c path as given."""
+
+    def answer(self, version):
+        tools = Path(__file__).resolve().parents[1] / 'tools'
+        script = (f'source {shlex.quote(str(tools / "server_args.sh"))}; ODOO_VERSION={shlex.quote(version)}; '
+                  'configuration_reads_environment; odoo_reads_pgdatabase && echo pg; '
+                  'odoo_expands_config_path && echo expand; true')
+        result = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
+        return result.returncode, result.stdout, result.stderr
+
+    def test_each_series_answers_from_the_table(self):
+        self.assertEqual(self.answer('19.0'), (0, 'true\npg\nexpand\n', ''))
+        self.assertEqual(self.answer('15.0'), (0, 'false\n', ''))
+
+    def test_an_unreadable_table_warns_checks_pgdatabase_and_keeps_the_path(self):
+        warning = ('WARNING: cannot read configuration_reads_environment of Odoo 9.9 from tools/odoo_versions.py; '
+                   'checking PGDATABASE too.\n')
+        self.assertEqual(self.answer('9.9'), (0, 'unknown\npg\n', warning * 3))
 
 
 class EnvironmentDatabaseTests(ServerBase):

@@ -214,13 +214,30 @@ busy() {
   printf 'Port %s is in use by another process; %s or stop that process.\n' "$port" "$pass" >&2
 }
 
-# odoo_configuration_reads_environment: whether the series' configuration reads -d from PGDATABASE (after the
-# command line and before the configuration file) and expands variables and ~ in the -c path; the series' answer is
-# tools/odoo_versions.py's configuration_reads_environment, with the Odoo source lines.
-# It fails closed: only an explicit false skips PGDATABASE, so a table that cannot be read checks more, never less.
-odoo_configuration_reads_environment() {
-  [[ "$(python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/odoo_versions.py" "$ODOO_VERSION" configuration_reads_environment \
-    2>/dev/null)" != false ]]
+# configuration_reads_environment: the series' answer in tools/odoo_versions.py (true or false, with the Odoo
+# source lines): whether -d reads PGDATABASE (after the command line, before the configuration file) and whether -c
+# expands variables and ~. A table that cannot be read prints one WARNING and answers "unknown".
+configuration_reads_environment() {
+  local answer
+  answer=$(python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/odoo_versions.py" "$ODOO_VERSION" \
+    configuration_reads_environment 2>/dev/null) || answer=
+  case "$answer" in
+    true | false) printf '%s\n' "$answer" ;;
+    *)
+      printf 'WARNING: cannot read configuration_reads_environment of Odoo %s from tools/odoo_versions.py; checking PGDATABASE too.\n' \
+        "${ODOO_VERSION:-?}" >&2
+      printf 'unknown\n' ;;
+  esac
+}
+
+# odoo_reads_pgdatabase: fails closed, only an explicit false skips PGDATABASE (the check covers more, never less).
+odoo_reads_pgdatabase() {
+  [[ "$(configuration_reads_environment)" != false ]]
+}
+
+# odoo_expands_config_path: only an explicit true expands the -c path; unknown keeps it as given.
+odoo_expands_config_path() {
+  [[ "$(configuration_reads_environment)" == true ]]
 }
 
 # conf_database [<file>]: the db_name of that configuration file (the configured odoo.conf by default), or nothing
@@ -229,7 +246,7 @@ odoo_configuration_reads_environment() {
 # the series' Odoo expands it.
 conf_database() {
   local expand=''
-  if [[ -n "${1:-}" ]] && odoo_configuration_reads_environment; then expand=expand; fi
+  if [[ -n "${1:-}" ]] && odoo_expands_config_path; then expand=expand; fi
   python3 -I -B - "$(dirname "${BASH_SOURCE[0]}")/odoo_addons_path.py" "${1:-$ODOO_CONFIG}" "$expand" 2>/dev/null <<'PYTHON' || true
 import importlib.util, os.path, sys
 spec = importlib.util.spec_from_file_location('oasis_odoo_addons_path', sys.argv[1])
@@ -276,7 +293,7 @@ server_databases() {
     printf '%s\n' "$explicit_database"
     return
   fi
-  if odoo_configuration_reads_environment && [[ -v PGDATABASE ]]; then
+  if odoo_reads_pgdatabase && [[ -v PGDATABASE ]]; then
     database_list "$PGDATABASE"
     return
   fi
