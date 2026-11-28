@@ -38,16 +38,11 @@ class BootstrapExitTests(unittest.TestCase):
             'actual=2.9.5"; echo "missing_packages=0"; echo "version_mismatches=1"; exit 3 ;;'))
 
     def fake_doctor(self, script):
-        """The tools with doctor (the trailing doctor --environment --full) replaced by script: links to the others."""
-        tools = Path(self.scratch.name) / 'tools'
-        tools.mkdir()
-        for entry in (lifecycle.STAGE / 'tools').iterdir():
-            if entry.name not in ('doctor', '__pycache__'):
-                (tools / entry.name).symlink_to(entry)
-        doctor = tools / 'doctor'
+        """A staged entry point whose doctor (the trailing doctor --environment --full) is script; invoke runs it."""
+        self.entry = lifecycle.staged_bundle(Path(self.scratch.name) / 'staged')
+        doctor = self.entry.parent / 'tools/doctor'
         doctor.write_text('#!/bin/sh\n' + script)
         doctor.chmod(0o755)
-        self.env['OASIS_TOOLS_DIR'] = str(tools)
 
     def header(self):
         return (f'mode=apply\nproject=a project\nenvironment={self.python.parent.parent}\n'

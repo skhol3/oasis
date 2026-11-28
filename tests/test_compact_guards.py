@@ -134,10 +134,7 @@ class LinkedWorktreeCompactTests(unittest.TestCase):
         subprocess.run([*GIT, '-C', str(cwd), *args], check=True, capture_output=True, env=self.env)
 
     def invoke(self, root, *args):
-        path = root / 'dev/scripts/test-module'
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes((lifecycle.STAGE / 'project-wrappers/test-module').read_bytes())
-        return subprocess.run(['bash', str(path), *args], text=True, cwd=root, env=self.env,
+        return subprocess.run(lifecycle.oasis_argv(root, 'test-module', *args), text=True, cwd=root, env=self.env,
                               capture_output=True)
 
     def run_of(self, root, result, checkout_id):
@@ -216,10 +213,7 @@ class ConfiguredLogsCompactTests(unittest.TestCase):
             profile.write_text(profile.read_text() + "logs = '../logs'\n")
 
     def invoke(self, root, command, *args):
-        path = root / 'dev/scripts' / command
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes((lifecycle.STAGE / 'project-wrappers' / command).read_bytes())
-        return subprocess.run(['bash', str(path), *args], text=True, cwd=root, env=self.env,
+        return subprocess.run(lifecycle.oasis_argv(root, command, *args), text=True, cwd=root, env=self.env,
                               capture_output=True)
 
     def assert_single_run(self, root, checkout_id, database):

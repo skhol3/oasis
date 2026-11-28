@@ -1,6 +1,7 @@
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -115,6 +116,25 @@ class InstallTest(unittest.TestCase):
 
     def test_the_repository_has_no_odoo19_entry_point(self):
         self.assertFalse((ROOT / 'odoo19').exists())
+
+    def test_the_install_ships_no_project_wrapper_templates(self):
+        # v0.21.0 S11: a fixture repository committing the working tree's files installs the tools and no
+        # project-wrappers/ (the one door is the `oasis` entry point).
+        repo = self.scratch / 'repo'
+        listed = subprocess.run(['git', '-C', str(ROOT), 'ls-files', '-z', '--cached', '--others',
+                                 '--exclude-standard'], check=True, capture_output=True, text=True).stdout
+        for name in sorted(set(filter(None, listed.split('\0')))):
+            source = ROOT / name
+            if source.is_file() and not source.is_symlink():
+                (repo / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, repo / name)
+        self.commit_fixture(repo)
+        result = subprocess.run([str(repo / 'install.sh'), '--target', str(self.target)],
+                                capture_output=True, text=True, env=self.env, cwd=self.scratch)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(os.access(self.target / 'tools/start', os.X_OK))
+        self.assertFalse((self.target / 'project-wrappers').exists())
+        self.assertEqual([name for name in self.installed_files() if name.startswith('project-wrappers')], [])
 
     def commit_fixture(self, repo):
         git = ['git', '-C', str(repo), '-c', 'user.name=t', '-c', 'user.email=t@example.invalid']

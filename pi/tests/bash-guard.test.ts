@@ -376,6 +376,20 @@ test("the pre-0.17.0 odoo19 names are not oasis's", () => {
   }
   assert.equal(blockedProgram("~/.agents/skills/odoo19/oasis --project /p menu"), "menu");
   assert.deepEqual(asked("odoo19 --project /p drop-database cc_dev_x"), []);
+  // An old install still on disk: its tool scripts are plain programs that ask nothing, and odoo-bin, dropdb and
+  // psql stay blocked wherever they run from (v0.21.0 L5).
+  for (const command of ["~/.agents/skills/odoo19/tools/drop-database x", "odoo19 --project /p drop-database x"]) {
+    assert.deepEqual(asked(command), [], command);
+  }
+  for (const [command, program] of [
+    ["~/.agents/skills/odoo19/tools/odoo-bin -c dev/odoo.conf -d x", "odoo-bin"],
+    ["cd ~/.agents/skills/odoo19/tools && odoo-bin -d x", "odoo-bin"],
+    ["ODOO19_PROJECT_ROOT=/p ~/.agents/skills/odoo19/tools/stop && odoo-bin -d x", "odoo-bin"],
+    ["bash ~/.agents/skills/odoo19/tools/start; dropdb x", "dropdb"],
+    ["~/.agents/skills/odoo19/tools/odoo-shell x | psql x", "psql"],
+  ]) {
+    assert.equal(blockedProgram(command), program, command);
+  }
 });
 
 test("menu's script forms are blocked only in the installed bundle, not in unrelated projects", () => {

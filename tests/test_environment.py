@@ -108,17 +108,15 @@ class EnvironmentTests(unittest.TestCase):
         return [f'uv pip compile --python-version {python} runtime.in -o runtime.txt (in {requirements})',
                 f'uv pip compile --python-version {python} dev.in -o dev.txt (in {requirements})']
 
-    def test_invalid_option_usage_names_project_wrapper(self):
+    def test_invalid_option_usage_names_the_entry_point(self):
         self.prepare()
-        for command, tail in (('bootstrap', ' [--preview|--apply]'),):
-            result = self.invoke(command, '--invalid')
-            self.assertEqual((result.returncode, result.stdout, result.stderr),
-                             (2, '', 'Usage: ' + str(self.root / 'dev/scripts' / command) + tail + '\n'))
-            self.unchanged()
+        result = self.invoke('bootstrap', '--invalid')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', 'Usage: ' + str(lifecycle.STAGE / 'oasis') + ' [--preview|--apply]\n'))
+        self.unchanged()
         result = self.invoke('audit-dependencies', 'coffee', 'extra')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', 'Usage: ' + str(self.root / 'dev/scripts/audit-dependencies') +
-                          ' [module]\n'))
+                         (2, '', 'Usage: ' + str(lifecycle.STAGE / 'oasis') + ' [module]\n'))
         self.unchanged()
 
     def as_workspace(self, python=None, logs=False):
@@ -677,34 +675,16 @@ esac
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (2, '', 'ERROR: Module not found in this repository: bad-name\n'))
 
-    def test_audit_python_helper_path_runs_as_python_with_project_args(self):
+    def test_audit_help_omits_internal_config_arguments(self):
         self.prepare()
-        (self.root / 'dev/requirements/dev.in').write_text('# no imports\n')
-        helper = self.root / 'dev/scripts/audit_dependencies.py'
-        helper.parent.mkdir(parents=True, exist_ok=True)
-        helper.write_bytes((lifecycle.STAGE / 'project-wrappers/audit_dependencies.py').read_bytes())
-        result = subprocess.run([sys.executable, '-B', str(helper), 'coffee'],
-                                text=True, capture_output=True, env=self.env)
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (0, 'scope=coffee\ndeclared_distributions=0\nexternal_imports=0\n'
-                          'undeclared_dependencies=0\n', ''))
-
-    def test_audit_python_helper_help_omits_internal_config_arguments(self):
-        self.prepare()
-        helper = self.root / 'dev/scripts/audit_dependencies.py'
-        helper.parent.mkdir(parents=True, exist_ok=True)
-        helper.write_bytes((lifecycle.STAGE / 'project-wrappers/audit_dependencies.py').read_bytes())
-        result = subprocess.run([sys.executable, '-B', str(helper), '--help'],
-                                text=True, capture_output=True, env=self.env)
+        result = self.invoke('audit-dependencies', '--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertIn('usage: audit_dependencies.py [-h] [module]\n', result.stdout)
         self.assertNotIn('--project-root', result.stdout)
 
     def test_lock_helper_public_cli_and_missing_lock(self):
         self.prepare()
-        helper = self.root / 'dev/scripts/check_environment.py'
-        helper.parent.mkdir(parents=True, exist_ok=True)
-        helper.write_bytes((lifecycle.STAGE / 'project-wrappers/check_environment.py').read_bytes())
+        helper = lifecycle.STAGE / 'tools/check_environment.py'
         result = subprocess.run([sys.executable, '-B', str(helper),
                                  str(self.root / 'dev/requirements/absent.txt')],
                                 text=True, capture_output=True, env=self.env)

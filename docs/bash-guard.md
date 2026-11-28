@@ -240,7 +240,7 @@ Contract change in v0.16.0 (S1): `setup --apply` (Tier A) runs; `worktree-init` 
 
 ## What it does not catch
 
-It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught, and neither are the project wrappers copied to `dev/scripts/` (`dev/scripts/drop-database`, `dev/scripts/stop`). Writes to a setting file by other programs (a Python or Node one-liner, `dd`, `install`, `ln`), by a target held in a variable (`> "$f"`), or moving or removing the file (`mv oasis-workspace.toml x`, `rm`) are not caught either. To bypass it, run the command yourself or disable the package.
+It is a guard rail, not a sandbox: scripts, commands piped into a shell, `ssh`, `su -c` or `python3 -m odoo` are not caught, and neither are a project's own copies of the earlier project wrappers in `dev/scripts/` (`dev/scripts/drop-database`, `dev/scripts/stop`; oasis ships no templates since v0.21.0): to the guard they are plain programs. Writes to a setting file by other programs (a Python or Node one-liner, `dd`, `install`, `ln`), by a target held in a variable (`> "$f"`), or moving or removing the file (`mv oasis-workspace.toml x`, `rm`) are not caught either. To bypass it, run the command yourself or disable the package.
 
 ## Text that bash would not run
 

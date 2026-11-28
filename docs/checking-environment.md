@@ -95,9 +95,9 @@ reported it as `missing_package=zope-event==5.0`). It prints `locked_packages=<n
 `missing_package=<name>==<version>` or `version_mismatch=<name>: expected=<x> actual=<y>` per difference,
 then `missing_packages=<n>` and `version_mismatches=<n>`. A dist-info or egg-info without usable metadata (none, no
 name or version, or not readable as text) is left out, so the package it would be is reported missing instead of
-the comparison failing. The comparison (`tools/check_environment.py`, also the project wrapper
-`dev/scripts/check_environment.py <lockfile>`) exits 0 when the environment matches, 3 when it drifted (1 before
-0.17.0), 2 for a lock it cannot read, and 1 for a crash (a traceback), which is therefore never reported as a drift.
+the comparison failing. The comparison (`tools/check_environment.py <lockfile>`) exits 0 when the environment
+matches, 3 when it drifted (1 before 0.17.0), 2 for a lock it cannot read, and 1 for a crash (a traceback), which
+is therefore never reported as a drift.
 The result depends on who created the environment:
 
 | Environment | Matches the locks | Does not match them |

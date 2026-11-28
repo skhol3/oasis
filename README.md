@@ -180,21 +180,23 @@ identical alias): [which one when](docs/setup.md#setup-or-bootstrap). v0.21.0 re
 `check-environment` (see below).
 
 Contract change in v0.17.0: the `odoo19` name is gone, with no transition. `./install.sh` installs into
-`~/.agents/skills/oasis` and moves a previous install out of `~/.agents/skills/odoo19` into its backups
-(only when it holds `.oasis-install.json`; anything else there is left and named in a warning). The
-`odoo19` entry point, the `odoo19-*` skills, the inactive `odoo19_*` Gentle Shell tools and `/odoo19` are
-removed: run `~/.agents/skills/oasis/oasis`, `/oasis` and the `oasis_*` tools. A project whose wrappers in
-`dev/scripts/` were copied from an earlier version still calls `~/.agents/skills/odoo19/tools`; `oasis
-doctor` reports it as `FAIL project_wrappers=old_install_dir`, and its fix line names the edit: replace
-`.agents/skills/odoo19/` with `.agents/skills/oasis/` in each wrapper it lists (or copy them again from
-`~/.agents/skills/oasis/project-wrappers/`). An overlay or allowlist that names an `odoo19_*` tool needs
-the `oasis_*` name; `/oasis setup` updates an outdated overlay. Only the `OASIS_*` variables are read: a
-legacy `ODOO19_*` one (`ODOO19_PROJECT_ROOT`, `ODOO19_ENTRYPOINT`, `ODOO19_TOOLS_DIR`,
-`ODOO19_COMPOSE_LOCK_TIMEOUT`) is ignored, and neither the entry point nor a project wrapper sets one. A workspace
-without `[tooling].logs` keeps its logs in `logs` next to `oasis-workspace.toml`, as `oasis setup` writes the key
-(`logs/<x.y>` with `workspace_version = 2`), no longer in each checkout's `dev/logs/odoo19/`: runs already there
-stay where they are and are no longer read by `oasis_test_summary` (the runs before 0.8.0 under
-`<logs>/odoo19/` still are). The legacy `.odoo19-agent.toml` is still refused naming `oasis migrate`.
+`~/.agents/skills/oasis` and moves a previous install out of `~/.agents/skills/odoo19` into its backups (only when
+it holds `.oasis-install.json`; anything else there is left and named in a warning; until v0.21.0, which no longer
+moves it). The `odoo19` entry point, the `odoo19-*` skills, the inactive `odoo19_*` Gentle Shell tools and
+`/odoo19` are removed: run `~/.agents/skills/oasis/oasis`, `/oasis` and the `oasis_*` tools. A project whose
+wrappers in `dev/scripts/` were copied from an earlier version still calls `~/.agents/skills/odoo19/tools`; `oasis
+doctor` reports it as `FAIL project_wrappers=old_install_dir` (until v0.21.0, which removed the check), and its fix
+line names the edit: replace `.agents/skills/odoo19/` with `.agents/skills/oasis/` in each wrapper it lists (or
+copy them again from `~/.agents/skills/oasis/project-wrappers/`, until v0.21.0 removed the templates; see below).
+An overlay or allowlist that names an `odoo19_*` tool needs the `oasis_*` name; `/oasis setup` updates an outdated
+overlay. Only the `OASIS_*` variables are read: a legacy `ODOO19_*` one (`ODOO19_PROJECT_ROOT`,
+`ODOO19_ENTRYPOINT`, `ODOO19_TOOLS_DIR`, `ODOO19_COMPOSE_LOCK_TIMEOUT`) is ignored, and neither the entry point nor
+a project wrapper sets one. A workspace without `[tooling].logs` keeps its logs in `logs` next to
+`oasis-workspace.toml`, as `oasis setup` writes the key (`logs/<x.y>` with `workspace_version = 2`), no longer in
+each checkout's `dev/logs/odoo19/`: runs already there stay where they are and are no longer read by
+`oasis_test_summary` (the runs before 0.8.0 under `<logs>/odoo19/` still are, until v0.21.0). The legacy
+`.odoo19-agent.toml` is still refused naming `oasis migrate` (until v0.21.0, which removed the refusal and `oasis
+migrate`; see below).
 
 Contract change in v0.20.0: the exit code of `bootstrap --apply` reports its own work, the locks and the sync: 0
 once they succeeded, also when its trailing `doctor --environment --full` fails outside the sync (for example
@@ -264,8 +266,8 @@ from an earlier version runs:
   file>` it names, then install this version again. Or create the workspace file with `oasis setup` and delete the
   old file.
 - Project wrappers in `dev/scripts/` that call `~/.agents/skills/odoo19/tools`: replace `.agents/skills/odoo19/`
-  with `.agents/skills/oasis/` in each (`grep -l .agents/skills/odoo19/ dev/scripts/*` lists them), or copy them
-  again from `~/.agents/skills/oasis/project-wrappers/`.
+  with `.agents/skills/oasis/` in each (`grep -l .agents/skills/odoo19/ dev/scripts/*` lists them), or call
+  `oasis --project <checkout> <command>` instead and delete them (the templates are gone too: S11 below).
 - An install before 0.17.0 still in `~/.agents/skills/odoo19`: move it out of `~/.agents/skills` yourself.
 - A `lock.sha256` relative to the checkout: in the requirements directory run `sha256sum runtime.in runtime.txt
   dev.in dev.txt > lock.sha256` (`overrides.txt` last when it exists), which writes the same digests relative to
@@ -285,6 +287,14 @@ their policy rows are removed, and the bash guard treats them as no oasis comman
   --environment [--quick|--full]`, the same checks, lines and exit codes; delete the wrapper from `dev/scripts/`.
   The `oasis_check_environment` tool keeps its name and runs it.
 
+Contract change in v0.21.0 (S11): the project wrapper templates are gone. The bundle no longer has (nor installs)
+`project-wrappers/`, the scripts a project could copy into its `dev/scripts/` to run a tool without the entry point;
+`oasis` is the one door. A project's existing copies keep working while the tool names exist: each still runs
+`~/.agents/skills/oasis/tools/<command>` (or the directory in `OASIS_TOOLS_DIR`) for the project two levels above
+it, and the bash guard treats them as plain programs, as before. Call `oasis --project <checkout> <command>`
+instead (the same tool, its lines and exit codes; a usage line names the entry point instead of the copy), and
+delete the copies from `dev/scripts/` when convenient.
+
 ## Documentation
 
 | Documentation | Purpose |
@@ -297,7 +307,7 @@ their policy rows are removed, and the bash guard treats them as no oasis comman
 | [Subagents](docs/subagents.md) | The overlay that gives Gentle Shell subagents the `oasis_*` tools |
 | [Setting up a new workspace](docs/new-workspace.md) | From a clone to `doctor` and a database with `oasis setup`; where each value lives, an example tree, the steps by hand |
 | [Setting up a checkout with oasis setup](docs/setup.md) | `oasis setup`: the plan, then `--apply` creates only what is missing |
-| [New project setup](docs/project-setup.md) | Workspace file, entry point and optional project wrappers |
+| [New project setup](docs/project-setup.md) | Workspace file and the entry point |
 | [Checking the environment](docs/checking-environment.md) | `doctor`, `doctor --environment`, `lock.sha256` and the installed packages (a drifted adopted environment is a WARN) |
 | [Workspace file](docs/workspace-file.md) | One `oasis-workspace.toml` for every checkout |
 | [Path-free odoo.conf](docs/path-free-odoo-conf.md) | What oasis passes on the Odoo command line |

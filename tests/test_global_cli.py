@@ -327,10 +327,9 @@ class GlobalCliTests(unittest.TestCase):
                     with self.subTest(name=name, args=args, project=project.name):
                         self.assert_no_calls(self.invoke('--project', str(project), name, *args),
                                              f'ERROR: Unsupported oasis command: {name}\n')
-        # The bundle ships neither their tool scripts nor the check-environment project wrapper.
+        # The bundle ships none of their tool scripts (nor, since S11, any project wrapper: tests/test_bundle.py).
         for name in REMOVED_ALIASES:
             self.assertFalse((ROOT / 'tools' / name).exists(), name)
-        self.assertFalse((ROOT / 'project-wrappers/check-environment').exists())
         # The commands they named still run.
         for name, args in (('doctor', ('--environment', '--full')), ('setup-postgres', ()),
                            ('recreate-postgres-volume', ('--confirm', 'cc-shop'))):
@@ -353,7 +352,7 @@ class GlobalCliTests(unittest.TestCase):
         self.assert_no_calls(self.invoke('--project', str(self.project), 'status'),
                              f'oasis tools are not installed: {self.bundle / "tools/status"}\n')
 
-    def test_staged_guidance_describes_full_path_and_optional_wrappers(self):
+    def test_staged_guidance_describes_full_path_and_no_wrapper_templates(self):
         # The setup and tool-manager sections moved from the README to their topic files.
         setup = (ROOT / 'docs/project-setup.md').read_text()
         troubleshooting = (ROOT / 'docs/troubleshooting.md').read_text()
@@ -363,7 +362,9 @@ class GlobalCliTests(unittest.TestCase):
                    'doctor --environment --quick')
         self.assertIn(example, setup)
         self.assertIn(example, environment)
-        self.assertIn('Alternatively, if the project wants legacy local CLI entrypoints', setup)
+        # v0.21.0 S11: no wrapper templates to copy; a project's existing copies keep working.
+        self.assertNotIn('Alternatively, if the project wants legacy local CLI entrypoints', setup)
+        self.assertIn('oasis ships no project wrapper templates since v0.21.0', setup)
         self.assertIn('Missing project wrappers alone are not a blocker', lifecycle)
         self.assertIn('mise', troubleshooting)
 

@@ -221,13 +221,14 @@ class BundleTests(unittest.TestCase):
                 named.add(relative.as_posix())
         self.assertEqual(sorted(named), sorted(ODOO19_MENTIONS))
 
-    def test_the_project_wrapper_templates_call_the_oasis_install_directory(self):
-        # v0.17.0 S3: a project wrapper copied before 0.17.0 calls the old one (the README says the edit).
-        for path in sorted((ROOT / 'project-wrappers').iterdir()):
-            with self.subTest(wrapper=path.name):
-                text = path.read_text(encoding='utf-8')
-                self.assertIn('.agents/skills/oasis/tools', text)
-                self.assertNotIn('.agents/skills/odoo19', text)
+    def test_the_project_wrapper_templates_are_gone_and_only_the_contract_notes_name_them(self):
+        # v0.21.0 S11: one door, `oasis <command>`. A project's existing dev/scripts copies keep working while the
+        # tool names exist; only the README contract notes name the directory the templates were in.
+        self.assertFalse((ROOT / 'project-wrappers').exists())
+        shipped = [*documents(ROOT), *skill_documents(ROOT)]
+        mentions = {path.relative_to(ROOT).as_posix() for path in shipped
+                    if 'project-wrappers' in path.read_text(encoding='utf-8')}
+        self.assertEqual(mentions, {'README.md'})
 
     def test_the_legacy_profile_example_is_gone_and_only_the_contract_notes_name_the_format(self):
         self.assertFalse((ROOT / 'odoo-environment/assets/odoo19-agent.example.toml').exists())

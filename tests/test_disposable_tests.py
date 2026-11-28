@@ -164,10 +164,7 @@ class DisposableFixture(unittest.TestCase):
         return database
 
     def popen(self, command, *args, **kwargs):
-        path = self.root / 'dev/scripts' / command
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes((lifecycle.STAGE / 'project-wrappers' / command).read_bytes())
-        process = subprocess.Popen(['bash', str(path), *args], cwd=self.root, env=self.env, text=True,
+        process = subprocess.Popen(lifecycle.oasis_argv(self.root, command, *args), cwd=self.root, env=self.env, text=True,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
         self.addCleanup(lambda: process.poll() is None and process.kill())
         return process

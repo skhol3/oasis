@@ -35,6 +35,10 @@ names) may still change in a minor release; every such change is listed here und
   wrapper, the entry point's command list and its *Deprecated aliases* help line, and their rows of the policy
   table and of the bash guard. Each old name exits 2 (`Unsupported oasis command: <name>`), like any unknown
   command. `bootstrap --apply` runs its trailing `doctor --environment --full` through `tools/doctor`.
+- Contract change: the project wrapper templates (`project-wrappers/`: 13 commands plus `common.sh`,
+  `check_environment.py` and `audit_dependencies.py`), which ran `~/.agents/skills/oasis/tools/<command>` without the
+  entry point; the bundle no longer ships them. A project's existing copies in `dev/scripts/` keep working while the
+  tool names exist: call `oasis --project <checkout> <command>` instead and delete the copies when convenient.
 
 ## [0.20.0] - 2026-11-27
 

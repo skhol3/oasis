@@ -71,6 +71,20 @@ class DependencyLockTests(unittest.TestCase):
         self.write_lock(requirements, '../config/requirements/')
         self.assert_locks('stale')
 
+    def test_bootstrap_preview_accepts_a_lock_relative_to_its_directory_and_plans_a_stale_one(self):
+        # v0.21.0 L6: restored from the check-environment tests T2 removed.
+        requirements = self.requirements()
+        self.write_lock(requirements, '')
+        result = self.run_tool('bootstrap', '--preview')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.startswith('mode=preview\n'), result.stdout)
+        # v0.14.0 (S9): a stale input is no longer refused; bootstrap plans to compile the locks.
+        (requirements / 'dev.in').write_text('# changed\n')
+        result = self.run_tool('bootstrap', '--preview')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn('mutation=none\nlocks=stale\n', result.stdout)
+        self.assertTrue(result.stdout.endswith('planned_action=compile_locks_then_sync_lock\n'), result.stdout)
+
 
 class OldPythonAuditTests(unittest.TestCase):
     """bootstrap --apply ends with the full check, whose dependency audit runs with the environment's

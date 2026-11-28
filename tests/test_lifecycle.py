@@ -5,6 +5,7 @@ import os
 import random
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -27,6 +28,38 @@ def write_config(root, text):
         checkout.write_text('[tooling]\n' + ''.join(slugs))
     elif checkout.exists():
         checkout.unlink()
+
+
+def oasis_argv(root, command, *args, entry=None):
+    """`oasis --project <root> <command> <args>`, the one door (v0.21.0 S11 removed the project wrapper
+    templates that the tests used to copy into dev/scripts); entry is a staged_bundle's entry point."""
+    return [sys.executable, '-B', str(entry or STAGE / 'oasis'), '--project', str(root), command, *args]
+
+
+def staged_bundle(directory):
+    """A copy of the entry point and its tools/ in directory, for a test that replaces a tool (the entry point runs
+    only the tools next to it); returns that entry point. Copying again refreshes the tools."""
+    shutil.copytree(STAGE / 'tools', directory / 'tools', ignore=shutil.ignore_patterns('__pycache__'),
+                    dirs_exist_ok=True)
+    shutil.copy2(STAGE / 'oasis', directory / 'oasis')
+    return directory / 'oasis'
+
+
+def existing_wrapper_copy(root, command, entrypoint):
+    """A project's own copy of a v0.20.0 project wrapper template in <root>/dev/scripts, byte for byte (the
+    templates of update-module and the like set OASIS_ENTRYPOINT, those of start, stop, status, install-module and
+    test-module did not). v0.21.0 S11 removed the templates; copies a project made keep working while the tool
+    names exist."""
+    path = root / 'dev/scripts' / command
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('#!/usr/bin/env bash\nset -Eeuo pipefail\n'
+                    'export OASIS_PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"\n'
+                    + ('export OASIS_ENTRYPOINT="$0"\n' if entrypoint else '')
+                    + 'tools=${OASIS_TOOLS_DIR:-$HOME/.agents/skills/oasis/tools}\n'
+                    f'if [[ ! -f "$tools/{command}" ]]; then printf \'oasis tools are not installed: %s\\n\' '
+                    f'"$tools/{command}" >&2; exit 2; fi\n'
+                    f'exec bash "$tools/{command}" "$@"\n')
+    return path
 
 
 def free_port():
@@ -190,41 +223,36 @@ exit 0
         self.env['XDG_RUNTIME_DIR'] = self.runtime.name
 
     def invoke(self, command, *args, input=None):
-        path = self.root / 'dev/scripts' / command
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes((STAGE / 'project-wrappers' / command).read_bytes())
-        return subprocess.run(['bash', str(path), *args], text=True, input=input,
-                              cwd=self.root, env=self.env, capture_output=True)
+        return subprocess.run(oasis_argv(self.root, command, *args, entry=getattr(self, 'entry', None)), text=True,
+                              input=input, cwd=self.root, env=self.env, capture_output=True)
 
     def doctor_environment(self, *args):
-        """`oasis --project <root> doctor --environment <args>`, the environment checks (v0.21.0 S7: they have no
-        project wrapper since check-environment is gone)."""
-        return subprocess.run([sys.executable, '-B', str(STAGE / 'oasis'), '--project', str(self.root), 'doctor',
-                               '--environment', *args], text=True, cwd=self.root, env=self.env, capture_output=True)
+        """`oasis --project <root> doctor --environment <args>`, the environment checks."""
+        return subprocess.run(oasis_argv(self.root, 'doctor', '--environment', *args), text=True, cwd=self.root,
+                              env=self.env, capture_output=True)
 
     def unchanged(self):
         self.assertFalse(self.commands.exists(), self.commands.read_text() if self.commands.exists() else '')
 
-    def test_usage_names_project_wrapper_not_global_tool(self):
+    def test_usage_names_the_entry_point_not_the_tool(self):
         for command, args, tail in (
                 ('update-module', ('coffee',), ' <module> <database>'),
                 ('list-databases', ('unexpected',), '')):
             result = self.invoke(command, *args)
             self.assertEqual((result.returncode, result.stdout, result.stderr),
-                             (2, '', 'Usage: ' + str(self.root / 'dev/scripts' / command) + tail + '\n'))
+                             (2, '', 'Usage: ' + str(STAGE / 'oasis') + tail + '\n'))
             self.unchanged()
 
     def test_tier_b_flags_are_never_abbreviated_or_valued(self):
         # v0.16.0 S1 review: stop --database and drop-database --confirm take only their exact spelling
         # (no argparse abbreviations); the guard asks for the other spellings anyway (pi/lib/bash-guard.ts).
-        # stop's usage names the tool the wrapper runs.
-        stop = 'Usage: ' + str(STAGE / 'tools/stop') + ' [--database | --force]\n'
+        stop = 'Usage: ' + str(STAGE / 'oasis') + ' [--database | --force]\n'
         for args in (('--d',), ('--datab',), ('--database=x',), ('--database', '--database')):
             with self.subTest(args=args):
                 result = self.invoke('stop', *args)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', stop))
                 self.unchanged()
-        drop = ('Usage: ' + str(self.root / 'dev/scripts/drop-database')
+        drop = ('Usage: ' + str(STAGE / 'oasis')
                 + ' <cc_dev_*|cc_test_*> [--terminate] [--confirm <database>]\n')
         for args in (('--conf', 'cc_dev_coffee'), ('--confirm', 'cc_dev_coffee', '--term'),
                      ('--terminate=1', '--confirm', 'cc_dev_coffee')):
@@ -250,7 +278,7 @@ exit 0
         self.unchanged()
 
     def test_odoo_shell_refuses_extra_arguments_with_its_usage(self):
-        usage = 'Usage: ' + str(self.root / 'dev/scripts/odoo-shell') + ' <database>\n'
+        usage = 'Usage: ' + str(STAGE / 'oasis') + ' <database>\n'
         self.env['FAKE_EXISTS'] = '1'
         for args in (('cc_dev_coffee', 'extra'), ('cc_dev_coffee', '--', 'x'), ('--help', 'extra'), ()):
             with self.subTest(args=args):
@@ -277,9 +305,28 @@ exit 0
         self.assertIn(' shell -c ' + str(self.root / 'dev/odoo.conf') + ' -d cc_dev_coffee\n',
                       self.commands.read_text())
 
-    def test_missing_tools_fails_clearly_without_fallback(self):
+    def test_an_existing_project_wrapper_copy_keeps_working(self):
+        # v0.21.0 S11: the templates are gone; a copy a project made of one still runs the tool for its project
+        # (OASIS_TOOLS_DIR is the fixture's tools/), and names itself in the usage line when it sets the entry point.
+        update = existing_wrapper_copy(self.root, 'update-module', entrypoint=True)
+        result = subprocess.run(['bash', str(update), 'coffee'], text=True, cwd=self.root, env=self.env,
+                                capture_output=True)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', 'Usage: ' + str(update) + ' <module> <database>\n'))
+        self.unchanged()
+        # The copy and the entry point print the same and run the same commands.
+        status = existing_wrapper_copy(self.root, 'status', entrypoint=False)
+        copy = subprocess.run(['bash', str(status)], text=True, cwd=self.root, env=self.env, capture_output=True)
+        copy_commands = self.commands.read_text()
+        self.commands.unlink()
+        entry = self.invoke('status')
+        self.assertEqual((copy.returncode, copy.stdout, copy.stderr, copy_commands),
+                         (entry.returncode, entry.stdout, entry.stderr, self.commands.read_text()))
+        self.assertEqual(copy.returncode, 0, copy.stderr)
+        self.commands.unlink()
+        # Without the tools it fails clearly, with no fallback.
         self.env['OASIS_TOOLS_DIR'] = str(self.root / 'not installed')
-        result = self.invoke('status')
+        result = subprocess.run(['bash', str(status)], text=True, cwd=self.root, env=self.env, capture_output=True)
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (2, '', 'oasis tools are not installed: ' +
                           str(self.root / 'not installed/status') + '\n'))
@@ -854,7 +901,7 @@ class Odoo15CommandLineTests(unittest.TestCase):
         self.addCleanup(kill_recorded)
 
         def oasis(*args):
-            # restart has no project wrapper: the oasis entry point runs it, bounded.
+            # The oasis entry point runs restart, bounded.
             return subprocess.run([sys.executable, '-B', str(STAGE / 'oasis'), '--project', str(self.root), *args],
                                   text=True, cwd=self.root, env=self.env, capture_output=True,
                                   stdin=subprocess.DEVNULL, timeout=60)
@@ -899,10 +946,7 @@ class SecondPortConfTests(unittest.TestCase):
                              f'http_port = {self.http_port}\n{own} = {self.gevent_port}\n{other} = {self.other_port}\n')
 
     def start(self, *args):
-        path = self.linked / 'dev/scripts/start'
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes((STAGE / 'project-wrappers/start').read_bytes())
-        return subprocess.run(['bash', str(path), *args], text=True, cwd=self.linked, env=self.env,
+        return subprocess.run(oasis_argv(self.linked, 'start', *args), text=True, cwd=self.linked, env=self.env,
                               capture_output=True, stdin=subprocess.DEVNULL)
 
     def assert_second_port(self, series, option):

@@ -117,5 +117,14 @@ class DoctorEnvironmentTests(unittest.TestCase):
                     # doctor itself still runs there (one FAIL configuration).
                     self.assertTrue(self.cli(program, 'doctor', project=plain)[1].startswith('FAIL configuration='))
 
+
+class SetupOrBootstrapDocTests(unittest.TestCase):
+    def test_the_setup_guide_says_which_setup_command_to_use(self):
+        # v0.21.0 L6: restored from the alias test T2 removed; setup and bootstrap stay two commands.
+        setup = (ROOT / 'docs/setup.md').read_text(encoding='utf-8')
+        self.assertIn('\n## setup or bootstrap\n', setup)
+        self.assertIn('neither is an alias of the other\n(v0.16.0 S5)', setup)
+
+
 if __name__ == '__main__':
     unittest.main()

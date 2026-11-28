@@ -77,6 +77,19 @@ def write_conf(test, addons_path):
                          f'gevent_port = {test.gevent_port}\n')
 
 
+# The dev/scripts/common.sh project wrapper template of v0.20.0, byte for byte (removed in v0.21.0, S11).
+OLD_COMMON_SH = '''#!/usr/bin/env bash
+# This file is sourced by existing project-local helpers; do not exec a subprocess.
+export OASIS_PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+tools=${OASIS_TOOLS_DIR:-$HOME/.agents/skills/oasis/tools}
+if [[ ! -f "$tools/common.sh" ]]; then
+  printf 'oasis tools are not installed: %s\\n' "$tools/common.sh" >&2
+  return 2
+fi
+source "$tools/common.sh"
+'''
+
+
 class SharedConfTests(unittest.TestCase):
     setUp_fixture = lifecycle.LifecycleTests.setUp
     unchanged = lifecycle.LifecycleTests.unchanged
@@ -86,10 +99,7 @@ class SharedConfTests(unittest.TestCase):
         shared_layout(self)
 
     def invoke(self, root, command, *args, input=None):
-        path = root / 'dev/scripts' / command
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes((lifecycle.STAGE / 'project-wrappers' / command).read_bytes())
-        return subprocess.run(['bash', str(path), *args], text=True, input=input, cwd=root,
+        return subprocess.run(lifecycle.oasis_argv(root, command, *args), text=True, input=input, cwd=root,
                               env=self.env, capture_output=True)
 
     def odoo_lines(self):
@@ -250,14 +260,15 @@ class SharedConfTests(unittest.TestCase):
                 self.assertEqual(self.odoo_lines(), [])
 
     def test_project_local_helpers_calling_run_odoo_get_the_same_options(self):
+        # v0.21.0 S11: the dev/scripts/common.sh template is gone; a project's existing copy (its v0.20.0 text,
+        # below) keeps sourcing the installed tools/common.sh.
         helper = 'source "$(dirname "$0")/common.sh"\nrun_odoo -d cc_dev_x --stop-after-init\n'
         for root, addons in ((self.main, None),
                              (self.linked, f'{self.enterprise},{self.linked},{self.odoo_addons}')):
             with self.subTest(root=root):
                 scripts = root / 'dev/scripts'
                 scripts.mkdir(parents=True, exist_ok=True)
-                (scripts / 'common.sh').write_bytes(
-                    (lifecycle.STAGE / 'project-wrappers/common.sh').read_bytes())
+                (scripts / 'common.sh').write_text(OLD_COMMON_SH)
                 (scripts / 'local-helper').write_text('set -Eeuo pipefail\n' + helper)
                 result = subprocess.run(['bash', str(scripts / 'local-helper')], text=True, cwd=root,
                                         env=self.env, capture_output=True)

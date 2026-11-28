@@ -203,38 +203,32 @@ class AdoptedEnvironmentTests(unittest.TestCase):
 
     def test_an_adopted_environment_that_drifted_is_a_warning_and_is_left_as_it_is(self):
         before = snapshot(self.environment)
-        for args in (('doctor', '--environment', '--full'),):
-            with self.subTest(args=args):
-                code, stdout, stderr = self.cli(*args)
-                self.assertEqual((code, stderr), (0, ''), stdout)
-                self.assertIn('PASS package_compatibility=valid\n' + self.warned(self.environment)
-                              + 'scope=all\n', stdout)
-                self.assertNotIn('locked_environment=exact', stdout)
-                self.assertTrue(stdout.endswith('environment_mode=full\nenvironment_failures=0\n'), stdout)
-                self.assertEqual(snapshot(self.environment), before)
+        code, stdout, stderr = self.cli('doctor', '--environment', '--full')
+        self.assertEqual((code, stderr), (0, ''), stdout)
+        self.assertIn('PASS package_compatibility=valid\n' + self.warned(self.environment)
+                      + 'scope=all\n', stdout)
+        self.assertNotIn('locked_environment=exact', stdout)
+        self.assertTrue(stdout.endswith('environment_mode=full\nenvironment_failures=0\n'), stdout)
+        self.assertEqual(snapshot(self.environment), before)
 
     def test_an_environment_oasis_created_that_drifted_still_fails(self):
         (self.environment / MARK).write_text('created by oasis\n')
-        for args in (('doctor', '--environment', '--full'),):
-            with self.subTest(args=args):
-                code, stdout, stderr = self.cli(*args)
-                self.assertEqual((code, stderr), (1, 'FAIL locked_environment=drifted\n'))
-                self.assertIn('PASS package_compatibility=valid\n' + DRIFT + 'scope=all\n', stdout)
-                self.assertNotIn('WARN', stdout)
-                self.assertTrue(stdout.endswith('environment_mode=full\nenvironment_failures=1\n'), stdout)
+        code, stdout, stderr = self.cli('doctor', '--environment', '--full')
+        self.assertEqual((code, stderr), (1, 'FAIL locked_environment=drifted\n'))
+        self.assertIn('PASS package_compatibility=valid\n' + DRIFT + 'scope=all\n', stdout)
+        self.assertNotIn('WARN', stdout)
+        self.assertTrue(stdout.endswith('environment_mode=full\nenvironment_failures=1\n'), stdout)
 
     def test_a_crash_of_the_comparison_fails_for_an_adopted_environment(self):
         # A traceback (exit 1) is no drift: FAIL, never the WARN of an adopted environment.
         self.python.write_text(self.python.read_text().replace(REAL_COMPARISON, (
             "*/check_environment.py) echo 'Traceback (most recent call last):' >&2; "
             "echo 'TypeError: broken' >&2; exit 1 ;;")))
-        for args in (('doctor', '--environment', '--full'),):
-            with self.subTest(args=args):
-                code, stdout, stderr = self.cli(*args)
-                self.assertEqual((code, stderr), (1, 'Traceback (most recent call last):\nTypeError: broken\n'
-                                                     'FAIL locked_environment=drifted\n'))
-                self.assertNotIn('WARN', stdout)
-                self.assertTrue(stdout.endswith('environment_mode=full\nenvironment_failures=1\n'), stdout)
+        code, stdout, stderr = self.cli('doctor', '--environment', '--full')
+        self.assertEqual((code, stderr), (1, 'Traceback (most recent call last):\nTypeError: broken\n'
+                                             'FAIL locked_environment=drifted\n'))
+        self.assertNotIn('WARN', stdout)
+        self.assertTrue(stdout.endswith('environment_mode=full\nenvironment_failures=1\n'), stdout)
 
     def test_an_unreadable_lock_still_fails_for_an_adopted_environment(self):
         (self.requirements / 'dev.txt').write_text('# no pins\n')

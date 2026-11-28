@@ -83,6 +83,12 @@ class LocksTests(unittest.TestCase):
         self.assert_state('stale')
         self.assertFalse(locks.current(self.requirements))
 
+    def test_a_lock_relative_to_the_project_root_with_a_hand_edited_lock_file_is_stale_not_edited(self):
+        # v0.21.0 L5: the old format is never read, so an edit under it is not told apart: compile again.
+        self.write_lock('dev/requirements/')
+        (self.requirements / 'dev.txt').write_text('pylint==3.0.0\n')
+        self.assert_state('stale')
+
     def test_an_unreadable_fingerprint_is_stale(self):
         (self.requirements / 'lock.sha256').write_text('# not a fingerprint\n')
         self.assert_state('stale')

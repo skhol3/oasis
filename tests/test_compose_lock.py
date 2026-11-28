@@ -67,14 +67,8 @@ class ComposeLockTests(unittest.TestCase):
                      ('compose-' + hashlib.sha256(
                          os.path.realpath(self.compose_file).encode()).hexdigest()[:16] + '.lock'))
 
-    def wrapper(self, root, command):
-        path = root / 'dev/scripts' / command
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes((lifecycle.STAGE / 'project-wrappers' / command).read_bytes())
-        return path
-
     def run_in(self, root, command, *args, env=None):
-        return subprocess.run(['bash', str(self.wrapper(root, command)), *args], text=True,
+        return subprocess.run(lifecycle.oasis_argv(root, command, *args), text=True,
                               cwd=root, env=env or self.env, capture_output=True)
 
     def up_line(self):
@@ -82,7 +76,7 @@ class ComposeLockTests(unittest.TestCase):
                 'up -d --wait --wait-timeout 60 db')
 
     def test_concurrent_starts_in_two_checkouts_do_not_overlap_compose_up(self):
-        processes = [subprocess.Popen(['bash', str(self.wrapper(root, 'start')), '--stop-after-init'],
+        processes = [subprocess.Popen(lifecycle.oasis_argv(root, 'start', '--stop-after-init'),
                                       text=True, cwd=root, env=self.env, stdout=subprocess.PIPE,
                                       stderr=subprocess.PIPE)
                      for root in (self.root, self.other)]
@@ -124,7 +118,7 @@ class ComposeLockTests(unittest.TestCase):
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         # The default would wait 120 s; OASIS_COMPOSE_LOCK_TIMEOUT sets the wait.
         env = {**self.env, 'OASIS_COMPOSE_LOCK_TIMEOUT': '0.3'}
-        result = subprocess.run(['bash', str(self.wrapper(self.root, 'list-databases'))], text=True,
+        result = subprocess.run(lifecycle.oasis_argv(self.root, 'list-databases'), text=True,
                                 cwd=self.root, env=env, capture_output=True, timeout=30)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (1, '', TIMEOUT_MESSAGE))
         self.unchanged()
@@ -138,7 +132,7 @@ class ComposeLockTests(unittest.TestCase):
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         env = {**self.env, 'ODOO19_COMPOSE_LOCK_TIMEOUT': '0.3'}
         env.pop('OASIS_COMPOSE_LOCK_TIMEOUT', None)
-        process = subprocess.Popen(['bash', str(self.wrapper(self.root, 'list-databases'))], cwd=self.root, env=env,
+        process = subprocess.Popen(lifecycle.oasis_argv(self.root, 'list-databases'), cwd=self.root, env=env,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         try:
             with self.assertRaises(subprocess.TimeoutExpired):

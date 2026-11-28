@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
-export OASIS_PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-export OASIS_ENTRYPOINT="$0"
-tools=${OASIS_TOOLS_DIR:-$HOME/.agents/skills/oasis/tools}
-if [[ ! -f "$tools/bootstrap" ]]; then printf 'oasis tools are not installed: %s\n' "$tools/bootstrap" >&2; exit 2; fi
-exec bash "$tools/bootstrap" "$@"

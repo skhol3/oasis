@@ -823,12 +823,9 @@ class DetachTests(MenuFixture):
         return self.invoke('start', *args)
 
     def invoke(self, command, *args):
-        """The project wrapper, bounded: a start that never returns fails instead of hanging."""
-        path = self.root / 'dev/scripts' / command
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes((ROOT / 'project-wrappers' / command).read_bytes())
+        """The command through the entry point, bounded: a start that never returns fails instead of hanging."""
         try:
-            return subprocess.run(['bash', str(path), *args], text=True, cwd=self.root, env=self.env,
+            return subprocess.run(lifecycle.oasis_argv(self.root, command, *args), text=True, cwd=self.root, env=self.env,
                                   capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
         except subprocess.TimeoutExpired as exc:
             self.kill_recorded()

@@ -1,6 +1,6 @@
 # Project capability contract
 
-Read the current project's instructions before using this optional example. Project permissions, database guards, and validation requirements prevail. The example is a non-runtime illustration, not a machine-validated authorization schema or an installed wrapper. An existing complete `AGENTS.md` and documented guarded command interface need no template. Local wrappers are optional when an installed global entrypoint is explicitly authorized.
+Read the current project's instructions before using this optional example. Project permissions, database guards, and validation requirements prevail. The example is a non-runtime illustration, not a machine-validated authorization schema or an installed wrapper. An existing complete `AGENTS.md` and documented guarded command interface need no template. oasis ships no local wrappers since v0.21.0; a project's existing ones are optional when an installed global entrypoint is explicitly authorized.
 
 ## One runtime source, distinct roles
 
