@@ -5,7 +5,9 @@ starts (odoo-bin -d <name> would create it), naming the create-database plan.
 start and restart (v0.20.0 L19, the slice verifier's defect 2) open only existing databases too: odoo-bin creates
 every database it is given that is missing (-d, or odoo.conf's db_name, a comma-separated list), so each one is
 checked first and a missing one is refused (exit 2) naming the create-database plan; start without a database
-(Odoo's database selector) runs as before.
+(Odoo's database selector) runs as before. Without -d, the database also comes from PGDATABASE on 19.0 (its -d reads
+that variable, over the configuration file; 15.0 does not read it) and from the configuration file of a later
+-c/--config among the passed options instead of odoo.conf (v0.20.0 L22 (b)).
 
 Synthetic fixtures with the fake docker and python of test_lifecycle, through the project wrappers (restart, which
 has none, through the oasis entry point)."""
@@ -89,7 +91,7 @@ class InstallModuleTests(CreationBase):
         self.unchanged()
 
 
-class ServerDatabaseTests(CreationBase):
+class ServerBase(CreationBase):
     PORTS = ('--http-port=9000', '--gevent-port=9001')
 
     def missing(self, database):
@@ -105,6 +107,9 @@ class ServerDatabaseTests(CreationBase):
 
     def existing(self, *names):
         (self.root / 'commands.log.databases').write_text(''.join(f'{name}\n' for name in names))
+
+
+class ServerDatabaseTests(ServerBase):
 
     def test_start_and_restart_refuse_a_missing_database_before_odoo_starts(self):
         (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text(f'http_port = {lifecycle.free_port()}\n'))
@@ -183,6 +188,152 @@ class ServerDatabaseTests(CreationBase):
         result = self.invoke('start', '-d', 'cc_dev_x', '--version')
         self.assertEqual(result.returncode, 0)
         self.assertNotIn('pg_database', self.log())
+
+
+class EnvironmentDatabaseTests(ServerBase):
+    """v0.20.0 L22 (b): 19.0's -d reads PGDATABASE (odoo/tools/config.py:377 env_name; the environment comes before
+    the configuration file and after the command line, config.py:164-170), a comma-separated list. oasis never sets
+    it, so a user's own PGDATABASE is what reaches Odoo."""
+
+    def test_a_missing_pgdatabase_is_refused_before_odoo_starts(self):
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text(f'http_port = {lifecycle.free_port()}\n'))
+        self.env['PGDATABASE'] = 'cc_dev_x'
+        for args in (('start',), ('start', '--detach'), ('start', '--stop-after-init', '-i', 'base'),
+                     ('start', '--stop-after-init', *self.PORTS, '-u', 'coffee'), ('restart',),
+                     ('restart', '--dev', 'all')):
+            with self.subTest(args=args):
+                result = self.invoke(*args) if args[0] == 'start' else self.oasis(*args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', self.missing('cc_dev_x')))
+                self.assertIn("datname = 'cc_dev_x'", self.log())
+                self.assertEqual(self.odoo_lines(), [])
+                self.commands.unlink()
+
+    def test_pgdatabase_is_a_list_and_comes_before_odoo_conf_db_name(self):
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text(
+            f'http_port = {lifecycle.free_port()}\ndb_name = cc_dev_a\n'))
+        self.existing('cc_dev_a')
+        for value, missing in (('cc_dev_a, cc_dev_b', 'cc_dev_b'), ('cc_dev_x', 'cc_dev_x')):
+            with self.subTest(value=value):
+                self.env['PGDATABASE'] = value
+                result = self.invoke('start', '--stop-after-init', *self.PORTS, '-u', 'coffee')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', self.missing(missing)))
+                self.assertEqual(self.odoo_lines(), [])
+                self.commands.unlink()
+
+    def test_an_existing_pgdatabase_runs_with_the_same_line_as_before(self):
+        port = lifecycle.free_port()
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text(f'http_port = {port}\n'))
+        self.existing('cc_dev_a', 'cc_dev_b')
+        for value in ('cc_dev_a', 'cc_dev_a,cc_dev_b'):
+            with self.subTest(value=value):
+                self.env['PGDATABASE'] = value
+                result = self.invoke('start', '--stop-after-init', *self.PORTS, '-u', 'coffee')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+                self.assertEqual(self.odoo_lines(), [self.odoo_line('--stop-after-init', *self.PORTS, '-u', 'coffee')])
+                self.assertIn("datname = 'cc_dev_a'", self.log())
+                self.commands.unlink()
+        result = self.invoke('start')
+        self.assertEqual((result.returncode, result.stdout), (0, ''))
+        self.assertRegex(result.stderr, rf'^oasis start: http://localhost:{port} \(pid \d+\)\n$')
+        self.assertEqual(self.odoo_lines(), [self.odoo_line(f'--http-port={port}')])
+
+    def test_d_comes_before_pgdatabase_and_an_empty_one_hides_odoo_conf_db_name(self):
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text('db_name = cc_dev_b\n'))
+        self.existing('cc_dev_c')
+        self.env['PGDATABASE'] = 'cc_dev_x'
+        result = self.invoke('start', '--stop-after-init', *self.PORTS, '-d', 'cc_dev_c', '-i', 'base')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(self.odoo_lines(), [self.odoo_line('--stop-after-init', *self.PORTS, '-d', 'cc_dev_c',
+                                                            '-i', 'base')])
+        self.assertNotIn("datname = 'cc_dev_x'", self.log())
+        # Set but empty, it is an empty list that hides odoo.conf's db_name: Odoo's database selector, no query.
+        self.commands.unlink()
+        self.env['PGDATABASE'] = ''
+        result = self.invoke('start', '--stop-after-init', *self.PORTS, '-u', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(self.odoo_lines(), [self.odoo_line('--stop-after-init', *self.PORTS, '-u', 'coffee')])
+        self.assertNotIn('pg_database', self.log())
+
+    def test_print_command_and_informational_options_never_check_pgdatabase(self):
+        self.env['PGDATABASE'] = 'cc_dev_x'
+        result = self.invoke('start', '--print-command')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertNotIn('pg_database', self.log())
+        result = self.invoke('start', '--version')
+        self.assertEqual(result.returncode, 0)
+        self.assertNotIn('pg_database', self.log())
+
+    def test_odoo_15_does_not_read_pgdatabase(self):
+        # 15.0's -d has no environment variable (odoo/tools/config.py:239): PGDATABASE never reaches Odoo there.
+        lifecycle.use_odoo_15(self)
+        ports = ('--http-port=9000', '--longpolling-port=9001')
+        self.env['PGDATABASE'] = 'cc_dev_x'
+        result = self.invoke('start', '--stop-after-init', *ports, '-u', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(self.odoo_lines(), [self.odoo_line('--stop-after-init', *ports, '-u', 'coffee')])
+        self.assertNotIn('pg_database', self.log())
+
+
+class ConfigFileDatabaseTests(ServerBase):
+    """v0.20.0 L22 (b): a later -c/--config among the passed options is the file Odoo reads (optparse: the last one
+    wins), so its db_name is checked instead of odoo.conf's, with the same reader."""
+
+    def other_conf(self, options):
+        path = self.root / 'dev/other.conf'
+        path.write_text(lifecycle.conf_text(options))
+        return path
+
+    def forms(self, path):
+        return (('-c', str(path)), (f'-c{path}',), ('--config', str(path)), (f'--config={path}',),
+                ('--conf', str(path)), (f'--c={path}',), ('-c', 'dev/other.conf'))
+
+    def test_a_missing_db_name_of_a_later_config_is_refused(self):
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text(f'http_port = {lifecycle.free_port()}\n'))
+        path = self.other_conf('db_name = cc_dev_a, cc_dev_x\n')
+        self.existing('cc_dev_a')
+        cases = [('start', '--stop-after-init', *self.PORTS, *form, '-u', 'coffee') for form in self.forms(path)]
+        cases += [('start', '--detach', '-c', str(path)), ('start', '-c', str(path)), ('restart', '--config', str(path))]
+        for args in cases:
+            with self.subTest(args=args):
+                result = self.invoke(*args) if args[0] == 'start' else self.oasis(*args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', self.missing('cc_dev_x')))
+                self.assertIn("datname = 'cc_dev_a'", self.log())
+                self.assertEqual(self.odoo_lines(), [])
+                self.commands.unlink()
+
+    def test_an_existing_db_name_of_a_later_config_runs_and_odoo_conf_db_name_is_not_checked(self):
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text('db_name = cc_dev_missing\n'))
+        path = self.other_conf('db_name = cc_dev_a\n')
+        self.existing('cc_dev_a')
+        for form in self.forms(path):
+            with self.subTest(form=form):
+                result = self.invoke('start', '--stop-after-init', *self.PORTS, *form, '-u', 'coffee')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+                self.assertEqual(self.odoo_lines(), [self.odoo_line('--stop-after-init', *self.PORTS, *form, '-u',
+                                                                    'coffee')])
+                self.assertIn("datname = 'cc_dev_a'", self.log())
+                self.assertNotIn('cc_dev_missing', self.log())
+                self.commands.unlink()
+
+    def test_a_later_config_without_db_name_is_odoo_s_database_selector(self):
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text('db_name = cc_dev_missing\n'))
+        for options in ('', 'db_name = False\n'):
+            with self.subTest(options=options):
+                path = self.other_conf(options)
+                result = self.invoke('start', '--stop-after-init', *self.PORTS, '-c', str(path), '-u', 'coffee')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+                self.assertEqual(self.odoo_lines(), [self.odoo_line('--stop-after-init', *self.PORTS, '-c', str(path),
+                                                                    '-u', 'coffee')])
+                self.assertNotIn('pg_database', self.log())
+                self.commands.unlink()
+
+    def test_pgdatabase_comes_before_a_later_config_on_19(self):
+        path = self.other_conf('db_name = cc_dev_a\n')
+        self.existing('cc_dev_a')
+        self.env['PGDATABASE'] = 'cc_dev_x'
+        result = self.invoke('start', '--stop-after-init', *self.PORTS, '-c', str(path), '-u', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', self.missing('cc_dev_x')))
+        self.assertEqual(self.odoo_lines(), [])
 
 
 if __name__ == '__main__':

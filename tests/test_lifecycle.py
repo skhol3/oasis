@@ -182,6 +182,8 @@ exit 0
                     # Keep git discovery inside the scratch project: no checkout identity
                     # leaks from the repository that holds the fixtures.
                     'GIT_CEILING_DIRECTORIES': self.scratch.name}
+        # 19.0's -d reads PGDATABASE (start checks that database): the host's must not reach the fixtures.
+        self.env.pop('PGDATABASE', None)
         # Server records (tools/runtime_state.py) stay in a private runtime directory per test.
         self.runtime = tempfile.TemporaryDirectory(prefix='oasis-runtime-')
         self.addCleanup(self.runtime.cleanup)

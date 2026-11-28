@@ -65,12 +65,12 @@ CI: `.github/workflows/tests.yml` runs `node --test pi/tests/*.test.ts` and `pyt
 2. Start the database service and run `doctor` until `doctor_failures=0` (each `FAIL` says how to
    fix it). setup generated the database account in the environment file, which the service and
    Odoo both read; no step needs a password read, copied or typed
-   ([The database account](docs/setup.md#the-database-account)). `start-database` starts the
+   ([The database account](docs/setup.md#the-database-account)). `setup-postgres` starts the
    service the way every database command does and names no environment file, so an agent harness
    that refuses commands naming one runs it too:
 
    ```bash
-   ~/.agents/skills/oasis/oasis start-database
+   ~/.agents/skills/oasis/oasis setup-postgres
    ~/.agents/skills/oasis/oasis doctor
    ```
 
@@ -107,7 +107,7 @@ Tier A in the skills too. In the CLI, `drop-database`, `gc --apply --trash`, `mi
 `worktree-init` run only with `--confirm <exact name>` (the database, the project root, the
 workspace file, the worktree path); without it they exit 2 and name the exact command. The menu,
 `/oasis worktree` and `/oasis migrate` pass it after your confirmation. New Tier B command:
-`recreate-database-volume --confirm <compose project>` runs `docker compose -p <compose project> down -v`
+`recreate-postgres-volume --confirm <compose project>` runs `docker compose -p <compose project> down -v`
 (the project's containers and networks, every named volume of its compose file and every anonymous
 volume of its containers: every database of its PostgreSQL) and starts the service again with the
 account of the env file; it replaces a raw `docker compose down -v`.
@@ -128,7 +128,7 @@ asks in advance about what would fail later (python-ldap 3.4.0 against OpenLDAP 
 requirements missing or conflicting with Odoo's pins; uv 0.13 gets `UV_LEGACY_TAR_BACKEND=1`). Without a
 terminal an unanswered question is listed in the plan and `--apply` refuses, naming its flag.
 `oasis status --json` says what is ready, what is missing and the next oasis command to run
-(`start-database` for a stopped database service). A new workspace gets the `[development]` table
+(`setup-postgres` for a stopped database service). A new workspace gets the `[development]` table
 `create-database` needs (the question `development`, recommended `add`: `administrator_login =
 'admin'`, its password generated), so no step edits the workspace file by hand.
 [Docs →](docs/setup.md#questions-and-answers)
@@ -235,7 +235,8 @@ as deprecated aliases with the same output, exit codes, tier and `--confirm`, af
 <old> is a deprecated alias of <new>: run <new> instead.` `start` and `restart` refuse a database that does not
 exist (`-d`, else each name of `odoo.conf`'s `db_name`) with exit 2, naming `create-database --plan`, because
 Odoo would create it. `tools/dev_users.py` creates a database only with `--confirm <database>` as its first two
-arguments, after the name guards.
+arguments, after the name guards. Odoo's database manager (`/web/database/manager`) and its selector stay available when `start` runs without
+a database, by choice: a database created there is outside oasis (Odoo's default master password applies).
 
 v0.20.0: `oasis doctor` has a new check, `code_python`, right after `python`: the environment's Python
 compiles the checkout's `.py` files (none of the code runs, no `.pyc` is written). Every report has a

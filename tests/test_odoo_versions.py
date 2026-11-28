@@ -23,7 +23,8 @@ class CapabilityTableTests(unittest.TestCase):
         'test_tags_implies_stop': True, 'test_class_filter': True,
         'dev_option': '--dev', 'dev_features': ['access', 'qweb', 'reload', 'replica', 'xml'],
         'dev_all': ['access', 'qweb', 'reload', 'xml'], 'dev_reload_packages': ['inotify', 'watchdog'],
-        'user_groups_field': 'group_ids', 'runtime_requirements': [], 'ldap_override': None}
+        'user_groups_field': 'group_ids', 'runtime_requirements': [], 'ldap_override': None,
+        'configuration_reads_environment': True}
     # v0.15.0 S2, read from the local 15.0 source (tools/odoo_versions.py cites the lines).
     ODOO_15 = {
         'python': ('3.7', '3.12'), 'python_default': '3.9', 'postgres_min': 12,
@@ -38,7 +39,7 @@ class CapabilityTableTests(unittest.TestCase):
                                   'which provides it: an environment uv creates has none and uv pip sync would '
                                   'remove it; setuptools advises <81 to keep pkg_resources.')],
         # v0.16.0 S3: python-ldap 3.4.0 links libldap_r, which OpenLDAP 2.6 removed.
-        'ldap_override': ('python-ldap==3.4.0', 'python-ldap==3.4.4')}
+        'ldap_override': ('python-ldap==3.4.0', 'python-ldap==3.4.4'), 'configuration_reads_environment': False}
 
     def test_odoo_19_and_15_are_supported_with_their_capabilities(self):
         self.assertEqual(odoo_versions.CAPABILITIES, {'19.0': self.ODOO_19, '15.0': self.ODOO_15})

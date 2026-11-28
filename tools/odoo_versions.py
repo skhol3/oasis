@@ -98,6 +98,8 @@ CAPABILITIES = {
         'user_groups_field': 'group_ids',
         'runtime_requirements': [],
         'ldap_override': None,
+        # -d reads PGDATABASE and -c expands variables and ~ (odoo/tools/config.py:377, :1063-1066).
+        'configuration_reads_environment': True,
     },
     '15.0': {
         'python': ('3.7', '3.12'),
@@ -120,6 +122,8 @@ CAPABILITIES = {
                                   'which provides it: an environment uv creates has none and uv pip sync would '
                                   'remove it; setuptools advises <81 to keep pkg_resources.')],
         'ldap_override': ('python-ldap==3.4.0', 'python-ldap==3.4.4'),
+        # -d has no variable and -c is taken as given (odoo/tools/config.py:239, :426-427).
+        'configuration_reads_environment': False,
     },
 }
 

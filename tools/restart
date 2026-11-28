@@ -97,7 +97,8 @@ if [[ -n "$old_database" ]]; then
 fi
 if ! "$print_command"; then
   # start refuses a missing database (Odoo would create it): refused here before the server is stopped. Without -d,
-  # the database the stopped server had, else odoo.conf's db_name.
+  # the database the stopped server had, else start's other sources (server_args.sh server_databases: PGDATABASE where
+  # the series reads it, tools/odoo_versions.py; the db_name of a later -c/--config or of odoo.conf).
   if [[ -z "$explicit_database" && -n "$old_database" ]]; then explicit_database=$old_database; fi
   require_existing_server_databases
 fi
