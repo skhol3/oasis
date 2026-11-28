@@ -135,13 +135,6 @@ class DoctorEnvironmentTests(unittest.TestCase):
                     self.assertEqual(self.cli(program, 'doctor', '--environment', project=plain), alias)
                     # doctor itself still runs there (one FAIL configuration).
                     self.assertTrue(self.cli(program, 'doctor', project=plain)[1].startswith('FAIL configuration='))
-        (self.root / '.odoo19-agent.toml').write_text("[tooling]\nversion = '19.0'\n")
-        for program in PROGRAMS:
-            with self.subTest(program=program, where='legacy profile'):
-                alias = self.cli(program, 'check-environment', '--full')
-                self.assertEqual(alias[0], 2)
-                self.assertIn('is the old profile format, no longer read', alias[2])
-                self.assertEqual(self.cli(program, 'doctor', '--environment', '--full'), alias)
 
     def test_the_docs_mark_the_alias_deprecated_and_say_which_setup_command_to_use(self):
         readme = ' '.join((ROOT / 'README.md').read_text(encoding='utf-8').split())
@@ -150,8 +143,8 @@ class DoctorEnvironmentTests(unittest.TestCase):
         guide = (ROOT / 'docs/checking-environment.md').read_text(encoding='utf-8')
         self.assertIn('\n## check-environment, a deprecated alias\n', guide)
         setup = (ROOT / 'docs/setup.md').read_text(encoding='utf-8')
-        self.assertIn('\n## setup, bootstrap or migrate\n', setup)
-        self.assertIn('none is an alias of\nanother (v0.16.0 S5)', setup)
+        self.assertIn('\n## setup or bootstrap\n', setup)
+        self.assertIn('neither is an alias of the other\n(v0.16.0 S5)', setup)
 
 
 if __name__ == '__main__':

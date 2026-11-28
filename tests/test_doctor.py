@@ -224,17 +224,10 @@ class DoctorTests(unittest.TestCase):
 
     # -- failures and warnings ------------------------------------------------------------------
 
-    def test_legacy_profile_is_one_fail_naming_the_fix(self):
-        profile = self.root / '.odoo19-agent.toml'
-        profile.write_text('[tooling]\n')
-        # An invalid profile: migrate cannot plan it, so only its runnable --plan is named (it says why);
-        # tests/test_migrate.py covers the fix that names the exact --apply --confirm <workspace file>.
-        plan = shlex.join(['oasis', '--project', str(self.root), 'migrate', '--plan'])
-        self.assert_report(f'FAIL configuration={profile} is the old profile format, no longer read: run {plan} '
-                           'to see its conversion to oasis-workspace.toml or what stops it.\n'
-                           f'  fix: {plan}\n'
-                           'PASS git=2.47.1\nPASS docker\nPASS docker_compose=2.29.1\nPASS flock\nPASS proc\n'
-                           'doctor_failures=1\n')
+    def test_an_old_profile_next_to_the_workspace_file_is_not_read(self):
+        # v0.21.0 S6: `.odoo19-agent.toml` is neither read nor refused; the workspace file configures the checkout.
+        (self.root / '.odoo19-agent.toml').write_text('[tooling]\n')
+        self.assert_report(self.expected())
 
     def test_configuration_error_fails_and_skips_the_checks_that_need_it(self):
         profile = self.root / 'oasis-workspace.toml'
@@ -720,41 +713,13 @@ class DoctorTests(unittest.TestCase):
                                                              timeout=timeout))
                 self.assertEqual((output.getvalue(), report.failures), (line, 0))
 
-    # -- project wrappers (v0.17.0 S3) ----------------------------------------------------------
-
-    def test_a_project_wrapper_that_calls_the_install_directory_before_0_17_0_fails(self):
+    def test_project_wrappers_are_not_read(self):
+        # v0.21.0 S6: no project_wrappers check; a wrapper calling the pre-0.17.0 install directory adds no line.
         scripts = self.root / 'dev/scripts'
         scripts.mkdir(parents=True)
         (scripts / 'start').write_text(
             f'#!/usr/bin/env bash\n# {MARKER}\ntools=${{OASIS_TOOLS_DIR:-$HOME/.agents/skills/odoo19/tools}}\n')
-        (scripts / 'check_environment.py').write_text("tools = Path.home() / '.agents/skills/odoo19/tools'\n")
-        (scripts / 'stop').write_text('#!/usr/bin/env bash\ntools=$HOME/.agents/skills/oasis/tools\n')
-        (scripts / 'notes').mkdir()
-        fix = (f'replace .agents/skills/odoo19/ with .agents/skills/oasis/ in {scripts / "check_environment.py"} and '
-               f'{scripts / "start"} (the oasis install directory since 0.17.0)')
-        self.assert_report(self.expected(after={
-            'postgres_connection': f'FAIL project_wrappers=old_install_dir\n  fix: {fix}'}))
-        # Three wrappers are listed with commas, then `and`.
-        (scripts / 'stop').write_text('tools=$HOME/.agents/skills/odoo19/tools\n')
-        fix = (f'replace .agents/skills/odoo19/ with .agents/skills/oasis/ in {scripts / "check_environment.py"}, '
-               f'{scripts / "start"} and {scripts / "stop"} (the oasis install directory since 0.17.0)')
-        self.assert_report(self.expected(after={
-            'postgres_connection': f'FAIL project_wrappers=old_install_dir\n  fix: {fix}'}), docker_calls=2)
-
-    def test_project_wrappers_that_call_the_oasis_install_directory_add_no_line(self):
-        scripts = self.root / 'dev/scripts'
-        scripts.mkdir(parents=True)
-        (scripts / 'start').write_text('#!/usr/bin/env bash\ntools=$HOME/.agents/skills/oasis/tools\n')
         self.assert_report(self.expected())
-        # A legacy profile: the configuration FAIL, and the wrappers are still checked.
-        (scripts / 'start').write_text('tools=$HOME/.agents/skills/odoo19/tools\n')
-        (self.root / '.odoo19-agent.toml').write_text('[tooling]\n')
-        result = self.doctor()
-        self.assertEqual(result.returncode, 1)
-        self.assertTrue(result.stdout.endswith(
-            'PASS proc\nFAIL project_wrappers=old_install_dir\n'
-            f'  fix: replace .agents/skills/odoo19/ with .agents/skills/oasis/ in {scripts / "start"} (the oasis '
-            'install directory since 0.17.0)\ndoctor_failures=2\n'), result.stdout)
 
 
 class DoctorSurfaceTests(unittest.TestCase):

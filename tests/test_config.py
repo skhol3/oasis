@@ -26,25 +26,10 @@ db_service = "db"
 dev_prefix = "cc_dev_"
 test_prefix = "cc_test_"
 '''
-# The legacy profile of the same checkout: no longer read, only refused (and converted by migrate).
-PROFILE = '''[tooling]
-version = "19.0"
-python_version = "3.12"
-community = "../../source/odoo"
-'''
 # Appended after WORKSPACE_ROOT: the Odoo 19.0 options, no named environment, then DATA_DIR
 # (empty without [tooling].data_dir) and AGENT_DESTRUCTIVE (ask without [tooling].agent_destructive).
 APPENDED = ['ODOO_VERSION=19.0', 'ODOO_SECOND_PORT_OPTION=--gevent-port', 'ODOO_DEMO_OFF_ARGS=--without-demo',
             "ENVIRONMENT_NAME=''", 'PYTHON_VERSION=3.12', "DATA_DIR=''", 'AGENT_DESTRUCTIVE=ask']
-
-
-def refusal(profile, program='oasis'):
-    """The refusal of a checkout that still has a legacy profile migrate cannot plan here (no git
-    worktree list, no odoo.conf): its runnable --plan, which names what stops it (tests/test_migrate.py
-    covers the one that names the exact --apply --confirm <workspace file>)."""
-    plan = shlex.join([program, '--project', str(profile.parent), 'migrate', '--plan'])
-    return (f'ERROR: {profile} is the old profile format, no longer read: run {plan} to see '
-            'its conversion to oasis-workspace.toml or what stops it.\n')
 
 
 class ConfigCliTests(unittest.TestCase):
@@ -70,26 +55,18 @@ class ConfigCliTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (2, '', f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above {self.root}.\n'))
 
-    def test_legacy_profile_is_refused_with_the_migrate_fix(self):
-        profile = self.root / '.odoo19-agent.toml'
-        profile.write_text(PROFILE)
+    def test_an_old_profile_is_not_read(self):
+        # v0.21.0 S6: `.odoo19-agent.toml` is neither read nor refused. Alone, the checkout has no configuration.
+        (self.root / '.odoo19-agent.toml').write_text('[tooling]\nversion = "19.0"\n')
         result = self.run_reader()
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', refusal(profile)))
-        # Next to a workspace file, in the checkout or above it, the profile is refused too.
-        for workspace in (self.workspace, self.root.parent / 'oasis-workspace.toml'):
-            with self.subTest(workspace=str(workspace)):
-                workspace.write_text(WORKSPACE)
-                result = self.run_reader()
-                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', refusal(profile)))
-                workspace.unlink()
-        # An unreadable profile is refused the same way; the fix names oasis whatever file the entry point is
-        # (v0.17.0 S3: no odoo19 alias; an old copy under that name still says oasis).
-        profile.write_text('[tooling\n')
-        for entrypoint in ('/x/odoo19', '/x/oasis'):
-            with self.subTest(entrypoint=entrypoint):
-                result = subprocess.run([sys.executable, '-B', str(READER), str(self.root)], capture_output=True,
-                                        text=True, env={**self.env, 'OASIS_ENTRYPOINT': entrypoint})
-                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', refusal(profile, 'oasis')))
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above {self.root}.\n'))
+        # Next to a workspace file, the workspace file configures the checkout as without the profile.
+        self.workspace.write_text(WORKSPACE)
+        with_profile = self.run_reader()
+        (self.root / '.odoo19-agent.toml').unlink()
+        self.assertEqual(with_profile.returncode, 0, with_profile.stderr)
+        self.assertEqual((with_profile.stdout, with_profile.stderr), (self.run_reader().stdout, ''))
 
     def test_release_check_needs_the_file_and_the_series(self):
         # Its only caller, common.sh require_source, always passes the series.

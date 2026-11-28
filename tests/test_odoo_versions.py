@@ -151,9 +151,8 @@ class VersionNeutralToolsTests(unittest.TestCase):
         self.assertNotRegex('--with-demos --without-demo-data', self.FLAGS)
 
     # The series itself is read from the configuration (ODOO_VERSION) or the table: besides
-    # odoo_versions.py, only the legacy profile contract that migrate converts may name it.
+    # odoo_versions.py, no tool names it.
     SERIES = re.compile(r"(?<![\w.])19\.0(?!\d)|\(19, 0\)|release_is_19")
-    ALLOWED = {('tools/migrate.py', "LEGACY_VERSION = '19.0'")}
 
     def test_no_tool_names_the_odoo_series(self):
         found = []
@@ -161,7 +160,7 @@ class VersionNeutralToolsTests(unittest.TestCase):
             if not path.is_file() or path.name == 'odoo_versions.py' or '__pycache__' in path.parts:
                 continue
             for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
-                if self.SERIES.search(line) and (str(path.relative_to(ROOT)), line.strip()) not in self.ALLOWED:
+                if self.SERIES.search(line):
                     found.append(f'{path.relative_to(ROOT)}:{number}: {line.strip()}')
         self.assertEqual(found, [])
 

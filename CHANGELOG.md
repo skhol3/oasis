@@ -9,6 +9,27 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+### Removed
+
+- Contract change: the `.odoo19-agent.toml` profile is no longer read nor refused, anywhere (the entry point's
+  refusal and its exception for `migrate`, `doctor` and `policy`, `tools/config.py`, `gc`'s checkout slugs,
+  `doctor`'s fix, `setup`'s project-folder markers, the Gentle Shell project root and prompt context, the
+  setting files of the bash guard). A checkout with only that file gets the ordinary `Missing tooling
+  configuration` message. The README says what a project that still has one runs.
+- Contract change: `oasis migrate`, `/oasis migrate`, the menu's *Show the workspace migration plan* and
+  *Migrate to the workspace file* and the policy rows `migrate`, `migrate --plan` and `migrate --apply`: migrate
+  only converted that profile. `oasis migrate` exits 2 (`Unsupported oasis command: migrate`).
+- Contract change: `install.sh` no longer moves an install before 0.17.0 out of `~/.agents/skills/odoo19`.
+- Contract change: `doctor`'s `project_wrappers` check (a project wrapper that still calls
+  `~/.agents/skills/odoo19`).
+- Contract change: the bash guard no longer treats `odoo19`, `~/.agents/skills/odoo19/tools` or
+  `ODOO19_PROJECT_ROOT` as oasis's.
+- Contract change: a `lock.sha256` whose entries are relative to the project root (the format before v0.12.0)
+  is no longer current (`doctor --environment`, `bootstrap`, `setup`, `status --json`); `tools/locks.py state`
+  and `recorded` take the requirements directory only.
+- `oasis_test_summary` no longer reads the runs before 0.8.0 under `<logs>/odoo19/`.
+- `create-database` no longer prints a WARN line for a `<database>.logins` of a version before 0.20.0.
+
 ## [0.20.0] - 2026-11-27
 
 ### Added

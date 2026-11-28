@@ -17,9 +17,8 @@ main checkout (or a project outside git) owns `<test_prefix><rest>`. Both exclud
 of every other existing checkout whose namespace is longer and starts with theirs, so the main
 checkout skips `<test_prefix><linked slug>_...`. The other checkouts' slugs come from
 `git worktree list` (their oasis-checkout.toml's checkout_slug, else the slug derived from
-the folder name, as tools/config.py does; a checkout that still has a legacy profile stops
-it). A worktree that no longer exists has no namespace, so the main checkout takes its
-leftovers. Scope `all` matches every name with the run suffix.
+the folder name, as tools/config.py does). A worktree that no longer exists has no namespace,
+so the main checkout takes its leftovers. Scope `all` matches every name with the run suffix.
 """
 import os
 from pathlib import Path
@@ -37,14 +36,10 @@ USAGE = ('Usage: gc.py orphans <project_root> <test_prefix> <slug> <checkout|all
 def profile_slug(checkout):
     """A checkout's own [tooling].checkout_slug from its oasis-checkout.toml, or None.
 
-    Read with tools/config.py's rules. An untrusted or invalid checkout file, or a legacy
-    profile (no longer read, so its slug is unknown), raises with the fix: falling back to the
-    folder slug could make that checkout's databases look like this checkout's.
+    Read with tools/config.py's rules. An untrusted or invalid checkout file raises with the fix:
+    falling back to the folder slug could make that checkout's databases look like this checkout's.
     """
     reason = f'Cannot read the checkout slug of {checkout}:'
-    profile = checkout / config.PROFILE_NAME
-    if profile.is_file():
-        raise config.InvalidConfig(f'{reason} {config.legacy_profile_refusal(profile, config.program_name())}')
     try:
         value = config.checkout_overrides(checkout).get('checkout_slug')
     except config.InvalidConfig as exc:

@@ -53,7 +53,7 @@ class LocksTests(unittest.TestCase):
             for name in FILES))
 
     def assert_state(self, expected):
-        result = self.run_locks('state', self.requirements, self.root)
+        result = self.run_locks('state', self.requirements)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected + '\n', ''))
 
     def test_a_missing_lock_or_fingerprint_is_missing(self):
@@ -65,26 +65,32 @@ class LocksTests(unittest.TestCase):
                 self.assert_state('missing')
                 (self.requirements / name).write_bytes(saved)
 
-    def test_a_changed_input_is_stale_in_both_forms_of_the_fingerprint(self):
-        for prefix in ('', 'dev/requirements/'):
-            for name in ('runtime.in', 'dev.in'):
-                with self.subTest(prefix=prefix, name=name):
-                    self.write_lock(prefix)
-                    (self.requirements / name).write_text('# changed\n')
-                    self.assert_state('stale')
-                    (self.requirements / name).write_text(f'# {name}\n')
+    def test_a_changed_input_is_stale(self):
+        for name in ('runtime.in', 'dev.in'):
+            with self.subTest(name=name):
+                self.write_lock()
+                (self.requirements / name).write_text('# changed\n')
+                self.assert_state('stale')
+                (self.requirements / name).write_text(f'# {name}\n')
+
+    def test_a_lock_relative_to_the_project_root_is_stale_and_not_current(self):
+        # v0.21.0 S6: the lock format before v0.12.0 (entries relative to the checkout) is no longer read:
+        # compiling again (bootstrap --apply) writes lock.sha256 relative to its own directory.
+        spec = importlib.util.spec_from_file_location('oasis_locks_root_test', LOCKS)
+        locks = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(locks)
+        self.write_lock('dev/requirements/')
+        self.assert_state('stale')
+        self.assertFalse(locks.current(self.requirements))
 
     def test_an_unreadable_fingerprint_is_stale(self):
         (self.requirements / 'lock.sha256').write_text('# not a fingerprint\n')
         self.assert_state('stale')
 
-    def test_a_lock_changed_under_current_inputs_is_edited_in_both_forms(self):
-        for prefix in ('', 'dev/requirements/'):
-            with self.subTest(prefix=prefix):
-                self.write_lock(prefix)
-                (self.requirements / 'dev.txt').write_text('pylint==3.0.0\n')
-                self.assert_state('edited')
-                (self.requirements / 'dev.txt').write_text('# dev.txt\n')
+    def test_a_lock_changed_under_current_inputs_is_edited(self):
+        self.write_lock()
+        (self.requirements / 'dev.txt').write_text('pylint==3.0.0\n')
+        self.assert_state('edited')
 
     def test_fingerprint_writes_what_sha256sum_writes_and_leaves_the_inputs_alone(self):
         inputs = {name: (self.requirements / name).read_bytes() for name in ('runtime.in', 'dev.in')}
@@ -103,9 +109,9 @@ class LocksTests(unittest.TestCase):
     def test_usage(self):
         result = self.run_locks('compile', self.requirements)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (
-            2, '', 'Usage: locks.py state <requirements dir> <project root> | '
+            2, '', 'Usage: locks.py state <requirements dir> | '
                    'fingerprint <requirements dir> | compile <requirements dir> <python> <command to rerun> | '
-                   'recorded <requirements dir> <project root> | uv-env\n'))
+                   'recorded <requirements dir> | uv-env\n'))
 
     # -- overrides.txt (v0.15.0 S7) -------------------------------------------------------------
 
@@ -138,38 +144,36 @@ class LocksTests(unittest.TestCase):
                                    capture_output=True)
             self.assertEqual(check.returncode, 0)
         self.assert_state('edited')
-        self.assertEqual(self.run_locks('recorded', self.requirements, self.root).returncode, 0)
+        self.assertEqual(self.run_locks('recorded', self.requirements).returncode, 0)
 
     def test_an_added_changed_or_removed_overrides_file_makes_the_locks_stale(self):
         spec = importlib.util.spec_from_file_location('oasis_locks_overrides_test', LOCKS)
         locks = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(locks)
         overrides = self.requirements / 'overrides.txt'
-        for prefix in ('', 'dev/requirements/'):
-            with self.subTest(prefix=prefix):
-                # Added after the locks: lock.sha256 does not record it, so the locks are stale and not current.
-                self.write_lock(prefix)
-                overrides.write_text('cryptography==3.4.8\n')
-                self.assert_state('stale')
-                self.assertFalse(locks.current(self.requirements, self.root))
-                recorded = self.run_locks('recorded', self.requirements, self.root)
-                self.assertEqual((recorded.returncode, recorded.stdout, recorded.stderr), (1, '', ''))
-                # Recorded, then changed.
-                (self.requirements / 'lock.sha256').write_text(''.join(
-                    f'{hashlib.sha256((self.requirements / name).read_bytes()).hexdigest()}  {prefix}{name}\n'
-                    for name in (*FILES, 'overrides.txt')))
-                self.assertTrue(locks.current(self.requirements, self.root))
-                self.assertEqual(self.run_locks('recorded', self.requirements, self.root).returncode, 0)
-                overrides.write_text('cryptography==3.4.7\n')
-                self.assert_state('stale')
-                self.assertFalse(locks.current(self.requirements, self.root))
-                # Recorded, then removed.
-                overrides.unlink()
-                self.assert_state('stale')
-                self.assertFalse(locks.current(self.requirements, self.root))
+        # Added after the locks: lock.sha256 does not record it, so the locks are stale and not current.
+        self.write_lock()
+        overrides.write_text('cryptography==3.4.8\n')
+        self.assert_state('stale')
+        self.assertFalse(locks.current(self.requirements))
+        recorded = self.run_locks('recorded', self.requirements)
+        self.assertEqual((recorded.returncode, recorded.stdout, recorded.stderr), (1, '', ''))
+        # Recorded, then changed.
+        (self.requirements / 'lock.sha256').write_text(''.join(
+            f'{hashlib.sha256((self.requirements / name).read_bytes()).hexdigest()}  {name}\n'
+            for name in (*FILES, 'overrides.txt')))
+        self.assertTrue(locks.current(self.requirements))
+        self.assertEqual(self.run_locks('recorded', self.requirements).returncode, 0)
+        overrides.write_text('cryptography==3.4.7\n')
+        self.assert_state('stale')
+        self.assertFalse(locks.current(self.requirements))
+        # Recorded, then removed.
+        overrides.unlink()
+        self.assert_state('stale')
+        self.assertFalse(locks.current(self.requirements))
         # Without overrides.txt nothing needs recording.
         self.write_lock()
-        recorded = self.run_locks('recorded', self.requirements, self.root)
+        recorded = self.run_locks('recorded', self.requirements)
         self.assertEqual((recorded.returncode, recorded.stdout, recorded.stderr), (0, '', ''))
 
     def test_compile_writes_both_locks_then_the_fingerprint(self):
@@ -313,19 +317,17 @@ class LocksTests(unittest.TestCase):
                     f'was.\n{remedy}')))
                 self.assertEqual({path.name: path.read_bytes() for path in self.requirements.iterdir()}, before)
 
-    def test_current_accepts_what_sha256sum_check_accepts_from_either_base(self):
+    def test_current_accepts_what_sha256sum_check_accepts_from_the_requirements_directory(self):
         spec = importlib.util.spec_from_file_location('oasis_locks_test', LOCKS)
         locks = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(locks)
-        self.assertFalse(locks.current(self.requirements, self.root))
+        self.assertFalse(locks.current(self.requirements))
         self.write_lock()
-        self.assertTrue(locks.current(self.requirements, self.root))
-        self.write_lock('dev/requirements/')
-        self.assertTrue(locks.current(self.requirements, self.root))
+        self.assertTrue(locks.current(self.requirements))
         (self.requirements / 'dev.txt').write_text('# changed\n')
-        self.assertFalse(locks.current(self.requirements, self.root))
+        self.assertFalse(locks.current(self.requirements))
         (self.requirements / 'lock.sha256').write_text('')
-        self.assertFalse(locks.current(self.requirements, self.root))
+        self.assertFalse(locks.current(self.requirements))
 
     def test_a_failed_relay_kills_and_waits_for_the_child_before_raising(self):
         spec = importlib.util.spec_from_file_location('oasis_locks_streamed_test', LOCKS)

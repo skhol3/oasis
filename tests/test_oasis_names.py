@@ -9,15 +9,12 @@ import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oa
 from pathlib import Path
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
 import unittest
 
 import test_lifecycle as lifecycle
-
-BACKUP_STAMP = re.compile(r'\.bak-\d{8}T\d{6}Z')
 
 ROOT = lifecycle.STAGE
 TOOLS = ROOT / 'tools'
@@ -32,7 +29,7 @@ ROOT_ERROR = 'ERROR: OASIS_PROJECT_ROOT must name an absolute existing project d
 # Python tools that read the project root, with arguments that reach that check.
 PYTHON_TOOLS = (('model-info', ('sale.order',)), ('module-info', ('sale',)), ('view-info', ('sale.order',)),
                 ('xmlid-info', ('sale.view_order_form',)), ('lint-module', ('coffee',)),
-                ('worktree-init', ('feat', 'feature/x', '--dry-run')), ('migrate', ()), ('doctor', ()))
+                ('worktree-init', ('feat', 'feature/x', '--dry-run')), ('doctor', ()))
 
 
 class OasisVariableTests(unittest.TestCase):
@@ -50,11 +47,7 @@ class OasisVariableTests(unittest.TestCase):
                               env={**self.env, **variables}, capture_output=True)
 
     def observed(self, result):
-        # migrate's plan names backups with the current second (.bak-<YYYYMMDDTHHMMSSZ>); two runs
-        # may fall in different seconds, so the stamp is not part of what is compared.
-        def plain(text):
-            return BACKUP_STAMP.sub('.bak-<stamp>', text)
-        return result.returncode, plain(result.stdout), plain(result.stderr)
+        return result.returncode, result.stdout, result.stderr
 
     def test_shell_tools_read_oasis_names_first(self):
         result = self.tool('check-environment', '--bogus', OASIS_PROJECT_ROOT=str(self.root),
@@ -100,7 +93,7 @@ class OasisVariableTests(unittest.TestCase):
         self.assertEqual(self.observed(self.tool('doctor', ODOO19_PROJECT_ROOT=str(self.root))), (2, '', ROOT_ERROR))
 
     def test_python_usage_names_the_oasis_entry_point_first(self):
-        for command in ('doctor', 'migrate'):
+        for command in ('doctor', 'setup'):
             for variables, program in (
                     ({'OASIS_ENTRYPOINT': '/opt/bin/oasis', 'ODOO19_ENTRYPOINT': '/opt/old/oasis'}, '/opt/bin/oasis'),
                     ({'ODOO19_ENTRYPOINT': '/opt/old/oasis'}, 'oasis'),
@@ -290,7 +283,7 @@ class EntryPointHelpTests(unittest.TestCase):
 
     def test_no_help_names_odoo_19_or_a_fixed_odoo19_command(self):
         commands = ('test-module', 'verify-module', 'update-module', 'odoo-shell', 'gc', 'stop',
-                    'doctor', 'migrate', 'model-info', 'module-info', 'view-info', 'xmlid-info', 'lint-module',
+                    'doctor', 'model-info', 'module-info', 'view-info', 'xmlid-info', 'lint-module',
                     'worktree-init')
         outputs = [self.run_help('oasis', '--help')]
         outputs += [self.run_help('oasis', '--project', str(self.project), command, '--help')

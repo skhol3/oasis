@@ -51,7 +51,7 @@ test_prefix = 'acme_test_'
 # runs remove their filestores there. Without it, the data_dir of odoo.conf applies.
 # data_dir = 'data'
 # Optional: what the Gentle Shell layer does when an agent runs a Tier B command (drop-database,
-# stop --database, gc --apply --trash, migrate --apply, worktree-init), or changes this file:
+# stop --database, gc --apply --trash, worktree-init), or changes this file:
 # 'ask' (the default) shows the user a dialog
 # first, 'deny' blocks them, 'allow' runs them without a dialog. Only the user sets it.
 # agent_destructive = 'ask'

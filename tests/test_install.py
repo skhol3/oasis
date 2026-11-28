@@ -155,78 +155,19 @@ class InstallTest(unittest.TestCase):
                          (0, '', 'usage: install.sh [--target /absolute/path]\n'
                                  'default target: $HOME/.agents/skills/oasis\n'))
 
-    def test_the_default_install_moves_a_previous_odoo19_install_to_the_backups(self):
-        repo = self.fixture_repo()
-        home = self.scratch / 'home'
-        old = home / '.agents/skills/odoo19'
-        (old / 'odoo19-backend').mkdir(parents=True)
-        (old / '.oasis-install.json').write_text('{"version": "0.16.0"}\n')
-        (old / 'odoo19-backend/SKILL.md').write_text('old skill\n')
-        skills, result = self.install_home(repo)
-        self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertEqual(sorted(p.name for p in skills.iterdir()), ['oasis'])
-        [backup] = list((self.state / 'backups').iterdir())
-        self.assertRegex(backup.name, r'^odoo19-\d{8}T\d{6}Z$')
-        self.assertEqual((backup / 'odoo19-backend/SKILL.md').read_text(), 'old skill\n')
-        self.assertTrue(result.stdout.endswith(f'previous odoo19 install removed from {old}; kept in {backup}\n'),
-                        result.stdout)
-        self.assertEqual(len(result.stdout.splitlines()), 2, result.stdout)
-
-    def test_a_previous_odoo19_install_and_a_previous_oasis_install_are_both_kept_as_backups(self):
-        repo = self.fixture_repo()
-        home = self.scratch / 'home'
-        for name in ('odoo19', 'oasis'):
-            (home / '.agents/skills' / name).mkdir(parents=True)
-            (home / '.agents/skills' / name / '.oasis-install.json').write_text('{}\n')
-            (home / '.agents/skills' / name / 'mark').write_text(name)
-        skills, result = self.install_home(repo)
-        self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertEqual(sorted(p.name for p in skills.iterdir()), ['oasis'])
-        marks = sorted((backup / 'mark').read_text() for backup in (self.state / 'backups').iterdir())
-        self.assertEqual(marks, ['oasis', 'odoo19'])
-
-    def test_a_directory_named_odoo19_that_is_not_an_oasis_install_is_never_removed(self):
-        repo = self.fixture_repo()
-        home = self.scratch / 'home'
-        foreign = home / '.agents/skills/odoo19'
-        foreign.mkdir(parents=True)
-        (foreign / 'SKILL.md').write_text('someone else\n')
-        link = self.scratch / 'linked'
-        link.mkdir()
-        (link / '.oasis-install.json').write_text('{}\n')
-        for case in ('directory', 'symlink', 'file'):
-            with self.subTest(case=case):
-                if case == 'symlink':
-                    subprocess.run(['rm', '-rf', str(foreign)], check=True)
-                    foreign.symlink_to(link, target_is_directory=True)
-                elif case == 'file':
-                    foreign.unlink()
-                    foreign.write_text('a file\n')
-                skills, result = self.install_home(repo)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stderr, f'install.sh: warning: {foreign} is not an oasis install '
-                                                '(no .oasis-install.json); not removed\n')
-                self.assertEqual(len(result.stdout.splitlines()), 1 if case == 'directory' else 2, result.stdout)
-                self.assertEqual(sorted(p.name for p in skills.iterdir()), ['oasis', 'odoo19'])
-                if case == 'directory':
-                    self.assertEqual((foreign / 'SKILL.md').read_text(), 'someone else\n')
-                elif case == 'symlink':
-                    self.assertTrue(foreign.is_symlink())
-                    self.assertTrue((link / '.oasis-install.json').is_file())
-                else:
-                    self.assertEqual(foreign.read_text(), 'a file\n')
-
-    def test_an_explicit_target_never_touches_the_odoo19_directory(self):
+    def test_the_default_install_leaves_an_odoo19_directory_alone(self):
+        # v0.21.0 S6: the pre-0.17.0 install directory is no longer moved; it is never read either.
         repo = self.fixture_repo()
         home = self.scratch / 'home'
         old = home / '.agents/skills/odoo19'
         old.mkdir(parents=True)
-        (old / '.oasis-install.json').write_text('{}\n')
-        _skills, result = self.install_home(repo, '--target', str(self.target))
+        (old / '.oasis-install.json').write_text('{"version": "0.16.0"}\n')
+        skills, result = self.install_home(repo)
         self.assertEqual((result.returncode, result.stderr), (0, ''))
-        self.assertTrue((old / '.oasis-install.json').is_file())
-        self.assertTrue((self.target / '.oasis-install.json').is_file())
         self.assertEqual(len(result.stdout.splitlines()), 1, result.stdout)
+        self.assertEqual(sorted(p.name for p in skills.iterdir()), ['oasis', 'odoo19'])
+        self.assertEqual((old / '.oasis-install.json').read_text(), '{"version": "0.16.0"}\n')
+        self.assertFalse((self.state / 'backups').exists() and any((self.state / 'backups').iterdir()))
 
     def test_refuses_target_inside_repository(self):
         inside = ROOT / 'tmp-install-target'

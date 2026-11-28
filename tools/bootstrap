@@ -30,7 +30,7 @@ fi
 locks_state=current
 overrides_recorded() {
   [[ ! -f "$REQUIREMENTS_DIR/overrides.txt" ]] \
-    || python3 -I -B "$(dirname "$0")/locks.py" recorded "$REQUIREMENTS_DIR" "$PROJECT_ROOT"
+    || python3 -I -B "$(dirname "$0")/locks.py" recorded "$REQUIREMENTS_DIR"
 }
 if [[ ! -f "$REQUIREMENTS_DIR/runtime.txt" || ! -f "$lockfile" ]] || ! dependency_locks_current \
     || ! overrides_recorded; then
@@ -40,7 +40,7 @@ if [[ ! -f "$REQUIREMENTS_DIR/runtime.txt" || ! -f "$lockfile" ]] || ! dependenc
       exit 2
     fi
   done
-  locks_state=$(python3 -I -B "$(dirname "$0")/locks.py" state "$REQUIREMENTS_DIR" "$PROJECT_ROOT")
+  locks_state=$(python3 -I -B "$(dirname "$0")/locks.py" state "$REQUIREMENTS_DIR")
 fi
 if [[ "$locks_state" == edited ]]; then
   inputs='runtime.in and dev.in' fingerprinted='runtime.in runtime.txt dev.in dev.txt'

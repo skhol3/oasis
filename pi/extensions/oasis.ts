@@ -13,8 +13,7 @@ import { withHeartbeat } from "../lib/heartbeat.ts";
 import { DECISION_ENTRY, type GateEffects, settingReader, toolCallRouter } from "../lib/destructive.ts";
 import { findModules, formatModules, loadModules, DEFAULT_LIMIT } from "../lib/modules.ts";
 import {
-  findWorkspaceFile, legacyProfile, migrateFlow, notProject, type PlanFlow, projectContext, projectRootResolver,
-  worktreeFlow,
+  findWorkspaceFile, notProject, type PlanFlow, projectContext, projectRootResolver, worktreeFlow,
 } from "../lib/project.ts";
 import { formatStatus, listModules, parseAssignments, parseGit, parseServer, type StatusInput } from "../lib/status.ts";
 import { nextActiveTools, OASIS_TOOLS } from "../lib/activation.ts";
@@ -188,17 +187,6 @@ export default function oasisLayer(pi: ExtensionAPI) {
     await worktreeFlow(planFlow(root, ctx.ui), feature, branch);
   }
 
-  // The user's /oasis migrate: the plan, then `migrate --apply --confirm <workspace file>` (Tier B) on yes,
-  // with the workspace file the plan writes (migrateFlow).
-  async function migrate(ctx: { cwd: string; ui: FlowUi }): Promise<void> {
-    const root = await projectRoot(ctx.cwd);
-    if (!root) {
-      ctx.ui.notify(`Not an Odoo project: ${notProject(ctx.cwd)}`, "warning");
-      return;
-    }
-    await migrateFlow(planFlow(root, ctx.ui));
-  }
-
   // User-run only (no agent tool): `oasis doctor`, read-only, shown like the status.
   async function doctor(ctx: { cwd: string; ui: { notify: (message: string, level?: "info" | "warning" | "error") => void } }):
     Promise<void> {
@@ -304,7 +292,6 @@ export default function oasisLayer(pi: ExtensionAPI) {
   const subcommands: Record<SubcommandName, (ctx: CommandContext, args: string[]) => Promise<void>> = {
     setup: (ctx) => setup(ctx),
     doctor: (ctx) => doctor(ctx),
-    migrate: (ctx) => migrate(ctx),
     worktree: (ctx, args) => worktree(ctx, args[0], args[1]),
     menu: (ctx) => menu(ctx),
   };
@@ -372,10 +359,10 @@ export default function oasisLayer(pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     const root = await projectRoot(ctx.cwd);
     if (!root) return;
-    // The checkout's workspace file; null when the root holds a legacy profile, which config.py
-    // refuses (the context then says so). Name only the oasis tools this session has: a subagent
-    // without the overlay has none.
-    const workspace = legacyProfile(root) ? null : findWorkspaceFile(root);
+    // The checkout's workspace file. Name only the oasis tools this session has: a subagent without
+    // the overlay has none.
+    const workspace = findWorkspaceFile(root);
+    if (!workspace) return;
     const context = projectContext(root, workspace, pi.getActiveTools(), await projectVersion(root));
     const sections = event.systemPromptOptions?.sections;
     if (sections) {
@@ -389,13 +376,12 @@ export default function oasisLayer(pi: ExtensionAPI) {
   // ones (codemode) included; lib/destructive.ts decides (toolCallRouter) with the tiers of the core
   // policy table (lib/policy.ts). Deny tier (C): direct odoo-bin/dropdb/psql bypass the core's database
   // guards (Odoo projects), and the user's interactive menu is denied in every session. Ask tier (B):
-  // drop-database, stop --database, gc --apply --trash, migrate --apply, worktree-init and create-database (the
+  // drop-database, stop --database, gc --apply --trash, worktree-init and create-database (the
   // one command that creates a database) run after the user types the database name or `yes` in a dialog, unless
   // [tooling].agent_destructive (read through config.py, never from a tool argument) says deny or
   // allow: the stricter of the session project's and the target project's (`--project`, or a tool
-  // script's OASIS_PROJECT_ROOT or ODOO19_PROJECT_ROOT). The files that hold that setting (an
-  // oasis-workspace.toml, or a legacy .odoo19-agent.toml that migrate converts, in the session's
-  // directory or above it) are in the
+  // script's OASIS_PROJECT_ROOT). The files that hold that setting (an oasis-workspace.toml in the
+  // session's directory or above it) are in the
   // ask tier too: bash writes to them and Pi's edit and write tool calls on them. Each ask decision
   // is a custom session entry: Pi shows it but never sends it to the model.
   pi.registerEntryRenderer(DECISION_ENTRY, renderMenuEntry);

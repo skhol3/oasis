@@ -8,13 +8,13 @@ import { readFileSync } from "node:fs";
 
 test("subcommandCompletions offers every /oasis subcommand for an empty prefix", () => {
   const items = subcommandCompletions("");
-  assert.deepEqual(items?.map((item) => item.value), ["setup", "doctor", "migrate", "worktree ", "menu"]);
+  assert.deepEqual(items?.map((item) => item.value), ["setup", "doctor", "worktree ", "menu"]);
   assert.ok(items?.every((item) => item.label && item.description));
-  assert.deepEqual(SUBCOMMANDS.map((item) => item.name), ["setup", "doctor", "migrate", "worktree", "menu"]);
+  assert.deepEqual(SUBCOMMANDS.map((item) => item.name), ["setup", "doctor", "worktree", "menu"]);
 });
 
 test("subcommandCompletions filters by prefix and stops after the first word", () => {
-  assert.deepEqual(subcommandCompletions("m")?.map((item) => item.value), ["migrate", "menu"]);
+  assert.deepEqual(subcommandCompletions("m")?.map((item) => item.value), ["menu"]);
   assert.deepEqual(subcommandCompletions("me")?.map((item) => item.value), ["menu"]);
   assert.deepEqual(subcommandCompletions("  do")?.map((item) => item.value), ["doctor"]);
   assert.equal(subcommandCompletions("x"), null);
@@ -25,7 +25,7 @@ test("subcommandCompletions filters by prefix and stops after the first word", (
 test("parseCommand dispatches from the same table as completion and usage", () => {
   assert.deepEqual(parseCommand(""), { kind: "status" });
   assert.deepEqual(parseCommand("   "), { kind: "status" });
-  for (const name of ["setup", "doctor", "migrate", "menu"] as const) {
+  for (const name of ["setup", "doctor", "menu"] as const) {
     assert.deepEqual(parseCommand(` ${name} `), { kind: "run", name, args: [] });
     assert.deepEqual(parseCommand(`${name} extra`), { kind: "usage" });
   }
@@ -36,7 +36,9 @@ test("parseCommand dispatches from the same table as completion and usage", () =
   assert.deepEqual(parseCommand("worktree shop --force"), { kind: "usage" });
   assert.deepEqual(parseCommand("worktree a b c"), { kind: "usage" });
   assert.deepEqual(parseCommand("status"), { kind: "usage" });
-  assert.equal(USAGE, "Usage: /oasis [setup | doctor | migrate | worktree <feature> <branch> | menu]");
+  // v0.21.0 S6: migrate is gone (it only converted .odoo19-agent.toml).
+  assert.deepEqual(parseCommand("migrate"), { kind: "usage" });
+  assert.equal(USAGE, "Usage: /oasis [setup | doctor | worktree <feature> <branch> | menu]");
   for (const item of SUBCOMMANDS) assert.ok(SUBCOMMAND_SUMMARY.includes(`\`${item.name}`), item.name);
 });
 

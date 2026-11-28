@@ -281,24 +281,15 @@ exit 0
 
     def test_missing_config_and_bad_release_precede_external_commands(self):
         (self.root / 'oasis-workspace.toml').unlink()
+        # v0.21.0 S6: the old profile format is not read, so it changes nothing here.
+        profile = self.root / '.odoo19-agent.toml'
+        profile.write_text('[tooling]\n')
         result = self.invoke('status')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (2, '', f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above {self.root}.\n'))
         self.unchanged()
-        # A legacy profile is refused before anything runs, with the fix, also next to a workspace.
-        profile = self.root / '.odoo19-agent.toml'
-        profile.write_text('[tooling]\n')
-        # migrate cannot plan this profile, so only its runnable --plan is named (it says why).
-        plan = shlex.join(['oasis', '--project', str(self.root), 'migrate', '--plan'])
-        refusal = (f'ERROR: {profile} is the old profile format, no longer read: run {plan} to see '
-                   'its conversion to oasis-workspace.toml or what stops it.\n')
-        for workspace in (False, True):
-            if workspace:
-                (self.root / 'oasis-workspace.toml').write_text(WORKSPACE)
-            result = self.invoke('status')
-            self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', refusal))
-            self.unchanged()
         profile.unlink()
+        (self.root / 'oasis-workspace.toml').write_text(WORKSPACE)
         (self.source / 'odoo/release.py').write_text('version_info = (18, 0)\n')
         result = self.invoke('status')
         self.assertEqual((result.returncode, result.stdout, result.stderr),

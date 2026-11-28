@@ -2,9 +2,6 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-/** The legacy per-checkout profile: tools/config.py no longer reads it and refuses a checkout
- * that has one (`oasis migrate` converts it); found here only so that refusal shows. */
-export const PROFILE_NAME = ".odoo19-agent.toml";
 export const WORKSPACE_NAME = "oasis-workspace.toml";
 /** A checkout's own file at its root (tools/config.py CHECKOUT_NAME): checkout_slug and environment. */
 export const CHECKOUT_NAME = "oasis-checkout.toml";
@@ -98,12 +95,6 @@ export function machineFile(environment: Record<string, string | undefined>, hom
   return join(isAbsolute(configured) ? configured : join(home, ".config"), "oasis", "config.toml");
 }
 
-/** The legacy profile in `root` itself (the one tools/config.py refuses), else null. */
-export function legacyProfile(root: string): string | null {
-  const profile = join(root, PROFILE_NAME);
-  return existsSync(profile) ? profile : null;
-}
-
 /** Why `cwd` is not an Odoo project (findProjectRoot returned null). */
 export function notProject(cwd: string): string {
   return `no ${WORKSPACE_NAME} at or above ${cwd}`;
@@ -123,12 +114,8 @@ function nearestHolding(name: string, start: string, last?: string): string | nu
  * workspace file: the real git top level of `start`; without git (or when the top level is not
  * inside the real workspace directory, where the workspace file would not be found again), the
  * directory git would report, the nearest one holding `.git` from `start` up to the workspace
- * directory, else `start` itself. A legacy profile never picks the root there: config.py checks
- * only `<root>/.odoo19-agent.toml`, so one in a directory between the workspace and the checkout
- * is crossed, with git or without. A linked worktree with no workspace file at or above it, whose
- * main checkout reads one (findWorkspaceFile), is its own top level. Without a workspace file: the
- * nearest directory holding a legacy profile, so config.py's refusal (run oasis migrate) shows
- * there; else null.
+ * directory, else `start` itself. A linked worktree with no workspace file at or above it, whose
+ * main checkout reads one (findWorkspaceFile), is its own top level. Without a workspace file: null.
  */
 export function findProjectRoot(start: string, gitTopLevel?: GitTopLevel): string | null {
   // Real paths, as tools/config.py resolves the checkout and git reports its top level: a
@@ -137,8 +124,7 @@ export function findProjectRoot(start: string, gitTopLevel?: GitTopLevel): strin
   const workspace = nearestWorkspace(fallback);
   if (!workspace) {
     const linked = linkedWorktree(fallback);
-    if (linked && nearestWorkspace(linked.main)) return linked.top;
-    return nearestHolding(PROFILE_NAME, fallback);
+    return linked && nearestWorkspace(linked.main) ? linked.top : null;
   }
   const base = real(dirname(workspace));
   const top = gitTopLevel?.(fallback);
@@ -188,8 +174,7 @@ const TOOL_LINES: Record<string, string> = {
 };
 
 /**
- * Compact system-prompt section for a detected project; `workspace` names its workspace file, null
- * (or omitted) for a root that holds a legacy profile, which no command reads any more.
+ * Compact system-prompt section for a detected project; `workspace` names its workspace file.
  * `tools` are the session's tools: only the oasis tools among them are named, and a session with
  * none (a subagent without the overlay) is pointed to the CLI. Omitted: every oasis tool.
  * `version` is the configured Odoo series ("19.0"); it names the project, the series the odoo-<topic>
@@ -200,16 +185,13 @@ const TOOL_LINES: Record<string, string> = {
  */
 export function projectContext(
   root: string,
-  workspace?: string | null,
+  workspace: string,
   tools?: readonly string[],
   version?: string,
 ): string {
   // The series comes from the project's configuration; without it no number is made up.
   const odoo = version ? `Odoo ${version}` : "Odoo";
   const skills = version ? `odoo-* skill for series ${version}` : "odoo-* skill";
-  const source = workspace
-    ? `workspace ${workspace}`
-    : `legacy ${PROFILE_NAME}, no longer read: the user runs /oasis migrate`;
   const names = Object.keys(TOOL_LINES).filter((name) => !tools || tools.includes(name));
   const routing = names.length > 0
     ? [
@@ -223,7 +205,7 @@ export function projectContext(
         "lint-module, model-info). Do not browse Odoo source for",
       ];
   return [
-    `${odoo} project root: ${root} (${source}).`,
+    `${odoo} project root: ${root} (workspace ${workspace}).`,
     ...routing,
     version
       ? `framework APIs; load the ${skills} first (recipes: ~/.agents/skills/oasis/odoo-*/references/${version}/).`
@@ -233,19 +215,18 @@ export function projectContext(
 }
 
 /**
- * The --confirm value of a Tier B command from its dry-run plan (v0.16.0 S1): worktree-init's
- * `worktree: <path>` line, migrate's `write <dir>/oasis-workspace.toml` line; null when absent.
+ * The --confirm value of worktree-init from its dry-run plan (v0.16.0 S1): its `worktree: <path>`
+ * line; null when absent.
  */
-export function planConfirmation(kind: "worktree" | "migrate", plan: string): string | null {
+export function planConfirmation(plan: string): string | null {
   for (const line of plan.split("\n")) {
-    if (kind === "worktree" && line.startsWith("worktree: ")) return line.slice("worktree: ".length);
-    if (kind === "migrate" && line.startsWith("write ") && line.endsWith(`/${WORKSPACE_NAME}`)) return line.slice("write ".length);
+    if (line.startsWith("worktree: ")) return line.slice("worktree: ".length);
   }
   return null;
 }
 
 /**
- * What the user's /oasis worktree and /oasis migrate need: `run` runs the oasis CLI in the project
+ * What the user's /oasis worktree needs: `run` runs the oasis CLI in the project
  * root with these arguments (after `--project <root>`), `ui` the session's dialogs.
  */
 export interface PlanFlow {
@@ -279,40 +260,10 @@ export async function worktreeFlow(flow: PlanFlow, feature: string, branch: stri
       flow.ui.notify("oasis worktree: nothing changed.", "info");
       return;
     }
-    const path = planConfirmation("worktree", plan.stdout);
+    const path = planConfirmation(plan.stdout);
     const result = await flow.run(path === null ? args : [...args, "--confirm", path]);
     flow.ui.notify(`oasis worktree:\n${shown(result)}`, result.code === 0 ? "info" : "error");
   } catch (error) {
     flow.ui.notify(`oasis worktree failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-  }
-}
-
-/**
- * The user's /oasis migrate: the plan in a dialog, then, on yes, `migrate --apply --confirm <the
- * workspace file the plan writes>` (Tier B, see planConfirmation); `nothing to migrate` is only shown.
- */
-export async function migrateFlow(flow: PlanFlow): Promise<void> {
-  try {
-    const plan = await flow.run(["migrate"]);
-    if (plan.code !== 0) {
-      flow.ui.notify(`oasis migrate: ${plan.stderr.trim() || `exit ${plan.code}`}`, "error");
-      return;
-    }
-    const output = plan.stdout.trim();
-    if (output.startsWith("nothing to migrate")) {
-      flow.ui.notify(`oasis migrate: ${output}`, "info");
-      return;
-    }
-    const steps = output.split("\n").filter((line) => !line.startsWith("dry run: "));
-    if (!(await flow.ui.confirm("oasis migrate", `${steps.join("\n")}\n\nMigrate to this workspace file?`))) {
-      flow.ui.notify("oasis migrate: nothing changed.", "info");
-      return;
-    }
-    const workspace = planConfirmation("migrate", plan.stdout);
-    const confirm = workspace === null ? [] : ["--confirm", workspace];
-    const result = await flow.run(["migrate", "--apply", ...confirm]);
-    flow.ui.notify(`oasis migrate:\n${shown(result)}`, result.code === 0 ? "info" : "error");
-  } catch (error) {
-    flow.ui.notify(`oasis migrate failed: ${error instanceof Error ? error.message : String(error)}`, "error");
   }
 }

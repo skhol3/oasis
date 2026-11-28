@@ -27,7 +27,6 @@ One topic per file. Start from the group that matches what you are doing; the
 | [Fresh development database with role accounts](dev-database.md) | `create-database`, demo data and credentials |
 | [Checkouts and worktrees](checkouts-and-worktrees.md) | Checkout identity, databases per checkout and `worktree-init` |
 | [Path-free odoo.conf](path-free-odoo-conf.md) | `--addons-path` and `--data-dir` on the command line |
-| [Migrating to the workspace file](migrating.md) | `oasis migrate` |
 | [Troubleshooting](troubleshooting.md) | Tool-manager shims and known failures |
 
 ## Agent and skill author

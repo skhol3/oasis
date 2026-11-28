@@ -27,9 +27,9 @@ class PolicyTableTests(unittest.TestCase):
         for operation in ('setup', 'setup --apply', 'bootstrap', 'start', 'stop', 'restart',
                           'setup-postgres', 'start-database',
                           'install-module', 'update-module', 'doctor', 'check-environment', 'gc', 'gc --apply',
-                          'test-module', 'verify-module', 'migrate --plan', 'worktree-init --dry-run'):
+                          'test-module', 'verify-module', 'worktree-init --dry-run'):
             self.assertEqual(table[operation], 'A', operation)
-        for operation in ('worktree-init', 'migrate --apply', 'drop-database', 'gc --apply --trash',
+        for operation in ('worktree-init', 'drop-database', 'gc --apply --trash',
                           'recreate-postgres-volume', 'recreate-database-volume', 'create a branch'):
             self.assertEqual(table[operation], 'B', operation)
         self.assertEqual(table['type a password'], 'C')

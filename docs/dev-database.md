@@ -116,7 +116,7 @@ With `ODOO_ADMIN_PASSWORD` set, the administrator's line is `Account local_admin
 
 An existing database is refused (`ERROR: Could not create a fresh development database; existing data was not modified.`, exit 1). When the database was created and a later step failed (`ERROR: Development setup failed; the new database was retained.`), or the outcome is unknown (`ERROR: Development setup stopped unexpectedly (exit <n>); <database> may exist: oasis list-databases shows it.`, an exit the initialization does not use, such as 1 for an error it did not catch: it says `4` when it created the database and a later step failed; or `ERROR: Interrupted while creating <database>; it may exist: oasis list-databases shows it.`, Ctrl-C once it started, exit 130), the output still prints the administrator's line, since its password is already set in a database that exists. If the env file's directory does not exist, the command stops before any prompt or service with `ERROR: <directory> does not exist: run oasis setup --apply; no database was created.`
 
-Versions before 0.20.0 wrote the generated passwords to `<database>.logins` next to the env file. oasis no longer writes or reads that file: when the database's `.logins` file is there, the command leaves it as it is and prints one line on stderr, `WARN: <file> is from an earlier oasis version: oasis no longer writes or reads it; it is left as it is.`, then creates the database as usual. Delete it yourself once you no longer need it.
+Versions before 0.20.0 wrote the generated passwords to `<database>.logins` next to the env file. oasis no longer writes or reads that file, and since v0.21.0 says nothing of it: delete it yourself once you no longer need it.
 
 ## Credential handling and recovery
 

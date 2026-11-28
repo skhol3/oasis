@@ -23,7 +23,7 @@ Changing a tier is a contract change: a decision, a note in the README and in th
 
 ## Tier B in the CLI: `--confirm <exact name>`
 
-`drop-database`, `gc --apply --trash`, `migrate --apply`, `worktree-init`,
+`drop-database`, `gc --apply --trash`, `worktree-init`,
 `recreate-postgres-volume` and, since v0.20.0, `create-database` (the one command that creates a database)
 run only with `--confirm` naming exactly what they change:
 
@@ -31,7 +31,6 @@ run only with `--confirm` naming exactly what they change:
 | --- | --- |
 | `drop-database <name> [--terminate]` | the database name |
 | `gc --apply --trash [--older-than <days>]` | the project root (`--project`) |
-| `migrate [--workspace <dir>] --apply` | the workspace file the plan writes (`write <dir>/oasis-workspace.toml`) |
 | `worktree-init <feature> <branch> [--path <dir>]` | the worktree path the plan names (`worktree: <path>`) |
 | `recreate-postgres-volume` | the compose project (the top-level `name:` of the compose file, `compose_project=<name>` in the plan); see [The database account](setup.md#the-database-account) |
 | `create-database [--with-demo] [--lang <code>] [--country <code>] <module> <name>` | the database name |
@@ -49,8 +48,8 @@ ERROR: drop-database moves shop_dev_old and its filestore to the trash (Tier B: 
 
 `--confirm` records explicit intent: the agent proposes the command, a person agrees, then it runs
 with `--confirm`. It is not a guarantee against an agent that adds it by itself; where a harness
-exists, its dialog is the confirmation (see [Bash guard](bash-guard.md)). `worktree-init --dry-run`,
-`migrate --plan` and resuming an existing worktree need none.
+exists, its dialog is the confirmation (see [Bash guard](bash-guard.md)). `worktree-init --dry-run`
+and resuming an existing worktree need none.
 
 Decision (v0.20.0): a database is created only when the user asks for it, with what Odoo's database
 manager form asks, as the user chose it. `create-database` is the one command that creates a database,
@@ -114,9 +113,6 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `recreate-postgres-volume` | B | runs docker compose down -v for the compose project (-p), which removes its containers and networks, every named volume of its compose file and every anonymous volume of its containers (every database of its PostgreSQL), then starts the service again | compose project |
 | `recreate-database-volume` | B | deprecated alias of recreate-postgres-volume; deletes every database of the PostgreSQL volume of the compose project, then starts the service again | compose project |
 | `trash` | A | lists the trash; trash restore brings an entry back |  |
-| `migrate` | A | without --apply it prints the migration plan; changes nothing |  |
-| `migrate --plan` | A | prints the migration plan; changes nothing |  |
-| `migrate --apply` | B | rewrites the project's configuration files | workspace file |
 | `worktree-init --dry-run` | A | prints the worktree plan; changes nothing |  |
 | `worktree-init` | B | adds a git worktree and, when it does not exist, a new branch | worktree path |
 | `menu` | C | the interactive menu for a person at a terminal; agents run the commands it lists |  |

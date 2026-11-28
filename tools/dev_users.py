@@ -7,8 +7,7 @@ it is never asked. On a terminal each [[development.users]] password is asked wi
 first prompt generates it. Without a terminal every declared user's password is generated
 (token_urlsafe(24); v0.16.0 S2: no oasis workflow requires typing one). No password is written to a file or
 printed (v0.20.0 S8): the output says what each account's password is ("Odoo's default", "from <env file>
-ODOO_ADMIN_PASSWORD", typed, or generated and not stored), never a value. A <database>.logins file an earlier
-version wrote next to the env file is left as it is, with one WARN line.
+ODOO_ADMIN_PASSWORD", typed, or generated and not stored), never a value.
 
 The language and the country of the new database (v0.20.0 S12: create-database's --lang and --country, what
 Odoo's database manager form asks) are checked against the lists the form shows, read from the Odoo source, before
@@ -55,12 +54,6 @@ COUNTRIES = 'odoo/addons/base/data/res_country_data.xml'
 DEFAULT_LANGUAGE = 'en_US'
 # create-database's oasis option for demo data (tools/create-database), which its refusal repeats.
 DEMO_OPTION = '--with-demo'
-
-
-def legacy_logins(values, database) -> Path:
-    """Where versions before 0.20.0 wrote the generated passwords of database: <database>.logins next to the
-    env file. oasis no longer writes or reads it."""
-    return Path(values['ENV_FILE']).parent / f'{database}.logins'
 
 
 def administrator_password(values):
@@ -286,10 +279,6 @@ def main():
         return 2
     if validate_only:
         return 0
-    legacy = legacy_logins(values, database)
-    if legacy.exists():
-        print(f'WARN: {legacy} is from an earlier oasis version: oasis no longer writes or reads it; it is left as '
-              'it is.', file=sys.stderr)
     administrator = account_line(logins[0], admin_source, administrator=True)
     passwords, sources = [admin_password], [administrator]
     # Only a terminal is asked, and only for the declared users (getpass never falls back to visible piped

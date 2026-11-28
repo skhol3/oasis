@@ -11,7 +11,7 @@ metadata:
 
 Use for Odoo runtime/dependency discovery and diagnostics. Not for running module commands (`odoo-module-lifecycle`). A project's instructions may supply the complete contract without the optional template.
 
-A checkout reads the nearest `oasis-workspace.toml` at or above it, else (linked worktrees) its main checkout's through git ([example](assets/oasis-workspace.example.toml)): paths from it, `addons_paths` from the checkout. A checkout that still has the file of earlier versions is refused until the user runs `oasis migrate`.
+A checkout reads the nearest `oasis-workspace.toml` at or above it, else (linked worktrees) its main checkout's through git ([example](assets/oasis-workspace.example.toml)): paths from it, `addons_paths` from the checkout.
 
 Common to every series. Also read [15.0](references/15.0.md) or [19.0](references/19.0.md), per `oasis doctor` `series=`, else `odoo_release=`.
 

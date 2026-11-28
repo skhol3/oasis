@@ -106,12 +106,6 @@ OPERATIONS = (
      'deprecated alias of recreate-postgres-volume; deletes every database of the PostgreSQL volume of the compose '
      'project, then starts the service again', 'oasis --project /p recreate-database-volume'),
     ('trash', 'A', 'oasis', 'lists the trash; trash restore brings an entry back', 'oasis --project /p trash'),
-    ('migrate', 'A', 'oasis', 'without --apply it prints the migration plan; changes nothing',
-     'oasis --project /p migrate'),
-    ('migrate --plan', 'A', 'oasis', 'prints the migration plan; changes nothing',
-     'oasis --project /p migrate --plan'),
-    ('migrate --apply', 'B', 'oasis', "rewrites the project's configuration files",
-     'oasis --project /p migrate --apply'),
     ('worktree-init --dry-run', 'A', 'oasis', 'prints the worktree plan; changes nothing',
      'oasis --project /p worktree-init feat feature/x --dry-run'),
     ('worktree-init', 'B', 'oasis', 'adds a git worktree and, when it does not exist, a new branch',
@@ -140,7 +134,7 @@ ALIASES = {'check-environment': 'doctor --environment', 'start-database': 'setup
 # What `--confirm` takes for a Tier B oasis command (its refusal names the exact command); a Tier B
 # operation without one is confirmed only by a person or a harness dialog (stop --database).
 CONFIRM = {'drop-database': 'database name', 'gc --apply --trash': 'project root',
-           'migrate --apply': 'workspace file', 'worktree-init': 'worktree path',
+           'worktree-init': 'worktree path',
            'recreate-postgres-volume': 'compose project', 'recreate-database-volume': 'compose project',
            'create-database': 'database name'}
 

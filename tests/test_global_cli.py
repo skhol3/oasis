@@ -3,7 +3,6 @@ import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oa
 import json
 import os
 from pathlib import Path
-import shlex
 import shutil
 import subprocess
 import sys
@@ -16,17 +15,11 @@ CLI = ROOT / 'oasis'
 PROGRAMS = ('oasis',)
 
 
-def legacy_refusal(profile, program='oasis'):
-    """The refusal of a checkout with a legacy profile, here where the fake bundle has no migrate.py to plan
-    it: its runnable --plan (tests/test_migrate.py covers the exact --apply --confirm <workspace file>)."""
-    plan = shlex.join([program, '--project', str(profile.parent), 'migrate', '--plan'])
-    return (f'ERROR: {profile} is the old profile format, no longer read: run {plan} to see its conversion to '
-            'oasis-workspace.toml or what stops it.\n')
 # v0.20.0 S12: create-database is the one creator (init-dev-database is gone); S13: setup-postgres and
 # recreate-postgres-volume, with start-database and recreate-database-volume kept as deprecated aliases.
 PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
           'drop-database', 'gc', 'install-module', 'lint-module', 'list-databases',
-          'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy',
+          'menu', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy',
           'recreate-database-volume', 'recreate-postgres-volume', 'restart', 'setup', 'setup-postgres', 'start',
           'start-database', 'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info',
           'worktree-init', 'xmlid-info')
@@ -190,25 +183,24 @@ class GlobalCliTests(unittest.TestCase):
         self.assert_no_calls(self.invoke('--project', str(self.project), 'status'),
                              f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above {self.project}.\n')
 
-    def test_a_legacy_profile_is_refused_before_dispatch_except_for_migrate_and_doctor(self):
-        profile = self.project / '.odoo19-agent.toml'
-        profile.write_text('[tooling]\nversion = "19.0"\n')
-        for program in PROGRAMS:
-            with self.subTest(program=program):
-                self.assert_no_calls(self.invoke('--project', str(self.project), 'status', program=program),
-                                     legacy_refusal(profile, program))
-        # Without the workspace file next to it, the same refusal (not the missing configuration).
+    def test_an_old_profile_is_not_read(self):
+        # v0.21.0 S6: `.odoo19-agent.toml` is neither read nor refused: next to a workspace file the command runs,
+        # without one the checkout is unconfigured like any other.
+        (self.project / '.odoo19-agent.toml').write_text('[tooling]\nversion = "19.0"\n')
+        result = self.invoke('--project', str(self.project), 'status')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (17, 'delegated\n', 'delegated error\n'))
+        self.log.unlink()
         (self.project / 'oasis-workspace.toml').unlink()
-        self.assertIn('is the old profile format', self.invoke('--project', str(self.project), 'list-databases').stderr)
-        # migrate converts it and doctor reports it: both still run.
-        for command in ('migrate', 'doctor'):
-            with self.subTest(command=command):
-                result = self.invoke('--project', str(self.project), command, '--plan')
-                self.assertEqual((result.returncode, result.stdout, result.stderr),
-                                 (17, 'delegated\n', 'delegated error\n'))
-                self.assertEqual(json.loads(self.log.read_text()), {
-                    'argv': ['--plan'], 'root': str(self.project), 'stdin': '', 'tool': command})
-                self.log.unlink()
+        self.assert_no_calls(self.invoke('--project', str(self.project), 'list-databases'),
+                             f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above {self.project}.\n')
+
+    def test_migrate_is_gone(self):
+        # v0.21.0 S6: migrate only converted `.odoo19-agent.toml`; the name runs nothing, even with its tool on disk.
+        (self.bundle / 'tools/migrate').write_text(self.fake)
+        (self.project / '.odoo19-agent.toml').write_text('[tooling]\n')
+        for args in (('migrate',), ('migrate', '--plan')):
+            self.assert_no_calls(self.invoke('--project', str(self.project), *args),
+                                 'ERROR: Unsupported oasis command: migrate\n')
 
     def test_setup_runs_without_a_workspace_file_and_every_other_command_still_needs_one(self):
         # v0.14.0 S1: setup creates the workspace file, so it is the one command that runs before it.
@@ -235,17 +227,12 @@ class GlobalCliTests(unittest.TestCase):
             self.assert_no_calls(self.invoke('--project', str(self.project), 'status', program=program),
                                  f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above '
                                  f'{self.project}.\n')
-        # A legacy profile is still refused before setup: migrate converts it.
-        profile = self.project / '.odoo19-agent.toml'
-        profile.write_text('[tooling]\n')
-        self.assert_no_calls(self.invoke('--project', str(self.project), 'setup'), legacy_refusal(profile))
 
-    def test_policy_runs_without_a_workspace_file_and_in_a_legacy_checkout(self):
+    def test_policy_runs_without_a_workspace_file(self):
         # v0.16.0 S1: the agent contract is readable before any configuration exists.
         (self.project / 'oasis-workspace.toml').unlink()
         plain = self.temp / 'plain'
         plain.mkdir()
-        (plain / '.odoo19-agent.toml').write_text('[tooling]\n')
         for program in PROGRAMS:
             for args, cwd in ((('--project', str(self.project), 'policy', '--json'), self.temp),
                               (('policy', '--json'), plain)):
@@ -304,13 +291,10 @@ class GlobalCliTests(unittest.TestCase):
                                                f'at or above {plain}.\n')
                 self.assertEqual((implicit.returncode, implicit.stdout, implicit.stderr),
                                  (explicit.returncode, explicit.stdout, explicit.stderr))
-        # A legacy profile in the current directory: the same refusal, and migrate still runs.
-        profile = plain / '.odoo19-agent.toml'
-        profile.write_text('[tooling]\n')
-        self.assert_no_calls(self.invoke('status', cwd=plain), legacy_refusal(profile))
-        result = self.invoke('migrate', '--plan', cwd=plain)
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (17, 'delegated\n', 'delegated error\n'))
-        self.assertEqual(json.loads(self.log.read_text())['root'], str(plain))
+        # An old profile in the current directory is not read: the same refusal.
+        (plain / '.odoo19-agent.toml').write_text('[tooling]\n')
+        self.assert_no_calls(self.invoke('status', cwd=plain), f'ERROR: Missing tooling configuration: no '
+                                                               f'oasis-workspace.toml at or above {plain}.\n')
 
     def test_help_says_where_the_project_comes_from_without_project(self):
         for program in PROGRAMS:

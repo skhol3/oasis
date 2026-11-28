@@ -119,7 +119,7 @@ fills an env file's empty account variables in place (never adds absent ones) an
 only when the env file holds the same values (otherwise it warns and changes nothing), and
 `create-database` gives the administrator Odoo's default password (`admin`), or
 `ODOO_ADMIN_PASSWORD` of the env file when you set one, and writes no password file (an earlier
-`<database>.logins` is left alone with a WARN line). [Docs →](docs/setup.md#the-database-account)
+`<database>.logins` is left alone). [Docs →](docs/setup.md#the-database-account)
 
 No command needs a terminal: `oasis setup --plan --json` prints the plan as one JSON object (what it
 inferred and from where, the changes, the questions with their options, the recommended answer and the
@@ -158,7 +158,7 @@ of a checkout and runs them by hand. [Docs →](docs/action-menu.md)
 ### Environment and workspace file
 
 [`oasis setup`](docs/setup.md) configures a clone, `bootstrap` syncs its environment to the locks
-([which one when](docs/setup.md#setup-bootstrap-or-migrate)), `doctor` and `doctor --environment` check the
+([which one when](docs/setup.md#setup-or-bootstrap)), `doctor` and `doctor --environment` check the
 environment; one [`oasis-workspace.toml`](docs/workspace-file.md) configures every checkout, and
 the machine file gives the Odoo source of each series.
 [Docs →](docs/checking-environment.md)
@@ -166,8 +166,9 @@ the machine file gives the Odoo source of each series.
 Contract change in v0.12.0: the legacy per-checkout profile `.odoo19-agent.toml` is no longer
 read. A checkout that still has one is refused (exit 2) with
 `<checkout>/.odoo19-agent.toml is the old profile format, no longer read: run oasis migrate --plan to see its conversion to oasis-workspace.toml, then oasis migrate --apply.`;
-`doctor` reports it as one `FAIL configuration`. [`oasis migrate`](docs/migrating.md), the only
-command that still reads it, converts the profiles of every checkout into one workspace file.
+`doctor` reports it as one `FAIL configuration`. `oasis migrate`, the only
+command that still reads it, converts the profiles of every checkout into one workspace file (both removed in
+v0.21.0, see below).
 
 Contract note in v0.16.0 (S5): `check-environment [--quick|--full]` is a deprecated alias of
 `doctor --environment [--quick|--full]`. Both names keep working through `oasis`, the
@@ -175,7 +176,7 @@ project wrappers and the tool script, with the same lines, exit codes and usage 
 `oasis`, `doctor --help` and the policy table (both Tier A) say so, and the `oasis_check_environment` tool runs
 `doctor --environment`. `doctor`'s usage line now names the option: `Usage: <program> doctor
 [--environment [--quick|--full]]`. setup, bootstrap and migrate stay three commands (none would be an
-identical alias): [which one when](docs/setup.md#setup-bootstrap-or-migrate).
+identical alias): [which one when](docs/setup.md#setup-or-bootstrap).
 
 Contract change in v0.17.0: the `odoo19` name is gone, with no transition. `./install.sh` installs into
 `~/.agents/skills/oasis` and moves a previous install out of `~/.agents/skills/odoo19` into its backups
@@ -246,6 +247,31 @@ rejects too is `WARN code_python=syntax_error`; a timeout or no answer is a `WAR
 plan when the Python of an environment it adopts or creates may not parse the code; it never blocks
 `--apply`.
 
+Contract change in v0.21.0 (S6): the transition from earlier versions is gone. `.odoo19-agent.toml` is no longer
+read nor refused: a checkout with only that file gets the ordinary `Missing tooling configuration: no
+oasis-workspace.toml at or above <checkout>.`, and next to a workspace file it changes nothing. `oasis migrate`, its
+`/oasis migrate`, its menu actions and its policy rows are removed (`oasis migrate` exits 2 with `Unsupported oasis
+command: migrate`). `./install.sh` no longer moves `~/.agents/skills/odoo19` away, `oasis doctor` no longer has the
+`project_wrappers` check, the bash guard no longer treats `odoo19`, `~/.agents/skills/odoo19/tools` or
+`ODOO19_PROJECT_ROOT` as oasis's, a `lock.sha256` whose entries are relative to the checkout (the format before
+v0.12.0) is stale (`FAIL dependency_locks=stale_or_modified`), `oasis_test_summary` no longer reads the runs before
+0.8.0 under `<logs>/odoo19/`, and `create-database` prints no WARN for an earlier `<database>.logins`. What a project
+from an earlier version runs:
+
+- A checkout that still has `.odoo19-agent.toml`: install v0.20.0 (`git checkout v0.20.0 && ./install.sh` in this
+  repository), run `oasis --project <checkout> migrate --plan`, then the `migrate --apply --confirm <workspace
+  file>` it names, then install this version again. Or create the workspace file with `oasis setup` and delete the
+  old file.
+- Project wrappers in `dev/scripts/` that call `~/.agents/skills/odoo19/tools`: replace `.agents/skills/odoo19/`
+  with `.agents/skills/oasis/` in each (`grep -l .agents/skills/odoo19/ dev/scripts/*` lists them), or copy them
+  again from `~/.agents/skills/oasis/project-wrappers/`.
+- An install before 0.17.0 still in `~/.agents/skills/odoo19`: move it out of `~/.agents/skills` yourself.
+- A `lock.sha256` relative to the checkout: in the requirements directory run `sha256sum runtime.in runtime.txt
+  dev.in dev.txt > lock.sha256` (`overrides.txt` last when it exists), which writes the same digests relative to
+  its own directory; `bootstrap --apply` would compile the locks again instead.
+- A `<database>.logins` next to the env file holds the passwords versions before 0.20.0 generated: delete it once
+  you no longer need them.
+
 ## Documentation
 
 | Documentation | Purpose |
@@ -261,7 +287,6 @@ plan when the Python of an environment it adopts or creates may not parse the co
 | [New project setup](docs/project-setup.md) | Workspace file, entry point and optional project wrappers |
 | [Checking the environment](docs/checking-environment.md) | `doctor`, `doctor --environment` (`check-environment`, a deprecated alias), `lock.sha256` and the installed packages (a drifted adopted environment is a WARN) |
 | [Workspace file](docs/workspace-file.md) | One `oasis-workspace.toml` for every checkout |
-| [Migrating to the workspace file](docs/migrating.md) | `oasis migrate` |
 | [Path-free odoo.conf](docs/path-free-odoo-conf.md) | What oasis passes on the Odoo command line |
 | [Checkouts and worktrees](docs/checkouts-and-worktrees.md) | Checkout identity, databases per checkout, `worktree-init` |
 | [Servers and ports](docs/servers-and-ports.md) | `start`, `stop`, `status` and ports per checkout |

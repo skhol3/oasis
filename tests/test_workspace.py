@@ -23,7 +23,7 @@ os.umask(0o022)
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'oasis'
 READER = ROOT / 'tools' / 'config.py'
-# A legacy profile: no longer read, only refused (and converted by oasis migrate).
+# The profile format before v0.12.0: not read since v0.21.0 (S6), wherever it is.
 LEGACY_PROFILE = "[tooling]\nversion = '19.0'\npython_version = '3.12'\n"
 MODEL_INFO = ROOT / 'tests' / 'fixtures' / 'model_info'
 GIT = ['git', '-c', 'user.name=oasis tests', '-c', 'user.email=tests@example.invalid',
@@ -323,20 +323,10 @@ class WorkspaceTests(unittest.TestCase):
         finally:
             self.scratch.chmod(mode)
 
-    def refusal(self, profile):
-        # migrate cannot plan it here (a workspace file is already found), so only its --plan is named.
-        plan = shlex.join(['oasis', '--project', str(profile.parent), 'migrate', '--plan'])
-        return (f'{profile} is the old profile format, no longer read: run {plan} to see its '
-                'conversion to oasis-workspace.toml or what stops it.')
-
-    def test_a_legacy_profile_in_the_checkout_is_refused_next_to_the_workspace(self):
+    def test_an_old_profile_in_the_checkout_is_not_read(self):
         main = self.layout()
-        profile = main / '.odoo19-agent.toml'
-        profile.write_text(LEGACY_PROFILE)
-        self.assert_rejected(main, self.refusal(profile))
-        # The checkout file does not change that.
-        (main / 'oasis-checkout.toml').write_text("[tooling]\ncheckout_slug = 'mrp_2'\n")
-        self.assert_rejected(main, self.refusal(profile))
+        (main / '.odoo19-agent.toml').write_text(LEGACY_PROFILE)
+        self.assertEqual(self.output(main), self.expected(main, 'main', ''))
 
     def test_a_profile_on_the_way_no_longer_stops_discovery(self):
         main = self.layout()

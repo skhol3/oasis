@@ -55,7 +55,7 @@ fi
 # An overrides.txt next to the inputs (v0.15.0 S7) must be recorded in lock.sha256 too, which
 # `sha256sum --check` alone cannot require (tools/locks.py recorded).
 if dependency_locks_current && { [[ ! -f "$requirements_dir/overrides.txt" ]] \
-    || python3 -I -B "$(dirname "$0")/locks.py" recorded "$requirements_dir" "$PROJECT_ROOT"; }; then
+    || python3 -I -B "$(dirname "$0")/locks.py" recorded "$requirements_dir"; }; then
   pass "dependency_locks=current"
 else fail "dependency_locks=stale_or_modified"
 fi

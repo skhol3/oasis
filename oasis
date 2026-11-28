@@ -14,7 +14,7 @@ import sys
 COMMANDS = (
     'audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
     'drop-database', 'gc', 'install-module', 'lint-module', 'list-databases',
-    'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy',
+    'menu', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy',
     'recreate-database-volume', 'recreate-postgres-volume', 'restart', 'setup', 'setup-postgres', 'start',
     'start-database', 'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info',
     'worktree-init', 'xmlid-info',
@@ -22,9 +22,6 @@ COMMANDS = (
 PROGRAM = 'oasis'
 
 
-# Commands that run in a checkout that still has the legacy profile: migrate converts it, doctor
-# reports it as one FAIL, policy prints the agent contract. Every other command is refused before it runs.
-LEGACY_COMMANDS = ('migrate', 'doctor', 'policy')
 # Commands that run in a checkout without a workspace file: setup creates it, policy reads no
 # configuration, and `status --json` reports that the workspace is missing (v0.16.0 S3). Every other
 # command is refused there (missing configuration).
@@ -112,12 +109,8 @@ def main() -> int:
         if root is None:
             print(f'ERROR: {error}', file=sys.stderr)
             return 2
-    if config is not None and (root / config.PROFILE_NAME).is_file():
-        if gated not in LEGACY_COMMANDS:
-            print(f'ERROR: {config.legacy_profile_refusal(root / config.PROFILE_NAME, prog)}', file=sys.stderr)
-            return 2
-    elif (gated not in UNCONFIGURED_COMMANDS and not (args.command == 'status' and args.arguments == ['--json'])
-          and (config is None or config.workspace_file(root) is None)):
+    if (gated not in UNCONFIGURED_COMMANDS and not (args.command == 'status' and args.arguments == ['--json'])
+            and (config is None or config.workspace_file(root) is None)):
         message = (config.missing_configuration(root) if config is not None
                    else f'Missing tooling configuration: no oasis-workspace.toml at or above {root}.')
         print(f'ERROR: {message}', file=sys.stderr)

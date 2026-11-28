@@ -47,7 +47,7 @@ When it passes, the output ends with its `environment_failures=0`, as before; a 
 
 ## Dependency locks
 
-`lock.sha256` lists the dependency inputs and locks (`runtime.in`, `runtime.txt`, `dev.in`, `dev.txt`, and `overrides.txt` last when it [exists](#overridestxt)) with their SHA-256, in `sha256sum` format, relative to its own directory: regenerate it there with `sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256` (`... dev.txt overrides.txt > lock.sha256` with that file). `doctor --environment` (`dependency_locks`) and `bootstrap` run `sha256sum --check --strict lock.sha256` from that directory first and, for a legacy lock whose entries are relative to the project root (the checkout), from the project root next; either one passing is enough. `oasis migrate` rewrites a legacy lock relative to its directory with the same hashes.
+`lock.sha256` lists the dependency inputs and locks (`runtime.in`, `runtime.txt`, `dev.in`, `dev.txt`, and `overrides.txt` last when it [exists](#overridestxt)) with their SHA-256, in `sha256sum` format, relative to its own directory: regenerate it there with `sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256` (`... dev.txt overrides.txt > lock.sha256` with that file). `doctor --environment` (`dependency_locks`) and `bootstrap` run `sha256sum --check --strict lock.sha256` from that directory. Since v0.21.0 a lock whose entries are relative to the project root (the format before v0.12.0) is stale: regenerate it in its directory as above.
 
 `bootstrap` compiles the locks itself when they need it, before it creates or syncs the environment:
 
@@ -121,7 +121,7 @@ working and stays deprecated: through either entry point, from a project wrapper
 `doctor --environment` with the same mode and prints the same lines, with the same exit codes, as
 before; only its usage line differs (`Usage: <program> [--quick|--full]`, as before, against
 `Usage: <program> doctor [--environment [--quick|--full]]`). Both are refused where the other is: in a
-checkout without a workspace file or with a legacy profile, where `doctor` alone still runs (one
+checkout without a workspace file, where `doctor` alone still runs (one
 `FAIL configuration`). `bootstrap --apply` still ends with these checks in `--full` mode (since 0.20.0 only their
 `FAIL locked_environment=drifted` makes it exit 1: [The exit code of bootstrap](#the-exit-code-of-bootstrap)). Use
 `doctor --environment` in new scripts and instructions; the agent tool `oasis_check_environment`
@@ -140,7 +140,6 @@ FAIL python=missing
 
 | Failure | `fix:` |
 | --- | --- |
-| `configuration`: the legacy profile | `oasis migrate --plan, then oasis migrate --apply` |
 | `configuration`: no workspace file (`Missing tooling configuration: ...`), no section for the checkout's series (`... has no [series."<x.y>"] section: ...`), or no Odoo source (`No Odoo source for <x.y>: ...`); `odoo_conf=missing`, `compose=missing`, `env_file=missing` | `oasis setup --apply` |
 | `configuration`: any other error | `correct the setting the error names, then run oasis doctor again` |
 | `git` | `install git 2.31 or newer on PATH` |
@@ -159,13 +158,12 @@ FAIL python=missing
 | `postgres_connection=authentication_failed` | when `odoo.conf` sets `db_user` or `db_password` to other values than the env file: `<odoo.conf> sets <options> to other values than <env file>: remove <options> from <odoo.conf> so Odoo uses the account of <env file>, then run oasis doctor again`; when `odoo.conf` points at the compose service (`db_host` `127.0.0.1` or `localhost` and the port the compose file publishes to 5432): `the PostgreSQL that <odoo.conf> names refuses the account Odoo uses: its volume was initialized with other credentials than <env file>; oasis --project <checkout> recreate-postgres-volume --confirm <compose project> recreates it with them (Tier B: it deletes every database of the service)`; when oasis cannot read the port the compose file publishes to 5432 (`it cannot be read`, `several ports`, or `an entry other than - [<address>:]<port>:5432` under `ports:`): `the PostgreSQL that <odoo.conf> names (db_host <host>, db_port <port>) refuses the account Odoo uses, and oasis could not read the port <compose file> publishes to 5432 (<why>), so it cannot tell whether that server is the service of <compose file>: if it is, oasis --project <checkout> recreate-postgres-volume --confirm <compose project> recreates its volume with the account of <env file> (Tier B: it deletes every database of the service); if it is not, correct that account on that server; then run oasis doctor again`; otherwise `the PostgreSQL that <odoo.conf> names (db_host <host>, db_port <port>) refuses the account Odoo uses, and it is not the service of <compose file> (published on 127.0.0.1:<port>): correct that account on that server, or set db_host = 127.0.0.1 and the db_port <compose file> publishes in <odoo.conf>; then run oasis doctor again` |
 | `logs_dir=not_writable`, `data_dir=not_writable` | `make <path> a directory you can write`: the directory, or, when it does not exist yet, its nearest existing parent (also when that is a file) |
 | `http_port=invalid` | `set http_port in <odoo.conf> to a port number` |
-| `project_wrappers=old_install_dir`: a file of the checkout's `dev/scripts/` (the [project wrappers](project-setup.md)) still calls `~/.agents/skills/odoo19`, the install directory before 0.17.0; the last check, with no line when none does | `replace .agents/skills/odoo19/ with .agents/skills/oasis/ in <wrappers> (the oasis install directory since 0.17.0)`, where `<wrappers>` are their paths (`a`, `a and b`, `a, b and c`) ([From an earlier version](install.md#from-an-earlier-version)) |
 
 The commands the fix lines name start with `oasis`. `doctor` and `setup` are the commands the entry point runs in a checkout without a workspace file: doctor then reports `FAIL configuration=Missing tooling configuration: ...` with `fix: oasis setup --apply`.
 
 | Check | Passes when | Otherwise |
 | --- | --- | --- |
-| `configuration` | the workspace file loads; the value is `workspace` | `FAIL configuration=<error>` (a checkout that still has the file of earlier versions gives the refusal that names `oasis migrate`, see [Migrating](migrating.md)); the checks after `proc` are left out |
+| `configuration` | the workspace file loads; the value is `workspace` | `FAIL configuration=<error>`; the checks after `proc` are left out |
 | `odoo_version` | always, when the configuration loads (only supported series load): the checkout's series | |
 | `series`, `series_exceptions` | with `workspace_version = 2` only: `series=<x.y> from=<checkout\|manifests\|workspace>`, where the checkout's series came from (see [The checkout's series](workspace-file.md#the-checkouts-series)); `series_exceptions=<modules>` when its section lists any | a series without a section fails `configuration` |
 | `series_isolation` | with `workspace_version = 2` and several series: no two series resolve to the same database port (published by their compose files), compose project, `dev_prefix` or `test_prefix`, or env file; the value lists the series (`19.0,15.0`) | `FAIL series_isolation=<db_port\|compose_project\|prefixes\|env_file> series=<x.y>,<x.y>`, one per group of series sharing it (see [Isolation](workspace-file.md#isolation)) |

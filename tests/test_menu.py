@@ -30,8 +30,8 @@ ACTIONS = ['server.run', 'server.start', 'server.restart', 'server.stop', 'serve
            'modules.install', 'modules.update', 'modules.status', 'modules.create_database', 'modules.overview',
            'tests.module', 'tests.class', 'tests.reuse',
            'maintenance.drop_database', 'maintenance.trash',
-           'maintenance.trash_restore', 'maintenance.trash_empty', 'maintenance.gc', 'maintenance.gc_apply', 'maintenance.doctor', 'maintenance.migrate_plan',
-           'maintenance.migrate', 'maintenance.worktree']
+           'maintenance.trash_restore', 'maintenance.trash_empty', 'maintenance.gc', 'maintenance.gc_apply', 'maintenance.doctor',
+           'maintenance.worktree']
 ACTION_KEYS = ['argv', 'command', 'confirm', 'destructive', 'follow', 'group', 'id', 'inputs', 'kind', 'label',
                'superseded_by', 'terminal_only', 'user_run']
 INPUT_KEYS = ['allow_new', 'choices', 'default', 'error', 'hint', 'id', 'kind', 'label', 'pattern', 'required',
@@ -299,9 +299,8 @@ class CatalogTests(MenuFixture):
         self.assertEqual((actions['modules.install']['confirm'], actions['modules.install']['destructive']),
                          (None, False))
         self.assertEqual((actions['maintenance.drop_database']['confirm'], actions['maintenance.gc_apply']['confirm'],
-                          actions['server.stop_database']['confirm'], actions['maintenance.migrate']['confirm'],
-                          actions['maintenance.trash_empty']['confirm']),
-                         ('database', 'yes', 'yes', 'yes', 'yes'))
+                          actions['server.stop_database']['confirm'], actions['maintenance.trash_empty']['confirm']),
+                         ('database', 'yes', 'yes', 'yes'))
         # The trash (S2): drop moves to it; list, restore and empty it.
         self.assertEqual(actions['maintenance.drop_database']['label'], 'Move a database to the trash')
         self.assertEqual(actions['maintenance.trash'], {
@@ -326,16 +325,12 @@ class CatalogTests(MenuFixture):
                         'choices': None}],
             'destructive': True, 'confirm': 'yes', 'user_run': False, 'terminal_only': False, 'follow': False, 'superseded_by': None})
         self.assertEqual([key for key, action in actions.items() if action['user_run']],
-                         ['maintenance.migrate', 'maintenance.worktree'])
+                         ['maintenance.worktree'])
         self.assertEqual([key for key, action in actions.items() if action['terminal_only']], ['modules.create_database'])
-        self.assertEqual(actions['maintenance.migrate_plan']['argv'], [*prefix, 'migrate', '--plan'])
         # v0.16.0 S1: the Tier B actions pass --confirm <exact name> (tools/policy.py).
         self.assertEqual(actions['maintenance.drop_database']['argv'][-3:],
                          [{'input': 'database'}, {'input': 'terminate', 'flag': '--terminate'},
                           {'input': 'database', 'option': '--confirm'}])
-        self.assertEqual(actions['maintenance.migrate']['argv'],
-                         [*prefix, 'migrate', '--apply', {'input': 'workspace_file', 'option': '--confirm'}])
-        self.assertEqual([field['id'] for field in actions['maintenance.migrate']['inputs']], ['workspace_file'])
         self.assertEqual(actions['maintenance.worktree']['argv'],
                          [*prefix, 'worktree-init', {'input': 'feature'}, {'input': 'branch'},
                           {'input': 'path', 'option': '--path'}, {'input': 'path', 'option': '--confirm'}])
@@ -589,7 +584,7 @@ class TerminalMenuTests(MenuFixture):
         self.assertEqual(self.log().count('RENAME TO'), 1)
 
     def test_user_run_actions_are_not_remembered(self):
-        result = self.terminal('4\n10\nshop\nshop\n/work/a-shop\n')
+        result = self.terminal('4\n8\nshop\nshop\n/work/a-shop\n')
         self.assertIn(self.command('worktree-init', 'shop', 'shop', '--path', '/work/a-shop', '--confirm', '/work/a-shop'),
                       result.stdout)
         self.assertFalse(self.state_file().exists())

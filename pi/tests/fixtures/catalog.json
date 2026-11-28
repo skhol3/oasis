@@ -996,66 +996,6 @@
       "superseded_by": null
     },
     {
-      "id": "maintenance.migrate_plan",
-      "group": "maintenance",
-      "label": "Show the workspace migration plan",
-      "kind": "command",
-      "command": "migrate",
-      "argv": [
-        "/opt/oasis/oasis",
-        "--project",
-        "/work/a project",
-        "migrate",
-        "--plan"
-      ],
-      "inputs": [],
-      "destructive": false,
-      "confirm": null,
-      "user_run": false,
-      "terminal_only": false,
-      "follow": false,
-      "superseded_by": null
-    },
-    {
-      "id": "maintenance.migrate",
-      "group": "maintenance",
-      "label": "Migrate to the workspace file",
-      "kind": "command",
-      "command": "migrate",
-      "argv": [
-        "/opt/oasis/oasis",
-        "--project",
-        "/work/a project",
-        "migrate",
-        "--apply",
-        {
-          "input": "workspace_file",
-          "option": "--confirm"
-        }
-      ],
-      "inputs": [
-        {
-          "id": "workspace_file",
-          "label": "Workspace file to write (the plan names it after write)",
-          "kind": "text",
-          "source": null,
-          "required": true,
-          "allow_new": false,
-          "pattern": "^/.+",
-          "error": "Enter an absolute path.",
-          "default": null,
-          "hint": null,
-          "choices": null
-        }
-      ],
-      "destructive": true,
-      "confirm": "yes",
-      "user_run": true,
-      "terminal_only": false,
-      "follow": false,
-      "superseded_by": null
-    },
-    {
       "id": "maintenance.worktree",
       "group": "maintenance",
       "label": "Create a linked worktree",

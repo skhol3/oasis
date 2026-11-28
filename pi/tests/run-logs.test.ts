@@ -34,15 +34,12 @@ test("runLogLocations follows the compact log rules of tools/compact.sh", () => 
   assert.deepEqual(runLogLocations(WITHOUT_LOGS), {});
 });
 
-test("isRunLog accepts the run logs of each layout inside the project's log locations", () => {
+test("isRunLog accepts the run logs inside the project's log locations", () => {
   const withLogs = runLogLocations(WITH_LOGS);
   for (const path of [
     // <logs>/<main|slug>/run-<id>/ (0.8.0).
     "/p/logs/main/run-1/stdout.log",
     "/p/logs/shop_feature/run-x9/stderr.log",
-    // <logs>/odoo19/<main|slug>/run-<id>/ of runs before 0.8.0.
-    "/p/logs/odoo19/main/run-1/stdout.log",
-    "/p/logs/odoo19/shop_feature/run-x9/stderr.log",
   ]) assert.equal(isRunLog(path, withLogs, SAME), true, path);
 });
 
@@ -51,6 +48,9 @@ test("isRunLog rejects paths outside the project's log locations, even with a ru
   for (const path of [
     "/tmp/x/main/run-1/stdout.log",
     "/tmp/odoo19/main/run-1/stdout.log",
+    // <logs>/odoo19/<main|slug>/run-<id>/ of runs before 0.8.0 is no run log since v0.21.0 (S6).
+    "/p/logs/odoo19/main/run-1/stdout.log",
+    "/p/logs/odoo19/shop_feature/run-x9/stderr.log",
     "/p/logs-other/main/run-1/stdout.log",
     "/p/logsmain/run-1/stdout.log",
     // dev/logs/odoo19 is not read.
@@ -84,10 +84,9 @@ test("isRunLog refuses a path that cannot be resolved", () => {
   assert.equal(isRunLog("/p/logs/main/run-1/stdout.log", runLogLocations(WITH_LOGS), realpathSync), false);
 });
 
-test("formatBackgroundRun summarizes a run of each layout", () => {
+test("formatBackgroundRun summarizes a run of the main checkout or a linked one", () => {
   for (const [config, stdoutLog, stderrLog] of [
     [WITH_LOGS, "/p/logs/shop_feature/run-1/stdout.log", "/p/logs/shop_feature/run-1/stderr.log"],
-    [WITH_LOGS, "/p/logs/odoo19/main/run-1/stdout.log", "/p/logs/odoo19/main/run-1/stderr.log"],
     [LINKED, "/p/logs/shop_wt/run-1/stdout.log", "/p/logs/shop_wt/run-1/stderr.log"],
   ] as const) {
     const logs: Record<string, string> = { [stdoutLog]: RESULT, [stderrLog]: "" };
