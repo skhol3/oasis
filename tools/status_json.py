@@ -13,9 +13,9 @@ databases, server; `next` is the command of the first one that is not ready (nul
   database_service  start-database, which starts it (stopped or starting) and names no env file (an agent harness
                     may refuse a command that does; list-databases would start it too, but the policy says it only
                     reads), doctor when it is unhealthy or its state cannot be read
-  databases         init-dev-database --plan --json with [development] and a module, else create-database --plan
-                    --json: creating a database is the user's decision, its name included (v0.20.0 S5, S6: the plan
-                    asks it); doctor when they cannot be read
+  databases         init-dev-database --plan --json, the plan of the one command that creates a database: creating
+                    one is the user's decision, its name included (v0.20.0 S5, S6, S12: the plan asks it); doctor
+                    when they cannot be read
   server            start
 """
 from __future__ import annotations
@@ -87,17 +87,6 @@ def databases(values: dict, root: Path) -> list[str] | str:
             if name and trash.owned(name, dev, test, slug, slugs)]
 
 
-def first_module(values: dict) -> str | None:
-    for addon_root in values['ADDON_ROOTS'].splitlines():
-        try:
-            found = sorted(path.parent.name for path in Path(addon_root).glob('*/__manifest__.py'))
-        except OSError:
-            continue
-        if found:
-            return found[0]
-    return None
-
-
 def report(root: Path) -> dict:
     program = [config.program_name(), '--project', str(root)]
 
@@ -159,14 +148,9 @@ def report(root: Path) -> dict:
     if not checks['databases']['ready']:
         if isinstance(checks['databases']['detail'], str):
             return done(command('doctor'))
-        # v0.20.0 S5, S6: the plan asks the user the name (and the kind, the module, the demo data); none is chosen here.
-        try:
-            development = isinstance(config.read_toml(workspace).get('development'), dict)
-        except config.InvalidConfig:
-            development = False
-        if development and first_module(values) is not None:
-            return done(command('init-dev-database', '--plan', '--json'))
-        return done(command('create-database', '--plan', '--json'))
+        # v0.20.0 S5, S6, S12: the plan asks the user the name, the kind, the module, the demo data, the language and
+        # the country; none is chosen here.
+        return done(command('init-dev-database', '--plan', '--json'))
     return done(None if checks['server']['ready'] else command('start'))
 
 

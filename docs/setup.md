@@ -93,9 +93,9 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
   configuration's Python) until answered: setup never chooses them for you.
 - The `[development]` table of a new workspace (v0.16.0), which `init-dev-database` needs: the question
   `development`, `init-dev-database needs a [development] table in <workspace file>: add one with
-  administrator_login = 'admin' (its password is generated)?`, answered `add` (recommended) or `none` with
-  `--answer development=<add|none>` or on a terminal (Enter: `add`). Without a terminal and without an
-  answer, `add` applies. `add` writes the table after
+  administrator_login = 'admin' (its password: Odoo's default, or ODOO_ADMIN_PASSWORD of the env file)?`,
+  answered `add` (recommended) or `none` with `--answer development=<add|none>` or on a terminal (Enter:
+  `add`). Without a terminal and without an answer, `add` applies. `add` writes the table after
   `[tooling]`, below a comment; `none` leaves it out and the [next steps](#next-steps) name the lines to
   add. An existing workspace is never asked (an answer is refused as one setup does not use).
 - Questions are asked only when standard input and standard error are a terminal (never with `--json`).

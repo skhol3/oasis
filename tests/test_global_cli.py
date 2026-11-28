@@ -22,7 +22,7 @@ def legacy_refusal(profile, program='oasis'):
     plan = shlex.join([program, '--project', str(profile.parent), 'migrate', '--plan'])
     return (f'ERROR: {profile} is the old profile format, no longer read: run {plan} to see its conversion to '
             'oasis-workspace.toml or what stops it.\n')
-PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
+PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'doctor',
           'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases',
           'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy',
           'recreate-database-volume', 'restart', 'setup', 'start', 'start-database',

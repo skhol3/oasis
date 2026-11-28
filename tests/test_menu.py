@@ -29,7 +29,7 @@ ACTIONS = ['server.run', 'server.start', 'server.restart', 'server.stop', 'serve
            'server.stop_database',
            'modules.install', 'modules.update', 'modules.status', 'modules.init_dev', 'modules.overview',
            'tests.module', 'tests.class', 'tests.reuse',
-           'maintenance.create_database', 'maintenance.drop_database', 'maintenance.trash',
+           'maintenance.drop_database', 'maintenance.trash',
            'maintenance.trash_restore', 'maintenance.trash_empty', 'maintenance.gc', 'maintenance.gc_apply', 'maintenance.doctor', 'maintenance.migrate_plan',
            'maintenance.migrate', 'maintenance.worktree']
 ACTION_KEYS = ['argv', 'command', 'confirm', 'destructive', 'follow', 'group', 'id', 'inputs', 'kind', 'label',
@@ -280,7 +280,7 @@ class CatalogTests(MenuFixture):
             'follow': True, 'superseded_by': None})
         self.assertEqual(actions['modules.install']['argv'], [
             *prefix, 'install-module', {'input': 'demo', 'flag': '--with-demo'}, {'input': 'module'},
-            {'input': 'database'}, {'input': 'database', 'option': '--confirm'}])
+            {'input': 'database'}])
         self.assertEqual([item['id'] for item in actions['modules.install']['inputs']], ['module', 'database', 'demo'])
         self.assertEqual(actions['modules.install']['inputs'][2]['default'], False)
         self.assertEqual(actions['tests.reuse']['argv'], [
@@ -289,16 +289,15 @@ class CatalogTests(MenuFixture):
         self.assertFalse(actions['tests.reuse']['inputs'][1]['required'])
         self.assertEqual(actions['modules.update']['argv'], [
             *prefix, 'update-module', {'compact': '--compact'}, {'input': 'module'}, {'input': 'database'}])
-        # v0.20.0 S5: the commands that create a database are Tier B; the menu passes --confirm <database>, after
-        # the typed name where the database is new; install-module needs it only for a missing database.
-        for key, command, template in (
-                ('maintenance.create_database', 'create-database', [{'input': 'database'}]),
-                ('modules.init_dev', 'init-dev-database',
-                 [{'input': 'demo', 'flag': '--with-demo'}, {'input': 'module'}, {'input': 'database'}])):
-            self.assertEqual((actions[key]['argv'], actions[key]['confirm'], actions[key]['destructive']),
-                             ([*prefix, command, *template, {'input': 'database', 'option': '--confirm'}],
-                              'database', True), key)
-        self.assertEqual(actions['modules.install']['confirm'], None)
+        # v0.20.0 S5, S12: init-dev-database, the one command that creates a database, is Tier B; the menu passes
+        # --confirm <database> after the typed name. install-module installs into an existing database only: no
+        # --confirm.
+        self.assertEqual((actions['modules.init_dev']['argv'], actions['modules.init_dev']['confirm'],
+                          actions['modules.init_dev']['destructive']),
+                         ([*prefix, 'init-dev-database', {'input': 'demo', 'flag': '--with-demo'}, {'input': 'module'},
+                           {'input': 'database'}, {'input': 'database', 'option': '--confirm'}], 'database', True))
+        self.assertEqual((actions['modules.install']['confirm'], actions['modules.install']['destructive']),
+                         (None, False))
         self.assertEqual((actions['maintenance.drop_database']['confirm'], actions['maintenance.gc_apply']['confirm'],
                           actions['server.stop_database']['confirm'], actions['maintenance.migrate']['confirm'],
                           actions['maintenance.trash_empty']['confirm']),
@@ -395,7 +394,7 @@ class CatalogTests(MenuFixture):
         self.assertEqual([key for key in actions if key.startswith('tests.')], ['tests.module', 'tests.class', 'tests.reuse'])
         self.assertEqual(actions['modules.install']['argv'], [
             *prefix, 'install-module', {'input': 'demo', 'flag': '--with-demo'}, {'input': 'module'},
-            {'input': 'database'}, {'input': 'database', 'option': '--confirm'}])
+            {'input': 'database'}])
         self.unchanged()
 
     def test_catalog_defaults_follow_the_checkout_and_its_odoo_conf(self):
@@ -578,7 +577,7 @@ class TerminalMenuTests(MenuFixture):
         # A destructive action repeats only after its typed confirmation.
         Path(str(self.commands) + '.databases').write_text('cc_dev_coffee\n')
         self.env.pop('FAKE_EXISTS')
-        result = self.terminal('4\n2\n1\nn\ncc_dev_coffee\n')
+        result = self.terminal('4\n1\n1\nn\ncc_dev_coffee\n')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         result = self.terminal('r\ncc_dev_coffe\n')
         self.assertEqual((result.returncode, result.stderr), (1, ''), result.stdout)
@@ -590,7 +589,7 @@ class TerminalMenuTests(MenuFixture):
         self.assertEqual(self.log().count('RENAME TO'), 1)
 
     def test_user_run_actions_are_not_remembered(self):
-        result = self.terminal('4\n11\nshop\nshop\n/work/a-shop\n')
+        result = self.terminal('4\n10\nshop\nshop\n/work/a-shop\n')
         self.assertIn(self.command('worktree-init', 'shop', 'shop', '--path', '/work/a-shop', '--confirm', '/work/a-shop'),
                       result.stdout)
         self.assertFalse(self.state_file().exists())
@@ -629,7 +628,7 @@ class TerminalMenuTests(MenuFixture):
         self.assertIn(' --test-tags /coffee:TestOrder ', self.log())
 
     def test_databases_are_listed_with_a_waiting_message_and_defaults_apply(self):
-        # The default database exists: install-module needs no --confirm (v0.20.0 S5); none is listed.
+        # The default database exists: install-module installs into existing databases only (v0.20.0 S12).
         self.env['FAKE_EXISTS'] = '1'
         result = self.terminal('2\n1\n1\n\ny\n')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
@@ -679,7 +678,7 @@ class TerminalMenuTests(MenuFixture):
                 self.assertIn("SELECT datname FROM pg_database WHERE datname LIKE 'cc\\_dev\\_%' ESCAPE", self.log())
 
     def test_a_number_is_not_a_database_name_when_none_is_listed(self):
-        # The default database exists: install-module needs no --confirm (v0.20.0 S5); none is listed.
+        # The default database exists: install-module installs into existing databases only (v0.20.0 S12).
         self.env['FAKE_EXISTS'] = '1'
         result = self.terminal('2\n1\n1\n3\n\nn\n')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
@@ -688,29 +687,27 @@ class TerminalMenuTests(MenuFixture):
         self.assertTrue(result.stdout.endswith(self.command('install-module', 'coffee')))
         self.assertIn('-d cc_dev_coffee -i coffee', self.log())
 
-    def test_create_requires_typing_the_database_name_and_passes_confirm(self):
-        # v0.20.0 S5: create-database is Tier B; the menu passes --confirm <database> after the typed name.
-        result = self.terminal('4\n1\ncc_dev_new\ncc_dev_ne\n')
-        self.assertEqual((result.returncode, result.stderr), (1, ''), result.stdout)
-        self.assertIn(self.command('create-database', 'cc_dev_new', '--confirm', 'cc_dev_new'), result.stdout)
-        self.assertTrue(result.stdout.endswith('Not confirmed: nothing ran.\n'), result.stdout)
+    def test_install_on_a_missing_database_is_refused_naming_the_plan(self):
+        # v0.20.0 S12: install-module never creates a database; the menu runs it as it is.
+        result = self.terminal('2\n1\n1\n\nn\n')
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertTrue(result.stdout.endswith(self.command('install-module', 'coffee')), result.stdout)
+        plan = shlex.join(['oasis', '--project', str(self.root), 'init-dev-database', '--plan'])
+        self.assertIn(f'Database cc_dev_coffee does not exist; create it with: {plan}', result.stdout + result.stderr)
         self.assertNotIn('createdb', self.log())
-        result = self.terminal('4\n1\ncc_dev_new\ncc_dev_new\n')
-        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
-        self.assertTrue(result.stdout.endswith('Database ready: cc_dev_new\n'), result.stdout)
-        self.assertIn('createdb', self.log())
+        self.assertNotIn(' -i coffee', self.log())
 
     def test_drop_requires_typing_the_database_name(self):
         self.env.update(FAKE_DATABASES='cc_dev_coffee cc_test_other')
         # Only cc_dev_coffee exists, so its trash name is free.
         Path(str(self.commands) + '.databases').write_text('cc_dev_coffee\n')
-        result = self.terminal('4\n2\n1\nn\ncc_dev_coffe\n')
+        result = self.terminal('4\n1\n1\nn\ncc_dev_coffe\n')
         self.assertEqual((result.returncode, result.stderr), (1, ''), result.stdout)
         self.assertIn('  1) cc_dev_coffee\n  2) cc_test_other\n', result.stdout)
         self.assertIn(self.command('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee'), result.stdout)
         self.assertTrue(result.stdout.endswith('Not confirmed: nothing ran.\n'), result.stdout)
         self.assertNotIn('ALTER DATABASE', self.log())
-        result = self.terminal('4\n2\n1\nn\ncc_dev_coffee\n')
+        result = self.terminal('4\n1\n1\nn\ncc_dev_coffee\n')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         # The command first, then the confirmation (the typed answer echoes on the terminal only).
         self.assertRegex(result.stdout, re.escape(self.command('drop-database', 'cc_dev_coffee', '--confirm',

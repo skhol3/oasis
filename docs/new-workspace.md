@@ -120,8 +120,9 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
    password file is written and no password is printed: the output says what each account uses.
    Then check the installed packages against the locks.
 
-   Creating it is your decision (Tier B since v0.20.0): `init-dev-database --plan` asks the name
-   after `acme_dev_`, the module and whether with demo data, then prints the command with
+   Creating it is your decision (Tier B since v0.20.0): `init-dev-database --plan`, the one command
+   that creates a database, asks the name after `acme_dev_` (or `acme_test_`), dev, test or both, the
+   module, whether with demo data, the language and the country, then prints the command with
    `--confirm <database>` ([The plan of a new database](dev-database.md#the-plan-of-a-new-database)).
 
    ```bash

@@ -64,7 +64,7 @@ function fixedChoices(modules: string[], databases: string[]) {
 test("parseCatalog reads the core catalog and refuses another version or malformed JSON", () => {
   assert.equal(catalog.project, "/work/a project");
   assert.deepEqual(catalog.groups.map((group) => group.id), ["server", "modules", "tests", "maintenance"]);
-  assert.equal(catalog.actions.length, 27);
+  assert.equal(catalog.actions.length, 26);
   assert.throws(() => parseCatalog(FIXTURE.replace('"catalog_version": 1', '"catalog_version": 2')),
     /^Error: unsupported catalog_version 2 \(this panel reads version 1\); update the oasis layer\.$/);
   assert.throws(() => parseCatalog("not json"), /^Error: the catalog is not JSON: /);
@@ -78,7 +78,7 @@ test("fillTemplate fills words, inputs, options, flags and compact in order", ()
   assert.deepEqual(fillTemplate(action("modules.install"), { module: "coffee", database: "", demo: true }, true),
     [...PREFIX, "install-module", "--with-demo", "coffee"]);
   assert.deepEqual(fillTemplate(action("modules.install"), { module: "coffee", database: "cc_dev_x", demo: false }, true),
-    [...PREFIX, "install-module", "coffee", "cc_dev_x", "--confirm", "cc_dev_x"]);
+    [...PREFIX, "install-module", "coffee", "cc_dev_x"]);
   assert.deepEqual(fillTemplate(action("modules.update"), { module: "coffee", database: "cc_dev_x" }, true),
     [...PREFIX, "update-module", "--compact", "coffee", "cc_dev_x"]);
   assert.deepEqual(fillTemplate(action("modules.update"), { module: "coffee", database: "cc_dev_x" }, false),
@@ -139,7 +139,7 @@ test("textError applies required, the catalog pattern and refuses option-like va
   assert.equal(textError(only, "TestCup.test_fill"), null);
   assert.equal(textError(feature, "--force"), "A value cannot start with -.");
   assert.equal(textError(feature, "shop"), null);
-  const database = action("maintenance.create_database").inputs[0];
+  const database = action("modules.init_dev").inputs[1];
   assert.equal(textError(database, "bad-name"), "Database name must use only letters, numbers, and underscores.");
 });
 

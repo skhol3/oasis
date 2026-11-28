@@ -50,11 +50,12 @@ class Config:
         Path(os.environ['FAKE_STATE'] + '.config').write_text(json.dumps(args))
 tools = SimpleNamespace(config=Config())
 class Database:
-    def exp_create_database(self, database, demo, lang, user_password, login):
+    # The signature of odoo/service/db.py in 15.0 and 19.0 (phone left out: oasis never passes it).
+    def exp_create_database(self, database, demo, lang, user_password='admin', login='admin', country_code=None):
         if read():
             raise RuntimeError('existing database')
-        save({'demo': demo, 'users': {login: {'id': 2, 'password': digest(user_password),
-              'groups': [1, 2]}}, 'commits': 0})
+        save({'demo': demo, 'lang': lang, 'country': country_code,
+              'users': {login: {'id': 2, 'password': digest(user_password), 'groups': [1, 2]}}, 'commits': 0})
 class Common:
     def exp_authenticate(self, database, login, password, agent):
         user = read().get('users', {}).get(login, {})
@@ -113,6 +114,20 @@ GENERATED = 'password: generated, not stored or shown (local_admin can set one i
 TYPED = 'password: typed on the terminal'
 USERS_GENERATED = f'Account planner, {GENERATED}\nAccount manager, {GENERATED}\n'
 ACCOUNTS = ADMIN_DEFAULT + USERS_GENERATED
+# Synthetic copies of the files Odoo's database manager form lists its languages and countries from (15.0 and 19.0:
+# odoo/addons/base/data, read by exp_list_lang and exp_list_countries of odoo/service/db.py).
+LANGUAGES = ('"id","name","code","iso_code"\n"base.lang_en","English (US)","en_US","en"\n'
+             '"base.lang_fr","French / Français","fr_FR","fr"\n"base.lang_es_AR","Spanish (AR) / Español (AR)","es_AR","es_AR"\n')
+COUNTRIES = ('<?xml version="1.0" encoding="utf-8"?>\n<odoo>\n<data noupdate="1">\n'
+             '<record id="us" model="res.country"><field name="name">United States</field>'
+             '<field name="code">us</field></record>\n'
+             '<record id="ar" model="res.country"><field name="name">Argentina</field>'
+             '<field name="code">ar</field></record>\n'
+             '<record id="ARS" model="res.currency"><field name="name">ARS</field></record>\n'
+             '</data>\n</odoo>\n')
+LANGUAGE_OPTIONS = [{'value': 'en_US', 'label': 'English (US)'}, {'value': 'fr_FR', 'label': 'French / Français'},
+                    {'value': 'es_AR', 'label': 'Spanish (AR) / Español (AR)'}]
+COUNTRY_NONE = {'value': 'none', 'label': "none: no country (the database manager form's empty choice)"}
 
 
 def digest(password):
@@ -174,6 +189,14 @@ class DevelopmentUsersTests(unittest.TestCase):
     def confirmation(self, *args):
         return shlex.join(['oasis', '--project', str(self.root), 'init-dev-database', *args])
 
+    def base_data(self):
+        """The Odoo source's language and country lists (synthetic); without them Odoo offers en_US only."""
+        directory = self.source / 'odoo/addons/base/data'
+        directory.mkdir(parents=True)
+        (directory / 'res.lang.csv').write_text(LANGUAGES, encoding='utf-8')
+        (directory / 'res_country_data.xml').write_text(COUNTRIES, encoding='utf-8')
+        return directory
+
     def test_without_confirm_it_refuses_naming_the_exact_command(self):
         # v0.20.0 S5: Tier B. The configuration is checked first; nothing runs, no password is asked.
         for args, demo in ((('coffee', 'cc_dev_coffee'), 'no'), (('--with-demo', 'coffee', 'cc_dev_coffee'), 'yes')):
@@ -198,13 +221,19 @@ class DevelopmentUsersTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (2, '', 'ERROR: Invalid development user configuration.\n'))
 
-    def test_dry_run_prints_the_database_module_and_demo(self):
-        for args, demo in ((('coffee', 'cc_dev_coffee'), 'no'), (('--with-demo', 'coffee', 'cc_dev_coffee'), 'yes')):
+    def test_dry_run_prints_the_database_kind_module_demo_language_and_country(self):
+        # v0.20.0 S12: without --lang and --country, en_US and no country, as before.
+        self.base_data()
+        for args, database, kind, demo, language, country in (
+                (('coffee', 'cc_dev_coffee'), 'cc_dev_coffee', 'dev', 'no', 'en_US', 'none'),
+                (('--with-demo', 'coffee', 'cc_dev_coffee'), 'cc_dev_coffee', 'dev', 'yes', 'en_US', 'none'),
+                (('--lang', 'es_AR', '--country=AR', 'coffee', 'cc_test_coffee'), 'cc_test_coffee', 'test', 'no',
+                 'es_AR', 'ar')):
             with self.subTest(args=args):
                 result = self.invoke(*args, '--dry-run')
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
-                    f'database: cc_dev_coffee\nkind: dev\nmodule: coffee\ndemo: {demo}\ndry run: nothing changed\n'),
-                    ''))
+                    f'database: {database}\nkind: {kind}\nmodule: coffee\ndemo: {demo}\nlanguage: {language}\n'
+                    f'country: {country}\ndry run: nothing changed\n'), ''))
                 self.assertFalse(self.state.exists())
                 self.assertFalse(self.commands.exists())
 
@@ -215,56 +244,222 @@ class DevelopmentUsersTests(unittest.TestCase):
         self.assertFalse(self.commands.exists())
         return json.loads(result.stdout)
 
-    def test_plan_asks_the_name_the_module_and_the_demo_data(self):
-        # v0.20.0 S6: nothing is chosen for the user; demo data is recommended off, and still asked.
+    def test_plan_asks_the_name_kind_module_demo_language_and_country(self):
+        # v0.20.0 S6, S12: the questions of Odoo's database manager form, and dev, test or both; nothing is chosen
+        # for the user: demo data is recommended off and en_US recommended, both still asked; no country is
+        # recommended. The languages and countries are the Odoo source's, as the form lists them (by name).
+        self.base_data()
         (self.root / 'tea').mkdir()
         (self.root / 'tea/__manifest__.py').touch()
         document = self.plan()
-        self.assertEqual((document['command'], document['complete'], document['open'], document['databases']),
-                         ('init-dev-database', False, ['suffix', 'module', 'demo'], []))
+        self.assertEqual((document['format'], document['version'], document['command'], document['checkout'],
+                          document['complete'], document['open'], document['databases']),
+                         ('oasis-database-plan', 1, 'init-dev-database', str(self.root), False,
+                          ['suffix', 'kind', 'module', 'demo', 'language', 'country'], []))
         self.assertEqual(document['questions'], [
-            {'id': 'suffix', 'text': 'Name of the new database after cc_dev_ (letters, digits and underscores)',
+            {'id': 'suffix', 'text': 'Name of the new database after cc_dev_ or cc_test_ (letters, digits and '
+                                     'underscores)',
              'options': [], 'recommended': None, 'flag': '--answer suffix=<name>', 'answer': None, 'origin': None},
+            {'id': 'kind', 'text': 'Kind of the new database: dev, test or both',
+             'options': [{'value': 'dev', 'label': 'a development database cc_dev_<suffix>'},
+                         {'value': 'test', 'label': 'a test database cc_test_<suffix>'},
+                         {'value': 'both', 'label': 'both: cc_dev_<suffix> and cc_test_<suffix>'}],
+             'recommended': None, 'flag': '--answer kind=<dev|test|both>', 'answer': None, 'origin': None},
             {'id': 'module', 'text': 'Module init-dev-database installs in the new database',
              'options': [{'value': 'coffee', 'label': 'coffee'}, {'value': 'tea', 'label': 'tea'}],
              'recommended': None, 'flag': '--answer module=<module>', 'answer': None, 'origin': None},
             {'id': 'demo', 'text': "Load Odoo's demo data into the new database",
              'options': [{'value': 'no', 'label': 'without demo data'},
                          {'value': 'yes', 'label': "with Odoo's demo data and [development].demo_modules"}],
-             'recommended': 'no', 'flag': '--answer demo=<no|yes>', 'answer': None, 'origin': None}])
-        self.assertEqual(document['inferred']['kind'],
-                         {'value': 'dev', 'origin': 'init-dev-database creates development databases only'})
+             'recommended': 'no', 'flag': '--answer demo=<no|yes>', 'answer': None, 'origin': None},
+            {'id': 'language', 'text': 'Language of the new database: Odoo loads it and gives it to the '
+                                       'administrator, as its database manager form does',
+             'options': LANGUAGE_OPTIONS, 'recommended': 'en_US', 'flag': '--answer language=<code>', 'answer': None,
+             'origin': None},
+            {'id': 'country', 'text': "Country of the new database's company: Odoo sets the company's country and "
+                                      "currency (and the users' time zone when the country has only one), as its "
+                                      'database manager form does',
+             'options': [COUNTRY_NONE, {'value': 'ar', 'label': 'Argentina'},
+                         {'value': 'us', 'label': 'United States'}],
+             'recommended': None, 'flag': '--answer country=<code|none>', 'answer': None, 'origin': None}])
+        self.assertNotIn('kind', document['inferred'])
+        self.assertEqual(document['inferred']['dev_prefix']['value'], 'cc_dev_')
+        self.assertEqual(document['inferred']['test_prefix']['value'], 'cc_test_')
+        self.assertIn('not per database', document['inferred']['test_prefix']['origin'])
         self.assertIn('open question demo: Load Odoo\'s demo data into the new database. Answer with '
                       '--answer demo=<no|yes> (recommended: no).', document['lines'])
+        self.assertIn('open question country: Country of the new database\'s company: Odoo sets the company\'s '
+                      "country and currency (and the users' time zone when the country has only one), as its database "
+                      'manager form does. Answer with --answer country=<code|none> (no recommended answer).',
+                      document['lines'])
+        self.assertEqual(document['lines'][-1], 'nothing changed: answer the open questions above '
+                         '(docs/dev-database.md#the-plan-of-a-new-database), then run the plan again')
+
+    def test_without_the_source_lists_the_plan_offers_what_odoo_does(self):
+        # Odoo's scan_languages falls back to en_US when res.lang.csv cannot be read; without the countries' file
+        # only none is left (exp_list_countries fails there).
+        questions = {question['id']: question for question in self.plan()['questions']}
+        self.assertEqual(questions['language']['options'], [{'value': 'en_US', 'label': 'English'}])
+        self.assertEqual(questions['country']['options'], [COUNTRY_NONE])
+
+    ANSWERS = ('--answer', 'suffix=training', '--answer', 'module=coffee')
 
     def test_answered_plan_prints_the_dry_run_and_the_confirm_command(self):
-        for demo, options in (('no', ()), ('yes', ('--with-demo',))):
-            with self.subTest(demo=demo):
-                document = self.plan('--answer', 'suffix=training', '--answer', 'module=coffee',
-                                     '--answer', f'demo={demo}')
-                command = self.confirmation(*options, 'coffee', 'cc_dev_training', '--confirm', 'cc_dev_training')
-                self.assertEqual(document['databases'], [{'database': 'cc_dev_training', 'kind': 'dev',
-                                                          'command': command, 'module': 'coffee',
-                                                          'demo': demo == 'yes'}])
-                tail = document['lines'][document['lines'].index('database: cc_dev_training'):]
-                self.assertEqual(tail, ['database: cc_dev_training', 'kind: dev', 'module: coffee', f'demo: {demo}',
+        self.base_data()
+        for kind, demo, language, country, options in (
+                ('dev', 'no', 'en_US', 'none', ('--lang', 'en_US')),
+                ('test', 'yes', 'es_AR', 'AR', ('--with-demo', '--lang', 'es_AR', '--country', 'ar'))):
+            with self.subTest(kind=kind):
+                database = f'cc_{kind}_training'
+                document = self.plan(*self.ANSWERS, '--answer', f'kind={kind}', '--answer', f'demo={demo}',
+                                     '--answer', f'language={language}', '--answer', f'country={country}')
+                self.assertEqual((document['complete'], document['open']), (True, []))
+                command = self.confirmation(*options, 'coffee', database, '--confirm', database)
+                self.assertEqual(document['databases'], [{'database': database, 'kind': kind, 'command': command,
+                                                          'module': 'coffee', 'demo': demo == 'yes',
+                                                          'language': language,
+                                                          'country': None if country == 'none' else 'ar'}])
+                self.assertEqual([question['origin'] for question in document['questions']], ['from --answer'] * 6)
+                tail = document['lines'][document['lines'].index(f'database: {database}'):]
+                self.assertEqual(tail, [f'database: {database}', f'kind: {kind}', 'module: coffee', f'demo: {demo}',
+                                        f'language: {language}', f'country: {country.lower()}',
                                         'dry run: nothing changed', f'run: {command}',
                                         'nothing changed: creating a database is Tier B (oasis policy --json): '
                                         'the user confirms the command above'])
-        # An answer outside the options, and the guards of the dry run, refuse.
-        for args, stderr in ((('--answer', 'module=tea'), 'ERROR: Invalid answer tea for module: answer coffee.\n'),
-                             (('--answer', 'demo=maybe'), 'ERROR: Invalid answer maybe for demo: answer no or yes.\n'),
-                             (('--answer', 'kind=test'),
-                              'ERROR: --answer: unknown question kind (this plan asks suffix, module, demo).\n')):
+
+    def test_both_gives_the_dry_run_and_the_confirm_command_of_each_database(self):
+        answers = self.root / 'answers.json'
+        answers.write_text(json.dumps({'suffix': 'shop', 'kind': 'both', 'module': 'coffee', 'demo': 'no',
+                                       'language': 'en_US', 'country': 'none'}))
+        result = self.invoke('--plan', '--answers', str(answers), confirm=False)
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        dev = self.confirmation('--lang', 'en_US', 'coffee', 'cc_dev_shop', '--confirm', 'cc_dev_shop')
+        test = self.confirmation('--lang', 'en_US', 'coffee', 'cc_test_shop', '--confirm', 'cc_test_shop')
+        dry_run = 'module: coffee\ndemo: no\nlanguage: en_US\ncountry: none\ndry run: nothing changed\n'
+        self.assertTrue(result.stdout.endswith(
+            f'database: cc_dev_shop\nkind: dev\n{dry_run}database: cc_test_shop\nkind: test\n{dry_run}'
+            f'run: {dev}\nrun: {test}\n'
+            'nothing changed: creating a database is Tier B (oasis policy --json): the user confirms each command '
+            'above\n'), result.stdout)
+        self.assertIn('kind: both (from --answers)\n', result.stdout)
+        self.assertFalse(self.state.exists())
+        self.assertFalse(self.commands.exists())
+
+    def test_a_slugged_checkout_names_its_namespace(self):
+        (self.root / 'oasis-checkout.toml').write_text("[tooling]\ncheckout_slug = 'wt_1'\n")
+        document = self.plan(*self.ANSWERS, '--answer', 'kind=both', '--answer', 'demo=no', '--answer',
+                             'language=en_US', '--answer', 'country=none')
+        self.assertEqual([entry['database'] for entry in document['databases']],
+                         ['cc_dev_wt_1_training', 'cc_test_wt_1_training'])
+        self.assertEqual(document['inferred']['checkout_slug']['value'], 'wt_1')
+
+    def test_refused_plan_answers_change_nothing(self):
+        self.base_data()
+        complete = ('--answer', 'demo=no', '--answer', 'language=en_US', '--answer', 'country=none')
+        for args, stderr in (
+                (('--answer', 'module=tea'), 'ERROR: Invalid answer tea for module: answer coffee.\n'),
+                (('--answer', 'demo=maybe'), 'ERROR: Invalid answer maybe for demo: answer no or yes.\n'),
+                (('--answer', 'kind=staging'), 'ERROR: Invalid answer staging for kind: answer dev, test or both.\n'),
+                (('--answer', 'language=xx_XX'),
+                 'ERROR: Invalid answer xx_XX for language: answer en_US, fr_FR or es_AR.\n'),
+                (('--answer', 'country=zz'), 'ERROR: Invalid answer zz for country: answer none, ar or us.\n'),
+                (('--answer', 'prefix=acme_dev_'), 'ERROR: --answer: unknown question prefix (this plan asks suffix, '
+                                                   'kind, module, demo, language, country).\n'),
+                ((*self.ANSWERS, '--answer', 'kind=dev', *complete[:-2], '--answer', 'suffix=x'),
+                 'ERROR: The question suffix is answered twice: by --answer and by --answer.\n'),
+                (('--answer', 'suffix=', '--answer', 'kind=dev'),
+                 'ERROR: Invalid answer for suffix: the name needs at least one character after the prefix.\n'),
+                (('--answer', 'suffix=bad-name', '--answer', 'module=coffee', '--answer', 'kind=dev', *complete),
+                 'ERROR: Initialization requires a named development or test database.\n'),
+                (('--answer', 'suffix=x_r1a2b3c', '--answer', 'module=coffee', '--answer', 'kind=dev', *complete),
+                 'ERROR: Database names ending in _r<6 hex> are reserved for disposable runs: cc_dev_x_r1a2b3c\n'),
+                # A test database leaves room for verify-module's _update sibling (config.py's test_database rule).
+                (('--answer', 'suffix=' + 'x' * 49, '--answer', 'module=coffee', '--answer', 'kind=test', *complete),
+                 f'ERROR: Test databases with an _update sibling must be at most 56 bytes: cc_test_{"x" * 49}\n')):
             with self.subTest(args=args):
-                result = self.invoke('--plan', *args, confirm=False)
+                result = self.invoke('--plan', '--json', *args, confirm=False)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', stderr))
+                self.assertFalse(self.state.exists())
+                self.assertFalse(self.commands.exists())
         self.profile.write_text(test_lifecycle.WORKSPACE + PROFILE + "password = 'not-a-real-secret'\n")
-        result = self.invoke('--plan', '--answer', 'suffix=training', '--answer', 'module=coffee',
-                             '--answer', 'demo=no', confirm=False)
+        result = self.invoke('--plan', *self.ANSWERS, '--answer', 'kind=dev', *complete, confirm=False)
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (2, '', 'ERROR: Invalid development user configuration.\n'))
         self.assertFalse(self.state.exists())
+
+    def test_a_refused_answer_of_a_long_list_names_the_plan_instead_of_every_option(self):
+        directory = self.base_data()
+        (directory / 'res.lang.csv').write_text('"code","name"\n' + ''.join(
+            f'"l{number:02}_XX","Language {number:02}"\n' for number in range(11)), encoding='utf-8')
+        result = self.invoke('--plan', '--answer', 'language=en_US', confirm=False)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+            'ERROR: Invalid answer en_US for language: answer one of the 11 options of the question '
+            '(init-dev-database --plan --json lists them).\n')))
+
+    def test_plan_usage_error(self):
+        result = self.invoke('--plan', 'cc_dev_x', confirm=False)
+        self.assertEqual((result.returncode, result.stdout), (2, ''))
+        self.assertEqual(result.stderr, f'Usage: {(ROOT / "oasis").resolve()} init-dev-database --plan [--json] '
+                                        '[--answer <id>=<value>]... [--answers <file.json>]\n')
+        self.assertFalse(self.commands.exists())
+
+    def test_the_language_and_the_country_reach_odoo(self):
+        # v0.20.0 S12: exp_create_database gets them (both series take country_code); without the options, en_US
+        # and no country, as before.
+        self.base_data()
+        result = self.invoke('coffee', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
+            'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n' + ACCOUNTS), ''))
+        state = json.loads(self.state.read_text())
+        self.assertEqual((state['lang'], state['country']), ('en_US', None))
+        self.state.unlink()
+        result = self.invoke('--lang', 'fr_FR', '--country', 'US', 'coffee', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        state = json.loads(self.state.read_text())
+        self.assertEqual((state['lang'], state['country']), ('fr_FR', 'us'))
+
+    def test_an_unknown_language_or_country_is_refused_before_anything(self):
+        directory = self.base_data()
+        for args, stderr in (
+                (('--lang', 'xx_XX'), f'ERROR: Unknown language xx_XX: Odoo 19.0 lists its languages in '
+                                      f'{directory / "res.lang.csv"}; init-dev-database --plan --json shows them. No '
+                                      'database was created.\n'),
+                (('--country', 'zz'), f'ERROR: Unknown country zz: Odoo 19.0 lists its countries in '
+                                      f'{directory / "res_country_data.xml"}; init-dev-database --plan --json shows '
+                                      'them. No database was created.\n')):
+            for confirm in (True, False):
+                with self.subTest(args=args, confirm=confirm):
+                    result = self.invoke(*args, 'coffee', 'cc_dev_coffee', confirm=confirm)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', stderr))
+                    self.assertFalse(self.state.exists())
+                    self.assertFalse(self.commands.exists())
+        (directory / 'res_country_data.xml').write_text('<odoo>', encoding='utf-8')
+        result = self.invoke('--country', 'ar', 'coffee', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+            f'ERROR: Cannot read the countries of Odoo 19.0: {directory / "res_country_data.xml"}. No database was '
+            'created.\n')))
+        self.assertFalse(self.state.exists())
+
+    def test_a_test_database_is_created_the_same_way(self):
+        # v0.20.0 S12: <test_prefix>[slug_]<suffix>, Tier B as a development one.
+        result = self.invoke('coffee', 'cc_test_coffee', confirm=False)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+            'ERROR: init-dev-database creates the test database cc_test_coffee with its accounts and installs coffee, '
+            'demo data: no (Tier B: it needs explicit confirmation); nothing changed. Run: '
+            + self.confirmation('coffee', 'cc_test_coffee', '--confirm', 'cc_test_coffee') + '\n')))
+        self.assertFalse(self.state.exists())
+        result = self.invoke('coffee', 'cc_test_coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
+            'Development database initialized: cc_test_coffee\nAccounts ready: 3\n' + ACCOUNTS), ''))
+        self.assertEqual(set(json.loads(self.state.read_text())['users']), {'local_admin', 'planner', 'manager'})
+        self.state.unlink()
+        self.commands.unlink()
+        too_long = 'cc_test_' + 'x' * 49
+        result = self.invoke('coffee', too_long)
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', f'Test databases with an _update sibling must be at most 56 bytes: {too_long}\n'))
+        self.assertFalse(self.state.exists())
+        self.assertFalse(self.commands.exists())
 
     def terminal(self, *args, generated=(), logins=('planner', 'manager')):
         """Run on a terminal, typing a password (twice) for each login but those in generated, which
@@ -309,11 +504,11 @@ class DevelopmentUsersTests(unittest.TestCase):
         self.assertNotIn(b'Password for local_admin', output)
         return code, output.decode().replace('\r\n', '\n')
 
-    def test_rejects_test_unmanaged_empty_and_unsafe_names_without_effects(self):
-        for database in ('cc_test_coffee', 'other_db', 'cc_dev_', "cc_dev_bad'"):
+    def test_rejects_unmanaged_empty_and_unsafe_names_without_effects(self):
+        for database in ('other_db', 'cc_dev_', 'cc_test_', "cc_dev_bad'"):
             result = self.invoke('coffee', database)
             self.assertEqual((result.returncode, result.stdout, result.stderr),
-                (2, '', 'ERROR: Initialization requires a named development database.\n'))
+                (2, '', 'ERROR: Initialization requires a named development or test database.\n'))
             self.assertFalse(self.state.exists())
             self.assertFalse(self.commands.exists())
 
@@ -328,10 +523,12 @@ class DevelopmentUsersTests(unittest.TestCase):
             self.assertFalse(self.commands.exists())
 
     def test_requires_explicit_module_and_database(self):
-        usage = ('Usage: init-dev-database [--with-demo] <module> <database>\n'
+        usage = ('Usage: init-dev-database [--with-demo] [--lang <code>] [--country <code>] <module> <database>\n'
                  '       ... <module> <database> --dry-run | --confirm <database>; or init-dev-database --plan [--json]\n')
         for args in (('coffee',), ('coffee', 'cc_dev_coffee', '--bogus'), ('coffee', 'cc_dev_coffee', '--confirm'),
-                     ('coffee', 'cc_dev_coffee', 'extra')):
+                     ('coffee', 'cc_dev_coffee', 'extra'), ('--lang', 'coffee', 'cc_dev_coffee'),
+                     ('--lang', 'en_US', '--lang', 'en_US', 'coffee', 'cc_dev_coffee'),
+                     ('--country=', 'coffee', 'cc_dev_coffee')):
             with self.subTest(args=args):
                 result = self.invoke(*args, confirm=False)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', usage))
@@ -503,7 +700,9 @@ class DevelopmentUsersTests(unittest.TestCase):
         result = self.invoke('--help')
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stderr, '')
-        self.assertIn('Usage: init-dev-database [--with-demo] <module> <database>', result.stdout)
+        self.assertIn('Usage: init-dev-database [--with-demo] [--lang <code>] [--country <code>] <module> <database>',
+                      result.stdout)
+        self.assertIn('the one oasis command that creates a database', result.stdout)
         self.assertIn('native Odoo demo loader', result.stdout)
         self.assertIn("The administrator keeps Odoo's default password", result.stdout)
         self.assertIn('ODOO_ADMIN_PASSWORD', result.stdout)
@@ -545,11 +744,11 @@ class DevelopmentUsersTests(unittest.TestCase):
         self.assertIn('--without-demo', state['installs'][0])
         self.assertEqual(state['installs'][0][state['installs'][0].index('-i') + 1], 'coffee')
 
-    def test_demo_option_preserves_dev_only_guard(self):
-        for name in ('cc_test_coffee', 'other_db', 'cc_dev_'):
+    def test_demo_option_preserves_the_managed_name_guard(self):
+        for name in ('other_db', 'cc_dev_', 'cc_test_'):
             result = self.invoke('--with-demo', 'coffee', name)
             self.assertEqual((result.returncode, result.stdout, result.stderr),
-                (2, '', 'ERROR: Initialization requires a named development database.\n'))
+                (2, '', 'ERROR: Initialization requires a named development or test database.\n'))
             self.assertFalse(self.state.exists())
             self.assertFalse(self.commands.exists())
 
@@ -593,6 +792,13 @@ class DevelopmentUsersTests(unittest.TestCase):
                     for module in (['purchase_stock', 'coffee'] if demo else ['coffee'])])
                 self.assertEqual(state['users']['planner']['groups'], [1, 3])
                 self.assertEqual({user.get('groups_field') for user in state['users'].values()}, {None, 'groups_id'})
+        # 15.0's exp_create_database takes the language and country_code as 19.0's does (v0.20.0 S12).
+        self.base_data()
+        self.state.unlink()
+        result = self.invoke('--lang', 'es_AR', '--country', 'ar', 'coffee', 'cc_dev_coffee')
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        state = json.loads(self.state.read_text())
+        self.assertEqual((state['lang'], state['country']), ('es_AR', 'ar'))
 
     # Workspace mode: the checkout has no profile; [development] lives in the workspace file.
     WORKSPACE = '''workspace_version = 1
@@ -797,6 +1003,7 @@ test_prefix = 'cc_test_'
         """tools/dev_users_runtime.py itself, on the fake Odoo pieces, with the payload dev_users.py sends."""
         conf = str(self.root / 'dev/odoo.conf')
         payload = {'declaration': declaration, 'passwords': ['admin-secret', 'planner-secret'], 'with_demo': False,
+                   'lang': 'en_US', 'country': None,
                    'runtime': {'python': str(self.python), 'odoo_bin': str(self.source / 'odoo-bin'),
                                'odoo_source': str(self.source), 'demo_flags': ['--without-demo'],
                                'groups_field': 'group_ids', 'config_args': ['-c', conf]}}

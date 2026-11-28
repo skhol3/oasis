@@ -183,15 +183,16 @@ class StatusJsonTests(unittest.TestCase):
     def test_the_next_database_command_follows_the_workspace(self):
         program = self.configured('--answer', 'development=none')
         self.env['FAKE_PS'] = RUNNING
-        # v0.20.0 S5, S6: creating a database is the user's decision, its name included: the next command is a
-        # plan that asks it (before: install-module shop_sale, init-dev-database shop_sale shop_dev_manual and
-        # create-database shop_dev_manual, a name chosen for the user).
-        self.assertEqual(self.status_json()['next'], f'{program} create-database --plan --json')
+        # v0.20.0 S5, S6, S12: creating a database is the user's decision, its name included: the next command is the
+        # plan of init-dev-database, the one command that creates a database, which asks it, with or without
+        # [development] and modules (before: the plan of an empty PostgreSQL database without them; earlier
+        # install-module shop_sale, init-dev-database shop_sale shop_dev_manual or an empty shop_dev_manual).
+        self.assertEqual(self.status_json()['next'], f'{program} init-dev-database --plan --json')
         workspace = self.checkout / 'oasis-workspace.toml'
         workspace.write_text(workspace.read_text() + "\n[development]\nadministrator_login = 'admin'\n")
         self.assertEqual(self.status_json()['next'], f'{program} init-dev-database --plan --json')
         (self.checkout / 'shop_sale/__manifest__.py').unlink()
-        self.assertEqual(self.status_json()['next'], f'{program} create-database --plan --json')
+        self.assertEqual(self.status_json()['next'], f'{program} init-dev-database --plan --json')
 
     def test_a_running_server_leaves_nothing_next(self):
         self.configured()

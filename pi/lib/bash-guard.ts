@@ -880,6 +880,6 @@ export function blockReason(program: string, root: string): string {
     `Direct ${program} is blocked in this Odoo project: it bypasses the database prefix guards. ` +
     `Use the oasis tools (oasis_test_module, oasis_module_status) or ` +
     `\`oasis --project ${root} <command>\` (test-module, update-module, install-module, odoo-shell, ` +
-    `create-database, drop-database). If the user explicitly needs raw access, ask them to run it.`
+    `init-dev-database, drop-database). If the user explicitly needs raw access, ask them to run it.`
   );
 }

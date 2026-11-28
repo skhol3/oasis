@@ -1,6 +1,8 @@
 # Fresh development database with role accounts
 
-Use the global `init-dev-database` command for a **new, explicitly authorized development database**. By default it initializes Odoo without demo data, configures the administrator (Odoo's default password `admin`, or the env file's `ODOO_ADMIN_PASSWORD`), installs one project module, and creates the project-declared role accounts. Pass `--with-demo` explicitly to use Odoo's native demo loader. The Odoo options come from the series table (`tools/odoo_versions.py`): without demo data `--without-demo` on 19.0 and `--without-demo=all` on 15.0; with it `--with-demo` on 19.0 and nothing on 15.0, which loads demo data by default and has no `--with-demo` option. Role accounts get their groups through the series' `res.users` field (`group_ids` on 19.0, `groups_id` on 15.0). The part that runs inside Odoo uses the project environment's Python (3.7 or later, such as the 3.8 or 3.9 of an Odoo 15 environment) and only its standard library: the configuration is read by oasis's own Python, which passes it the values it needs. `create-database` (empty PostgreSQL database), `install-module`, `update-module`, `start`, and test commands do not provision these users. `create-database <name>` is Tier B too (`--confirm <name>`, `--dry-run`, `--plan`), and so is `install-module` when its database does not exist: it creates it only with `--confirm <database>` and otherwise names the exact command; on an existing database it runs as before.
+Use the global `init-dev-database` command for a **new, explicitly authorized development or test database**: it is the one oasis command that creates a database (v0.20.0), the way Odoo's database manager form does, through the same Odoo function (`exp_create_database`: name, demo data, language, administrator, country). By default it initializes Odoo without demo data, configures the administrator (Odoo's default password `admin`, or the env file's `ODOO_ADMIN_PASSWORD`), installs one project module, and creates the project-declared role accounts. Pass `--with-demo` explicitly to use Odoo's native demo loader. The Odoo options come from the series table (`tools/odoo_versions.py`): without demo data `--without-demo` on 19.0 and `--without-demo=all` on 15.0; with it `--with-demo` on 19.0 and nothing on 15.0, which loads demo data by default and has no `--with-demo` option. Role accounts get their groups through the series' `res.users` field (`group_ids` on 19.0, `groups_id` on 15.0). The part that runs inside Odoo uses the project environment's Python (3.7 or later, such as the 3.8 or 3.9 of an Odoo 15 environment) and only its standard library: the configuration is read by oasis's own Python, which passes it the values it needs. `install-module`, `update-module`, `start`, and test commands do not provision these users. `install-module`, `update-module` and `odoo-shell` work on existing databases only: a missing one exits 2 with `Database <name> does not exist; create it with: oasis --project <checkout> init-dev-database --plan`, before Odoo starts (`odoo-bin -d <name>` would create a missing database by itself). The disposable and kept test databases of `test-module` and `verify-module` are theirs, as before ([Disposable test databases](disposable-test-databases.md)).
+
+The language (`--lang <code>`, `en_US` without it) is one of the codes the Odoo source lists (`odoo/addons/base/data/res.lang.csv`, what the form lists; `en_US` alone when that file cannot be read, as Odoo does): Odoo loads it into the new database and gives it to the administrator. The country (`--country <code>`, none without it) is one of the Odoo source's countries (`odoo/addons/base/data/res_country_data.xml`; its codes are lowercase, `AR` is taken as `ar`): Odoo sets the company's country and currency, and the users' time zone when the country has only one. Odoo 15.0 and 19.0 take both the same way (`exp_create_database(..., lang, ..., country_code)`), so both apply on both series. Another code is refused before anything runs, exit 2: `ERROR: Unknown language <code>: Odoo <series> lists its languages in <file>; init-dev-database --plan --json shows them. No database was created.` (`Unknown country <code>: ... lists its countries in <file> ...` for a country; `ERROR: Cannot read the countries of Odoo <series>: <file>. No database was created.` when that file cannot be read).
 
 Declare non-secret accounts in the project's `oasis-workspace.toml`. A workspace `oasis setup` creates already has the table, with the administrator alone (the question `development`, recommended `add`; [Setup](setup.md#what-it-infers-and-what-it-asks)): `[development]` and `administrator_login = 'admin'`, so `init-dev-database` runs without editing the file; `--answer development=none` leaves it out, and setup's next steps then name those two lines. Edit it, for example:
 
@@ -16,7 +18,7 @@ groups = ['your_module.group_planner']
 
 Replace the example group with an actual installed `res.groups` XML ID. Additional `[[development.users]]` entries declare other roles; omit them when only the administrator is needed. Every role account receives `base.group_user` plus its declared groups, limited to the initial company. The module must define its roles outside demo data. Logins must be unique and names/groups nonempty; unknown keys, including credentials, are rejected.
 
-Run the full executable path with the actual module and a fresh database name under the project's `[tooling].dev_prefix`, from a terminal or not. Creating a database is the user's decision (v0.20.0: Tier B in the [agent contract](agent-contract.md)): the command creates it only with `--confirm` naming that database:
+Run the full executable path with the actual module and a fresh database name under the project's `[tooling].dev_prefix` (a development database) or `[tooling].test_prefix` (a test database, created the same way; at most 56 bytes, as `[tooling].test_database`, so verify-module's `_update` sibling fits), from a terminal or not. Any other name exits 2 with `ERROR: Initialization requires a named development or test database.` Creating a database is the user's decision (v0.20.0: Tier B in the [agent contract](agent-contract.md)): the command creates it only with `--confirm` naming that database:
 
 ```bash
 ~/.agents/skills/oasis/oasis --project /absolute/project init-dev-database your_module project_dev_manual --confirm project_dev_manual
@@ -35,30 +37,34 @@ database: project_dev_manual
 kind: dev
 module: your_module
 demo: no
+language: en_US
+country: none
 dry run: nothing changed
 ```
 
 ## The plan of a new database
 
-A database is created only when the user asks for one, and the user chooses its name, its kind, its module and its demo data; oasis chooses none of them. `create-database --plan` and `init-dev-database --plan` list what they need as questions, and `--json` prints them as one JSON object in the shape of [setup's plan](setup.md#questions-and-answers): an agent relays the open questions to the user and passes the answers back with `--answer <id>=<value>` (repeatable) or `--answers <file.json>` (one JSON object of ids and text answers):
+A database is created only when the user asks for one, and the user chooses what Odoo's database manager form asks: its name, its kind, its module, its demo data, its language and its country; oasis chooses none of them. `init-dev-database --plan` lists them as questions, and `--json` prints them as one JSON object in the shape of [setup's plan](setup.md#questions-and-answers): an agent relays the open questions to the user and passes the answers back with `--answer <id>=<value>` (repeatable) or `--answers <file.json>` (one JSON object of ids and text answers):
 
-| Id | Asked by | Answer | Recommended |
-| --- | --- | --- | --- |
-| `suffix` | both | the part of the name after the prefix (and the checkout slug): letters, digits and underscores | none |
-| `kind` | `create-database` | `dev`, `test` or `both`: `both` creates `<dev_prefix>[<slug>_]<suffix>` and `<test_prefix>[<slug>_]<suffix>` | none |
-| `module` | `init-dev-database` | one of the checkout's addon modules (the options it lists) | none |
-| `demo` | `init-dev-database` | `no` (without demo data) or `yes` (`--with-demo`) | `no`, still asked |
+| Id | Answer | Recommended |
+| --- | --- | --- |
+| `suffix` | the part of the name after the prefix (and the checkout slug): letters, digits and underscores | none |
+| `kind` | `dev`, `test` or `both`: `<dev_prefix>[<slug>_]<suffix>`, `<test_prefix>[<slug>_]<suffix>` or both, each created the same way | none |
+| `module` | one of the checkout's addon modules (the options it lists) | none |
+| `demo` | `no` (without demo data) or `yes` (`--with-demo`) | `no`, still asked |
+| `language` | one of the Odoo source's languages (the options it lists, by name, as the form does) | `en_US`, still asked |
+| `country` | `none` or one of the Odoo source's countries (the options it lists; either case) | none |
 
 ```bash
-~/.agents/skills/oasis/oasis --project /absolute/project create-database --plan --json
-~/.agents/skills/oasis/oasis --project /absolute/project create-database --plan --json --answer kind=both --answer suffix=shop
+~/.agents/skills/oasis/oasis --project /absolute/project init-dev-database --plan --json
+~/.agents/skills/oasis/oasis --project /absolute/project init-dev-database --plan --json --answer suffix=shop --answer kind=both --answer module=your_module --answer demo=no --answer language=en_US --answer country=none
 ```
 
-- The prefixes are the workspace's `[tooling].dev_prefix` and `test_prefix`, shown under `inferred` (with the checkout slug of a linked worktree): changing a prefix is a workspace setting ([Workspace file](workspace-file.md)), not an answer of the plan. `init-dev-database` creates development databases only (`kind` is `dev`, inferred).
+- The prefixes are the workspace's `[tooling].dev_prefix` and `test_prefix`, shown under `inferred` (with the checkout slug of a linked worktree): changing a prefix is a workspace setting ([Workspace file](workspace-file.md)), not an answer of the plan.
 - The document holds `format` (`oasis-database-plan`), `version` (1), `command`, `checkout`, `complete`, `inferred` (`{"<key>": {"value", "origin"}}`), `questions` (each with `id`, `text`, `options` (`[{"value", "label"}]`), `recommended`, `flag`, `answer` and `origin`, as in setup's plan), `open` (the ids still unanswered), `databases` and `lines` (the text plan, which `--plan` without `--json` prints).
 - With an open question the plan lists it (`open question <id>: <text>. Answer with <flag> (no recommended answer).`) and ends with `nothing changed: answer the open questions above (docs/dev-database.md#the-plan-of-a-new-database), then run the plan again` (exit 0).
-- Once every question is answered, the plan runs the command's own `--dry-run` for each database, so the database name guards decide (letters, digits and underscores, the checkout's namespace, at most 63 bytes, no trash or disposable-run suffix), prints it, then `run: <the exact --confirm command>` of each database; `databases` lists `{"database", "kind", "command"}` (and `module` and `demo` for `init-dev-database`). The user confirms each command; the plan itself never creates anything.
-- An unknown id, an answer outside a question's options, an answer given twice, or a name the guards refuse is refused (exit 2) with the reason, and nothing changes.
+- Once every question is answered, the plan runs `init-dev-database --dry-run` for each database (dev first), so the database name guards decide (letters, digits and underscores, the checkout's namespace, at most 63 bytes, 56 for a test database, no trash or disposable-run suffix) and the `[development]` configuration is checked, prints it, then `run: <the exact --confirm command>` of each database (`--lang <code>` always, `--country <code>` unless `none`); `databases` lists `{"database", "kind", "command", "module", "demo", "language", "country"}` (`country` null for none). The user confirms each command; the plan itself never creates anything.
+- An unknown id, an answer outside a question's options (a question with more than 10 options says `answer one of the <n> options of the question (init-dev-database --plan --json lists them)` instead of listing them), an answer given twice, or a name the guards refuse is refused (exit 2) with the reason, and nothing changes.
 
 ## Listing this checkout's databases
 
@@ -86,7 +92,7 @@ demo_modules = ['purchase_stock']
 
 `demo_modules` is optional and defaults to an empty list. Entries must be unique Odoo technical module names (letters, digits and underscores). Only with `--with-demo`, the tool installs them sequentially in declared order, using the native loader, before installing the selected module. This does not change any addon's `depends`, and does not broaden the selected project module roots. Odoo itself resolves the optional modules through its configured addon paths; a missing module or installation failure retains the new database and reports failure. The declaration is not permission to install modules or operate services. Choose native demo user logins that do not collide with configured manual accounts: account collisions are refused without overwriting them.
 
-`--with-demo` remains restricted to fresh development databases. It cannot load demo into an existing database, enable it for tests, reset credentials, or modify previously created project data. No project configuration is automatically edited by this command.
+`--with-demo` remains restricted to the fresh databases this command creates. It cannot load demo into an existing database, enable it for tests, reset credentials, or modify previously created project data. No project configuration is automatically edited by this command.
 
 ## Passwords: Odoo's default for the administrator, no password file
 
@@ -112,6 +118,6 @@ Versions before 0.20.0 wrote the generated passwords to `<database>.logins` next
 
 ## Credential handling and recovery
 
-The command refuses test/unmanaged databases and existing databases; it never resets existing credentials. Passwords are not passed in arguments or environment variables, printed, written to a file or relayed in logs; the administrator's is Odoo's default or the env file's `ODOO_ADMIN_PASSWORD`. Do not put them in the workspace file, shell commands, or chat. A failed setup retains the new database for inspection and reports a sanitized error; no automatic deletion or retry occurs. Base initialization, module installation, and account creation are separate phases; role accounts are created in one transaction. Tests continue to create their own actors independently.
+The command refuses unmanaged databases and existing databases; it never resets existing credentials. Passwords are not passed in arguments or environment variables, printed, written to a file or relayed in logs; the administrator's is Odoo's default or the env file's `ODOO_ADMIN_PASSWORD`. Do not put them in the workspace file, shell commands, or chat. A failed setup retains the new database for inspection and reports a sanitized error; no automatic deletion or retry occurs. Base initialization, module installation, and account creation are separate phases; role accounts are created in one transaction. Tests continue to create their own actors independently.
 
 Before modifying an installed bundle without a source checkout, make and validate a complete backup. Recover only affected files after preserving unrelated later edits; a reinstall may overwrite local changes. Fresh database initialization is not permission to modify an existing database.

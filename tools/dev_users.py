@@ -9,7 +9,16 @@ first prompt generates it. Without a terminal every declared user's password is 
 printed (v0.20.0 S8): the output says what each account's password is ("Odoo's default", "from <env file>
 ODOO_ADMIN_PASSWORD", typed, or generated and not stored), never a value. A <database>.logins file an earlier
 version wrote next to the env file is left as it is, with one WARN line.
+
+The language and the country of the new database (v0.20.0 S12: init-dev-database's --lang and --country, what
+Odoo's database manager form asks) are checked against the lists the form shows, read from the Odoo source, before
+anything runs; the runner passes them to exp_create_database, which takes them the same way in every supported
+series.
+
+Usage (through init-dev-database): dev_users.py [--validate] <root> <module> <database> <true|false> <language>
+<country, empty for none>
 """
+import csv
 import getpass
 import json
 from pathlib import Path
@@ -19,6 +28,7 @@ import shlex
 import subprocess
 import sys
 import warnings
+from xml.etree import ElementTree
 
 from config import InvalidConfig, configuration, load, program_name, versions
 from db_account import UNSUPPORTED, AccountError, UnsupportedValue, env_values
@@ -32,6 +42,11 @@ ADMIN_VARIABLE = 'ODOO_ADMIN_PASSWORD'
 ODOO_DEFAULT_PASSWORD = 'admin'
 TYPED = 'typed on the terminal'
 GENERATED = 'generated, not stored or shown ({administrator} can set one in Odoo)'
+# The language and country lists of Odoo's database manager form, in the Odoo source (every supported series), and the
+# language of a database created without --lang (v0.20.0 S12).
+LANGUAGES = 'odoo/addons/base/data/res.lang.csv'
+COUNTRIES = 'odoo/addons/base/data/res_country_data.xml'
+DEFAULT_LANGUAGE = 'en_US'
 
 
 def legacy_logins(values, database) -> Path:
@@ -51,6 +66,61 @@ def administrator_password(values):
     if value:
         return value, f'from {env_file} {ADMIN_VARIABLE}'
     return ODOO_DEFAULT_PASSWORD, "Odoo's default"
+
+
+def languages(source) -> list:
+    """[(code, name)] of the languages Odoo offers, sorted by name: what its database manager form lists (exp_list_lang
+    of odoo/service/db.py, odoo.tools.misc.scan_languages in every supported series: base/data/res.lang.csv), and
+    like it [('en_US', 'English')] when that file cannot be read."""
+    try:
+        with (Path(source) / LANGUAGES).open(encoding='utf-8', newline='') as handle:
+            reader = csv.reader(handle, delimiter=',', quotechar='"')
+            fields = next(reader)
+            code, name = fields.index('code'), fields.index('name')
+            found = [(row[code], row[name]) for row in reader]
+    except (OSError, UnicodeError, ValueError, IndexError, StopIteration, csv.Error):
+        found = []
+    return sorted(found or [(DEFAULT_LANGUAGE, 'English')], key=lambda item: item[1])
+
+
+def countries(source) -> list:
+    """[(code, name)] of the countries Odoo offers, sorted by name: what its database manager form lists
+    (exp_list_countries of odoo/service/db.py in every supported series: the res.country records of
+    base/data/res_country_data.xml, lowercase codes). Raises CountryError when that file cannot be read, as
+    exp_list_countries fails there."""
+    path = Path(source) / COUNTRIES
+    try:
+        records = ElementTree.parse(path).getroot().find('data').findall('record[@model="res.country"]')
+        found = [(record.find('field[@name="code"]').text, record.find('field[@name="name"]').text)
+                 for record in records]
+    except (OSError, ElementTree.ParseError, AttributeError) as exc:
+        raise CountryError(path) from exc
+    if any(not isinstance(code, str) or not isinstance(name, str) for code, name in found):
+        raise CountryError(path)
+    return sorted(found, key=lambda item: item[1])
+
+
+class CountryError(Exception):
+    """The countries' file of the Odoo source cannot be read (its path)."""
+
+
+def check_language_and_country(values, language, country):
+    """The refusal of a language or country Odoo does not offer (an empty country: none), or None. The codes are the
+    ones the database manager form takes: exp_create_database's lang and country_code (every supported series)."""
+    source, series = values['ODOO_SOURCE'], values['ODOO_VERSION']
+    if language not in [code for code, _name in languages(source)]:
+        return (f'ERROR: Unknown language {language}: Odoo {series} lists its languages in {Path(source) / LANGUAGES}; '
+                'init-dev-database --plan --json shows them. No database was created.')
+    if country:
+        try:
+            codes = [code for code, _name in countries(source)]
+        except CountryError as error:
+            return f'ERROR: Cannot read the countries of Odoo {series}: {error}. No database was created.'
+        if country not in codes:
+            return (f'ERROR: Unknown country {country}: Odoo {series} lists its countries in '
+                    f'{Path(source) / COUNTRIES}; init-dev-database --plan --json shows them. No database was '
+                    'created.')
+    return None
 
 
 def account_line(login, source, administrator=False) -> str:
@@ -115,10 +185,10 @@ def declaration(root):
 def main():
     validate_only = len(sys.argv) > 1 and sys.argv[1] == '--validate'
     args = sys.argv[2:] if validate_only else sys.argv[1:]
-    if len(args) != 4 or args[3] not in ('true', 'false'):
+    if len(args) != 6 or args[3] not in ('true', 'false'):
         print(INVALID, file=sys.stderr)
         return 2
-    root, module, database = Path(args[0]), args[1], args[2]
+    root, module, database, language, country = Path(args[0]), args[1], args[2], args[4], args[5]
     try:
         values = load(root)
         section, logins = declaration(root)
@@ -142,6 +212,10 @@ def main():
     except ConfError as error:
         # The message names the path, never content (odoo_addons_path.py).
         print(f'ERROR: {error}', file=sys.stderr)
+        return 2
+    refusal = check_language_and_country(values, language, country)
+    if refusal:
+        print(refusal, file=sys.stderr)
         return 2
     if validate_only:
         return 0
@@ -180,7 +254,8 @@ def main():
         print('ERROR: Local database service is unavailable; no initialization was attempted.',
               file=sys.stderr)
         return 1
-    payload = {'declaration': section, 'passwords': passwords, 'with_demo': with_demo, 'runtime': runtime}
+    payload = {'declaration': section, 'passwords': passwords, 'with_demo': with_demo, 'lang': language,
+               'country': country or None, 'runtime': runtime}
     runner = Path(__file__).with_name('dev_users_runtime.py')
     # The passwords exist only in process memory and the anonymous stdin pipe: no file holds them.
     try:

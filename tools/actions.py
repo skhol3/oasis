@@ -145,8 +145,8 @@ def flag(id, name):
 
 
 def confirmed(template: list) -> list:
-    """The template of a command that creates a database (Tier B since v0.20.0 S5) with --confirm <database> after
-    it: the database the person chose (and, for an action with confirm, typed again)."""
+    """The template of init-dev-database, the command that creates a database (Tier B since v0.20.0 S5), with
+    --confirm <database> after it: the database the person chose and typed again."""
     return [*template, option('database', '--confirm')]
 
 
@@ -210,25 +210,23 @@ def actions(values: dict, class_filter: bool, run: dict | None = None) -> list[d
         action('server.follow', 'Follow the server log', None, kind='log', follow=True),
         action('server.status', 'Show the server and database service status', 'status'),
         action('server.stop_database', 'Stop the database service', 'stop', ['--database'], confirm='yes'),
-        # v0.20.0 S5: a database the person chose is passed as --confirm too, which install-module needs to
-        # create a missing one; Enter (the default database) creates none without it: install-module names the command.
-        action('modules.install', 'Install a module', 'install-module', confirmed(
+        # v0.20.0 S12: install-module installs into an existing database only; init_dev creates databases.
+        action('modules.install', 'Install a module', 'install-module',
                [flag('demo', '--with-demo'), value('module'), value('database')],
-               ), [MODULE, database(required=False, hint=f'Enter for {default_dev}'), DEMO]),
+               [MODULE, database(required=False, hint=f'Enter for {default_dev}'), DEMO]),
         action('modules.update', 'Update a module', 'update-module', [COMPACT, value('module'), value('database')],
                [MODULE, database()]),
         action('modules.status', "Show a module's state", 'module-status', [value('module'), value('database')],
                [MODULE, database()]),
-        # Tier B (tools/policy.py, v0.20.0 S5): --confirm <exact name> after the typed confirmation.
+        # The one command that creates a database (v0.20.0 S12), Tier B (tools/policy.py, v0.20.0 S5): --confirm
+        # <exact name> after the typed confirmation.
         action('modules.init_dev', 'Create a development database with role accounts', 'init-dev-database', confirmed(
                [flag('demo', '--with-demo'), value('module'), value('database')],
                ), [MODULE, new_database(), DEMO], confirm='database', terminal_only=True),
         action('modules.overview', "Show a module's overview from source", 'module-info', [value('module')],
                [MODULE]),
         *tests,
-        # Tier B (tools/policy.py): each passes --confirm <exact name> after the typed confirmation.
-        action('maintenance.create_database', 'Create a database', 'create-database',
-               confirmed([value('database')]), [new_database()], confirm='database'),
+        # Tier B (tools/policy.py): --confirm <exact name> after the typed confirmation.
         action('maintenance.drop_database', 'Move a database to the trash', 'drop-database',
                [value('database'), flag('terminate', '--terminate'), option('database', '--confirm')],
                [database(), TERMINATE], confirm='database'),

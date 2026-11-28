@@ -25,7 +25,7 @@ import test_shared_conf as shared
 
 READER = lifecycle.STAGE / 'tools' / 'config.py'
 # The five commands that start Odoo, with their arguments and whether the database exists (install-module's does:
-# creating one needs --confirm since v0.20.0 S5).
+# it never creates one since v0.20.0 S12).
 COMMANDS = (('test-module', ('coffee',), '0'), ('install-module', ('coffee',), '1'),
             ('update-module', ('coffee', 'cc_dev_coffee'), '1'), ('odoo-shell', ('cc_dev_coffee',), '1'),
             ('start', ('--workers=0',), '0'))
@@ -190,7 +190,7 @@ class PathFreeLinkedWorktreeTests(unittest.TestCase):
         shared.shared_layout(self)
         # The shared conf names no addons_path: oasis composes it for every checkout.
         self.conf.write_text(f'[options]\nhttp_port = {self.http_port}\ngevent_port = {self.gevent_port}\n')
-        # install-module runs on an existing database: no --confirm (v0.20.0 S5: only creating one needs it).
+        # install-module runs on an existing database only (v0.20.0 S12: it never creates one).
         self.env['FAKE_EXISTS'] = '1'
 
     def install(self, root, database):

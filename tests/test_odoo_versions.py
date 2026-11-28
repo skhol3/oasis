@@ -122,10 +122,10 @@ class VersionNeutralToolsTests(unittest.TestCase):
     FLAGS = re.compile(r'--(gevent-port|longpolling-port|without-demo|with-demo)(?![\w-])')
     OASIS_OPTIONS = {
         ('tools/actions.py', "[flag('demo', '--with-demo'), value('module'), value('database')],"),
-        ('tools/init-dev-database', "printf '%s\\n' 'Usage: init-dev-database [--with-demo] <module> <database>' \\"),
+        ('tools/init-dev-database',
+         "usage_line='Usage: init-dev-database [--with-demo] [--lang <code>] [--country <code>] <module> <database>'"),
         ('tools/init-dev-database', "'--with-demo opts in to the native Odoo demo loader and project development.demo_modules.'"),
         ('tools/init-dev-database', 'if [[ ${1:-} == --with-demo ]]; then'),
-        ('tools/init-dev-database', "printf 'Usage: init-dev-database [--with-demo] <module> <database>\\n' >&2"),
         ('tools/install-module', "usage='Usage: install-module [--with-demo] <module> [database]'"),
         ('tools/install-module', 'if [[ ${1:-} == --with-demo ]]; then'),
         ('tools/database_plan.py', "DEMO_OPTION = '--with-demo'"),

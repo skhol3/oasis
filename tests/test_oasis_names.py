@@ -163,7 +163,7 @@ class WrapperVariableTests(unittest.TestCase):
         self.env['ODOO19_TOOLS_DIR'] = str(self.root / 'legacy tools')
         scripts = self.root / 'dev/scripts'
         scripts.mkdir(parents=True)
-        self.assertEqual(len(WRAPPERS), 18)
+        self.assertEqual(len(WRAPPERS), 17)  # v0.20.0: no create-database wrapper
         for wrapper in WRAPPERS:
             with self.subTest(wrapper=wrapper.name):
                 path = scripts / wrapper.name

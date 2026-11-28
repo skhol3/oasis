@@ -30,15 +30,14 @@ names) may still change in a minor release; every such change is listed here und
   what each account uses, never a value (`Account <login> (administrator), password: Odoo's default`, or `from
   <env file> ODOO_ADMIN_PASSWORD`, `typed on the terminal`, `generated, not stored or shown`). An existing
   `<database>.logins` from an earlier version is left as it is, with a WARN line.
-- Contract change: creating a database needs the user. `create-database` and `init-dev-database` are Tier B
-  (`--confirm <database>`; `--dry-run` and `--plan` are Tier A), and `install-module` is Tier B only when its
-  database does not exist (`install-module --confirm`); without `--confirm` they refuse with exit 2 naming the
-  exact command. New `create-database --plan [--json]` and `init-dev-database --plan [--json]` ask the
-  suffix, the kind (dev, test or both; `init-dev-database` creates dev databases), the module and demo data
-  (recommended off, still asked) in setup's question shape, with `--answer`/`--answers`, then print each dry
-  run and `--confirm` command; nothing is chosen for the user. The bash guard asks for them; the menu passes
-  `--confirm`; `status --json` `next` and `setup`'s next steps name the plan instead of a `<dev_prefix>manual`
-  name.
+- Contract change: creating a database needs the user, and one command does it. `init-dev-database` (Odoo's
+  own database creation) is Tier B (`--confirm <database>`; `--dry-run` and `--plan` are Tier A); its plan
+  (`--plan [--json]`, setup's question shape, `--answer`/`--answers`) asks the suffix, dev, test or both, the
+  module, demo data (recommended off, still asked), the language and the country, then prints each dry run and
+  `--confirm` command; it creates test databases too and takes `--lang` and `--country`. `install-module`
+  refuses a missing database (exit 2, naming the plan) and has no `--confirm` or `--dry-run`; `update-module`
+  and `odoo-shell` name the same plan. The bash guard asks for `init-dev-database`; the menu passes `--confirm`;
+  `status --json` `next` and `setup`'s next steps name the plan instead of a `<dev_prefix>manual` name.
 - Contract change: `bootstrap --apply` exits with the result of its own work, the locks and the sync: 0 once
   they succeeded, also when its trailing `doctor --environment --full` fails outside the sync (before, exit 1, for
   example with PostgreSQL not running yet). The doctor's lines are printed as they are, then `sync=succeeded`,
@@ -62,6 +61,11 @@ names) may still change in a minor release; every such change is listed here und
   environment named after the project, `<name><major>` like its prefixes, in that environment's folder when it is
   in the workspace directory, else in the workspace's; before, `<that environment>-<x.y>`, named after what may be
   another project's environment.
+
+### Removed
+
+- The `create-database` command, its project wrapper template, the menu action *Create a database*, and the
+  policy rows for `create-database`: `init-dev-database` creates databases (see Changed).
 
 ## [0.19.0] - 2026-11-27
 

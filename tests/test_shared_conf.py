@@ -119,7 +119,7 @@ class SharedConfTests(unittest.TestCase):
                 ('update-module', ('coffee', dev), None),
                 ('odoo-shell', (dev,), 'print(1)\n'),
                 ('start', ('--workers=0',), None)):
-            # install-module's database exists: creating one needs --confirm (v0.20.0 S5).
+            # install-module's database exists: it never creates one (v0.20.0 S12).
             self.env['FAKE_EXISTS'] = '1' if command in ('update-module', 'odoo-shell', 'install-module') else '0'
             result = self.invoke(root, command, *args, input=stdin)
             self.assertEqual(result.returncode, 0, command)
@@ -174,7 +174,7 @@ class SharedConfTests(unittest.TestCase):
 
     def test_sub_paths_move_and_unrelated_items_stay_in_order(self):
         write_conf(self, f' {self.main}/vendor , {self.main}-other/addons,/srv/oca, {self.main} ')
-        self.env['FAKE_EXISTS'] = '1'  # an existing database: no --confirm (v0.20.0 S5)
+        self.env['FAKE_EXISTS'] = '1'  # an existing database: install-module never creates one (v0.20.0 S12)
         result = self.invoke(self.linked, 'install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         addons = f'{self.linked}/vendor,{self.main}-other/addons,/srv/oca,{self.linked}'
@@ -184,7 +184,7 @@ class SharedConfTests(unittest.TestCase):
 
     def test_no_main_checkout_item_adds_no_flag(self):
         self.conf.write_text(f'[options]\naddons_path = {self.enterprise},/srv/oca\n')
-        self.env['FAKE_EXISTS'] = '1'  # an existing database: no --confirm (v0.20.0 S5)
+        self.env['FAKE_EXISTS'] = '1'  # an existing database: install-module never creates one (v0.20.0 S12)
         result = self.invoke(self.linked, 'install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertEqual(self.odoo_lines(), [self.odoo_call(
@@ -196,7 +196,7 @@ class SharedConfTests(unittest.TestCase):
         for content in ('[options]\ndb_host = db\n', '[other]\naddons_path = /x\n'):
             with self.subTest(content=content):
                 self.conf.write_text(content)
-                self.env['FAKE_EXISTS'] = '1'  # an existing database: no --confirm (v0.20.0 S5)
+                self.env['FAKE_EXISTS'] = '1'  # an existing database: install-module never creates one (v0.20.0 S12)
                 result = self.invoke(self.linked, 'install-module', 'coffee')
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
                 self.assertEqual(self.odoo_lines(), [self.odoo_call(
@@ -209,7 +209,7 @@ class SharedConfTests(unittest.TestCase):
         own = self.linked / 'dev/odoo.conf'
         own.parent.mkdir()
         own.write_text(f'[options]\naddons_path = {self.enterprise},{self.linked},{self.odoo_addons}\n')
-        self.env['FAKE_EXISTS'] = '1'  # an existing database: no --confirm (v0.20.0 S5)
+        self.env['FAKE_EXISTS'] = '1'  # an existing database: install-module never creates one (v0.20.0 S12)
         result = self.invoke(self.linked, 'install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertEqual(self.odoo_lines(), [self.odoo_call(
@@ -292,7 +292,7 @@ class SharedConfTests(unittest.TestCase):
         own = self.linked / 'dev/odoo.conf'
         own.parent.mkdir()
         own.write_text(f'[options]\naddons_path = {self.linked}\n')
-        self.env['FAKE_EXISTS'] = '1'  # an existing database: no --confirm (v0.20.0 S5)
+        self.env['FAKE_EXISTS'] = '1'  # an existing database: install-module never creates one (v0.20.0 S12)
         result = self.invoke(self.linked, 'install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertEqual(self.odoo_lines(), [self.odoo_call(
@@ -300,7 +300,7 @@ class SharedConfTests(unittest.TestCase):
 
     def test_malformed_conf_leaves_the_main_checkout_unchanged(self):
         self.conf.write_text(f'addons_path = {self.main}\n')
-        self.env['FAKE_EXISTS'] = '1'  # an existing database: no --confirm (v0.20.0 S5)
+        self.env['FAKE_EXISTS'] = '1'  # an existing database: install-module never creates one (v0.20.0 S12)
         result = self.invoke(self.main, 'install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertEqual(self.odoo_lines(), [self.odoo_call(

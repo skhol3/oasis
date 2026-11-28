@@ -214,15 +214,19 @@ terminal setup asks them as before. A new series section next to an adopted `[to
 after the project (`<name><major>`), no longer `<that environment>-<x.y>`.
 [A new environment and its Python](docs/setup.md#a-new-environment-and-its-python).
 
-Contract change in v0.20.0: creating a database is the user's decision. `create-database` and
-`init-dev-database` are Tier B in `oasis policy --json` and create only with `--confirm <database>`;
-`install-module` needs `--confirm <database>` only when its database does not exist (on an existing one it
-runs as before). Without it they change nothing, exit 2 and name the exact command; `--dry-run` prints what
-would be created. `create-database --plan --json` and `init-dev-database --plan --json` list the questions
-an agent relays (the name after the workspace's prefix; dev, test or both; the module; demo data) and, once
-answered, the dry run and the `--confirm` command of each database. To update a script or wrapper that runs
-`create-database <name>`, `init-dev-database <module> <name>` or `install-module` on a new database, add
-`--confirm <name>`. `status --json` and `setup`'s next steps now name the plan. `test-module` and
+Contract change in v0.20.0: `init-dev-database` is the one oasis command that creates a database, through
+Odoo's own database creation (what the database manager form uses), and only with `--confirm <database>`
+(Tier B in `oasis policy --json`; without it, exit 2 naming the exact command; `--dry-run` prints what would be
+created). `init-dev-database --plan [--json]` asks what an agent relays: the name (the suffix after the
+workspace's prefix), dev, test or both, the module, demo data (recommended no), the language (recommended
+en_US) and the country (`none` or a code), then prints the dry run and the `--confirm` command of each
+database; it also creates test databases (`<test_prefix>[<slug>_]<suffix>`) and takes `--lang <code>` and
+`--country <code>`. `create-database` is removed: `oasis create-database` exits 2 (`Unsupported oasis
+command`); run `oasis --project <checkout> init-dev-database --plan` instead, and delete a project's
+`dev/scripts/create-database` wrapper or any script that calls `~/.agents/skills/oasis/tools/create-database`.
+`install-module` never creates a database: on a missing one it exits 2 with `Database <name> does not exist;
+create it with: oasis --project <checkout> init-dev-database --plan` before Odoo starts (`update-module` and
+`odoo-shell` name the same plan). `status --json` and `setup`'s next steps name the plan. `test-module` and
 `verify-module` (`--reuse`, `[tooling].test_database`) are unchanged.
 
 v0.20.0: `oasis doctor` has a new check, `code_python`, right after `python`: the environment's Python

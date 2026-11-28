@@ -17,7 +17,7 @@ Common to every series. Also read [15.0](references/15.0.md) or [19.0](reference
 
 - Confirm the series with matching `release.py` and permitted runtime evidence before lifecycle commands.
 - Require an explicitly named local database; never guess a default or derive authorization from a template prefix.
-- Create databases only on the user's request, relaying `create-database --plan --json` or `init-dev-database --plan --json` questions and its `--confirm`.
+- Create databases only on the user's request, relaying the `init-dev-database --plan --json` questions and each `--confirm`; `install-module` never creates one.
 - Use documented project wrappers and their guards, or the installed `~/.agents/skills/oasis/oasis --project /absolute/project <command>` entry point with its packaged tools and the project's workspace file. Missing project wrappers alone are not a blocker for an authorized global entry point; if neither guarded interface is available, report unavailable. Never bypass guards with raw SQL or guessed commands.
 - Destructive reset requires an exact named disposable test database, a guarded installed interface enforcing the project's namespace, explicit authorization, and an active-session check. Never auto-stop or terminate sessions. Default `test-module`/`verify-module` runs create and drop their own `_r<hex>` databases; `gc --apply` drops orphans (Tier A in the [agent contract](../docs/agent-contract.md): the agent runs it).
 - Each checkout owns its databases and its Odoo server. Never use another checkout's databases, stop another checkout's server, or stop the shared database to free a port. Apply the [checkout resource rules](references/checkout-resources.md).

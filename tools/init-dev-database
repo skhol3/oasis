@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
-# Creates a new development database with its accounts (tools/dev_users.py: the administrator keeps Odoo's default
-# password or the env file's ODOO_ADMIN_PASSWORD, v0.20.0 S7; no password file, S8). Tier B in the agent policy
-# (tools/policy.py, v0.20.0 S5): it creates it only with --confirm <database>, the database it names; without
-# it, or with another name, it refuses (exit 2) naming the exact command once the configuration is checked, and
-# nothing changes. --dry-run prints what it would create and changes nothing. --plan (tools/database_plan.py,
-# v0.20.0 S6) asks the name, the module and the demo data first.
+# Creates a new database with its accounts, the one oasis command that creates a database (v0.20.0 S12), through
+# Odoo's exp_create_database as its database manager form does: a development database (dev_prefix) or a test one
+# (test_prefix), the module, the demo data, the language (--lang, en_US without it) and the company's country
+# (--country, none without it). tools/dev_users.py: the administrator keeps Odoo's default password or the env
+# file's ODOO_ADMIN_PASSWORD (v0.20.0 S7); no password file (S8). Tier B in the agent policy (tools/policy.py,
+# v0.20.0 S5): it creates it only with --confirm <database>, the database it names; without it, or with another
+# name, it refuses (exit 2) naming the exact command once the configuration is checked, and nothing changes.
+# --dry-run prints what it would create and changes nothing. --plan (tools/database_plan.py, v0.20.0 S6, S12) asks
+# the name, the kind, the module, the demo data, the language and the country first.
 set -Eeuo pipefail
+usage_line='Usage: init-dev-database [--with-demo] [--lang <code>] [--country <code>] <module> <database>'
 if [[ ${1:-} == --help && $# == 1 ]]; then
-  printf '%s\n' 'Usage: init-dev-database [--with-demo] <module> <database>' \
+  printf '%s\n' "$usage_line" \
     '       ... <module> <database> --dry-run | --confirm <database>' \
     '       init-dev-database --plan [--json] [--answer <id>=<value>]... [--answers <file.json>]' \
-    'Create a NEW development database with explicit administrator and project role accounts.' \
+    'Create a NEW development or test database with explicit administrator and project role accounts:' \
+    "the one oasis command that creates a database, through Odoo's database creation (its database manager form's)." \
     'Tier B (oasis policy --json): it creates the database only with --confirm <database>, the name it is given;' \
     'without it it refuses naming the exact command and changes nothing. --dry-run prints the database, its kind,' \
-    'the module and the demo data and changes nothing. --plan asks the name (the suffix after the dev prefix), the' \
-    'module and the demo data, then prints the dry run and the --confirm command (docs/dev-database.md).' \
+    'the module, the demo data, the language and the country and changes nothing. --plan asks the name (the suffix' \
+    'after the dev or test prefix), dev, test or both, the module, the demo data, the language and the country,' \
+    'then prints the dry run and the --confirm command of each database (docs/dev-database.md).' \
+    "--lang <code> is one of the Odoo source's languages (en_US without it); --country <code> one of its countries," \
+    "which sets the company's country and currency (none without it)." \
     "Requires [development] configuration; excludes tests. The administrator keeps Odoo's default password" \
     '(admin), or ODOO_ADMIN_PASSWORD of the env file when it sets one; it is never asked. On a terminal each' \
     '[[development.users]] password is asked with the echo off (Enter generates one); otherwise it is generated.' \
@@ -37,58 +45,82 @@ arguments=()
 dry_run=false
 confirm=
 confirmed=false
+language=
+language_given=false
+country=
+country_given=false
 usage_error=false
 for (( index = 1; index <= $#; index++ )); do
   argument=${!index}
   case $argument in
     --dry-run) "$dry_run" && usage_error=true; dry_run=true ;;
-    --confirm|--confirm=*)
-      "$confirmed" && usage_error=true
-      confirmed=true
-      if [[ "$argument" == --confirm ]]; then
+    --confirm|--confirm=*|--lang|--lang=*|--country|--country=*)
+      # `--name value` or `--name=value`; a missing or empty value is a usage error, as a repeated option.
+      name=${argument%%=*}
+      if [[ "$argument" == "$name" ]]; then
         index=$(( index + 1 ))
-        confirm=${!index:-}
+        value=${!index:-}
       else
-        confirm=${argument#--confirm=}
+        value=${argument#*=}
       fi
-      [[ -n "$confirm" && "$confirm" != -* ]] || usage_error=true ;;
+      [[ -n "$value" && "$value" != -* ]] || usage_error=true
+      case $name in
+        --confirm) "$confirmed" && usage_error=true; confirmed=true; confirm=$value ;;
+        --lang) "$language_given" && usage_error=true; language_given=true; language=$value ;;
+        # Odoo's list has lowercase codes and its search ignores the case (ilike): AR is ar.
+        --country) "$country_given" && usage_error=true; country_given=true; country=${value,,} ;;
+      esac ;;
     --*) usage_error=true ;;
     *) arguments+=("$argument") ;;
   esac
 done
 if "$usage_error" || (( ${#arguments[@]} != 2 )); then
-  printf 'Usage: init-dev-database [--with-demo] <module> <database>\n' >&2
+  printf '%s\n' "$usage_line" >&2
   printf '       ... <module> <database> --dry-run | --confirm <database>; or init-dev-database --plan [--json]\n' >&2
   exit 2
 fi
 module=${arguments[0]}
 database=${arguments[1]}
-if [[ ! "$database" =~ ^[A-Za-z0-9_]+$ || "$database" != "$DEV_PREFIX"* || "$database" == "$DEV_PREFIX" ]]; then
-  printf 'ERROR: Initialization requires a named development database.\n' >&2
+if [[ ! "$database" =~ ^[A-Za-z0-9_]+$ || ( "$database" != "$DEV_PREFIX"* && "$database" != "$TEST_PREFIX"* ) ||
+      "$database" == "$DEV_PREFIX" || "$database" == "$TEST_PREFIX" ]]; then
+  printf 'ERROR: Initialization requires a named development or test database.\n' >&2
   exit 2
 fi
 require_working_database_name "$database"
+kind=dev
+kind_name=development
+if [[ "$database" == "$TEST_PREFIX"* ]]; then
+  kind=test
+  kind_name=test
+  # A test database follows [tooling].test_database's rule (config.py): room for verify-module's _update sibling.
+  require_update_sibling_room "$database"
+fi
 require_module "$module"
 # A linked worktree's odoo.conf must be readable before any prompt or service call.
 odoo_config_arguments
 helper="$(dirname "$0")/dev_users.py"
-python3 -B "$helper" --validate "$PROJECT_ROOT" "$module" "$database" "$with_demo"
+python3 -B "$helper" --validate "$PROJECT_ROOT" "$module" "$database" "$with_demo" "${language:-en_US}" "$country"
+# The options the refusal's command repeats: the ones given (a country lowercased).
+options=("${demo_option[@]}")
+if "$language_given"; then options+=(--lang "$language"); fi
+if "$country_given"; then options+=(--country "$country"); fi
 demo=no
 if "$with_demo"; then demo=yes; fi
 if "$dry_run"; then
-  printf 'database: %s\nkind: dev\nmodule: %s\ndemo: %s\ndry run: nothing changed\n' "$database" "$module" "$demo"
+  printf 'database: %s\nkind: %s\nmodule: %s\ndemo: %s\nlanguage: %s\ncountry: %s\ndry run: nothing changed\n' \
+    "$database" "$kind" "$module" "$demo" "${language:-en_US}" "${country:-none}"
   exit 0
 fi
 if [[ "$confirm" != "$database" ]]; then
-  command=$(confirm_command init-dev-database "${demo_option[@]}" "$module" "$database" --confirm "$database")
+  command=$(confirm_command init-dev-database "${options[@]}" "$module" "$database" --confirm "$database")
   if "$confirmed"; then
     printf 'ERROR: --confirm %s does not name the database %s; nothing changed. Run: %s\n' \
       "$confirm" "$database" "$command" >&2
   else
-    printf 'ERROR: init-dev-database creates the development database %s with its accounts and installs %s, demo data: %s (Tier B: it needs explicit confirmation); nothing changed. Run: %s\n' \
-      "$database" "$module" "$demo" "$command" >&2
+    printf 'ERROR: init-dev-database creates the %s database %s with its accounts and installs %s, demo data: %s (Tier B: it needs explicit confirmation); nothing changed. Run: %s\n' \
+      "$kind_name" "$database" "$module" "$demo" "$command" >&2
   fi
   exit 2
 fi
 require_runtime
-exec python3 -B "$helper" "$PROJECT_ROOT" "$module" "$database" "$with_demo"
+exec python3 -B "$helper" "$PROJECT_ROOT" "$module" "$database" "$with_demo" "${language:-en_US}" "$country"

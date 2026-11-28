@@ -773,9 +773,10 @@ test("classifyBash allows every other oasis command, help alone and unrelated sc
     ["/work/shop", "~/.agents/skills/oasis/tools/restart --http-port=8070"],
     ["/work/shop", "oasis --project /p install-module coffee cc_dev_x"],
     ["/work/shop", "oasis --project /p update-module coffee cc_dev_x"],
-    // v0.20.0 S5: create-database is Tier B now (see "creating a database asks"); its plan and dry run run.
-    ["/work/shop", "oasis --project /p create-database --plan --json"],
-    ["/work/shop", "oasis --project /p create-database cc_dev_x --dry-run"],
+    // v0.20.0 S12: init-dev-database is the one command that creates a database (see "creating a database
+    // asks"); its plan and dry run run.
+    ["/work/shop", "oasis --project /p init-dev-database --plan --json"],
+    ["/work/shop", "oasis --project /p init-dev-database coffee cc_dev_x --dry-run"],
     ["/work/shop", "oasis --project /p trash"],
     ["/work/shop", "oasis --project /p trash restore cc_dev_x_trash_20261124_101500"],
     ["/work/shop", "oasis --project /p start --detach"],
@@ -926,31 +927,26 @@ test("setup runs through the entry points and its scripts, --apply included", ()
   }
 });
 
-// v0.20.0 S5: every oasis command that creates a database asks (Tier B): create-database and init-dev-database
-// always, install-module in its creating form (--confirm <database>, which its refusal names when the database does
-// not exist). Their plans and dry runs, install-module on an existing database and the test databases of
-// test-module/verify-module (--reuse, a configured test_database) run.
+// v0.20.0 S5, S12: init-dev-database, the one oasis command that creates a database, asks (Tier B), with any of
+// its options and a test database too. Its plan and dry run, install-module (it installs into an existing database
+// only: one Tier A row) and the test databases of test-module/verify-module (--reuse, a configured test_database)
+// run.
 test("creating a database asks; plans, dry runs, installs and test runs run", () => {
   const cases: [string, string[]][] = [
-    ["oasis --project /p create-database cc_dev_x", ["create-database"]],
-    ["oasis --project /p create-database cc_dev_x --confirm cc_dev_x", ["create-database"]],
-    ["oasis --project /p create-database cc_dev_x --dry", ["create-database"]],
-    ["oasis --project /p create-database $DB --dry-run", ["create-database"]],
-    ["~/.agents/skills/oasis/tools/create-database cc_dev_x", ["create-database"]],
     ["oasis --project /p init-dev-database coffee cc_dev_x", ["init-dev-database"]],
     ["oasis --project /p init-dev-database --with-demo coffee cc_dev_x --confirm cc_dev_x", ["init-dev-database"]],
-    ["oasis --project /p install-module coffee cc_dev_x --confirm cc_dev_x", ["install-module --confirm"]],
-    ["oasis --project /p install-module coffee --confirm=cc_dev_coffee", ["install-module --confirm"]],
-    ["oasis --project /p install-module coffee $DB", ["install-module --confirm"]],
-    ["oasis --project /p create-database --plan --json", []],
-    ["oasis --project /p create-database --plan --answer kind=both --answer suffix=shop", []],
-    ["oasis --project /p create-database cc_dev_x --dry-run", []],
+    ["oasis --project /p init-dev-database --lang es_AR --country ar coffee cc_test_x --confirm cc_test_x",
+      ["init-dev-database"]],
+    ["oasis --project /p init-dev-database coffee $DB --dry-run", ["init-dev-database"]],
+    ["~/.agents/skills/oasis/tools/init-dev-database coffee cc_dev_x", ["init-dev-database"]],
     ["oasis --project /p init-dev-database --plan --json", []],
+    ["oasis --project /p init-dev-database --plan --answer kind=both --answer suffix=shop", []],
     ["oasis --project /p init-dev-database coffee cc_dev_x --dry-run", []],
+    ["oasis --project /p init-dev-database --help", []],
     ["oasis --project /p install-module coffee", []],
     ["oasis --project /p install-module --with-demo coffee cc_dev_x", []],
-    ["oasis --project /p install-module coffee cc_dev_x --dry-run", []],
-    ["oasis --project /p create-database --help", []],
+    ["oasis --project /p install-module coffee $DB", []],
+    ["oasis --project /p install-module coffee cc_dev_x --confirm cc_dev_x", []],
     ["oasis --project /p test-module coffee", []],
     ["oasis --project /p test-module --reuse coffee", []],
     ["oasis --project /p test-module coffee cc_test_kept", []],
@@ -960,6 +956,6 @@ test("creating a database asks; plans, dry runs, installs and test runs run", ()
     const { programs, asks: found } = classifyBash(command);
     assert.deepEqual([programs, found.map((action) => action.command)], [[], asks], command);
   }
-  assert.deepEqual(classifyBash("oasis --project /p create-database cc_dev_x").asks,
-    [{ command: "create-database", project: "/p" }]);
+  assert.deepEqual(classifyBash("oasis --project /p init-dev-database coffee cc_dev_x").asks,
+    [{ command: "init-dev-database", project: "/p" }]);
 });

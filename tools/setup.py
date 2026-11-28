@@ -115,11 +115,11 @@ QUESTION_ID = re.compile(r'series|community|enterprise|environment|python|worksp
 QUESTION_IDS = ('series, community, enterprise, environment, python, workspace, series_exceptions, python_ldap, '
                 'development and requirement:<name>')
 # The [development] table of a new workspace (v0.16.0 S6, the question development): init-dev-database needs its
-# administrator_login; the administrator's password is generated (tools/dev_users.py). An existing workspace without
-# one gets a next step that names these lines.
+# administrator_login; the administrator keeps Odoo's default password, or ODOO_ADMIN_PASSWORD of the env file
+# (tools/dev_users.py, v0.20.0 S7). An existing workspace without one gets a next step that names these lines.
 DEVELOPMENT = {'administrator_login': 'admin'}
-DEVELOPMENT_COMMENT = ('# The administrator of the databases init-dev-database creates; its password is generated '
-                       '(docs/dev-database.md).\n')
+DEVELOPMENT_COMMENT = ("# The administrator of the databases init-dev-database creates; its password is Odoo's default, "
+                       'or ODOO_ADMIN_PASSWORD of the env file (docs/dev-database.md).\n')
 # A clone in <project>/code/<repo> or <project>/codigo/<repo> gets <project> as its recommended workspace (v0.16.0
 # S4.11), unless <project> holds one of these: then it is not a project folder of its own.
 CODE_FOLDERS = ('code', 'codigo')
@@ -261,8 +261,8 @@ whose answer setup cannot go without (series, community, enterprise), the enviro
 one of an anticipated problem is an open question: the plan lists it with its flag and --apply refuses,
 changing nothing; development and workspace take their recommended answers.
 A new workspace file gets the [development] table init-dev-database needs (the question development:
-add, recommended, writes administrator_login = 'admin', whose password init-dev-database generates;
-none leaves it out); a workspace file without one gets a next step that names its exact lines.
+add, recommended, writes administrator_login = 'admin', whose password is Odoo's default or the env file's
+ODOO_ADMIN_PASSWORD; none leaves it out); a workspace file without one gets a next step that names its exact lines.
 --plan --json prints the plan as one JSON object (inferred values and their origin, changes, questions; never a password).
 Anticipated problems (a new runtime.in only): Odoo 15.0's python-ldap==3.4.0 on a machine with
 OpenLDAP 2.6 without libldap_r (python_ldap: pin python-ldap==3.4.4 in a new overrides.txt), and each
@@ -660,7 +660,8 @@ def development_choice(questions: Questions, workspace: Path) -> bool:
     login = migrate.toml_string(DEVELOPMENT['administrator_login'])
     question = {'id': 'development',
                 'text': f'init-dev-database needs a [development] table in {workspace}: add one with '
-                        f'administrator_login = {login} (its password is generated)?',
+                        f"administrator_login = {login} (its password: Odoo's default, or ODOO_ADMIN_PASSWORD of the "
+                        'env file)?',
                 'options': [{'value': 'add', 'label': f'add [development] with administrator_login = {login}'},
                             {'value': 'none', 'label': 'none: no [development] table (init-dev-database then needs '
                                                        'one added by hand)'}],

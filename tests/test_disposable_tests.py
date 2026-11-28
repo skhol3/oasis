@@ -867,7 +867,6 @@ class ReservedRunNameTests(DisposableFixture):
 
     def test_commands_that_create_or_reuse_a_database_refuse_reserved_names(self):
         for command, args, database in (
-                ('create-database', ('cc_test_coffee_r123456',), 'cc_test_coffee_r123456'),
                 ('install-module', ('coffee', 'cc_dev_coffee_r1a2b3c'), 'cc_dev_coffee_r1a2b3c'),
                 ('install-module', ('--with-demo', 'coffee', 'cc_test_coffee_r123456_update'),
                  'cc_test_coffee_r123456_update'),

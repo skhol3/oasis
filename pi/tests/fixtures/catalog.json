@@ -351,10 +351,6 @@
         },
         {
           "input": "database"
-        },
-        {
-          "input": "database",
-          "option": "--confirm"
         }
       ],
       "inputs": [
@@ -775,47 +771,6 @@
       ],
       "destructive": false,
       "confirm": null,
-      "user_run": false,
-      "terminal_only": false,
-      "follow": false,
-      "superseded_by": null
-    },
-    {
-      "id": "maintenance.create_database",
-      "group": "maintenance",
-      "label": "Create a database",
-      "kind": "command",
-      "command": "create-database",
-      "argv": [
-        "/opt/oasis/oasis",
-        "--project",
-        "/work/a project",
-        "create-database",
-        {
-          "input": "database"
-        },
-        {
-          "input": "database",
-          "option": "--confirm"
-        }
-      ],
-      "inputs": [
-        {
-          "id": "database",
-          "label": "New database name",
-          "kind": "text",
-          "source": null,
-          "required": true,
-          "allow_new": false,
-          "pattern": "^[A-Za-z0-9_]+$",
-          "error": "Database name must use only letters, numbers, and underscores.",
-          "default": null,
-          "hint": null,
-          "choices": null
-        }
-      ],
-      "destructive": true,
-      "confirm": "database",
       "user_run": false,
       "terminal_only": false,
       "follow": false,

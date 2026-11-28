@@ -5,6 +5,7 @@ a `[tooling].checkout_slug` stands in for a linked worktree's derived slug.
 """
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import re
+import shlex
 import subprocess
 import unittest
 import test_lifecycle as lifecycle
@@ -12,7 +13,6 @@ import test_lifecycle as lifecycle
 SLUG = 'wt_1'
 NAMESPACE = (f'Databases of checkout {SLUG} must use cc_dev_{SLUG}_<name> or '
              f'cc_test_{SLUG}_<name>: ')
-MISSING = 'Database {} does not exist; create it with install-module or create-database.\n'
 TOO_LONG = 'Database names must be at most 63 bytes: {}\n'
 NO_SIBLING_ROOM = 'Test databases with an _update sibling must be at most 56 bytes: {}\n'
 
@@ -30,6 +30,12 @@ class IsolationBase(unittest.TestCase):
     unchanged = lifecycle.LifecycleTests.unchanged
 
     profile_extra = ''
+
+    def missing(self, database):
+        """The refusal of a missing database: init-dev-database is the one command that creates one, through its plan
+        (v0.20.0 S12)."""
+        plan = shlex.join(['oasis', '--project', str(self.root), 'init-dev-database', '--plan'])
+        return f'Database {database} does not exist; create it with: {plan}\n'
 
     def setUp(self):
         self.setUp_fixture()
@@ -108,7 +114,7 @@ class SluggedCheckoutTests(IsolationBase):
                     self.odoo_call('-d', update, '-u', 'coffee', '--stop-after-init')])
 
     def test_install_module_default_gets_the_slug(self):
-        # The database exists: install-module needs no --confirm (v0.20.0 S5: only creating one does).
+        # The database exists: install-module installs into an existing database only (v0.20.0 S12).
         self.env['FAKE_EXISTS'] = '1'
         result = self.invoke('install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
@@ -128,7 +134,6 @@ class SluggedCheckoutTests(IsolationBase):
             ('update-module', ('coffee', 'cc_dev_coffee'), 'cc_dev_coffee'),
             ('odoo-shell', ('cc_dev_coffee',), 'cc_dev_coffee'),
             ('start', ('-d', 'cc_dev_coffee'), 'cc_dev_coffee'),
-            ('create-database', ('cc_dev_coffee',), 'cc_dev_coffee'),
             ('drop-database', ('cc_test_coffee',), 'cc_test_coffee'),
             ('module-status', ('coffee', 'cc_dev_coffee'), 'cc_dev_coffee'),
             # Another checkout's namespace and the bare namespace are refused as well.
@@ -158,14 +163,15 @@ class SluggedCheckoutTests(IsolationBase):
             self.odoo_call('--http-port=<free>', '--gevent-port=<free>', '-d', 'cc_test_wt_1_other', '-i', 'coffee', '--without-demo', '--test-tags',
                            '/coffee', '--stop-after-init')])
 
-    def test_update_and_shell_refuse_a_missing_database(self):
-        for command, args in (('update-module', ('coffee', 'cc_dev_wt_1_coffee')),
+    def test_install_update_and_shell_refuse_a_missing_database(self):
+        # v0.20.0 S12: install-module too (before, it created the missing database).
+        for command, args in (('install-module', ('coffee',)), ('update-module', ('coffee', 'cc_dev_wt_1_coffee')),
                               ('odoo-shell', ('cc_dev_wt_1_coffee',))):
             with self.subTest(command=command):
                 self.commands.unlink(missing_ok=True)
                 result = self.invoke(command, *args, input='print(42)\n')
                 self.assertEqual((result.returncode, result.stdout, result.stderr),
-                                 (2, '', MISSING.format('cc_dev_wt_1_coffee')))
+                                 (2, '', self.missing('cc_dev_wt_1_coffee')))
                 log = self.commands.read_text()
                 self.assertIn("datname = 'cc_dev_wt_1_coffee'", log)
                 self.assertNotIn('createdb', log)
@@ -198,7 +204,7 @@ class SluggedCheckoutTests(IsolationBase):
         fits = 'cc_dev_wt_1_' + 'a' * 51
         too_long = fits + 'a'
         self.assertEqual((len(fits.encode()), len(too_long.encode())), (63, 64))
-        # The database exists: install-module needs no --confirm (v0.20.0 S5: only creating one does).
+        # The database exists: install-module installs into an existing database only (v0.20.0 S12).
         self.env['FAKE_EXISTS'] = '1'
         result = self.invoke('install-module', 'coffee', fits)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
@@ -262,7 +268,7 @@ class MainCheckoutTests(IsolationBase):
                 ('test-module', '-d cc_test_coffee_r<run> -i coffee --without-demo --test-tags /coffee'),
                 ('install-module', '-d cc_dev_coffee -i coffee --without-demo --stop-after-init')):
             with self.subTest(command=command):
-                # install-module's default database exists: no --confirm (v0.20.0 S5); test-module's is new.
+                # install-module's default database exists (v0.20.0 S12: it never creates one); test-module's is new.
                 self.env['FAKE_EXISTS'] = '1' if command == 'install-module' else '0'
                 result = self.invoke(command, 'coffee')
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
@@ -310,13 +316,13 @@ class MainCheckoutTests(IsolationBase):
     def test_update_refuses_a_missing_main_database(self):
         result = self.invoke('update-module', 'coffee', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', MISSING.format('cc_dev_coffee')))
+                         (2, '', self.missing('cc_dev_coffee')))
         self.assertNotIn('createdb', self.commands.read_text())
         self.assertEqual(self.odoo_lines(), [])
 
     def test_63_byte_limit_applies_without_slug(self):
         fits = 'cc_dev_' + 'a' * 56
-        # The database exists: install-module needs no --confirm (v0.20.0 S5: only creating one does).
+        # The database exists: install-module installs into an existing database only (v0.20.0 S12).
         self.env['FAKE_EXISTS'] = '1'
         result = self.invoke('install-module', 'coffee', fits)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))

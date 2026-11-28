@@ -401,7 +401,7 @@ class LaunchTests(unittest.TestCase):
             'printf "odoo %s\\n" "$*" >> "$FAKE_LOG"\n'
             'printf "account user=%s password=%s\\n" "${PGUSER-<unset>}" "${PGPASSWORD-<unset>}" >> "$FAKE_LOG"\n'))
         (self.root / 'dev/.env').write_text(f"ODOO_DB_USER=oasis_cc\nODOO_DB_PASSWORD='{MARKER} $x'\n")
-        # install-module runs on an existing database: no --confirm (v0.20.0 S5: only creating one needs it).
+        # install-module runs on an existing database only (v0.20.0 S12: it never creates one).
         self.env['FAKE_EXISTS'] = '1'
 
     def accounts(self):

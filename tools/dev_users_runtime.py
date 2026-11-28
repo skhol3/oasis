@@ -25,6 +25,8 @@ def main():
         declaration = payload['declaration']
         passwords = payload['passwords']
         with_demo = payload['with_demo']
+        # The language and the country (None: none) dev_users.py checked against the Odoo source's lists.
+        lang, country = payload['lang'], payload['country']
         # Decided by dev_users.py (runtime_values): the demo options and users' groups field of the series,
         # and common.sh's odoo_config_arguments.
         runtime = payload['runtime']
@@ -39,11 +41,11 @@ def main():
 
         odoo.tools.config.parse_config([*config_args, '--no-http',
                                        *demo_flags, '--log-level=critical'])
-        # Odoo creates the DB itself: an existing name or a concurrent CREATE fails,
-        # never the ensure_database behavior that might reuse another caller's DB.
+        # Odoo creates the DB itself, as its database manager form does (every supported series takes the same
+        # arguments): an existing name or a concurrent CREATE fails, never reusing another caller's DB.
         odoo.service.db.exp_create_database(
-            database, with_demo, 'en_US', user_password=passwords[0],
-            login=declaration['administrator_login'])
+            database, with_demo, lang, user_password=passwords[0],
+            login=declaration['administrator_login'], country_code=country)
         created = True
         if not odoo.service.common.exp_authenticate(
                 database, declaration['administrator_login'], passwords[0], {}):

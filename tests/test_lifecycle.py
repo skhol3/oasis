@@ -257,7 +257,7 @@ exit 0
         self.unchanged()
 
     def test_install_default_and_piped_shell(self):
-        # The default database exists: no --confirm (v0.20.0 S5: only creating one needs it).
+        # The default database exists: install-module never creates one (v0.20.0 S12).
         self.env['FAKE_EXISTS'] = '1'
         result = self.invoke('install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
@@ -510,8 +510,10 @@ exit 0
     def test_custom_prefixes_and_verify_distinct_names(self):
         path = self.root / 'oasis-workspace.toml'
         path.write_text(WORKSPACE.replace('cc_dev_', 'demo_dev_').replace('cc_test_', 'demo_test_'))
-        # The default database is new: install-module creates it with --confirm (v0.20.0 S5).
-        result = self.invoke('install-module', 'coffee', '--confirm', 'demo_dev_coffee')
+        # The default database exists: install-module never creates one (v0.20.0 S12).
+        self.env['FAKE_EXISTS'] = '1'
+        result = self.invoke('install-module', 'coffee')
+        del self.env['FAKE_EXISTS']
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertIn('-d demo_dev_coffee -i coffee', self.commands.read_text())
         before = self.commands.read_text()
@@ -681,7 +683,7 @@ exit 0
                 ('install-module', [odoo, '-c', conf, '-d', 'cc_dev_coffee', '-i', 'coffee', '--without-demo',
                                     '--stop-after-init'])):
             with self.subTest(command=command):
-                # install-module on an existing database: no --confirm (v0.20.0 S5).
+                # install-module on an existing database: it never creates one (v0.20.0 S12).
                 self.env['FAKE_EXISTS'] = '1' if command == 'install-module' else '0'
                 result = self.invoke(command, 'coffee', input='')
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
@@ -695,7 +697,7 @@ exit 0
         self.assertEqual(result.stdout.splitlines()[1], 'Default: --without-demo. The database must be managed '
                                                         '(cc_dev_/cc_test_) and defaults to cc_dev_<module>.')
 
-    def test_start_status_stop_create_list_and_module_status(self):
+    def test_start_status_stop_list_and_module_status(self):
         port = free_port()
         (self.root / 'dev/odoo.conf').write_text(conf_text(f'http_port = {port}\n'))
         result = self.invoke('start')
@@ -704,7 +706,6 @@ exit 0
         for command, args, output in (
                 ('status', (), 'server: stopped\n'),
                 ('stop', (), 'No Odoo server running for this checkout.\n'),
-                ('create-database', ('cc_dev_coffee', '--confirm', 'cc_dev_coffee'), 'Database ready: cc_dev_coffee\n'),
                 ('list-databases', (), ''),
                 ('module-status', ('coffee', 'cc_dev_coffee'),
                  'database=cc_dev_coffee\nmodule=coffee\ndatabase_state=missing\nmodule_state=unknown\n')):
@@ -760,7 +761,7 @@ class Odoo15CommandLineTests(unittest.TestCase):
 
     def test_install_without_and_with_demo(self):
         # Demo data is on by default in 15.0 (no --with-demo option): the opt-in passes nothing. The databases
-        # exist: no --confirm (v0.20.0 S5).
+        # exist: install-module never creates one (v0.20.0 S12).
         self.env['FAKE_EXISTS'] = '1'
         result = self.invoke('install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))

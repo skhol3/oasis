@@ -61,8 +61,8 @@ exit 0
 '''
 # The [development] table of a new workspace (v0.16.0 S6: the question development, recommended add), and the
 # step that names its lines when a workspace has none.
-DEVELOPMENT = ("\n# The administrator of the databases init-dev-database creates; its password is generated "
-               "(docs/dev-database.md).\n[development]\nadministrator_login = 'admin'\n")
+DEVELOPMENT = ("\n# The administrator of the databases init-dev-database creates; its password is Odoo's default, or "
+               "ODOO_ADMIN_PASSWORD of the env file (docs/dev-database.md).\n[development]\nadministrator_login = 'admin'\n")
 ADD_DEVELOPMENT = ("add these lines to {workspace} (docs/dev-database.md):\n       [development]\n"
                    "       administrator_login = 'admin'")
 WORKSPACE = '''# Written by oasis setup. Paths are relative to this file, addons_paths to each checkout;
@@ -435,7 +435,8 @@ class SetupTests(unittest.TestCase):
                                  # v0.16.0 S6: the [development] table of init-dev-database.
                                  ('init-dev-database needs a [development] table in '
                                   f'{self.checkout / "oasis-workspace.toml"}: add one with administrator_login = '
-                                  "'admin' (its password is generated)? (add/none) [Enter: add]: ", 'none')):
+                                  "'admin' (its password: Odoo's default, or ODOO_ADMIN_PASSWORD of the env file)? "
+                                  '(add/none) [Enter: add]: ', 'none')):
             deadline = time.monotonic() + 30
             while expected not in prompts and time.monotonic() < deadline:
                 if select.select([master], [], [], 1)[0]:
