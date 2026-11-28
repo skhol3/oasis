@@ -91,8 +91,8 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
   ([A new environment and its Python](#a-new-environment-and-its-python)). Without a terminal (v0.20.0)
   both are open questions, `environment` and `python`, with their recommended answers (create, the
   configuration's Python) until answered: setup never chooses them for you.
-- The `[development]` table of a new workspace (v0.16.0), which `init-dev-database` needs: the question
-  `development`, `init-dev-database needs a [development] table in <workspace file>: add one with
+- The `[development]` table of a new workspace (v0.16.0), which `create-database` needs: the question
+  `development`, `create-database needs a [development] table in <workspace file>: add one with
   administrator_login = 'admin' (its password: Odoo's default, or ODOO_ADMIN_PASSWORD of the env file)?`,
   answered `add` (recommended) or `none` with `--answer development=<add|none>` or on a terminal (Enter:
   `add`). Without a terminal and without an answer, `add` applies. `add` writes the table after
@@ -145,7 +145,7 @@ question has an id that `--answer <id>=<value>` (repeatable) or `--answers <file
   questions, then run oasis setup --apply again.` (exit 2).
 - On a terminal, a question of an anticipated problem is asked like the others: Enter takes the
   recommended answer (a question without one asks again); an answer that is not an option is asked again.
-- `init-dev-database` needs no terminal either: on one it asks each password with the echo off (Enter
+- `create-database` needs no terminal either: on one it asks each password with the echo off (Enter
   generates one), otherwise it generates them ([Development database](dev-database.md)).
 
 ## The plan as JSON
@@ -744,7 +744,7 @@ logs, errors).
   `config/compose.yml`) both name the same file and the result is the same.
 - Odoo reads the same file: `odoo.conf` stays path-free and password-free, and every command that starts
   Odoo (`start`, `restart`, `install-module`, `update-module`, `odoo-shell`, `test-module`,
-  `verify-module`, `init-dev-database`) exports `ODOO_DB_USER` and `ODOO_DB_PASSWORD` as `PGUSER` and
+  `verify-module`, `create-database`) exports `ODOO_DB_USER` and `ODOO_DB_PASSWORD` as `PGUSER` and
   `PGPASSWORD`, which libpq reads when Odoo passes no user or password of its own; they never appear on
   Odoo's command line (`start --print-command` shows none). A `db_user` or `db_password` that `odoo.conf`
   sets (other than empty, `False` or `None`, which Odoo reads as unset) is kept, and that one is not
@@ -764,7 +764,7 @@ logs, errors).
   [The doctor report](checking-environment.md#the-doctor-report)). When the compose service refuses it,
   its volume was initialized with other credentials (the environment file changed after the service first
   started, or a volume from an older setup), and the fix is the Tier B
-  `oasis --project <checkout> recreate-database-volume --confirm <compose project>`. That fix is named
+  `oasis --project <checkout> recreate-postgres-volume --confirm <compose project>`. That fix is named
   only when `odoo.conf` points at the compose service: `db_host` `127.0.0.1` or `localhost` and the
   `db_port` the compose file publishes to 5432 (5432 without a `db_port`). Another server refusing the
   account gets `correct that account on that server, or set db_host = 127.0.0.1 and the db_port <compose
@@ -775,7 +775,7 @@ logs, errors).
   `environment:` and other keys are not port entries), the fix says that oasis could not read
   the port (`it cannot be read`, `several ports` or `an entry other than - [<address>:]<port>:5432`) and
   names both: the recreate if that server is the compose service, correcting the account if it is not.
-- `recreate-database-volume` prints the plan, then runs `docker compose -p <compose project> down -v`:
+- `recreate-postgres-volume` prints the plan, then runs `docker compose -p <compose project> down -v`:
   it removes the compose project's containers and networks, every named volume of its compose file and
   every anonymous volume of its containers, so every database of its PostgreSQL, the trash included
   (filestores under `data_dir` are not touched). Then it starts the service again with the same `-p`,
@@ -786,8 +786,14 @@ logs, errors).
   one. Without `--confirm` and the compose project (the top-level `name:` of the compose file) it changes
   nothing and names the exact command. When `down -v` fails, or the service does not start again after
   it, the command exits 1, says the volume may already be gone (or is), and names the command that starts
-  the service again: `oasis --project <checkout> start-database` (v0.16.0; it runs the same compose project,
+  the service again: `oasis --project <checkout> setup-postgres` (v0.16.0; it runs the same compose project,
   since a `COMPOSE_PROJECT_NAME` that selects another one was refused first, and names no environment file).
+- Names (v0.20.0): `setup-postgres` was `start-database` and `recreate-postgres-volume` was
+  `recreate-database-volume`, since "database" names an Odoo database (`create-database`, `drop-database`,
+  `list-databases`). The old names are deprecated aliases: they run the new command with the same arguments,
+  output, exit codes and tier (`recreate-database-volume` takes the same `--confirm <compose project>`), after one
+  line on stderr, `WARNING: <old> is a deprecated alias of <new>: run <new> instead.`; what oasis prints
+  (next steps, fixes, the menu, `status --json`) names the new names.
 
 ## Next steps
 
@@ -795,15 +801,15 @@ After `--apply`, setup prints what is left, numbered, for example:
 
 ```text
 next steps:
-  1. oasis --project <checkout> start-database
+  1. oasis --project <checkout> setup-postgres
   2. oasis --project <checkout> doctor
-  3. oasis --project <checkout> init-dev-database --plan
+  3. oasis --project <checkout> create-database --plan
 ```
 
 Nothing asks for an account: setup generated it ([The database account](#the-database-account)).
-`start-database` starts the service as every database command does and names no environment file, so an
+`setup-postgres` starts the service as every database command does and names no environment file, so an
 agent harness that refuses a command naming one runs it. A workspace without a `[development]` table (an
-existing one, or the answer `none`) gets a step before `init-dev-database` that names the exact lines. The
+existing one, or the answer `none`) gets a step before `create-database` that names the exact lines. The
 last step is the plan of a new development database, never a name chosen for you: creating a database is
 Tier B (v0.20.0), and the plan asks its name, module and demo data, then prints the exact `--confirm`
 command ([The plan of a new database](dev-database.md#the-plan-of-a-new-database)):

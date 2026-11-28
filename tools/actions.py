@@ -41,7 +41,7 @@ default is the value an empty answer takes (null: nothing); a text input's defau
 confirm is `database` (type the chosen database name), `yes` (type yes) or null; destructive is
 true exactly when confirm is set. user_run actions are never offered for Repeat (Tier B in the
 agent policy, tools/policy.py: an agent proposes them, the user confirms them);
-terminal_only actions need a terminal (init-dev-database asks for passwords).
+terminal_only actions need a terminal (create-database asks for passwords).
 
 argv is a template; fill it in order (build below):
   "text"                        the word itself
@@ -145,7 +145,7 @@ def flag(id, name):
 
 
 def confirmed(template: list) -> list:
-    """The template of init-dev-database, the command that creates a database (Tier B since v0.20.0 S5), with
+    """The template of create-database, the command that creates a database (Tier B since v0.20.0 S5), with
     --confirm <database> after it: the database the person chose and typed again."""
     return [*template, option('database', '--confirm')]
 
@@ -210,7 +210,7 @@ def actions(values: dict, class_filter: bool, run: dict | None = None) -> list[d
         action('server.follow', 'Follow the server log', None, kind='log', follow=True),
         action('server.status', 'Show the server and database service status', 'status'),
         action('server.stop_database', 'Stop the database service', 'stop', ['--database'], confirm='yes'),
-        # v0.20.0 S12: install-module installs into an existing database only; init_dev creates databases.
+        # v0.20.0 S12: install-module installs into an existing database only; create_database creates databases.
         action('modules.install', 'Install a module', 'install-module',
                [flag('demo', '--with-demo'), value('module'), value('database')],
                [MODULE, database(required=False, hint=f'Enter for {default_dev}'), DEMO]),
@@ -220,7 +220,7 @@ def actions(values: dict, class_filter: bool, run: dict | None = None) -> list[d
                [MODULE, database()]),
         # The one command that creates a database (v0.20.0 S12), Tier B (tools/policy.py, v0.20.0 S5): --confirm
         # <exact name> after the typed confirmation.
-        action('modules.init_dev', 'Create a development database with role accounts', 'init-dev-database', confirmed(
+        action('modules.create_database', 'Create a database with role accounts', 'create-database', confirmed(
                [flag('demo', '--with-demo'), value('module'), value('database')],
                ), [MODULE, new_database(), DEMO], confirm='database', terminal_only=True),
         action('modules.overview', "Show a module's overview from source", 'module-info', [value('module')],

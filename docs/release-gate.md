@@ -15,7 +15,7 @@ copy) and a scratch install (`./install.sh --target <dir>/oasis`):
 1. Clone a project into `<dir>/proj/code/<repo>`.
 2. `oasis setup --plan --json`, answer every open question with its recommended answer, then
    `oasis setup --answers <file> --apply`.
-3. Run the next steps setup printed: `oasis start-database`, `oasis doctor` (expect `doctor_failures=0`).
+3. Run the next steps setup printed: `oasis setup-postgres`, `oasis doctor` (expect `doctor_failures=0`).
 4. `oasis test-module --compact <module>` (expect `exit=0`, the disposable database dropped).
 5. `oasis worktree-init <feature> <branch> --dry-run`, then the same with `--confirm <path>` (the one
    genuine decision: Tier B).

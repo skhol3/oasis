@@ -32,9 +32,9 @@ class IsolationBase(unittest.TestCase):
     profile_extra = ''
 
     def missing(self, database):
-        """The refusal of a missing database: init-dev-database is the one command that creates one, through its plan
+        """The refusal of a missing database: create-database is the one command that creates one, through its plan
         (v0.20.0 S12)."""
-        plan = shlex.join(['oasis', '--project', str(self.root), 'init-dev-database', '--plan'])
+        plan = shlex.join(['oasis', '--project', str(self.root), 'create-database', '--plan'])
         return f'Database {database} does not exist; create it with: {plan}\n'
 
     def setUp(self):

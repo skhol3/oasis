@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The plan of a new database (v0.20.0 S6, S12): `init-dev-database --plan`, the one command that creates a database.
+"""The plan of a new database (v0.20.0 S6, S12): `create-database --plan`, the one command that creates a database.
 
 Creating a database is the user's decision (Tier B in tools/policy.py, v0.20.0 S5), and so are the questions of
 Odoo's database manager form: the plan lists them as questions, in the shape `setup --plan --json` uses
@@ -21,13 +21,13 @@ answers):
 
 The prefixes are the workspace's [tooling].dev_prefix and test_prefix, shown as inferred values: changing one is
 a workspace setting (docs/workspace-file.md), not an answer of this plan. Once every question is answered, the
-plan runs init-dev-database --dry-run for each database, so the name guards of tools/common.sh and the checks of
+plan runs create-database --dry-run for each database, so the name guards of tools/common.sh and the checks of
 tools/dev_users.py decide whether it is valid, prints it, then the exact --confirm command of each database. It
 never creates anything: exit 0 with open questions or with the commands, exit 2 when an answer is refused (an
 unknown id, an answer that is not one of the options, a name the guards refuse).
 
-Usage (through init-dev-database --plan):
-  database_plan.py init-dev-database [--json] [--answer <id>=<value>]... [--answers <file.json>]
+Usage (through create-database --plan):
+  database_plan.py create-database [--json] [--answer <id>=<value>]... [--answers <file.json>]
 """
 import importlib.util
 import json
@@ -41,8 +41,8 @@ sys.path.insert(0, str(TOOLS))
 import config  # noqa: E402
 import dev_users  # noqa: E402
 
-COMMANDS = ('init-dev-database',)
-# The oasis options of init-dev-database (tools/init-dev-database).
+COMMANDS = ('create-database',)
+# The oasis options of create-database (tools/create-database).
 DEMO_OPTION = '--with-demo'
 LANGUAGE_OPTION = '--lang'
 COUNTRY_OPTION = '--country'
@@ -190,7 +190,7 @@ def resolve(listed: list[dict], answers: dict) -> list[dict]:
                 answer = answer.lower()
             if values and answer not in values:
                 if len(values) > LISTED_OPTIONS:
-                    listed_values = (f'one of the {len(values)} options of the question (init-dev-database --plan '
+                    listed_values = (f'one of the {len(values)} options of the question (create-database --plan '
                                      '--json lists them)')
                 else:
                     listed_values = ', '.join(values[:-1]) + f' or {values[-1]}' if len(values) > 1 else values[0]
@@ -270,7 +270,7 @@ def plan(command: str, options: dict, root: Path) -> dict:
 
 def main(arguments: list[str]) -> int:
     if not arguments or arguments[0] not in COMMANDS:
-        print('Usage: database_plan.py init-dev-database [--json] [--answer <id>=<value>]... '
+        print('Usage: database_plan.py create-database [--json] [--answer <id>=<value>]... '
               '[--answers <file.json>]', file=sys.stderr)
         return 2
     command = arguments[0]

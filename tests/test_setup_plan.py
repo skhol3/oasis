@@ -33,10 +33,10 @@ CREATE_15 = ('--answer', 'environment=create', '--answer', 'python=3.9')
 def development_question(workspace, answer, origin):
     """The question development of a new workspace (v0.16.0 S6) as the JSON plan lists it."""
     return {'id': 'development',
-            'text': f"init-dev-database needs a [development] table in {workspace}: add one with administrator_login = "
+            'text': f"create-database needs a [development] table in {workspace}: add one with administrator_login = "
                     "'admin' (its password: Odoo's default, or ODOO_ADMIN_PASSWORD of the env file)?",
             'options': [{'value': 'add', 'label': "add [development] with administrator_login = 'admin'"},
-                        {'value': 'none', 'label': 'none: no [development] table (init-dev-database then needs one '
+                        {'value': 'none', 'label': 'none: no [development] table (create-database then needs one '
                                                    'added by hand)'}],
             'recommended': 'add', 'flag': '--answer development=<add|none>', 'answer': answer, 'origin': origin}
 

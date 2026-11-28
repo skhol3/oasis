@@ -222,7 +222,7 @@ class PathFreeLinkedWorktreeTests(unittest.TestCase):
 
 
 class PathFreeDevelopmentTests(unittest.TestCase):
-    """init-dev-database (dev_users_runtime.py) passes the same configuration options."""
+    """create-database (dev_users_runtime.py) passes the same configuration options."""
     setUp_fixture = test_dev_users.DevelopmentUsersTests.setUp
     command = test_dev_users.DevelopmentUsersTests.command
     terminal = test_dev_users.DevelopmentUsersTests.terminal

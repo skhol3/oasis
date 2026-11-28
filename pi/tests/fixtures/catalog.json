@@ -511,16 +511,16 @@
       "superseded_by": null
     },
     {
-      "id": "modules.init_dev",
+      "id": "modules.create_database",
       "group": "modules",
-      "label": "Create a development database with role accounts",
+      "label": "Create a database with role accounts",
       "kind": "command",
-      "command": "init-dev-database",
+      "command": "create-database",
       "argv": [
         "/opt/oasis/oasis",
         "--project",
         "/work/a project",
-        "init-dev-database",
+        "create-database",
         {
           "input": "demo",
           "flag": "--with-demo"

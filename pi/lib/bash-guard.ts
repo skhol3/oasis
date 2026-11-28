@@ -4,7 +4,7 @@
 // Only programs in command position count, so searching or printing their
 // names stays allowed. This is a guard rail for agents, not a sandbox.
 import { posix } from "node:path";
-import { COMMANDS, findEntry, operationOf, type PolicyEntry, PROGRAMS, stricter, tierOf } from "./policy.ts";
+import { COMMANDS, findEntry, operationOf, policyEntry, type PolicyEntry, PROGRAMS, stricter, tierOf } from "./policy.ts";
 
 // The tiers come from the core policy table (tools/policy.py, see lib/policy.ts): a Tier C program or
 // oasis command is denied, a Tier B one asks, a Tier A one runs.
@@ -14,6 +14,10 @@ export const WORKTREE_INIT = "worktree-init";
 const WORKTREE_INIT_SCRIPTS = new Set([WORKTREE_INIT, "worktree_init.py"]);
 export const MIGRATE = "migrate";
 const MIGRATE_SCRIPTS = new Set([MIGRATE, "migrate.py"]);
+// create-database's Python scripts create the database themselves (v0.20.0 L19): in any directory, with any
+// arguments, they ask like create-database (its Tier B row, never its plan's or dry run's).
+export const CREATE_DATABASE = "create-database";
+const CREATE_DATABASE_SCRIPTS = new Set(["dev_users.py", "dev_users_runtime.py"]);
 // The interactive action menu (its catalog included) is for the user, in a terminal or the Gentle
 // Shell panel; agents run the commands it lists directly.
 export const MENU = "menu";
@@ -464,6 +468,7 @@ function scriptCommand(word: string, where: Where | undefined): string | null {
   const name = basename(word);
   if (WORKTREE_INIT_SCRIPTS.has(name)) return WORKTREE_INIT;
   if (MIGRATE_SCRIPTS.has(name) && /(^|\/)tools\/[^/]+$/.test(word)) return MIGRATE;
+  if (CREATE_DATABASE_SCRIPTS.has(name)) return CREATE_DATABASE;
   if (menuScript(word, where)) return MENU;
   if (oasisScript(word, SCRIPT_NAMES, where)) return name === "setup.py" ? "setup" : name;
   return null;
@@ -554,8 +559,12 @@ function toolFinding(words: string[], index: number, where?: Where): Finding[] {
     args = words.slice(index + 1);
   }
   const rest = args.filter((arg) => !REDIRECTION.test(arg));
-  if (!tool || (!undetermined && onlyHelp(rest))) return [];
-  const entry = undetermined
+  // create-database's Python scripts have no plan, dry run or help of their own: always its Tier B row.
+  const creating = !ENTRY_POINTS.has(basename(words[index])) && CREATE_DATABASE_SCRIPTS.has(basename(words[index]));
+  if (!tool || (!undetermined && !creating && onlyHelp(rest))) return [];
+  const entry = creating
+    ? policyEntry(CREATE_DATABASE)
+    : undetermined
     ? strictestPresent(words.slice(index + 1).filter((word) => !REDIRECTION.test(word)))
     : operationOf(tool, rest, literalArguments(rest));
   if (entry === null || entry.tier === "A") return [];
@@ -880,6 +889,6 @@ export function blockReason(program: string, root: string): string {
     `Direct ${program} is blocked in this Odoo project: it bypasses the database prefix guards. ` +
     `Use the oasis tools (oasis_test_module, oasis_module_status) or ` +
     `\`oasis --project ${root} <command>\` (test-module, update-module, install-module, odoo-shell, ` +
-    `init-dev-database, drop-database). If the user explicitly needs raw access, ask them to run it.`
+    `create-database, drop-database). If the user explicitly needs raw access, ask them to run it.`
   );
 }

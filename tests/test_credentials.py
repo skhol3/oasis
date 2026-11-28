@@ -312,7 +312,7 @@ class AuthenticationFixTests(unittest.TestCase):
         return result.stdout
 
     def unread(self, why, where='db_host 127.0.0.1, db_port 6001', confirm=True):
-        command = ['oasis', '--project', str(self.scratch), 'recreate-database-volume']
+        command = ['oasis', '--project', str(self.scratch), 'recreate-postgres-volume']
         command += ['--confirm', 'cc-shop'] if confirm else []
         return (f'the PostgreSQL that {self.conf} names ({where}) refuses the account Odoo uses, and oasis could not '
                 f'read the port {self.compose} publishes to 5432 ({why}), so it cannot tell whether that server is the '
@@ -345,7 +345,7 @@ class AuthenticationFixTests(unittest.TestCase):
         self.assertEqual(self.fix(None), self.unread('it cannot be read', confirm=False))
 
     def test_a_mapping_it_reads_keeps_its_fix(self):
-        recreate = shlex.join(['oasis', '--project', str(self.scratch), 'recreate-database-volume', '--confirm',
+        recreate = shlex.join(['oasis', '--project', str(self.scratch), 'recreate-postgres-volume', '--confirm',
                                'cc-shop'])
         local = (f'the PostgreSQL that {self.conf} names refuses the account Odoo uses: its volume was initialized with '
                  f'other credentials than {self.env_file}; {recreate} recreates it with them (Tier B: it deletes every '
@@ -537,7 +537,7 @@ class CheckEnvironmentConnectionTests(unittest.TestCase):
         result = self.invoke('check-environment', '--full')
         self.assertEqual(result.returncode, 1)
         self.assertIn('PASS postgres_service=running\n', result.stdout)
-        command = shlex.join(['oasis', '--project', str(self.root), 'recreate-database-volume', '--confirm', 'cc-shop'])
+        command = shlex.join(['oasis', '--project', str(self.root), 'recreate-postgres-volume', '--confirm', 'cc-shop'])
         self.assertTrue(result.stderr.endswith(
             'FAIL postgres_connection=authentication_failed\n'
             f'  fix: the PostgreSQL that {self.root / "dev/odoo.conf"} names refuses the account Odoo uses: its volume '
@@ -568,7 +568,7 @@ class CheckEnvironmentConnectionTests(unittest.TestCase):
                     'again\n'), result.stderr)
         # localhost names the published endpoint too.
         conf.write_text(lifecycle.conf_text('db_host = localhost\ndb_port = 6001\n'))
-        self.assertIn('recreate-database-volume --confirm cc-shop', self.invoke('check-environment', '--full').stderr)
+        self.assertIn('recreate-postgres-volume --confirm cc-shop', self.invoke('check-environment', '--full').stderr)
 
     def test_each_word_of_the_probe_is_checked_and_an_unknown_one_is_unchecked(self):
         self.prepare()
@@ -604,7 +604,7 @@ class CheckEnvironmentConnectionTests(unittest.TestCase):
 
 
 class RecreateVolumeTests(unittest.TestCase):
-    """recreate-database-volume is Tier B: --confirm <compose project>, else the plan and a refusal."""
+    """recreate-postgres-volume is Tier B: --confirm <compose project>, else the plan and a refusal."""
     setUp_fixture = lifecycle.LifecycleTests.setUp
 
     def setUp(self):
@@ -626,13 +626,13 @@ class RecreateVolumeTests(unittest.TestCase):
                          '-p', 'cc-shop', *args])
 
     def start_command(self):
-        # v0.16.0 S6: start-database, which names no env file (a harness may refuse a command that does); it runs
+        # v0.16.0 S6: setup-postgres, which names no env file (a harness may refuse a command that does); it runs
         # the same compose project, since a COMPOSE_PROJECT_NAME that selects another one was refused first.
-        return shlex.join(['oasis', '--project', str(self.root), 'start-database'])
+        return shlex.join(['oasis', '--project', str(self.root), 'setup-postgres'])
 
-    def cli(self, *args):
+    def cli(self, *args, command='recreate-postgres-volume'):
         result = subprocess.run([sys.executable, '-B', str(ROOT / 'oasis'), '--project', str(self.root),
-                                 'recreate-database-volume', *args], text=True, capture_output=True, cwd=self.root,
+                                 command, *args], text=True, capture_output=True, cwd=self.root,
                                 env=self.env)
         self.assertNotIn(MARKER, result.stdout + result.stderr)
         return result
@@ -648,10 +648,10 @@ class RecreateVolumeTests(unittest.TestCase):
                 'database of its PostgreSQL, the trash included\n')
 
     def test_without_the_exact_compose_project_it_prints_the_plan_and_changes_nothing(self):
-        command = shlex.join(['oasis', '--project', str(self.root), 'recreate-database-volume', '--confirm', 'cc-shop'])
+        command = shlex.join(['oasis', '--project', str(self.root), 'recreate-postgres-volume', '--confirm', 'cc-shop'])
         result = self.cli()
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, self.plan(), (
-            'ERROR: recreate-database-volume deletes the PostgreSQL volume of compose project cc-shop and every '
+            'ERROR: recreate-postgres-volume deletes the PostgreSQL volume of compose project cc-shop and every '
             f'database in it, then starts the service again with the account of {self.root / "dev/.env"} (Tier B: it '
             f'needs explicit confirmation); nothing changed. Run: {command}\n')))
         result = self.cli('--confirm', 'other')
@@ -677,7 +677,7 @@ class RecreateVolumeTests(unittest.TestCase):
         env_file = self.root / 'dev/.env'
         refusal = ('ERROR: COMPOSE_PROJECT_NAME {where} makes docker compose use the compose project other, not cc-shop '
                    f'(the top-level name: of {self.root / "dev/compose.yml"}); nothing changed: unset it or set it to '
-                   'cc-shop, then run recreate-database-volume again.\n')
+                   'cc-shop, then run recreate-postgres-volume again.\n')
         self.env['COMPOSE_PROJECT_NAME'] = 'other'
         for args in ((), ('--confirm', 'cc-shop'), ('--confirm', 'other')):
             with self.subTest(args=args):
@@ -773,7 +773,7 @@ class RecreateVolumeTests(unittest.TestCase):
                 result = self.cli('--confirm', 'cc-shop')
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
                     f'ERROR: {self.root / "dev/compose.yml"} has no top-level name: add one (oasis doctor checks it), '
-                    'then run recreate-database-volume again.\n')))
+                    'then run recreate-postgres-volume again.\n')))
                 self.assertEqual(self.calls(), [])
 
     def test_usage_errors_and_a_compose_file_without_a_name(self):
@@ -791,8 +791,37 @@ class RecreateVolumeTests(unittest.TestCase):
         result = self.cli('--confirm', 'cc-shop')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
             f'ERROR: {self.root / "dev/compose.yml"} has no top-level name: add one (oasis doctor checks it), then run '
-            'recreate-database-volume again.\n')))
+            'recreate-postgres-volume again.\n')))
         self.assertEqual(self.calls(), [])
+
+
+class RecreateVolumeAliasTests(unittest.TestCase):
+    """v0.20.0 S13: recreate-database-volume, the deprecated alias of recreate-postgres-volume, runs it exactly (Tier B,
+    --confirm <compose project>), with one deprecation line first on stderr."""
+    DEPRECATION = ('WARNING: recreate-database-volume is a deprecated alias of recreate-postgres-volume: run '
+                   'recreate-postgres-volume instead.\n')
+    setUp_fixture = lifecycle.LifecycleTests.setUp
+    setUp = RecreateVolumeTests.setUp
+    cli = RecreateVolumeTests.cli
+    calls = RecreateVolumeTests.calls
+
+    def test_the_alias_runs_the_same_and_prints_the_deprecation_line(self):
+        for args in ((), ('--confirm', 'other'), ('--confirm', 'cc-shop'), ('--help',), ('extra',)):
+            with self.subTest(args=args):
+                self.commands.unlink(missing_ok=True)
+                new = self.cli(*args)
+                new_calls = self.calls()
+                self.commands.unlink(missing_ok=True)
+                old = self.cli(*args, command='recreate-database-volume')
+                self.assertEqual((old.returncode, old.stdout, old.stderr),
+                                 (new.returncode, new.stdout, self.DEPRECATION + new.stderr))
+                self.assertEqual(self.calls(), new_calls)
+        # Without --confirm nothing changes and the command it names is the new one.
+        old = self.cli(command='recreate-database-volume')
+        self.assertEqual(old.returncode, 2)
+        self.assertIn(shlex.join(['oasis', '--project', str(self.root), 'recreate-postgres-volume', '--confirm', 'cc-shop']),
+                      old.stderr)
+        self.assertNotIn('recreate-database-volume', old.stdout + old.stderr.removeprefix(self.DEPRECATION))
 
 
 if __name__ == '__main__':

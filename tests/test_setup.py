@@ -61,7 +61,7 @@ exit 0
 '''
 # The [development] table of a new workspace (v0.16.0 S6: the question development, recommended add), and the
 # step that names its lines when a workspace has none.
-DEVELOPMENT = ("\n# The administrator of the databases init-dev-database creates; its password is Odoo's default, or "
+DEVELOPMENT = ("\n# The administrator of the databases create-database creates; its password is Odoo's default, or "
                "ODOO_ADMIN_PASSWORD of the env file (docs/dev-database.md).\n[development]\nadministrator_login = 'admin'\n")
 ADD_DEVELOPMENT = ("add these lines to {workspace} (docs/dev-database.md):\n       [development]\n"
                    "       administrator_login = 'admin'")
@@ -257,9 +257,9 @@ class SetupTests(unittest.TestCase):
                  f'compiled {requirements}/runtime.txt, dev.txt and lock.sha256\n'
                  f'created the environment {environment}\n'
                  'next steps:\n'
-                 f'  1. oasis --project {self.checkout} start-database\n'
+                 f'  1. oasis --project {self.checkout} setup-postgres\n'
                  f'  2. oasis --project {self.checkout} doctor\n'
-                 f'  3. oasis --project {self.checkout} init-dev-database --plan\n')
+                 f'  3. oasis --project {self.checkout} create-database --plan\n')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, self.plan(port) + steps, ''))
         # S10: the source goes to the machine file (0600), not to the workspace file.
         self.assertEqual(self.machine.read_text(), MACHINE_HEADER + f"[series.\"19.0\"]\ncommunity = '{self.source}'\n")
@@ -432,8 +432,8 @@ class SetupTests(unittest.TestCase):
                                   'environment to use instead: ', ''),
                                  (f'Python of the new environment {self.checkout / ".oasis/venv"}, one of 3.10, '
                                   '3.11, 3.12, 3.13, 3.14 [Enter: 3.12]: ', ''),
-                                 # v0.16.0 S6: the [development] table of init-dev-database.
-                                 ('init-dev-database needs a [development] table in '
+                                 # v0.16.0 S6: the [development] table of create-database.
+                                 ('create-database needs a [development] table in '
                                   f'{self.checkout / "oasis-workspace.toml"}: add one with administrator_login = '
                                   "'admin' (its password: Odoo's default, or ODOO_ADMIN_PASSWORD of the env file)? "
                                   '(add/none) [Enter: add]: ', 'none')):
@@ -512,7 +512,7 @@ class SetupTests(unittest.TestCase):
         self.assertEqual((project / 'config/compose.yml').read_text(), 'name: mine\n')
         self.assertFalse(self.machine.exists())
         self.assertNotIn('fill in', applied.stdout)
-        self.assertIn(f'  1. oasis --project {self.checkout} start-database\n', applied.stdout)
+        self.assertIn(f'  1. oasis --project {self.checkout} setup-postgres\n', applied.stdout)
         self.assertNotIn(str(env_file), applied.stdout.split('next steps:')[1])
 
     def test_a_workspace_without_a_source_gets_the_machine_entry(self):
@@ -594,9 +594,9 @@ class SetupTests(unittest.TestCase):
             f'  1. the locks in {requirements} describe runtime.in and dev.in: oasis --project {self.checkout} '
             f'bootstrap --apply syncs the adopted environment {environment} to them (it changes the packages '
             'installed there)\n'
-            f'  2. oasis --project {self.checkout} start-database\n'
+            f'  2. oasis --project {self.checkout} setup-postgres\n'
             f'  3. oasis --project {self.checkout} doctor\n'
-            f'  4. oasis --project {self.checkout} init-dev-database --plan\n'))
+            f'  4. oasis --project {self.checkout} create-database --plan\n'))
         self.assertEqual(workspace.read_text(), WORKSPACE.format(base='.oasis/').replace(
             "environment = '.oasis/venv'", f"environment = '{environment}'"))
         self.assertEqual(self.log.read_text().splitlines(), [
@@ -947,10 +947,10 @@ class SetupTests(unittest.TestCase):
         """The next steps setup --apply prints for existing_workspace() with every other piece created."""
         config = project / 'config'
         workspace = project / 'oasis-workspace.toml'
-        steps = [f'oasis --project {self.checkout} start-database', f'oasis --project {self.checkout} doctor']
+        steps = [f'oasis --project {self.checkout} setup-postgres', f'oasis --project {self.checkout} doctor']
         if add_development:
             steps.append(ADD_DEVELOPMENT.format(workspace=workspace))
-        steps.append(f'oasis --project {self.checkout} init-dev-database --plan')
+        steps.append(f'oasis --project {self.checkout} create-database --plan')
         return 'next steps:\n' + ''.join(f'  {number}. {step}\n' for number, step in enumerate(steps, 1))
 
     def test_a_workspace_with_a_development_table_gets_no_step_to_add_one(self):
@@ -962,7 +962,7 @@ class SetupTests(unittest.TestCase):
         self.assertIn(f'created the environment {project / "envs/shop"}\n', result.stdout)
         self.assertTrue(result.stdout.endswith(self.adopted_next_steps(project, add_development=False)), result.stdout)
         self.assertNotIn('add these lines', result.stdout)
-        # Without the table the step is there and init-dev-database comes after it.
+        # Without the table the step is there and create-database comes after it.
         shutil.rmtree(project / 'config')
         shutil.rmtree(project / 'envs')
         self.existing_workspace()
@@ -984,7 +984,7 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn('add these lines', result.stdout)
 
     def test_a_new_workspace_gets_the_development_table_unless_the_answer_is_none(self):
-        # v0.16.0 S6: init-dev-database needs [development]; setup asks the question development (recommended add,
+        # v0.16.0 S6: create-database needs [development]; setup asks the question development (recommended add,
         # applied without a terminal), so no manual edit of the workspace file comes before it.
         workspace = self.checkout / 'oasis-workspace.toml'
         flags = ('--community', str(self.source), '--no-enterprise')
@@ -993,10 +993,10 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(workspace.read_text(), WORKSPACE.format(base='.oasis/').replace(DEVELOPMENT, ''))
         self.assertTrue(result.stdout.endswith(
             'next steps:\n'
-            f'  1. oasis --project {self.checkout} start-database\n'
+            f'  1. oasis --project {self.checkout} setup-postgres\n'
             f'  2. oasis --project {self.checkout} doctor\n'
             f'  3. {ADD_DEVELOPMENT.format(workspace=workspace)}\n'
-            f'  4. oasis --project {self.checkout} init-dev-database --plan\n'), result.stdout)
+            f'  4. oasis --project {self.checkout} create-database --plan\n'), result.stdout)
         # The lines the step names are the table setup writes.
         self.assertIn("\n[development]\nadministrator_login = 'admin'\n", DEVELOPMENT)
         # An answer setup does not take, and the question asked of an existing workspace, are refused.

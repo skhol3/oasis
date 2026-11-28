@@ -357,7 +357,7 @@ def check_conf(report: Report, values: dict, conf_reader, program: str):
 
 def compose_project(path: Path) -> str | None:
     """The top-level `name:` of a compose file (quotes removed), None without a non-empty one; raises
-    OSError or UnicodeError when it cannot be read (tools/db_account.py, which recreate-database-volume
+    OSError or UnicodeError when it cannot be read (tools/db_account.py, which recreate-postgres-volume
     reads it with)."""
     return sibling('db_account').compose_project(path)
 
@@ -420,7 +420,7 @@ def check_connection(report: Report, values: dict, program: str):
     """Odoo's account logs in to the PostgreSQL odoo.conf names (v0.16.0 S2): tools/db_account.py probe with
     the environment's Python and psycopg2. Refused credentials FAIL with what fixes them (odoo.conf's own
     values that differ from the env file's, else the Tier B volume recreate); a service that does not answer is a
-    WARN followed by the fix start-database, and a probe that cannot run is a WARN."""
+    WARN followed by the fix setup-postgres, and a probe that cannot run is a WARN."""
     helper = Path(__file__).with_name('db_account.py')
     output = probe([values['PYTHON'], '-I', '-B', str(helper), 'probe', values['ODOO_CONFIG'], values['ENV_FILE']])
     outcome = (output or '').strip()
@@ -433,7 +433,7 @@ def check_connection(report: Report, values: dict, program: str):
     if outcome == 'not_running':
         # Nothing answered: the oasis command that starts the service, which names no env file (v0.16.0 S6).
         report.warn('postgres_connection', 'not_running')
-        print(f'  fix: {shlex.join([program, "--project", values["PROJECT_ROOT"], "start-database"])}')
+        print(f'  fix: {shlex.join([program, "--project", values["PROJECT_ROOT"], "setup-postgres"])}')
         return True
     return report.warn('postgres_connection', 'unchecked')
 
@@ -546,7 +546,7 @@ the compose file's top-level name, the env file (exists, and the database accoun
 whether odoo.conf holds a db_password (a WARN naming setup --apply, which moves it to the env file), the
 logs and data directories,
 and the HTTP port, and that Odoo's database account logs in to the PostgreSQL odoo.conf names (a refused
-account names its fix; a service that does not answer is a WARN whose fix is start-database). With workspace_version 2: the checkout's series and where it came from, its
+account names its fix; a service that does not answer is a WARN whose fix is setup-postgres). With workspace_version 2: the checkout's series and where it came from, its
 series exceptions, and that the workspace's series share no database port, prefixes, compose
 project or env file. Last, project_wrappers: a FAIL when a project wrapper in dev/scripts still calls
 ~/.agents/skills/odoo19, the install directory before 0.17.0 (now ~/.agents/skills/oasis).
@@ -559,7 +559,7 @@ Never starts services or prints file contents or values; it connects only to che
 --quick (the default) checks the requirement files and lock.sha256, the environment's Python, the
 virtualenv, uv, the Odoo version and compose config; --full also checks the installed packages against
 the locks, audits the dependencies and logs in to PostgreSQL with Odoo's account (the database service
-running; when it is not, the fix is start-database). Package names are compared normalized (PEP 503:
+running; when it is not, the fix is setup-postgres). Package names are compared normalized (PEP 503:
 zope.event satisfies zope-event). Installed packages that do not match the locks are FAIL
 locked_environment=drifted for an environment oasis created (bootstrap --apply or setup --apply; it
 carries <environment>/.oasis-created), and WARN locked_environment=drifted, not counted as a failure, for an

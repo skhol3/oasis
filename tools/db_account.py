@@ -356,7 +356,7 @@ def recreate_command(compose, program, root) -> str:
         project = compose_project(compose)
     except (OSError, UnicodeError):
         project = None
-    command = [program, '--project', str(root), 'recreate-database-volume']
+    command = [program, '--project', str(root), 'recreate-postgres-volume']
     if project is not None:
         command += ['--confirm', project]
     return ' '.join(shlex.quote(word) for word in command)

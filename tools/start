@@ -26,6 +26,10 @@ set -Eeuo pipefail
 # values of password options shown as *** (server_args.sh print_server_command). Nothing else runs:
 # no database service, no odoo-bin (not even --version), no record, no log, no banner or warning.
 # Refusals are start's. --print-command anywhere else before `--` is refused (exit 2).
+# Odoo creates a database it is given that does not exist (v0.20.0 L19): before Odoo starts, a server or a batch run
+# checks that the database of -d, else each one of odoo.conf's db_name, exists, and refuses a missing one (exit 2)
+# naming create-database --plan (server_args.sh require_existing_server_databases). Without a database (Odoo's
+# database selector) nothing is checked; --print-command and Odoo's informational options never check.
 source "$(dirname "$0")/common.sh"
 print_command=false detach=false
 if [[ ${1:-} == --print-command ]]; then
@@ -88,6 +92,7 @@ if "$batch"; then
     print_server_command "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" "$@"
     exit 0
   fi
+  require_existing_server_databases
   wait_for_database
   exec "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "${port_arguments[@]}" "$@"
 fi
@@ -108,6 +113,7 @@ if "$detach"; then
   source "$(dirname "$0")/compact.sh"
   log=$(server_log_path)
 fi
+require_existing_server_databases
 warn_without_database
 wait_for_database
 if "$detach"; then

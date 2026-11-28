@@ -81,7 +81,7 @@ class DoctorEnvironmentTests(unittest.TestCase):
         observed = self.assert_same(('--full',))
         code, _stdout, stderr, _log = observed['oasis', ('--full',)]
         self.assertEqual(code, 1)
-        command = shlex.join(['oasis', '--project', str(self.root), 'recreate-database-volume', '--confirm', 'cc-shop'])
+        command = shlex.join(['oasis', '--project', str(self.root), 'recreate-postgres-volume', '--confirm', 'cc-shop'])
         self.assertIn(command, stderr)
 
     def test_a_stopped_database_service_names_start_database(self):
@@ -90,7 +90,7 @@ class DoctorEnvironmentTests(unittest.TestCase):
         observed = self.assert_same(('--full',))
         for program in PROGRAMS:
             code, _stdout, stderr, _log = observed[program, ('--full',)]
-            start = shlex.join([program, '--project', str(self.root), 'start-database'])
+            start = shlex.join([program, '--project', str(self.root), 'setup-postgres'])
             self.assertEqual(code, 1)
             self.assertIn(f'FAIL postgres_service=not_running\n  fix: {start}\n', stderr)
             self.assertNotIn(str(self.root / 'dev/.env'), stderr)
@@ -121,7 +121,8 @@ class DoctorEnvironmentTests(unittest.TestCase):
                 result = subprocess.run([sys.executable, '-B', str(ROOT / program), '--help'], text=True,
                                         capture_output=True, env=self.env)
                 self.assertEqual((result.returncode, result.stderr), (0, ''))
-                self.assertIn('Deprecated aliases (they keep working): check-environment runs doctor --environment\n',
+                # v0.20.0 S13: the aliases of setup-postgres and recreate-postgres-volume follow it.
+                self.assertIn('Deprecated aliases (they keep working): check-environment runs doctor --environment, ',
                               result.stdout)
 
     def test_refused_where_check_environment_is_refused(self):

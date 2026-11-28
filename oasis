@@ -12,11 +12,12 @@ from pathlib import Path
 import sys
 
 COMMANDS = (
-    'audit-dependencies', 'bootstrap', 'check-environment', 'doctor',
-    'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases',
+    'audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
+    'drop-database', 'gc', 'install-module', 'lint-module', 'list-databases',
     'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy',
-    'recreate-database-volume', 'restart', 'setup', 'start', 'start-database', 'status', 'stop', 'test-module',
-    'trash', 'update-module', 'verify-module', 'view-info', 'worktree-init', 'xmlid-info',
+    'recreate-database-volume', 'recreate-postgres-volume', 'restart', 'setup', 'setup-postgres', 'start',
+    'start-database', 'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info',
+    'worktree-init', 'xmlid-info',
 )
 PROGRAM = 'oasis'
 
@@ -28,9 +29,11 @@ LEGACY_COMMANDS = ('migrate', 'doctor', 'policy')
 # configuration, and `status --json` reports that the workspace is missing (v0.16.0 S3). Every other
 # command is refused there (missing configuration).
 UNCONFIGURED_COMMANDS = ('doctor', 'policy', 'setup')
-# Deprecated command names (v0.16.0 S5): each keeps working, with the same output and exit codes as the
-# command it stands for (tools/policy.py ALIASES gives both the same tier).
-DEPRECATED_ALIASES = {'check-environment': 'doctor --environment'}
+# Deprecated command names (v0.16.0 S5; v0.20.0 S13): each keeps working, with the same output and exit codes as the
+# command it stands for (tools/policy.py ALIASES gives both the same tier); start-database and
+# recreate-database-volume print one stderr line naming the new name first (their tool scripts).
+DEPRECATED_ALIASES = {'check-environment': 'doctor --environment', 'start-database': 'setup-postgres',
+                      'recreate-database-volume': 'recreate-postgres-volume'}
 
 
 def configuration_reader(tools: Path):

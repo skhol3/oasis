@@ -331,10 +331,10 @@ class SeriesSetupTests(unittest.TestCase):
             f'compiled {requirements}/runtime.txt, dev.txt and lock.sha256',
             f'created the environment {environment}',
             'next steps:',
-            f'  1. oasis --project {self.checkout} start-database',
+            f'  1. oasis --project {self.checkout} setup-postgres',
             f'  2. oasis --project {self.checkout} doctor',
             f'  3. {ADD_DEVELOPMENT.format(workspace=self.workspace)}',
-            f'  4. oasis --project {self.checkout} init-dev-database --plan']) + '\n')
+            f'  4. oasis --project {self.checkout} create-database --plan']) + '\n')
         # Only the version line changed; the section is appended; the mode is kept.
         self.assertEqual(self.workspace.read_text(),
                          V1.replace('workspace_version = 1', 'workspace_version = 2') + '\n' + SECTION)
@@ -969,10 +969,10 @@ series_exceptions = ['report_xlsx']
             f'  1. the locks in {requirements} describe runtime.in, dev.in and overrides.txt: oasis --project '
             f'{self.checkout} bootstrap --apply syncs the adopted environment {environment} to them (it changes '
             'the packages installed there)',
-            f'  2. oasis --project {self.checkout} start-database',
+            f'  2. oasis --project {self.checkout} setup-postgres',
             f'  3. oasis --project {self.checkout} doctor',
             f'  4. {ADD_DEVELOPMENT.format(workspace=self.workspace)}',
-            f'  5. oasis --project {self.checkout} init-dev-database --plan']) + '\n')
+            f'  5. oasis --project {self.checkout} create-database --plan']) + '\n')
         self.assertEqual(self.workspace.read_text(),
                          V1.replace('workspace_version = 1', 'workspace_version = 2') + '\n' + section)
         # Both compiles with the overrides, with the environment's Python; no uv venv, no uv pip sync.

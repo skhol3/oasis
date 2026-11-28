@@ -113,7 +113,7 @@ class TestLibraryBook(TransactionCase):
 - `--test-tags` implies `--stop-after-init` (`odoo/tools/config.py:725-726`).
 
 - A new database loads no demo data unless `--with-demo` (`odoo/tools/config.py:238-239`); oasis still passes
-  `--without-demo` to its test runs, and `install-module --with-demo` and `init-dev-database --with-demo` pass
+  `--without-demo` to its test runs, and `install-module --with-demo` and `create-database --with-demo` pass
   `--with-demo`.
 
 - The second server port of a test run is `--gevent-port` (`odoo/tools/config.py:266`).

@@ -176,18 +176,18 @@ class DevelopmentUsersTests(unittest.TestCase):
         self.python.chmod(0o755)
 
     def command(self, *args, confirm=True):
-        """init-dev-database through the entry point. A creating call (a module, then a database) confirms its
+        """create-database through the entry point. A creating call (a module, then a database) confirms its
         database, as the refusal names it (v0.20.0 S5: Tier B); confirm=False leaves --confirm out."""
         extra = ['--confirm', args[-1]] if confirm and len(args) >= 2 and not args[-1].startswith('-') else []
         return [sys.executable, '-B', str(ROOT / 'oasis'), '--project', str(self.root),
-                'init-dev-database', *args, *extra]
+                'create-database', *args, *extra]
 
     def invoke(self, *args, confirm=True):
         return subprocess.run(self.command(*args, confirm=confirm), input='', text=True,
                               capture_output=True, env=self.env, timeout=60)
 
     def confirmation(self, *args):
-        return shlex.join(['oasis', '--project', str(self.root), 'init-dev-database', *args])
+        return shlex.join(['oasis', '--project', str(self.root), 'create-database', *args])
 
     def base_data(self):
         """The Odoo source's language and country lists (synthetic); without them Odoo offers en_US only."""
@@ -204,7 +204,7 @@ class DevelopmentUsersTests(unittest.TestCase):
                 result = self.invoke(*args, confirm=False)
                 command = self.confirmation(*args, '--confirm', 'cc_dev_coffee')
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
-                    'ERROR: init-dev-database creates the development database cc_dev_coffee with its accounts and '
+                    'ERROR: create-database creates the development database cc_dev_coffee with its accounts and '
                     f'installs coffee, demo data: {demo} (Tier B: it needs explicit confirmation); nothing changed. '
                     f'Run: {command}\n')))
                 self.assertFalse(self.state.exists())
@@ -254,7 +254,7 @@ class DevelopmentUsersTests(unittest.TestCase):
         document = self.plan()
         self.assertEqual((document['format'], document['version'], document['command'], document['checkout'],
                           document['complete'], document['open'], document['databases']),
-                         ('oasis-database-plan', 1, 'init-dev-database', str(self.root), False,
+                         ('oasis-database-plan', 1, 'create-database', str(self.root), False,
                           ['suffix', 'kind', 'module', 'demo', 'language', 'country'], []))
         self.assertEqual(document['questions'], [
             {'id': 'suffix', 'text': 'Name of the new database after cc_dev_ or cc_test_ (letters, digits and '
@@ -265,7 +265,7 @@ class DevelopmentUsersTests(unittest.TestCase):
                          {'value': 'test', 'label': 'a test database cc_test_<suffix>'},
                          {'value': 'both', 'label': 'both: cc_dev_<suffix> and cc_test_<suffix>'}],
              'recommended': None, 'flag': '--answer kind=<dev|test|both>', 'answer': None, 'origin': None},
-            {'id': 'module', 'text': 'Module init-dev-database installs in the new database',
+            {'id': 'module', 'text': 'Module create-database installs in the new database',
              'options': [{'value': 'coffee', 'label': 'coffee'}, {'value': 'tea', 'label': 'tea'}],
              'recommended': None, 'flag': '--answer module=<module>', 'answer': None, 'origin': None},
             {'id': 'demo', 'text': "Load Odoo's demo data into the new database",
@@ -394,12 +394,12 @@ class DevelopmentUsersTests(unittest.TestCase):
         result = self.invoke('--plan', '--answer', 'language=en_US', confirm=False)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
             'ERROR: Invalid answer en_US for language: answer one of the 11 options of the question '
-            '(init-dev-database --plan --json lists them).\n')))
+            '(create-database --plan --json lists them).\n')))
 
     def test_plan_usage_error(self):
         result = self.invoke('--plan', 'cc_dev_x', confirm=False)
         self.assertEqual((result.returncode, result.stdout), (2, ''))
-        self.assertEqual(result.stderr, f'Usage: {(ROOT / "oasis").resolve()} init-dev-database --plan [--json] '
+        self.assertEqual(result.stderr, f'Usage: {(ROOT / "oasis").resolve()} create-database --plan [--json] '
                                         '[--answer <id>=<value>]... [--answers <file.json>]\n')
         self.assertFalse(self.commands.exists())
 
@@ -422,10 +422,10 @@ class DevelopmentUsersTests(unittest.TestCase):
         directory = self.base_data()
         for args, stderr in (
                 (('--lang', 'xx_XX'), f'ERROR: Unknown language xx_XX: Odoo 19.0 lists its languages in '
-                                      f'{directory / "res.lang.csv"}; init-dev-database --plan --json shows them. No '
+                                      f'{directory / "res.lang.csv"}; create-database --plan --json shows them. No '
                                       'database was created.\n'),
                 (('--country', 'zz'), f'ERROR: Unknown country zz: Odoo 19.0 lists its countries in '
-                                      f'{directory / "res_country_data.xml"}; init-dev-database --plan --json shows '
+                                      f'{directory / "res_country_data.xml"}; create-database --plan --json shows '
                                       'them. No database was created.\n')):
             for confirm in (True, False):
                 with self.subTest(args=args, confirm=confirm):
@@ -444,7 +444,7 @@ class DevelopmentUsersTests(unittest.TestCase):
         # v0.20.0 S12: <test_prefix>[slug_]<suffix>, Tier B as a development one.
         result = self.invoke('coffee', 'cc_test_coffee', confirm=False)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
-            'ERROR: init-dev-database creates the test database cc_test_coffee with its accounts and installs coffee, '
+            'ERROR: create-database creates the test database cc_test_coffee with its accounts and installs coffee, '
             'demo data: no (Tier B: it needs explicit confirmation); nothing changed. Run: '
             + self.confirmation('coffee', 'cc_test_coffee', '--confirm', 'cc_test_coffee') + '\n')))
         self.assertFalse(self.state.exists())
@@ -523,8 +523,8 @@ class DevelopmentUsersTests(unittest.TestCase):
             self.assertFalse(self.commands.exists())
 
     def test_requires_explicit_module_and_database(self):
-        usage = ('Usage: init-dev-database [--with-demo] [--lang <code>] [--country <code>] <module> <database>\n'
-                 '       ... <module> <database> --dry-run | --confirm <database>; or init-dev-database --plan [--json]\n')
+        usage = ('Usage: create-database [--with-demo] [--lang <code>] [--country <code>] <module> <database>\n'
+                 '       ... <module> <database> --dry-run | --confirm <database>; or create-database --plan [--json]\n')
         for args in (('coffee',), ('coffee', 'cc_dev_coffee', '--bogus'), ('coffee', 'cc_dev_coffee', '--confirm'),
                      ('coffee', 'cc_dev_coffee', 'extra'), ('--lang', 'coffee', 'cc_dev_coffee'),
                      ('--lang', 'en_US', '--lang', 'en_US', 'coffee', 'cc_dev_coffee'),
@@ -700,7 +700,7 @@ class DevelopmentUsersTests(unittest.TestCase):
         result = self.invoke('--help')
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stderr, '')
-        self.assertIn('Usage: init-dev-database [--with-demo] [--lang <code>] [--country <code>] <module> <database>',
+        self.assertIn('Usage: create-database [--with-demo] [--lang <code>] [--country <code>] <module> <database>',
                       result.stdout)
         self.assertIn('the one oasis command that creates a database', result.stdout)
         self.assertIn('native Odoo demo loader', result.stdout)
@@ -907,7 +907,7 @@ test_prefix = 'cc_test_'
             while not (marker.exists() and marker.read_text()):
                 self.assertLess(time.monotonic(), deadline, 'the runner did not start')
                 time.sleep(0.05)
-            # The runner's parent is init-dev-database's Python (the entry point and bash exec into it).
+            # The runner's parent is create-database's Python (the entry point and bash exec into it).
             self.assertEqual(int(marker.read_text()), process.pid)
             os.kill(process.pid, signal.SIGINT)
             stdout, stderr = process.communicate(timeout=15)
@@ -1003,7 +1003,7 @@ test_prefix = 'cc_test_'
         """tools/dev_users_runtime.py itself, on the fake Odoo pieces, with the payload dev_users.py sends."""
         conf = str(self.root / 'dev/odoo.conf')
         payload = {'declaration': declaration, 'passwords': ['admin-secret', 'planner-secret'], 'with_demo': False,
-                   'lang': 'en_US', 'country': None,
+                   'lang': 'en_US', 'country': None, 'confirmed': 'cc_dev_coffee',
                    'runtime': {'python': str(self.python), 'odoo_bin': str(self.source / 'odoo-bin'),
                                'odoo_source': str(self.source), 'demo_flags': ['--without-demo'],
                                'groups_field': 'group_ids', 'config_args': ['-c', conf]}}
@@ -1043,6 +1043,116 @@ test_prefix = 'cc_test_'
         state = json.loads(self.state.read_text())
         self.assertEqual(set(state['users']), {'local_admin'})
         self.assertEqual(state['commits'], 0)
+
+
+class DirectScriptTests(unittest.TestCase):
+    """v0.20.0 L19 (the slice verifier's defect 1): create-database's Python scripts, called directly (python3
+    <install>/tools/dev_users.py ...), create a database only with the confirmation create-database checks, after the
+    same name guards; dev_users_runtime.py runs only with the payload dev_users.py sends."""
+    setUp = DevelopmentUsersTests.setUp
+    run_runner = DevelopmentUsersTests.run_runner
+    command = DevelopmentUsersTests.command
+    invoke = DevelopmentUsersTests.invoke
+
+    def direct(self, *args):
+        return subprocess.run([sys.executable, '-B', str(ROOT / 'tools/dev_users.py'), *args], input='', text=True,
+                              capture_output=True, env=self.env, timeout=60)
+
+    def arguments(self, database='cc_dev_coffee', demo='false', language='en_US', country=''):
+        return (str(self.root), 'coffee', database, demo, language, country)
+
+    def assert_nothing_created(self):
+        self.assertFalse(self.state.exists())
+        self.assertFalse(self.commands.exists(), self.commands.read_text() if self.commands.exists() else '')
+
+    def test_without_the_confirmation_it_refuses_and_creates_nothing(self):
+        command = shlex.join(['oasis', '--project', str(self.root), 'create-database', 'coffee', 'cc_dev_coffee',
+                              '--confirm', 'cc_dev_coffee'])
+        refusal = ('ERROR: dev_users.py creates the database cc_dev_coffee only with --confirm cc_dev_coffee, the '
+                   'confirmation create-database asks (Tier B); nothing changed. Run: ' + command + '\n')
+        for args in (self.arguments(), ('--confirm', 'cc_dev_other', *self.arguments()),
+                     ('--confirm=cc_dev_coffee', *self.arguments())):
+            with self.subTest(args=args[:2]):
+                result = self.direct(*args)
+                if args[0] == '--confirm=cc_dev_coffee':
+                    # Only `--confirm <database>` as the first two arguments: anything else is the usage error.
+                    self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                     (2, '', 'ERROR: Invalid development user configuration.\n'))
+                else:
+                    self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', refusal))
+                self.assert_nothing_created()
+        # The refusal repeats the options it was given.
+        result = self.direct(*self.arguments(database='cc_test_x', demo='true', language='es_AR', country='ar'))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('Run: ' + shlex.join(['oasis', '--project', str(self.root), 'create-database', '--with-demo',
+                                            '--lang', 'es_AR', '--country', 'ar', 'coffee', 'cc_test_x', '--confirm',
+                                            'cc_test_x']) + '\n', result.stderr)
+        self.assert_nothing_created()
+
+    def test_the_name_guards_refuse_before_anything_even_confirmed(self):
+        long_dev = 'cc_dev_' + 'x' * 57
+        long_test = 'cc_test_' + 'x' * 49
+        cases = (('other_db', 'ERROR: Initialization requires a named development or test database.\n'),
+                 ('cc_dev_', 'ERROR: Initialization requires a named development or test database.\n'),
+                 ('cc_test_', 'ERROR: Initialization requires a named development or test database.\n'),
+                 ("cc_dev_bad'", 'ERROR: Initialization requires a named development or test database.\n'),
+                 ('cc_dev_bad-name', 'ERROR: Initialization requires a named development or test database.\n'),
+                 (long_dev, f'Database names must be at most 63 bytes: {long_dev}\n'),
+                 ('cc_dev_x_trash_20261124_101500', 'Database names ending in _trash_<YYYYMMDD>_<HHMMSS> are reserved '
+                                                    'for the trash: cc_dev_x_trash_20261124_101500\n'),
+                 ('cc_test_coffee_r1a2b3c', 'Database names ending in _r<6 hex> are reserved for disposable runs: '
+                                            'cc_test_coffee_r1a2b3c\n'),
+                 (long_test, f'Test databases with an _update sibling must be at most 56 bytes: {long_test}\n'))
+        for database, message in cases:
+            for mode in (('--confirm', database), ('--validate',)):
+                with self.subTest(database=database, mode=mode[0]):
+                    result = self.direct(*mode, *self.arguments(database=database))
+                    self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', message))
+                    self.assert_nothing_created()
+        # The create-database command line refuses the same names with the same lines (tools/common.sh).
+        for database, message in cases:
+            with self.subTest(command=database):
+                result = self.invoke('coffee', database)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', message))
+                self.assert_nothing_created()
+
+    def test_a_slugged_checkout_keeps_its_namespace(self):
+        (self.root / 'oasis-checkout.toml').write_text("[tooling]\ncheckout_slug = 'wt_1'\n")
+        for database in ('cc_dev_coffee', 'cc_dev_wt_1_'):
+            with self.subTest(database=database):
+                result = self.direct('--confirm', database, *self.arguments(database=database))
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', (
+                    f'Databases of checkout wt_1 must use cc_dev_wt_1_<name> or cc_test_wt_1_<name>: {database}\n')))
+                self.assert_nothing_created()
+
+    def test_with_the_confirmation_it_creates_the_database_as_create_database_does(self):
+        result = self.direct('--confirm', 'cc_dev_coffee', *self.arguments())
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertEqual(result.stdout, 'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n'
+                         + ACCOUNTS)
+        self.assertEqual(set(json.loads(self.state.read_text())['users']), {'local_admin', 'planner', 'manager'})
+
+    def test_the_runner_refuses_a_call_dev_users_did_not_make(self):
+        account = {'login': 'planner', 'name': 'Local Planner', 'groups': ['example.group_planner']}
+        declaration = {'administrator_login': 'local_admin', 'users': [account]}
+        refusal = ('ERROR: dev_users_runtime.py runs only under create-database (tools/dev_users.py), which confirms '
+                   'the database; nothing was created.\n')
+        for changes in ({'confirmed': None}, {'confirmed': 'cc_dev_other'}, {'confirmed': ''}):
+            with self.subTest(changes=changes):
+                result = self.run_runner(declaration, changes)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (3, '', refusal))
+                self.assertFalse(self.state.exists())
+        payload = json.dumps({'declaration': declaration, 'passwords': ['a', 'b']})
+        result = subprocess.run([sys.executable, '-B', str(ROOT / 'tools/dev_users_runtime.py'), str(self.root),
+                                 'coffee', 'cc_dev_coffee'], input=payload, text=True, capture_output=True,
+                                env=self.env, timeout=30)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (3, '', refusal))
+        # Arguments alone, with no payload on stdin: refused, never waiting for one.
+        result = subprocess.run([sys.executable, '-B', str(ROOT / 'tools/dev_users_runtime.py'), str(self.root),
+                                 'coffee', 'cc_dev_coffee'], stdin=subprocess.DEVNULL, text=True, capture_output=True,
+                                env=self.env, timeout=30)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (3, '', refusal))
+        self.assertFalse(self.state.exists())
 
 
 if __name__ == '__main__':

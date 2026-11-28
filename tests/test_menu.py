@@ -27,7 +27,7 @@ ROOT = lifecycle.STAGE
 ENTRY = str((ROOT / 'oasis').resolve())
 ACTIONS = ['server.run', 'server.start', 'server.restart', 'server.stop', 'server.logs', 'server.follow', 'server.status',
            'server.stop_database',
-           'modules.install', 'modules.update', 'modules.status', 'modules.init_dev', 'modules.overview',
+           'modules.install', 'modules.update', 'modules.status', 'modules.create_database', 'modules.overview',
            'tests.module', 'tests.class', 'tests.reuse',
            'maintenance.drop_database', 'maintenance.trash',
            'maintenance.trash_restore', 'maintenance.trash_empty', 'maintenance.gc', 'maintenance.gc_apply', 'maintenance.doctor', 'maintenance.migrate_plan',
@@ -289,12 +289,12 @@ class CatalogTests(MenuFixture):
         self.assertFalse(actions['tests.reuse']['inputs'][1]['required'])
         self.assertEqual(actions['modules.update']['argv'], [
             *prefix, 'update-module', {'compact': '--compact'}, {'input': 'module'}, {'input': 'database'}])
-        # v0.20.0 S5, S12: init-dev-database, the one command that creates a database, is Tier B; the menu passes
+        # v0.20.0 S5, S12: create-database, the one command that creates a database, is Tier B; the menu passes
         # --confirm <database> after the typed name. install-module installs into an existing database only: no
         # --confirm.
-        self.assertEqual((actions['modules.init_dev']['argv'], actions['modules.init_dev']['confirm'],
-                          actions['modules.init_dev']['destructive']),
-                         ([*prefix, 'init-dev-database', {'input': 'demo', 'flag': '--with-demo'}, {'input': 'module'},
+        self.assertEqual((actions['modules.create_database']['argv'], actions['modules.create_database']['confirm'],
+                          actions['modules.create_database']['destructive']),
+                         ([*prefix, 'create-database', {'input': 'demo', 'flag': '--with-demo'}, {'input': 'module'},
                            {'input': 'database'}, {'input': 'database', 'option': '--confirm'}], 'database', True))
         self.assertEqual((actions['modules.install']['confirm'], actions['modules.install']['destructive']),
                          (None, False))
@@ -327,7 +327,7 @@ class CatalogTests(MenuFixture):
             'destructive': True, 'confirm': 'yes', 'user_run': False, 'terminal_only': False, 'follow': False, 'superseded_by': None})
         self.assertEqual([key for key, action in actions.items() if action['user_run']],
                          ['maintenance.migrate', 'maintenance.worktree'])
-        self.assertEqual([key for key, action in actions.items() if action['terminal_only']], ['modules.init_dev'])
+        self.assertEqual([key for key, action in actions.items() if action['terminal_only']], ['modules.create_database'])
         self.assertEqual(actions['maintenance.migrate_plan']['argv'], [*prefix, 'migrate', '--plan'])
         # v0.16.0 S1: the Tier B actions pass --confirm <exact name> (tools/policy.py).
         self.assertEqual(actions['maintenance.drop_database']['argv'][-3:],
@@ -451,7 +451,7 @@ class CatalogTests(MenuFixture):
                 ('server.run', {'database': '', 'dev': 'pdb', 'port': ''}),
                 ('server.run', {'database': '', 'dev': '', 'port': '70000'}),
                 ('maintenance.worktree', {'feature': 'shop', 'branch': 'shop'}),
-                ('modules.init_dev', {'module': 'coffee', 'database': 'cc_dev_x', 'demo': False}),
+                ('modules.create_database', {'module': 'coffee', 'database': 'cc_dev_x', 'demo': False}),
                 ('server.follow', {}),
                 ('server.gone', {})):
             with self.subTest(action=action, answers=answers):
@@ -692,7 +692,7 @@ class TerminalMenuTests(MenuFixture):
         result = self.terminal('2\n1\n1\n\nn\n')
         self.assertEqual(result.returncode, 2, result.stdout)
         self.assertTrue(result.stdout.endswith(self.command('install-module', 'coffee')), result.stdout)
-        plan = shlex.join(['oasis', '--project', str(self.root), 'init-dev-database', '--plan'])
+        plan = shlex.join(['oasis', '--project', str(self.root), 'create-database', '--plan'])
         self.assertIn(f'Database cc_dev_coffee does not exist; create it with: {plan}', result.stdout + result.stderr)
         self.assertNotIn('createdb', self.log())
         self.assertNotIn(' -i coffee', self.log())
@@ -795,7 +795,9 @@ class DetachTests(MenuFixture):
         (self.source / 'odoo-bin').write_text(SERVING)
         self.port = lifecycle.quiet_ports(2)
         (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text(f'http_port = {self.port}\n'))
-        self.env.update(OASIS_DETACH_WAIT='0.5')
+        # v0.20.0 L19: start and restart open existing databases only (tests/test_database_creation.py pins a
+        # missing one); every database of these servers exists.
+        self.env.update(OASIS_DETACH_WAIT='0.5', FAKE_EXISTS='1')
         self.server_log = self.root.resolve() / 'logs/main/server.log'
         self.addCleanup(self.kill_recorded)
 

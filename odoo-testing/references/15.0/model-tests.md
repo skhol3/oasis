@@ -117,7 +117,7 @@ class TestLibraryBook(TransactionCase):
 
 - A new database loads demo data unless `--without-demo` says otherwise (`odoo/tools/config.py:111-113`); oasis
   passes `--without-demo=all` to its test runs, and `install-module --with-demo` and
-  `init-dev-database --with-demo` pass nothing, so they get the default demo data.
+  `create-database --with-demo` pass nothing, so they get the default demo data.
 
 - The second server port of a test run is `--longpolling-port` (`odoo/tools/config.py:136`).
 

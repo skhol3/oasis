@@ -382,7 +382,7 @@ class AddonsPathHelperTests(unittest.TestCase):
 
 
 class SharedConfDevelopmentTests(unittest.TestCase):
-    """init-dev-database parses the configuration and runs odoo-bin with the rewrite too."""
+    """create-database parses the configuration and runs odoo-bin with the rewrite too."""
     setUp_fixture = test_dev_users.DevelopmentUsersTests.setUp
     command = test_dev_users.DevelopmentUsersTests.command
     terminal = test_dev_users.DevelopmentUsersTests.terminal

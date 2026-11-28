@@ -92,13 +92,13 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
    [The database account](setup.md#the-database-account)): nothing to fill in, and no step needs
    a password read, copied or typed. Never commit that file.
 
-4. Start the database service. `start-database` runs `docker compose up -d --wait` of the
+4. Start the database service. `setup-postgres` runs `docker compose up -d --wait` of the
    service with the compose file and the environment file of the configuration, as every database
    command does, prints one line and names no environment file (an agent harness may refuse a
    command that names one).
 
    ```bash
-   ~/.agents/skills/oasis/oasis start-database
+   ~/.agents/skills/oasis/oasis setup-postgres
    ```
 
 5. Run `doctor` until it prints `doctor_failures=0`. Each `FAIL` line is followed by a `fix:`
@@ -120,14 +120,14 @@ an agent runs `setup --apply` alone (it creates only what is missing). Inside th
    password file is written and no password is printed: the output says what each account uses.
    Then check the installed packages against the locks.
 
-   Creating it is your decision (Tier B since v0.20.0): `init-dev-database --plan`, the one command
+   Creating it is your decision (Tier B since v0.20.0): `create-database --plan`, the one command
    that creates a database, asks the name after `acme_dev_` (or `acme_test_`), dev, test or both, the
    module, whether with demo data, the language and the country, then prints the command with
    `--confirm <database>` ([The plan of a new database](dev-database.md#the-plan-of-a-new-database)).
 
    ```bash
-   ~/.agents/skills/oasis/oasis init-dev-database --plan
-   ~/.agents/skills/oasis/oasis init-dev-database acme_sale acme_dev_manual --confirm acme_dev_manual
+   ~/.agents/skills/oasis/oasis create-database --plan
+   ~/.agents/skills/oasis/oasis create-database acme_sale acme_dev_manual --confirm acme_dev_manual
    ~/.agents/skills/oasis/oasis doctor --environment --full
    ```
 

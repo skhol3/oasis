@@ -773,10 +773,10 @@ test("classifyBash allows every other oasis command, help alone and unrelated sc
     ["/work/shop", "~/.agents/skills/oasis/tools/restart --http-port=8070"],
     ["/work/shop", "oasis --project /p install-module coffee cc_dev_x"],
     ["/work/shop", "oasis --project /p update-module coffee cc_dev_x"],
-    // v0.20.0 S12: init-dev-database is the one command that creates a database (see "creating a database
+    // v0.20.0 S12: create-database is the one command that creates a database (see "creating a database
     // asks"); its plan and dry run run.
-    ["/work/shop", "oasis --project /p init-dev-database --plan --json"],
-    ["/work/shop", "oasis --project /p init-dev-database coffee cc_dev_x --dry-run"],
+    ["/work/shop", "oasis --project /p create-database --plan --json"],
+    ["/work/shop", "oasis --project /p create-database coffee cc_dev_x --dry-run"],
     ["/work/shop", "oasis --project /p trash"],
     ["/work/shop", "oasis --project /p trash restore cc_dev_x_trash_20261124_101500"],
     ["/work/shop", "oasis --project /p start --detach"],
@@ -927,22 +927,22 @@ test("setup runs through the entry points and its scripts, --apply included", ()
   }
 });
 
-// v0.20.0 S5, S12: init-dev-database, the one oasis command that creates a database, asks (Tier B), with any of
+// v0.20.0 S5, S12: create-database, the one oasis command that creates a database, asks (Tier B), with any of
 // its options and a test database too. Its plan and dry run, install-module (it installs into an existing database
 // only: one Tier A row) and the test databases of test-module/verify-module (--reuse, a configured test_database)
 // run.
 test("creating a database asks; plans, dry runs, installs and test runs run", () => {
   const cases: [string, string[]][] = [
-    ["oasis --project /p init-dev-database coffee cc_dev_x", ["init-dev-database"]],
-    ["oasis --project /p init-dev-database --with-demo coffee cc_dev_x --confirm cc_dev_x", ["init-dev-database"]],
-    ["oasis --project /p init-dev-database --lang es_AR --country ar coffee cc_test_x --confirm cc_test_x",
-      ["init-dev-database"]],
-    ["oasis --project /p init-dev-database coffee $DB --dry-run", ["init-dev-database"]],
-    ["~/.agents/skills/oasis/tools/init-dev-database coffee cc_dev_x", ["init-dev-database"]],
-    ["oasis --project /p init-dev-database --plan --json", []],
-    ["oasis --project /p init-dev-database --plan --answer kind=both --answer suffix=shop", []],
-    ["oasis --project /p init-dev-database coffee cc_dev_x --dry-run", []],
-    ["oasis --project /p init-dev-database --help", []],
+    ["oasis --project /p create-database coffee cc_dev_x", ["create-database"]],
+    ["oasis --project /p create-database --with-demo coffee cc_dev_x --confirm cc_dev_x", ["create-database"]],
+    ["oasis --project /p create-database --lang es_AR --country ar coffee cc_test_x --confirm cc_test_x",
+      ["create-database"]],
+    ["oasis --project /p create-database coffee $DB --dry-run", ["create-database"]],
+    ["~/.agents/skills/oasis/tools/create-database coffee cc_dev_x", ["create-database"]],
+    ["oasis --project /p create-database --plan --json", []],
+    ["oasis --project /p create-database --plan --answer kind=both --answer suffix=shop", []],
+    ["oasis --project /p create-database coffee cc_dev_x --dry-run", []],
+    ["oasis --project /p create-database --help", []],
     ["oasis --project /p install-module coffee", []],
     ["oasis --project /p install-module --with-demo coffee cc_dev_x", []],
     ["oasis --project /p install-module coffee $DB", []],
@@ -956,6 +956,47 @@ test("creating a database asks; plans, dry runs, installs and test runs run", ()
     const { programs, asks: found } = classifyBash(command);
     assert.deepEqual([programs, found.map((action) => action.command)], [[], asks], command);
   }
-  assert.deepEqual(classifyBash("oasis --project /p init-dev-database coffee cc_dev_x").asks,
-    [{ command: "init-dev-database", project: "/p" }]);
+  assert.deepEqual(classifyBash("oasis --project /p create-database coffee cc_dev_x").asks,
+    [{ command: "create-database", project: "/p" }]);
+});
+
+// v0.20.0 L19 (the slice verifier's probe): create-database's Python scripts create the database themselves, so a
+// direct call asks like create-database, with any arguments and from any directory (a copy of the bundle too);
+// reading or testing them runs.
+test("calling create-database's scripts directly asks like create-database", () => {
+  const cases: [string, string[]][] = [
+    ["python3 ~/.agents/skills/oasis/tools/dev_users.py /p coffee cc_dev_x false en_US ''", ["create-database"]],
+    ["python3 -B ~/.agents/skills/oasis/tools/dev_users.py --confirm cc_dev_x /p coffee cc_dev_x false en_US ''",
+      ["create-database"]],
+    ["python3 -B /tmp/copy/tools/dev_users.py --validate /p coffee cc_dev_x false en_US ''", ["create-database"]],
+    ["OASIS_PROJECT_ROOT=/p python3 /opt/oasis/tools/dev_users.py /p coffee cc_dev_x --dry-run", ["create-database"]],
+    ["/p/.venv/bin/python -B ~/.agents/skills/oasis/tools/dev_users_runtime.py /p coffee cc_dev_x < payload.json",
+      ["create-database"]],
+    ["echo '{}' | python3 /tmp/x/dev_users_runtime.py /p coffee cc_dev_x", ["create-database"]],
+    ["cat ~/.agents/skills/oasis/tools/dev_users.py", []],
+    ["grep -n confirm tools/dev_users_runtime.py", []],
+    ["python3 -B -m unittest tests.test_dev_users", []],
+  ];
+  for (const [command, asks] of cases) {
+    const { programs, asks: found } = classifyBash(command);
+    assert.deepEqual([programs, found.map((action) => action.command)], [[], asks], command);
+  }
+  assert.deepEqual(classifyBash("OASIS_PROJECT_ROOT=/p python3 /opt/oasis/tools/dev_users.py /p coffee cc_dev_x").asks,
+    [{ command: "create-database", project: "/p" }]);
+});
+
+// v0.20.0 S13: the deprecated aliases keep the tiers of their new names.
+test("setup-postgres and its alias run; recreate-postgres-volume and its alias ask", () => {
+  const cases: [string, string[]][] = [
+    ["oasis --project /p setup-postgres", []],
+    ["oasis --project /p start-database", []],
+    ["oasis --project /p recreate-postgres-volume --confirm cc-shop", ["recreate-postgres-volume"]],
+    ["oasis --project /p recreate-database-volume --confirm cc-shop", ["recreate-database-volume"]],
+    ["~/.agents/skills/oasis/tools/recreate-database-volume", ["recreate-database-volume"]],
+    ["oasis --project /p recreate-postgres-volume --help", []],
+  ];
+  for (const [command, asks] of cases) {
+    const { programs, asks: found } = classifyBash(command);
+    assert.deepEqual([programs, found.map((action) => action.command)], [[], asks], command);
+  }
 });

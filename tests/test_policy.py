@@ -25,44 +25,53 @@ class PolicyTableTests(unittest.TestCase):
     def test_tiers_follow_s1(self):
         table = tiers()
         for operation in ('setup', 'setup --apply', 'bootstrap', 'start', 'stop', 'restart',
-                          'start-database',
+                          'setup-postgres', 'start-database',
                           'install-module', 'update-module', 'doctor', 'check-environment', 'gc', 'gc --apply',
                           'test-module', 'verify-module', 'migrate --plan', 'worktree-init --dry-run'):
             self.assertEqual(table[operation], 'A', operation)
         for operation in ('worktree-init', 'migrate --apply', 'drop-database', 'gc --apply --trash',
-                          'recreate-database-volume', 'create a branch'):
+                          'recreate-postgres-volume', 'recreate-database-volume', 'create a branch'):
             self.assertEqual(table[operation], 'B', operation)
         self.assertEqual(table['type a password'], 'C')
 
     def test_creating_a_database_is_tier_b_v0_20_0(self):
-        # v0.20.0 S5, S12: init-dev-database, the one command that creates a database, is Tier B; its plan and dry
+        # v0.20.0 S5, S12: create-database, the one command that creates a database, is Tier B; its plan and dry
         # run change nothing. install-module installs into an existing database only: one Tier A row, no --confirm
         # and no --dry-run. The disposable and the kept test databases of test-module/verify-module stay A.
         table, rows = tiers(), {row['operation']: row for row in policy.operations()}
-        self.assertEqual((table['init-dev-database'], rows['init-dev-database']['confirm']), ('B', 'database name'))
-        for operation in ('init-dev-database --plan', 'init-dev-database --dry-run', 'install-module',
+        self.assertEqual((table['create-database'], rows['create-database']['confirm']), ('B', 'database name'))
+        for operation in ('create-database --plan', 'create-database --dry-run', 'install-module',
                           'test-module', 'verify-module'):
             self.assertEqual((table[operation], rows[operation]['confirm']), ('A', None), operation)
         self.assertEqual(sorted(operation for operation in table if operation.split()[0] == 'install-module'),
                          ['install-module'])
         self.assertEqual(rows['install-module']['reason'],
-                         'installs a module in an existing managed database; it never creates one (init-dev-database '
+                         'installs a module in an existing managed database; it never creates one (create-database '
                          'does)')
-        self.assertEqual(rows['init-dev-database --plan']['example'],
-                         'oasis --project /p init-dev-database --plan --json')
-        self.assertIn('language and country', rows['init-dev-database --plan']['reason'])
-        self.assertIn('the one oasis command that creates a database', rows['init-dev-database']['reason'])
+        self.assertEqual(rows['create-database --plan']['example'],
+                         'oasis --project /p create-database --plan --json')
+        self.assertIn('language and country', rows['create-database --plan']['reason'])
+        self.assertIn('the one oasis command that creates a database', rows['create-database']['reason'])
+        # v0.20.0 S12: init-dev-database is gone, no alias.
+        self.assertEqual([operation for operation in table if operation.split()[0] == 'init-dev-database'], [])
 
     def test_a_deprecated_alias_has_the_tier_of_its_target(self):
         # v0.16.0 S5: check-environment runs doctor --environment; both keep a row of the same tier, and the
         # alias's reason says what it is.
-        self.assertEqual(policy.ALIASES, {'check-environment': 'doctor --environment'})
+        # v0.20.0 S13: start-database runs setup-postgres and recreate-database-volume runs recreate-postgres-volume,
+        # with the same tier and the same --confirm.
+        self.assertEqual(policy.ALIASES, {'check-environment': 'doctor --environment', 'start-database': 'setup-postgres',
+                                          'recreate-database-volume': 'recreate-postgres-volume'})
         rows = {row['operation']: row for row in policy.operations()}
         for alias, target in policy.ALIASES.items():
             self.assertEqual(rows[alias]['tier'], rows[target]['tier'], alias)
             self.assertEqual(rows[alias]['kind'], rows[target]['kind'], alias)
+            self.assertEqual(rows[alias]['confirm'], rows[target]['confirm'], alias)
             self.assertTrue(rows[alias]['reason'].startswith(f'deprecated alias of {target}; '), rows[alias])
         self.assertEqual(rows['doctor --environment']['example'], 'oasis --project /p doctor --environment --quick')
+        self.assertEqual((rows['recreate-postgres-volume']['tier'], rows['recreate-postgres-volume']['confirm']),
+                         ('B', 'compose project'))
+        self.assertEqual(rows['setup-postgres']['tier'], 'A')
         # The entry point lists the same aliases in its help.
         tree = ast.parse((ROOT / 'oasis').read_text(encoding='utf-8'))
         [listed] = [ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)

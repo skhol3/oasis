@@ -84,7 +84,7 @@ require_runtime_paths() {
 }
 
 # The exact command a refusal names (a Tier B one's --confirm, tools/policy.py; the plan of
-# init-dev-database for a missing database): `<program> --project <root> <args>`,
+# create-database for a missing database): `<program> --project <root> <args>`,
 # shell-quoted like the Python tools do (shlex.join).
 confirm_command() {
   python3 -I -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' "$(program_name)" --project "$PROJECT_ROOT" "$@"
@@ -221,7 +221,7 @@ require_trash_database_name() {
 
 # Names ending in the disposable run suffix (_r<6 hex>, optionally _update) belong to the
 # disposable runs of test-module and verify-module. The commands that create or reuse a
-# database for normal work (init-dev-database, install-module, update-module, odoo-shell,
+# database for normal work (create-database, install-module, update-module, odoo-shell,
 # start -d, and test-module/verify-module with an explicit or configured
 # database) call this guard instead of require_managed_database_name and refuse them;
 # drop-database, module-status and gc accept them. The phases of a disposable verify-module
@@ -247,13 +247,13 @@ require_update_sibling_room() {
 }
 
 # install-module, update-module and odoo-shell operate on existing databases only; they never create one
-# (v0.20.0 S12): init-dev-database is the one command that does, through its plan.
+# (v0.20.0 S12): create-database is the one command that does, through its plan.
 require_existing_database() {
   local database=$1
   # Outside the condition, so an unavailable service fails instead of looking missing.
   wait_for_database >/dev/null
   if ! database_exists "$database"; then
-    printf 'Database %s does not exist; create it with: %s\n' "$database" "$(confirm_command init-dev-database --plan)" >&2
+    printf 'Database %s does not exist; create it with: %s\n' "$database" "$(confirm_command create-database --plan)" >&2
     return 2
   fi
 }
@@ -265,7 +265,7 @@ require_existing_database() {
 # running. The lock descriptor is closed before returning, so Odoo never inherits it.
 # OASIS_COMPOSE_LOCK_TIMEOUT (seconds) exists for the tests only. Every step checks its own status and returns it (never errexit), so a
 # caller may run it in a condition or a `||` list, where errexit is off, and still get a non-zero
-# status on any failure (recreate-database-volume does; tests/test_credentials.py covers each one).
+# status on any failure (recreate-postgres-volume does; tests/test_credentials.py covers each one).
 wait_for_database() {
   local lock lock_fd timeout=120 status=0
   if ! command -v flock >/dev/null 2>&1; then

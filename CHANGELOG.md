@@ -22,6 +22,12 @@ names) may still change in a minor release; every such change is listed here und
 
 ### Changed
 
+- Contract change: `start-database` is renamed `setup-postgres` and `recreate-database-volume` is renamed
+  `recreate-postgres-volume`; the old names are deprecated aliases that print one stderr line naming the new
+  name. Next steps, doctor fixes, `status --json`, the menu, the policy and the docs use the new names.
+- Contract change: `start` and `restart` check that each database Odoo would open exists (`-d`, else `odoo.conf`'s
+  `db_name` list) and refuse a missing one with exit 2, naming `create-database --plan`, before Odoo starts or
+  the running server is stopped.
 - Contract change: `init-dev-database` no longer writes `<database>.logins` and never asks the administrator's
   password: the administrator keeps Odoo's default password (`admin`), or `ODOO_ADMIN_PASSWORD` of the env file
   when it sets a non-empty one (read as `ODOO_DB_PASSWORD` is; a value with compose interpolation or a
@@ -30,8 +36,8 @@ names) may still change in a minor release; every such change is listed here und
   what each account uses, never a value (`Account <login> (administrator), password: Odoo's default`, or `from
   <env file> ODOO_ADMIN_PASSWORD`, `typed on the terminal`, `generated, not stored or shown`). An existing
   `<database>.logins` from an earlier version is left as it is, with a WARN line.
-- Contract change: creating a database needs the user, and one command does it. `init-dev-database` (Odoo's
-  own database creation) is Tier B (`--confirm <database>`; `--dry-run` and `--plan` are Tier A); its plan
+- Contract change: creating a database needs the user, and one command does it. `create-database` (named
+  `init-dev-database` until this version; that name is removed, no alias; Odoo's own database creation) is Tier B (`--confirm <database>`; `--dry-run` and `--plan` are Tier A); its plan
   (`--plan [--json]`, setup's question shape, `--answer`/`--answers`) asks the suffix, dev, test or both, the
   module, demo data (recommended off, still asked), the language and the country, then prints each dry run and
   `--confirm` command; it creates test databases too and takes `--lang` and `--country`. `install-module`
@@ -62,8 +68,16 @@ names) may still change in a minor release; every such change is listed here und
   in the workspace directory, else in the workspace's; before, `<that environment>-<x.y>`, named after what may be
   another project's environment.
 
+### Fixed
+
+- Security: `tools/dev_users.py`, called directly, created a database without `--confirm` and skipped the name
+  guards. It now requires `--confirm <database>` and runs the guards itself; `tools/dev_users_runtime.py` runs only
+  with the payload `dev_users.py` sends; the Gentle Shell bash guard asks for a direct call of either script like
+  for `create-database`.
+
 ### Removed
 
+- `init-dev-database`, renamed `create-database` (no alias).
 - The `create-database` command, its project wrapper template, the menu action *Create a database*, and the
   policy rows for `create-database`: `init-dev-database` creates databases (see Changed).
 

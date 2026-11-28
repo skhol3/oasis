@@ -1,10 +1,19 @@
-"""v0.20.0 S12: init-dev-database is the one command that creates a database (tests/test_dev_users.py covers it
+"""v0.20.0 S12: create-database is the one command that creates a database (tests/test_dev_users.py covers it
 and its plan). install-module installs only into an existing database: a missing one is refused before Odoo
-starts (odoo-bin -d <name> would create it), naming the init-dev-database plan.
+starts (odoo-bin -d <name> would create it), naming the create-database plan.
 
-Synthetic fixtures with the fake docker and python of test_lifecycle, through the project wrappers."""
+start and restart (v0.20.0 L19, the slice verifier's defect 2) open only existing databases too: odoo-bin creates
+every database it is given that is missing (-d, or odoo.conf's db_name, a comma-separated list), so each one is
+checked first and a missing one is refused (exit 2) naming the create-database plan; start without a database
+(Odoo's database selector) runs as before.
+
+Synthetic fixtures with the fake docker and python of test_lifecycle, through the project wrappers (restart, which
+has none, through the oasis entry point)."""
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
+import re
 import shlex
+import subprocess
+import sys
 import unittest
 import test_lifecycle as lifecycle
 
@@ -18,7 +27,7 @@ class CreationBase(unittest.TestCase):
         self.setUp_fixture()
 
     def plan_command(self):
-        return shlex.join(['oasis', '--project', str(self.root), 'init-dev-database', '--plan'])
+        return shlex.join(['oasis', '--project', str(self.root), 'create-database', '--plan'])
 
     def log(self):
         return self.commands.read_text() if self.commands.exists() else ''
@@ -74,10 +83,106 @@ class InstallModuleTests(CreationBase):
         result = self.invoke('install-module', '--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertEqual(result.stdout.splitlines()[0], 'Usage: install-module [--with-demo] <module> [database]')
-        self.assertIn('The database must exist: install-module never creates one (init-dev-database --plan does).',
+        self.assertIn('The database must exist: install-module never creates one (create-database --plan does).',
                       result.stdout)
         self.assertNotIn('--confirm', result.stdout)
         self.unchanged()
+
+
+class ServerDatabaseTests(CreationBase):
+    PORTS = ('--http-port=9000', '--gevent-port=9001')
+
+    def missing(self, database):
+        return f'Database {database} does not exist; create it with: {self.plan_command()}\n'
+
+    def oasis(self, *args):
+        return subprocess.run([sys.executable, '-B', str(lifecycle.STAGE / 'oasis'), '--project', str(self.root),
+                               *args], text=True, cwd=self.root, env=self.env, capture_output=True,
+                              stdin=subprocess.DEVNULL, timeout=60)
+
+    def odoo_line(self, *args):
+        return ' '.join(['odoo', str(self.source / 'odoo-bin'), '-c', str(self.root / 'dev/odoo.conf'), *args])
+
+    def existing(self, *names):
+        (self.root / 'commands.log.databases').write_text(''.join(f'{name}\n' for name in names))
+
+    def test_start_and_restart_refuse_a_missing_database_before_odoo_starts(self):
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text(f'http_port = {lifecycle.free_port()}\n'))
+        cases = (('start', '-d', 'cc_dev_x'), ('start', '--database=cc_dev_x'), ('start', '-dcc_dev_x'),
+                 ('start', '--detach', '-d', 'cc_dev_x'),
+                 ('start', '--stop-after-init', '-d', 'cc_dev_x', '-i', 'base'),
+                 ('start', '--stop-after-init', *self.PORTS, '-d', 'cc_dev_x', '-i', 'base'),
+                 ('restart', '-d', 'cc_dev_x'), ('restart', '--database', 'cc_dev_x', '--dev', 'all'))
+        for args in cases:
+            with self.subTest(args=args):
+                result = self.invoke(*args) if args[0] == 'start' else self.oasis(*args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', self.missing('cc_dev_x')))
+                self.assertIn("datname = 'cc_dev_x'", self.log())
+                self.assertEqual(self.odoo_lines(), [])
+                self.commands.unlink()
+
+    def test_each_database_of_odoo_conf_db_name_must_exist(self):
+        # A free http_port: start's port checks come before the database's.
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text(
+            f'http_port = {lifecycle.free_port()}\ndb_name = cc_dev_a, cc_dev_b\n'))
+        self.existing('cc_dev_a')
+        for args in (('start', '--stop-after-init', '-i', 'base'), ('start', '--detach'), ('start',),
+                     ('restart',), ('restart', '--dev', 'all')):
+            with self.subTest(args=args):
+                result = self.invoke(*args) if args[0] == 'start' else self.oasis(*args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (2, '', self.missing('cc_dev_b')))
+                self.assertIn("datname = 'cc_dev_a'", self.log())
+                self.assertEqual(self.odoo_lines(), [])
+                self.commands.unlink()
+        # A database given with -d is the one Odoo opens: odoo.conf's db_name is not checked then.
+        self.existing('cc_dev_c')
+        result = self.invoke('start', '--stop-after-init', *self.PORTS, '-d', 'cc_dev_c', '-i', 'base')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(self.odoo_lines(), [self.odoo_line('--stop-after-init', *self.PORTS, '-d', 'cc_dev_c',
+                                                            '-i', 'base')])
+        self.assertNotIn("datname = 'cc_dev_b'", self.log())
+
+    def test_an_existing_database_runs_exactly_as_before(self):
+        self.env['FAKE_EXISTS'] = '1'
+        result = self.invoke('start', '--stop-after-init', *self.PORTS, '-d', 'cc_dev_x', '-i', 'base')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(self.odoo_lines(), [self.odoo_line('--stop-after-init', *self.PORTS, '-d', 'cc_dev_x',
+                                                            '-i', 'base')])
+        self.commands.unlink()
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text('db_name = cc_dev_a,cc_dev_b\n'))
+        result = self.invoke('start', '--stop-after-init', *self.PORTS, '-u', 'coffee')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+        self.assertEqual(self.odoo_lines(), [self.odoo_line('--stop-after-init', *self.PORTS, '-u', 'coffee')])
+        port = lifecycle.free_port()
+        (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text(f'http_port = {port}\ndb_name = cc_dev_a\n'))
+        for args, warning in ((('-d', 'cc_dev_x'), ''), ((), "WARNING: no database given (-d); Odoo will use "
+                                                             "odoo.conf's db_name (cc_dev_a).\n")):
+            with self.subTest(args=args):
+                self.commands.unlink()
+                result = self.invoke('start', *args)
+                self.assertEqual((result.returncode, result.stdout), (0, ''))
+                self.assertRegex(result.stderr, '^' + re.escape(warning)
+                                 + rf'oasis start: http://localhost:{port} \(pid \d+\)\n$')
+                self.assertEqual(self.odoo_lines(), [self.odoo_line(f'--http-port={port}', *args)])
+
+    def test_start_without_a_database_runs_as_before(self):
+        # Odoo's database selector: no database to check, so no query.
+        for conf in ('', 'db_name = False\n', 'db_name =\n'):
+            with self.subTest(conf=conf):
+                (self.root / 'dev/odoo.conf').write_text(lifecycle.conf_text(conf))
+                result = self.invoke('start', '--stop-after-init', *self.PORTS, '-u', 'coffee')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
+                self.assertEqual(self.odoo_lines(), [self.odoo_line('--stop-after-init', *self.PORTS, '-u', 'coffee')])
+                self.assertNotIn('pg_database', self.log())
+                self.commands.unlink()
+        # --print-command and Odoo's informational options never touch the service.
+        self.env.pop('FAKE_EXISTS', None)
+        result = self.invoke('start', '--print-command', '-d', 'cc_dev_x')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertNotIn('pg_database', self.log())
+        result = self.invoke('start', '-d', 'cc_dev_x', '--version')
+        self.assertEqual(result.returncode, 0)
+        self.assertNotIn('pg_database', self.log())
 
 
 if __name__ == '__main__':

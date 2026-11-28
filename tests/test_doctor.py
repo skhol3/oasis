@@ -142,8 +142,8 @@ class DoctorTests(unittest.TestCase):
         return '\n'.join(report) + f'\ndoctor_failures={failures}\n'
 
     def not_running(self):
-        """The connection WARN when nothing answers, and its fix: start-database (v0.16.0 S6), naming no env file."""
-        start = shlex.join(['oasis', '--project', str(self.root), 'start-database'])
+        """The connection WARN when nothing answers, and its fix: setup-postgres (v0.16.0 S6), naming no env file."""
+        start = shlex.join(['oasis', '--project', str(self.root), 'setup-postgres'])
         return f'WARN postgres_connection=not_running\n  fix: {start}'
 
     def assert_report(self, expected, docker_calls=1):
@@ -578,7 +578,7 @@ class DoctorTests(unittest.TestCase):
         # Refused: the volume was initialized with other credentials; the fix is the Tier B recreate.
         self.commands.unlink(missing_ok=True)
         self.env['FAKE_CONNECTION'] = 'authentication_failed'
-        recreate = shlex.join(['oasis', '--project', str(self.root), 'recreate-database-volume', '--confirm',
+        recreate = shlex.join(['oasis', '--project', str(self.root), 'recreate-postgres-volume', '--confirm',
                                'cc-shop'])
         env_file = self.root / 'dev/.env'
         self.assert_report(self.expected(

@@ -7,13 +7,14 @@
 # v0.20.0 S5): it creates it only with --confirm <database>, the database it names; without it, or with another
 # name, it refuses (exit 2) naming the exact command once the configuration is checked, and nothing changes.
 # --dry-run prints what it would create and changes nothing. --plan (tools/database_plan.py, v0.20.0 S6, S12) asks
-# the name, the kind, the module, the demo data, the language and the country first.
+# the name, the kind, the module, the demo data, the language and the country first. Named init-dev-database before
+# v0.20.0 (S12): that name is gone, with no alias.
 set -Eeuo pipefail
-usage_line='Usage: init-dev-database [--with-demo] [--lang <code>] [--country <code>] <module> <database>'
+usage_line='Usage: create-database [--with-demo] [--lang <code>] [--country <code>] <module> <database>'
 if [[ ${1:-} == --help && $# == 1 ]]; then
   printf '%s\n' "$usage_line" \
     '       ... <module> <database> --dry-run | --confirm <database>' \
-    '       init-dev-database --plan [--json] [--answer <id>=<value>]... [--answers <file.json>]' \
+    '       create-database --plan [--json] [--answer <id>=<value>]... [--answers <file.json>]' \
     'Create a NEW development or test database with explicit administrator and project role accounts:' \
     "the one oasis command that creates a database, through Odoo's database creation (its database manager form's)." \
     'Tier B (oasis policy --json): it creates the database only with --confirm <database>, the name it is given;' \
@@ -32,7 +33,7 @@ if [[ ${1:-} == --help && $# == 1 ]]; then
 fi
 source "$(dirname "$0")/common.sh"
 if [[ ${1:-} == --plan ]]; then
-  exec python3 -I -B "$(dirname "$0")/database_plan.py" init-dev-database "${@:2}"
+  exec python3 -I -B "$(dirname "$0")/database_plan.py" create-database "${@:2}"
 fi
 with_demo=false
 demo_option=()
@@ -76,7 +77,7 @@ for (( index = 1; index <= $#; index++ )); do
 done
 if "$usage_error" || (( ${#arguments[@]} != 2 )); then
   printf '%s\n' "$usage_line" >&2
-  printf '       ... <module> <database> --dry-run | --confirm <database>; or init-dev-database --plan [--json]\n' >&2
+  printf '       ... <module> <database> --dry-run | --confirm <database>; or create-database --plan [--json]\n' >&2
   exit 2
 fi
 module=${arguments[0]}
@@ -112,15 +113,17 @@ if "$dry_run"; then
   exit 0
 fi
 if [[ "$confirm" != "$database" ]]; then
-  command=$(confirm_command init-dev-database "${options[@]}" "$module" "$database" --confirm "$database")
+  command=$(confirm_command create-database "${options[@]}" "$module" "$database" --confirm "$database")
   if "$confirmed"; then
     printf 'ERROR: --confirm %s does not name the database %s; nothing changed. Run: %s\n' \
       "$confirm" "$database" "$command" >&2
   else
-    printf 'ERROR: init-dev-database creates the %s database %s with its accounts and installs %s, demo data: %s (Tier B: it needs explicit confirmation); nothing changed. Run: %s\n' \
+    printf 'ERROR: create-database creates the %s database %s with its accounts and installs %s, demo data: %s (Tier B: it needs explicit confirmation); nothing changed. Run: %s\n' \
       "$kind_name" "$database" "$module" "$demo" "$command" >&2
   fi
   exit 2
 fi
 require_runtime
-exec python3 -B "$helper" "$PROJECT_ROOT" "$module" "$database" "$with_demo" "${language:-en_US}" "$country"
+# The confirmation this command checked goes with it: dev_users.py creates nothing without it, and runs the same
+# name guards itself, so a direct call (python3 <install>/tools/dev_users.py) cannot skip them (v0.20.0 L19).
+exec python3 -B "$helper" --confirm "$database" "$PROJECT_ROOT" "$module" "$database" "$with_demo" "${language:-en_US}" "$country"

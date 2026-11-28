@@ -98,9 +98,9 @@ class StatusJsonTests(unittest.TestCase):
                          {'ready': False, 'detail': 'unknown while the database service is stopped'})
         self.assertEqual(status['checks']['server'], {'ready': False, 'detail': 'stopped'})
         # list-databases would start the service, which the policy's "reads and reports" does not say: the command
-        # that starts it is named instead, start-database, which names no env file (an agent harness may refuse a
+        # that starts it is named instead, setup-postgres, which names no env file (an agent harness may refuse a
         # command that does).
-        self.assertEqual(status['next'], f'{program} start-database')
+        self.assertEqual(status['next'], f'{program} setup-postgres')
         self.assertNotIn('.env', json.dumps(status['next']))
         # Read only: compose ps and nothing else (no `up`).
         calls = self.docker_log.read_text().splitlines()
@@ -117,9 +117,9 @@ class StatusJsonTests(unittest.TestCase):
         status = self.status_json()
         self.assertEqual(status['checks']['database_service'], {'ready': True, 'detail': 'running'})
         self.assertEqual(status['checks']['databases'], {'ready': False, 'detail': []})
-        # setup wrote [development] (its recommended answer without a terminal): init-dev-database works; its plan
+        # setup wrote [development] (its recommended answer without a terminal): create-database works; its plan
         # asks the user the name, the module and the demo data (v0.20.0 S6: none is chosen here).
-        self.assertEqual(status['next'], f'{program} init-dev-database --plan --json')
+        self.assertEqual(status['next'], f'{program} create-database --plan --json')
         self.env['FAKE_DATABASES'] = 'other_dev_x\nshop_dev_manual\nshop_test_x\n'
         status = self.status_json()
         self.assertEqual(status['checks']['databases'], {'ready': True, 'detail': ['shop_dev_manual', 'shop_test_x']})
@@ -140,9 +140,9 @@ class StatusJsonTests(unittest.TestCase):
 
     def test_each_state_of_the_database_service_and_its_next_command(self):
         program = self.configured()
-        start = f'{program} start-database'
-        # setup wrote [development] (v0.16.0 S6): the next database command is init-dev-database.
-        init_dev = f'{program} init-dev-database --plan --json'
+        start = f'{program} setup-postgres'
+        # setup wrote [development] (v0.16.0 S6): the next database command is create-database.
+        init_dev = f'{program} create-database --plan --json'
         for ps, detail, ready, next_command in (
                 ('', 'stopped', False, start),
                 ('{"Service":"db","State":"exited","Health":""}\n', 'stopped', False, start),
@@ -184,15 +184,15 @@ class StatusJsonTests(unittest.TestCase):
         program = self.configured('--answer', 'development=none')
         self.env['FAKE_PS'] = RUNNING
         # v0.20.0 S5, S6, S12: creating a database is the user's decision, its name included: the next command is the
-        # plan of init-dev-database, the one command that creates a database, which asks it, with or without
+        # plan of create-database, the one command that creates a database, which asks it, with or without
         # [development] and modules (before: the plan of an empty PostgreSQL database without them; earlier
-        # install-module shop_sale, init-dev-database shop_sale shop_dev_manual or an empty shop_dev_manual).
-        self.assertEqual(self.status_json()['next'], f'{program} init-dev-database --plan --json')
+        # install-module shop_sale, create-database shop_sale shop_dev_manual or an empty shop_dev_manual).
+        self.assertEqual(self.status_json()['next'], f'{program} create-database --plan --json')
         workspace = self.checkout / 'oasis-workspace.toml'
         workspace.write_text(workspace.read_text() + "\n[development]\nadministrator_login = 'admin'\n")
-        self.assertEqual(self.status_json()['next'], f'{program} init-dev-database --plan --json')
+        self.assertEqual(self.status_json()['next'], f'{program} create-database --plan --json')
         (self.checkout / 'shop_sale/__manifest__.py').unlink()
-        self.assertEqual(self.status_json()['next'], f'{program} init-dev-database --plan --json')
+        self.assertEqual(self.status_json()['next'], f'{program} create-database --plan --json')
 
     def test_a_running_server_leaves_nothing_next(self):
         self.configured()

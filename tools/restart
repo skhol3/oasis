@@ -5,8 +5,8 @@ set -Eeuo pipefail
 # Without an explicit -p/--http-port the new server keeps the port of the stopped one, and without
 # -d/--database (or an abbreviation) the database its record names, if any; a checkout without a
 # running server gets start's port and no database. What start would refuse (a database guard, an
-# invalid or busy explicit port, --stop-after-init) is refused before the server is stopped, and so
-# are --detach (implied) and informational options. When stop fails, nothing starts and restart
+# invalid or busy explicit port, --stop-after-init, a database that does not exist) is refused before
+# the server is stopped, and so are --detach (implied) and informational options. When stop fails, nothing starts and restart
 # exits with stop's status after stop's own message: a server that did not stop in time is left
 # running (`Nothing was restarted: Odoo is still running for this checkout.`, exit 1); any other
 # failure (an unreadable state, exit 2) says only `Nothing was restarted.`.
@@ -94,6 +94,12 @@ if [[ -z "$explicit_port" && -n "$old_port" ]]; then
 fi
 if [[ -n "$old_database" ]]; then
   kept+=(-d "$old_database")
+fi
+if ! "$print_command"; then
+  # start refuses a missing database (Odoo would create it): refused here before the server is stopped. Without -d,
+  # the database the stopped server had, else odoo.conf's db_name.
+  if [[ -z "$explicit_database" && -n "$old_database" ]]; then explicit_database=$old_database; fi
+  require_existing_server_databases
 fi
 if "$print_command"; then
   # What start --detach "${kept[@]}" "$@" would exec once the server is stopped: its port rules

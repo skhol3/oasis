@@ -116,7 +116,7 @@ class BootstrapExitTests(unittest.TestCase):
             f'  next: fix what they report (their fix: lines), then run '
             f'{self.command("doctor", "--environment", "--full")}\n',
             'FAIL postgres_service=not_running\n'
-            f'  fix: {self.command("start-database")}\n'))
+            f'  fix: {self.command("setup-postgres")}\n'))
         self.assertIn(f'uv pip sync --python {self.python}', self.commands.read_text())
         self.assertTrue((self.root / 'logs/main/bootstrap-before.txt').is_file())
 
@@ -137,7 +137,7 @@ class BootstrapExitTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr), (
             1, self.drifted_output(2).replace('PASS postgres_service=running\nPASS postgres_connection=ready\n', ''),
             'FAIL locked_environment=drifted\nFAIL postgres_service=not_running\n'
-            f'  fix: {self.command("start-database")}\n'))
+            f'  fix: {self.command("setup-postgres")}\n'))
 
     def test_a_passing_trailing_doctor_keeps_the_output_and_exit_0(self):
         self.prepare()

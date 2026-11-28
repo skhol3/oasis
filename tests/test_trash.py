@@ -382,7 +382,7 @@ class DropToTrashTests(TrashFixture):
                 ('odoo-shell', (trash,), trash),
                 ('start', ('-d', trash), trash),
                 ('start', (f'--database={trash}',), trash),
-                ('init-dev-database', ('coffee', trash), trash),
+                ('create-database', ('coffee', trash), trash),
                 ('module-status', ('coffee', trash), trash),
                 ('drop-database', (trash,), trash),
                 ('test-module', ('coffee', test_trash), test_trash),

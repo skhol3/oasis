@@ -55,7 +55,7 @@ v0.16.0 S3 (docs/setup.md#questions-and-answers): --plan --json prints the plan 
 a new runtime.in gets the questions of the problems tools/known_problems.py anticipates (anticipated):
 python-ldap against OpenLDAP 2.6 and the modules' external_dependencies. v0.16.0 S6: a new workspace file asks
 the question development (development_choice) and gets [development] with administrator_login = 'admin' unless
-the answer is none; the next steps name start-database, never the docker compose command with the env file.
+the answer is none; the next steps name setup-postgres, never the docker compose command with the env file.
 """
 import configparser
 import copy
@@ -114,11 +114,11 @@ QUESTION_ID = re.compile(r'series|community|enterprise|environment|python|worksp
                          r'|development|requirement:[a-z0-9][a-z0-9-]*')
 QUESTION_IDS = ('series, community, enterprise, environment, python, workspace, series_exceptions, python_ldap, '
                 'development and requirement:<name>')
-# The [development] table of a new workspace (v0.16.0 S6, the question development): init-dev-database needs its
+# The [development] table of a new workspace (v0.16.0 S6, the question development): create-database needs its
 # administrator_login; the administrator keeps Odoo's default password, or ODOO_ADMIN_PASSWORD of the env file
 # (tools/dev_users.py, v0.20.0 S7). An existing workspace without one gets a next step that names these lines.
 DEVELOPMENT = {'administrator_login': 'admin'}
-DEVELOPMENT_COMMENT = ("# The administrator of the databases init-dev-database creates; its password is Odoo's default, "
+DEVELOPMENT_COMMENT = ("# The administrator of the databases create-database creates; its password is Odoo's default, "
                        'or ODOO_ADMIN_PASSWORD of the env file (docs/dev-database.md).\n')
 # A clone in <project>/code/<repo> or <project>/codigo/<repo> gets <project> as its recommended workspace (v0.16.0
 # S4.11), unless <project> holds one of these: then it is not a project folder of its own.
@@ -210,7 +210,7 @@ can never apply. With --apply it creates only what is missing and keeps everythi
     files are kept;
   - the locks (uv pip compile, as bootstrap --apply) and the Python environment (uv venv, uv pip sync).
 The series comes from the module manifests (<series>.x.y.z), else from the machine file's single series,
-else --series. It ends with the next steps; the database service step is start-database, which names
+else --series. It ends with the next steps; the database service step is setup-postgres, which names
 no env file (an agent harness may refuse a command that names one).
 
 In a checkout of a series the existing workspace file has no section for (its oasis-checkout.toml
@@ -260,7 +260,7 @@ development (add or none) and requirement:<name>. Without a terminal and without
 whose answer setup cannot go without (series, community, enterprise), the environment and its Python, or
 one of an anticipated problem is an open question: the plan lists it with its flag and --apply refuses,
 changing nothing; development and workspace take their recommended answers.
-A new workspace file gets the [development] table init-dev-database needs (the question development:
+A new workspace file gets the [development] table create-database needs (the question development:
 add, recommended, writes administrator_login = 'admin', whose password is Odoo's default or the env file's
 ODOO_ADMIN_PASSWORD; none leaves it out); a workspace file without one gets a next step that names its exact lines.
 --plan --json prints the plan as one JSON object (inferred values and their origin, changes, questions; never a password).
@@ -655,15 +655,15 @@ def environment_choice(options: dict, questions: Questions, series: str, environ
 
 
 def development_choice(questions: Questions, workspace: Path) -> bool:
-    """Whether a new workspace file gets the [development] table init-dev-database needs (v0.16.0 S6): the question
+    """Whether a new workspace file gets the [development] table create-database needs (v0.16.0 S6): the question
     development, add (recommended; applied without a terminal and without an answer) or none."""
     login = migrate.toml_string(DEVELOPMENT['administrator_login'])
     question = {'id': 'development',
-                'text': f'init-dev-database needs a [development] table in {workspace}: add one with '
+                'text': f'create-database needs a [development] table in {workspace}: add one with '
                         f"administrator_login = {login} (its password: Odoo's default, or ODOO_ADMIN_PASSWORD of the "
                         'env file)?',
                 'options': [{'value': 'add', 'label': f'add [development] with administrator_login = {login}'},
-                            {'value': 'none', 'label': 'none: no [development] table (init-dev-database then needs '
+                            {'value': 'none', 'label': 'none: no [development] table (create-database then needs '
                                                        'one added by hand)'}],
                 'recommended': 'add', 'flag': '--answer development=<add|none>'}
     if question['id'] in questions.answers:
@@ -2254,9 +2254,9 @@ def apply_plan(plan: dict) -> int:
                      'packages installed there)')
     elif any(step[0] == 'compile' for step in plan['after']) and not any(step[0] == 'environment' for step in plan['after']):
         steps.append(f'{program} --project {root} bootstrap --apply')
-    # start-database names no env file: an agent harness may refuse a command that does (v0.16.0 S6).
-    steps += [f'{program} --project {root} start-database', f'{program} --project {root} doctor']
-    # init-dev-database needs the role accounts of [development] (tools/dev_users.py). A workspace
+    # setup-postgres names no env file: an agent harness may refuse a command that does (v0.16.0 S6).
+    steps += [f'{program} --project {root} setup-postgres', f'{program} --project {root} doctor']
+    # create-database needs the role accounts of [development] (tools/dev_users.py). A workspace
     # file that cannot be read now gets no edit advice: doctor reports the configuration.
     workspace_file = Path(values['WORKSPACE_ROOT']) / config.WORKSPACE_NAME
     try:
@@ -2268,7 +2268,7 @@ def apply_plan(plan: dict) -> int:
         steps.append(f'add these lines to {workspace_file} (docs/dev-database.md):'
                      + ''.join(f'\n       {line}' for line in lines))
     # A database is the user's decision (v0.20.0 S6): the step names the plan that asks its name, module and demo.
-    steps.append(f'{program} --project {root} init-dev-database --plan')
+    steps.append(f'{program} --project {root} create-database --plan')
     print('next steps:')
     for number, step in enumerate(steps, 1):
         print(f'  {number}. {step}')

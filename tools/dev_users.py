@@ -10,13 +10,19 @@ printed (v0.20.0 S8): the output says what each account's password is ("Odoo's d
 ODOO_ADMIN_PASSWORD", typed, or generated and not stored), never a value. A <database>.logins file an earlier
 version wrote next to the env file is left as it is, with one WARN line.
 
-The language and the country of the new database (v0.20.0 S12: init-dev-database's --lang and --country, what
+The language and the country of the new database (v0.20.0 S12: create-database's --lang and --country, what
 Odoo's database manager form asks) are checked against the lists the form shows, read from the Odoo source, before
 anything runs; the runner passes them to exp_create_database, which takes them the same way in every supported
 series.
 
-Usage (through init-dev-database): dev_users.py [--validate] <root> <module> <database> <true|false> <language>
-<country, empty for none>
+A direct call is guarded like create-database (v0.20.0 L19): the database's name passes the name guards of
+tools/common.sh (database_refusal) and, to create it, the first two arguments are `--confirm <database>`, the
+confirmation create-database checked (Tier B); without it, or with another name, it refuses (exit 2) naming the
+exact create-database command, and nothing changes. dev_users_runtime.py gets that confirmation in its stdin
+payload and refuses to run without it.
+
+Usage (through create-database): dev_users.py --validate | --confirm <database>  <root> <module> <database>
+<true|false> <language> <country, empty for none>
 """
 import csv
 import getpass
@@ -47,6 +53,8 @@ GENERATED = 'generated, not stored or shown ({administrator} can set one in Odoo
 LANGUAGES = 'odoo/addons/base/data/res.lang.csv'
 COUNTRIES = 'odoo/addons/base/data/res_country_data.xml'
 DEFAULT_LANGUAGE = 'en_US'
+# create-database's oasis option for demo data (tools/create-database), which its refusal repeats.
+DEMO_OPTION = '--with-demo'
 
 
 def legacy_logins(values, database) -> Path:
@@ -110,7 +118,7 @@ def check_language_and_country(values, language, country):
     source, series = values['ODOO_SOURCE'], values['ODOO_VERSION']
     if language not in [code for code, _name in languages(source)]:
         return (f'ERROR: Unknown language {language}: Odoo {series} lists its languages in {Path(source) / LANGUAGES}; '
-                'init-dev-database --plan --json shows them. No database was created.')
+                'create-database --plan --json shows them. No database was created.')
     if country:
         try:
             codes = [code for code, _name in countries(source)]
@@ -118,9 +126,51 @@ def check_language_and_country(values, language, country):
             return f'ERROR: Cannot read the countries of Odoo {series}: {error}. No database was created.'
         if country not in codes:
             return (f'ERROR: Unknown country {country}: Odoo {series} lists its countries in '
-                    f'{Path(source) / COUNTRIES}; init-dev-database --plan --json shows them. No database was '
+                    f'{Path(source) / COUNTRIES}; create-database --plan --json shows them. No database was '
                     'created.')
     return None
+
+
+# The name guards of tools/common.sh that create-database applies (its own prefix check, then
+# require_working_database_name and, for a test database, require_update_sibling_room), with the same lines.
+NAME = re.compile(r'[A-Za-z0-9_]+')
+TRASH_NAME = re.compile(r'.*_trash_[0-9]{8}_[0-9]{6}')
+RUN_NAME = re.compile(r'.*_r[0-9a-f]{6}(_update)?')
+
+
+def database_refusal(values, database):
+    """The refusal of a name create-database does not create (tools/common.sh's guards), or None: letters, digits
+    and underscores after [tooling].dev_prefix or test_prefix (more than the prefix), the checkout's namespace (its
+    slug after the prefix), at most 63 bytes, no trash name, no disposable run name (_r<6 hex>: a direct call is never
+    one of a run's phases) and, for a test database, at most 56 bytes (room for verify-module's _update sibling)."""
+    dev, test, slug = values['DEV_PREFIX'], values['TEST_PREFIX'], values.get('CHECKOUT_SLUG') or ''
+    if (not NAME.fullmatch(database) or not (database.startswith(dev) or database.startswith(test))
+            or database in (dev, test)):
+        return 'ERROR: Initialization requires a named development or test database.'
+    if slug:
+        dev_namespace, test_namespace = f'{dev}{slug}_', f'{test}{slug}_'
+        if (not (database.startswith(dev_namespace) or database.startswith(test_namespace))
+                or database in (dev_namespace, test_namespace)):
+            return (f'Databases of checkout {slug} must use {dev_namespace}<name> or {test_namespace}<name>: '
+                    f'{database}')
+    size = len(database.encode('utf-8'))
+    if size > 63:
+        return f'Database names must be at most 63 bytes: {database}'
+    if TRASH_NAME.fullmatch(database):
+        return f'Database names ending in _trash_<YYYYMMDD>_<HHMMSS> are reserved for the trash: {database}'
+    if RUN_NAME.fullmatch(database):
+        return f'Database names ending in _r<6 hex> are reserved for disposable runs: {database}'
+    if database.startswith(test) and size > 56:
+        return f'Test databases with an _update sibling must be at most 56 bytes: {database}'
+    return None
+
+
+def create_command(root, module, database, with_demo, language, country) -> str:
+    """The create-database command that confirms this database, with the options given (en_US is the default)."""
+    options = [*([DEMO_OPTION] if with_demo else []), *(['--lang', language] if language != DEFAULT_LANGUAGE else []),
+               *(['--country', country] if country else [])]
+    return shlex.join([program_name(), '--project', str(root), 'create-database', *options, module, database,
+                       '--confirm', database])
 
 
 def account_line(login, source, administrator=False) -> str:
@@ -184,8 +234,15 @@ def declaration(root):
 
 def main():
     validate_only = len(sys.argv) > 1 and sys.argv[1] == '--validate'
-    args = sys.argv[2:] if validate_only else sys.argv[1:]
-    if len(args) != 6 or args[3] not in ('true', 'false'):
+    confirmed = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == '--confirm' else None
+    if validate_only:
+        args = sys.argv[2:]
+    elif confirmed is not None:
+        args = sys.argv[3:]
+    else:
+        # Without --validate or --confirm <database>: the old shape, refused below once the name is checked.
+        args = sys.argv[1:]
+    if len(args) != 6 or args[3] not in ('true', 'false') or any(arg.startswith('--') for arg in args):
         print(INVALID, file=sys.stderr)
         return 2
     root, module, database, language, country = Path(args[0]), args[1], args[2], args[4], args[5]
@@ -194,6 +251,16 @@ def main():
         section, logins = declaration(root)
     except (OSError, ValueError, TypeError, InvalidConfig):
         print(INVALID, file=sys.stderr)
+        return 2
+    refusal = database_refusal(values, database)
+    if refusal:
+        print(refusal, file=sys.stderr)
+        return 2
+    if not validate_only and confirmed != database:
+        # Tier B (v0.20.0 S5): only the confirmation create-database asks for creates a database.
+        print(f'ERROR: dev_users.py creates the database {database} only with --confirm {database}, the confirmation '
+              'create-database asks (Tier B); nothing changed. Run: '
+              + create_command(root, module, database, args[3] == 'true', language, country), file=sys.stderr)
         return 2
     env_directory = Path(values['ENV_FILE']).parent
     if not env_directory.is_dir():
@@ -254,8 +321,9 @@ def main():
         print('ERROR: Local database service is unavailable; no initialization was attempted.',
               file=sys.stderr)
         return 1
+    # confirmed: the database the user confirmed, checked above; the runner refuses to run without it.
     payload = {'declaration': section, 'passwords': passwords, 'with_demo': with_demo, 'lang': language,
-               'country': country or None, 'runtime': runtime}
+               'country': country or None, 'runtime': runtime, 'confirmed': database}
     runner = Path(__file__).with_name('dev_users_runtime.py')
     # The passwords exist only in process memory and the anonymous stdin pipe: no file holds them.
     try:

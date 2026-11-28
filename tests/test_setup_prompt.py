@@ -50,7 +50,7 @@ def python_prompt(environment, pythons, default):
 
 def development_prompt(workspace):
     """The question development of a new workspace on a terminal (v0.16.0 S6); Enter adds the table."""
-    return (f"init-dev-database needs a [development] table in {workspace}: add one with administrator_login = "
+    return (f"create-database needs a [development] table in {workspace}: add one with administrator_login = "
             "'admin' (its password: Odoo's default, or ODOO_ADMIN_PASSWORD of the env file)? (add/none) "
             "[Enter: add]: ")
 

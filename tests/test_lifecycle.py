@@ -797,6 +797,7 @@ class Odoo15CommandLineTests(unittest.TestCase):
                 else:
                     self.assertRegex(' '.join(added), r'^--http-port=\d+$')
                 self.unchanged()
+        self.env['FAKE_EXISTS'] = '1'  # v0.20.0 L19: start opens an existing database only
         # The batch run execs that kind of line.
         result = self.invoke('start', '--stop-after-init', '-u', 'coffee', '-d', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
@@ -825,6 +826,7 @@ class Odoo15CommandLineTests(unittest.TestCase):
     def test_start_dev_passes_the_15_dev_features(self):
         # v0.20.0 S11: the main checkout's server on its odoo.conf port with 15.0's own dev features
         # (pdb, werkzeug: 19.0 has neither) and `all`, as given; no second port on the main checkout.
+        self.env['FAKE_EXISTS'] = '1'  # v0.20.0 L19: start opens an existing database only
         port = free_port()
         (self.root / 'dev/odoo.conf').write_text(conf_text(f'http_port = {port}\n'))
         for dev in ('pdb,werkzeug,xml', 'all'):
@@ -844,7 +846,7 @@ class Odoo15CommandLineTests(unittest.TestCase):
         (self.source / 'odoo-bin').write_text(menu.SERVING)
         port = quiet_ports(2)
         (self.root / 'dev/odoo.conf').write_text(conf_text(f'http_port = {port}\n'))
-        self.env.update(FAKE_SERVE='1', OASIS_DETACH_WAIT='5')
+        self.env.update(FAKE_SERVE='1', OASIS_DETACH_WAIT='5', FAKE_EXISTS='1')
 
         def kill_recorded():
             recorded = re.match(r'pid=(\d+) ', menu.DetachTests.record(self))

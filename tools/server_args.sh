@@ -230,3 +230,33 @@ warn_without_database() {
     printf "WARNING: no database given (-d); Odoo will use odoo.conf's db_name (%s).\n" "$named" >&2
   fi
 }
+
+# server_databases: the databases odoo-bin would open, one per line: the one given with -d (or a form of it), else
+# odoo.conf's db_name, a comma-separated list (Odoo splits it at the commas); none without either (Odoo's database
+# selector).
+server_databases() {
+  local named name names=()
+  if [[ -n "$explicit_database" ]]; then
+    printf '%s\n' "$explicit_database"
+    return
+  fi
+  named=$(conf_database)
+  IFS=',' read -ra names <<< "$named"
+  for name in "${names[@]}"; do
+    name=${name#"${name%%[![:space:]]*}"}
+    name=${name%"${name##*[![:space:]]}"}
+    if [[ -n "$name" ]]; then printf '%s\n' "$name"; fi
+  done
+}
+
+# require_existing_server_databases: odoo-bin creates every database it is given that does not exist (odoo/cli/server.py
+# of every supported series), so each one server_databases names must exist (common.sh require_existing_database:
+# exit 2 naming create-database --plan, the one command that creates a database, v0.20.0 S12). Called right before
+# Odoo would start, never for --print-command or Odoo's informational options; without a database nothing is checked.
+require_existing_server_databases() {
+  local database databases=()
+  mapfile -t databases < <(server_databases)
+  for database in "${databases[@]}"; do
+    require_existing_database "$database" </dev/null
+  done
+}
