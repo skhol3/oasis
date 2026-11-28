@@ -3,9 +3,7 @@
 #
 # Copies the files of HEAD (never uncommitted edits) into the target, removes
 # repository-only files, records the installed commit and keeps the previous
-# install as a backup outside any skill discovery directory. Installing into the
-# default target also moves a pre-0.17.0 install out of $HOME/.agents/skills/odoo19
-# (only when it holds .oasis-install.json; anything else there is left untouched).
+# install as a backup outside any skill discovery directory.
 set -euo pipefail
 
 usage() {
@@ -20,11 +18,10 @@ die() {
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 default_target="$HOME/.agents/skills/oasis"
-# The install directory before 0.17.0, replaced by the default target.
-previous_target="$HOME/.agents/skills/odoo19"
 target=$default_target
 state=${OASIS_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/oasis}
-repo_only=(AGENTS.md .gitignore install.sh)
+# The plans (odd/) and the test suites stay in the repository: nothing installed reads them.
+repo_only=(AGENTS.md .gitignore install.sh odd tests pi/tests)
 
 while (($#)); do
   case $1 in
@@ -50,12 +47,6 @@ parent=$(dirname "$target")
 [[ -d $parent ]] || die "target parent does not exist: $parent"
 parent=$(cd "$parent" && pwd -P)
 target="$parent/$(basename "$target")"
-default_parent=$(dirname "$default_target")
-if [[ -d $default_parent ]] && [[ $target == "$(cd "$default_parent" && pwd -P)/$(basename "$default_target")" ]]; then
-  into_default=1
-else
-  into_default=
-fi
 case "$target/" in
   "$repo"/*) die "target overlaps the repository: $target" ;;
 esac
@@ -76,7 +67,7 @@ trap 'rm -rf "$staging"' EXIT
 
 git -C "$repo" archive --format=tar "$commit" | tar -xf - -C "$staging"
 for name in "${repo_only[@]}"; do
-  rm -f "$staging/$name"
+  rm -rf "${staging:?}/$name"
 done
 # The installed version is the committed package.json version (SemVer).
 version=$(python3 -I -B - "$staging/package.json" <<'PY'
@@ -111,15 +102,3 @@ trap - EXIT
 
 echo "oasis $version (${commit:0:12}) installed in $target"
 [[ -z $backup ]] || echo "previous install kept in $backup"
-
-# The pre-0.17.0 install directory: moved to the backups only when it is an oasis install
-# (a real directory holding .oasis-install.json); a symlink, a file or another directory stays.
-if [[ -n $into_default ]] && [[ -e $previous_target || -L $previous_target ]]; then
-  if [[ -d $previous_target && ! -L $previous_target && -f $previous_target/.oasis-install.json ]]; then
-    previous_backup="$state/backups/$(basename "$previous_target")-$stamp"
-    mv "$previous_target" "$previous_backup"
-    echo "previous odoo19 install removed from $previous_target; kept in $previous_backup"
-  else
-    echo "install.sh: warning: $previous_target is not an oasis install (no .oasis-install.json); not removed" >&2
-  fi
-fi

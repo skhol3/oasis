@@ -29,7 +29,7 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
 - [Another Odoo series](#another-odoo-series): a checkout of a series the workspace file has no section for.
 - [The database account](#the-database-account): the generated account, one file, read by the service and Odoo.
 - [Next steps](#next-steps): what is left for you.
-- [setup, bootstrap or migrate](#setup-bootstrap-or-migrate): which one to run when.
+- [setup or bootstrap](#setup-or-bootstrap): which one to run when.
 - [oasis setup and /oasis setup](#oasis-setup-and-oasis-setup): two different commands.
 
 ## Plan and apply
@@ -285,7 +285,7 @@ set, pin a version of that package that has a wheel in `overrides.txt`.
   environment goes to `<environments>/<name>` instead when the machine file's entry sets
   `environments`.
 - A clone at `<project>/code/<repo>` or `<project>/codigo/<repo>`, whose `<project>` holds none of
-  `.git`, `oasis-checkout.toml`, a [legacy profile](migrating.md), `__manifest__.py` or `odoo-bin` (and is yours), is
+  `.git`, `oasis-checkout.toml`, `__manifest__.py` or `odoo-bin` (and is yours), is
   different: the question `workspace` recommends `<project>` and offers the clone. Without a terminal the
   recommended answer applies (as for the environment), so the workspace file and `config/`, `data/`,
   `logs/` and `venv/` go to `<project>`, and nothing is excluded in the clone; the plan says so
@@ -312,8 +312,7 @@ set, pin a version of that package that has a wheel in `overrides.txt`.
   answer a new configuration (`--series`, `--name`, `--workspace` but for the move above, and the
   source options when the configuration already has a source) are then refused (`<option>: <checkout> is already configured
   by <file>; setup only fills what is missing.`). A workspace file without a source gets the machine
-  file entry. A checkout that still has the legacy profile is refused before setup runs: run
-  [migrate](migrating.md) first. A checkout of another series than the file configures gets a
+  file entry. A checkout of another series than the file configures gets a
   section instead ([Another Odoo series](#another-odoo-series)). `--exception` and `--config-dir` apply
   only then; without a workspace file they are refused (`<option>: <checkout> has no workspace file; it
   only applies when setup adds a [series."<x.y>"] section to one.`).
@@ -790,10 +789,9 @@ logs, errors).
   since a `COMPOSE_PROJECT_NAME` that selects another one was refused first, and names no environment file).
 - Names (v0.20.0): `setup-postgres` was `start-database` and `recreate-postgres-volume` was
   `recreate-database-volume`, since "database" names an Odoo database (`create-database`, `drop-database`,
-  `list-databases`). The old names are deprecated aliases: they run the new command with the same arguments,
-  output, exit codes and tier (`recreate-database-volume` takes the same `--confirm <compose project>`), after one
-  line on stderr, `WARNING: <old> is a deprecated alias of <new>: run <new> instead.`; what oasis prints
-  (next steps, fixes, the menu, `status --json`) names the new names.
+  `list-databases`). The old names were deprecated aliases until v0.21.0, which removed them: each exits 2 with
+  `ERROR: Unsupported oasis command: <old>`, like any unknown command. Run the new names (`recreate-postgres-volume`
+  takes the same `--confirm <compose project>`).
 
 ## Next steps
 
@@ -826,20 +824,19 @@ runtime.in and dev.in (or runtime.in, dev.in and overrides.txt): oasis --project
 syncs the adopted environment <dir> to them (it changes the packages installed there)`. Then follow
 [Development database](dev-database.md) and [Tests and test databases](testing.md).
 
-## setup, bootstrap or migrate
+## setup or bootstrap
 
-Three commands touch a checkout's configuration or environment. They share code (the locks are compiled by
-`tools/locks.py` for both setup and bootstrap), but none does what another does, so none is an alias of
-another (v0.16.0 S5); each keeps its name:
+Two commands touch a checkout's configuration or environment. They share code (the locks are compiled by
+`tools/locks.py` for both), but neither does what the other does, so neither is an alias of the other
+(v0.16.0 S5); each keeps its name:
 
 | Situation | Run | What it changes |
 | --- | --- | --- |
 | A clone without `oasis-workspace.toml` at or above it; a file of the configuration missing; a checkout of a series the workspace file has no section for; a workspace setup created in the clone, to move above it | `oasis setup`, then `oasis setup --apply` (Tier A) | Creates only what is missing (configuration, locks, environment) and never syncs an existing environment |
 | The configuration exists and the environment must match the locks: `runtime.in` or `dev.in` changed, the locks are stale, the environment drifted or was moved away, an [adopted environment](#an-existing-environment) | `oasis bootstrap` (`--preview`, the default), then `oasis bootstrap --apply` (Tier A) | Compiles missing or stale locks, creates a missing environment, syncs it to `dev.txt` every time (`uv pip sync`, saving `bootstrap-before.txt` first) and ends with `doctor --environment --full`; never writes the configuration, and needs a workspace file |
-| A checkout that still has the legacy per-checkout profile | `oasis migrate --plan`, then `oasis migrate --apply --confirm <workspace file>` (Tier B) | Converts every checkout's profile into one workspace file and rewrites `odoo.conf` and `lock.sha256` ([Migrating](migrating.md)); every other command, setup included, refuses such a checkout and names migrate |
 
-A new clone: `setup --apply`. After a pull that changed the requirements: `bootstrap --apply`. A checkout of a
-release before 0.12.0: `migrate`. `doctor` names the one that fixes each failure (its `fix:` lines).
+A new clone: `setup --apply`. After a pull that changed the requirements: `bootstrap --apply`. `doctor` names
+the one that fixes each failure (its `fix:` lines).
 
 ## oasis setup and /oasis setup
 

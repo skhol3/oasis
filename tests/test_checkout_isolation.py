@@ -1,4 +1,4 @@
-"""Per-checkout database names and guards, through the public project wrappers.
+"""Per-checkout database names and guards, through the oasis entry point.
 
 Every project is a synthetic fixture with the fake docker/python harness of test_lifecycle;
 a `[tooling].checkout_slug` stands in for a linked worktree's derived slug.

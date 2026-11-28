@@ -1,7 +1,7 @@
 # Checking the environment
 
-One command, `doctor`, for two questions (v0.16.0: `check-environment` became `doctor --environment`; see
-[check-environment, a deprecated alias](#check-environment-a-deprecated-alias)):
+One command, `doctor`, for two questions (v0.16.0: `check-environment` became `doctor --environment`; v0.21.0
+removed the old name, see [check-environment, removed](#check-environment-removed)):
 
 - `oasis --project /absolute/project doctor` asks *can oasis work here at all?* It checks the environment contract up front and is read-only: it never starts a service and never prints file contents; its one connection logs in to PostgreSQL with the account Odoo uses (`postgres_connection`, below). In Gentle Shell, `/oasis doctor` shows the same report.
 - `oasis --project /absolute/project doctor --environment [--quick|--full]` asks *does the project environment match its locks?* `--quick` (the default) checks the requirement files and their fingerprint, `lock.sha256`, the environment's Python, the virtualenv, uv, the Odoo version and `compose config`; it skips the installed packages, the dependency audit and PostgreSQL (`SKIP <check>=use_--full`). `--full` also checks the installed packages against the locks (`dev.txt`, [The installed packages](#the-installed-packages)) and their compatibility, audits dependencies and logs in to PostgreSQL with the account Odoo uses (`postgres_connection`: the environment's Python and psycopg2 connect to the `db_host` and `db_port` of `odoo.conf` with the `db_user` and `db_password` it sets, else those of the env file; see [The database account](setup.md#the-database-account)), so it needs the database service running. A stopped service is `FAIL postgres_service=not_running`, followed on stderr by `  fix: oasis --project <checkout> setup-postgres` (v0.16.0). It prints `PASS postgres_connection=ready` or `FAIL postgres_connection=<authentication_failed|not_running|no_driver|failed|unchecked>` (`unchecked`: the probe printed none of the other words, an error of the environment's Python), never a value or the server's message; `authentication_failed` is followed on stderr by the same `  fix:` line as doctor's. It ends with `environment_mode=<quick|full>` and `environment_failures=<n>` (exit 1 when `n > 0`). Both modes print `FAIL env_file=unsupported_value <names>` and doctor's `  fix:` line on stderr when the env file writes an account variable Odoo would get with compose interpolation or a double-quoted escape ([The database account](setup.md#the-database-account)); `--full` then does not try the connection. The dependency audit (`oasis audit-dependencies [module]`, also run by `bootstrap --apply`) runs with the environment's Python, 3.7 and later: it maps each imported top-level module to its distribution with `importlib.metadata.packages_distributions` from Python 3.10, and on older Pythons (Odoo 15) from the installed distributions' `top_level.txt`, else their file lists, with the same output.
@@ -24,7 +24,7 @@ Move /home/you/odoo/19.0/environments/acme-next away and run oasis bootstrap --a
 - A failure of its own work: a refusal (exit 2), a failed compile of the locks (exit 2), `uv venv` or `uv pip sync` failing (their exit code). It stops there and runs no doctor.
 - The trailing doctor's `FAIL locked_environment=drifted` (stderr) for the environment it just synced: the sync did not produce the locked environment ([The installed packages](#the-installed-packages): an environment oasis created that still drifts, a lock that cannot be read, a comparison that crashed). It exits with the doctor's code (1) and prints nothing after the doctor's lines, also when other checks failed too.
 
-- A trailing doctor that did not complete: it did not run (exit 126 or 127, a missing or not executable `check-environment`) or died (a Python traceback, a signal, exit 128+n), so it printed no `environment_failures=<n>` summary line, or it exited with a code other than 0 or 1. Its lines are printed line by line, its exit code is bootstrap's, and one line on stderr says so:
+- A trailing doctor that did not complete: it did not run (exit 126 or 127, a missing or not executable `tools/doctor`) or died (a Python traceback, a signal, exit 128+n), so it printed no `environment_failures=<n>` summary line, or it exited with a code other than 0 or 1. Its lines are printed line by line, its exit code is bootstrap's, and one line on stderr says so:
 
   ```text
   doctor=incomplete exit=127: the trailing doctor --environment --full did not complete (no environment_failures= summary line); the sync succeeded; run oasis --project /home/you/odoo/19.0/projects/acme doctor --environment --full
@@ -47,7 +47,7 @@ When it passes, the output ends with its `environment_failures=0`, as before; a 
 
 ## Dependency locks
 
-`lock.sha256` lists the dependency inputs and locks (`runtime.in`, `runtime.txt`, `dev.in`, `dev.txt`, and `overrides.txt` last when it [exists](#overridestxt)) with their SHA-256, in `sha256sum` format, relative to its own directory: regenerate it there with `sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256` (`... dev.txt overrides.txt > lock.sha256` with that file). `doctor --environment` (`dependency_locks`) and `bootstrap` run `sha256sum --check --strict lock.sha256` from that directory first and, for a legacy lock whose entries are relative to the project root (the checkout), from the project root next; either one passing is enough. `oasis migrate` rewrites a legacy lock relative to its directory with the same hashes.
+`lock.sha256` lists the dependency inputs and locks (`runtime.in`, `runtime.txt`, `dev.in`, `dev.txt`, and `overrides.txt` last when it [exists](#overridestxt)) with their SHA-256, in `sha256sum` format, relative to its own directory: regenerate it there with `sha256sum runtime.in runtime.txt dev.in dev.txt > lock.sha256` (`... dev.txt overrides.txt > lock.sha256` with that file). `doctor --environment` (`dependency_locks`) and `bootstrap` run `sha256sum --check --strict lock.sha256` from that directory. Since v0.21.0 a lock whose entries are relative to the project root (the format before v0.12.0) is stale: regenerate it in its directory as above.
 
 `bootstrap` compiles the locks itself when they need it, before it creates or syncs the environment:
 
@@ -86,7 +86,7 @@ Without it, the compile commands, `lock.sha256` and every message are exactly as
 
 ## The installed packages
 
-`doctor --environment --full` (and `check-environment --full`, and the end of `bootstrap --apply`) compares
+`doctor --environment --full` (and the end of `bootstrap --apply`) compares
 every pin of `dev.txt` with the distributions installed in the environment, with the environment's Python
 (3.8 and later). Names are normalized on both sides as [PEP 503](https://peps.python.org/pep-0503/) does
 (v0.17.0): lowercase, and runs of `-`, `_` and `.` become `-`, so `zope.event-5.0.dist-info`, as pip
@@ -95,9 +95,9 @@ reported it as `missing_package=zope-event==5.0`). It prints `locked_packages=<n
 `missing_package=<name>==<version>` or `version_mismatch=<name>: expected=<x> actual=<y>` per difference,
 then `missing_packages=<n>` and `version_mismatches=<n>`. A dist-info or egg-info without usable metadata (none, no
 name or version, or not readable as text) is left out, so the package it would be is reported missing instead of
-the comparison failing. The comparison (`tools/check_environment.py`, also the project wrapper
-`dev/scripts/check_environment.py <lockfile>`) exits 0 when the environment matches, 3 when it drifted (1 before
-0.17.0), 2 for a lock it cannot read, and 1 for a crash (a traceback), which is therefore never reported as a drift.
+the comparison failing. The comparison (`tools/check_environment.py <lockfile>`) exits 0 when the environment
+matches, 3 when it drifted (1 before 0.17.0), 2 for a lock it cannot read, and 1 for a crash (a traceback), which
+is therefore never reported as a drift.
 The result depends on who created the environment:
 
 | Environment | Matches the locks | Does not match them |
@@ -113,19 +113,17 @@ An environment oasis created before 0.17.0 has no mark and is reported as adopte
 again, create the mark yourself (`touch <environment>/.oasis-created`), or move the environment away and
 run `bootstrap --apply`, which creates and marks it.
 
-## check-environment, a deprecated alias
+## check-environment, removed
 
-`check-environment [--quick|--full]` is the name `doctor --environment` had before v0.16.0. It keeps
-working and stays deprecated: through either entry point, from a project wrapper
-(`dev/scripts/check-environment`) or as the tool script, it runs the same checks as
-`doctor --environment` with the same mode and prints the same lines, with the same exit codes, as
-before; only its usage line differs (`Usage: <program> [--quick|--full]`, as before, against
-`Usage: <program> doctor [--environment [--quick|--full]]`). Both are refused where the other is: in a
-checkout without a workspace file or with a legacy profile, where `doctor` alone still runs (one
-`FAIL configuration`). `bootstrap --apply` still ends with these checks in `--full` mode (since 0.20.0 only their
-`FAIL locked_environment=drifted` makes it exit 1: [The exit code of bootstrap](#the-exit-code-of-bootstrap)). Use
-`doctor --environment` in new scripts and instructions; the agent tool `oasis_check_environment`
-runs it. The policy table lists both, Tier A ([Agent contract](agent-contract.md)).
+`check-environment [--quick|--full]` is the name `doctor --environment` had before v0.16.0; it was a deprecated
+alias until v0.21.0, which removed it: `oasis check-environment` exits 2 with `ERROR: Unsupported oasis command:
+check-environment`, like any unknown command, and neither the tool script nor the project wrapper
+`dev/scripts/check-environment` ships any more. Run `oasis --project <checkout> doctor --environment
+[--quick|--full]`: the same checks, lines and exit codes. It is refused in a checkout without a workspace file,
+where `doctor` alone still runs (one `FAIL configuration`). `bootstrap --apply` ends with these checks in `--full`
+mode (since 0.20.0 only their `FAIL locked_environment=drifted` makes it exit 1: [The exit code of
+bootstrap](#the-exit-code-of-bootstrap)). The agent tool `oasis_check_environment` keeps its name and runs
+`doctor --environment` ([Agent contract](agent-contract.md): Tier A).
 
 ## The doctor report
 
@@ -140,7 +138,6 @@ FAIL python=missing
 
 | Failure | `fix:` |
 | --- | --- |
-| `configuration`: the legacy profile | `oasis migrate --plan, then oasis migrate --apply` |
 | `configuration`: no workspace file (`Missing tooling configuration: ...`), no section for the checkout's series (`... has no [series."<x.y>"] section: ...`), or no Odoo source (`No Odoo source for <x.y>: ...`); `odoo_conf=missing`, `compose=missing`, `env_file=missing` | `oasis setup --apply` |
 | `configuration`: any other error | `correct the setting the error names, then run oasis doctor again` |
 | `git` | `install git 2.31 or newer on PATH` |
@@ -159,13 +156,12 @@ FAIL python=missing
 | `postgres_connection=authentication_failed` | when `odoo.conf` sets `db_user` or `db_password` to other values than the env file: `<odoo.conf> sets <options> to other values than <env file>: remove <options> from <odoo.conf> so Odoo uses the account of <env file>, then run oasis doctor again`; when `odoo.conf` points at the compose service (`db_host` `127.0.0.1` or `localhost` and the port the compose file publishes to 5432): `the PostgreSQL that <odoo.conf> names refuses the account Odoo uses: its volume was initialized with other credentials than <env file>; oasis --project <checkout> recreate-postgres-volume --confirm <compose project> recreates it with them (Tier B: it deletes every database of the service)`; when oasis cannot read the port the compose file publishes to 5432 (`it cannot be read`, `several ports`, or `an entry other than - [<address>:]<port>:5432` under `ports:`): `the PostgreSQL that <odoo.conf> names (db_host <host>, db_port <port>) refuses the account Odoo uses, and oasis could not read the port <compose file> publishes to 5432 (<why>), so it cannot tell whether that server is the service of <compose file>: if it is, oasis --project <checkout> recreate-postgres-volume --confirm <compose project> recreates its volume with the account of <env file> (Tier B: it deletes every database of the service); if it is not, correct that account on that server; then run oasis doctor again`; otherwise `the PostgreSQL that <odoo.conf> names (db_host <host>, db_port <port>) refuses the account Odoo uses, and it is not the service of <compose file> (published on 127.0.0.1:<port>): correct that account on that server, or set db_host = 127.0.0.1 and the db_port <compose file> publishes in <odoo.conf>; then run oasis doctor again` |
 | `logs_dir=not_writable`, `data_dir=not_writable` | `make <path> a directory you can write`: the directory, or, when it does not exist yet, its nearest existing parent (also when that is a file) |
 | `http_port=invalid` | `set http_port in <odoo.conf> to a port number` |
-| `project_wrappers=old_install_dir`: a file of the checkout's `dev/scripts/` (the [project wrappers](project-setup.md)) still calls `~/.agents/skills/odoo19`, the install directory before 0.17.0; the last check, with no line when none does | `replace .agents/skills/odoo19/ with .agents/skills/oasis/ in <wrappers> (the oasis install directory since 0.17.0)`, where `<wrappers>` are their paths (`a`, `a and b`, `a, b and c`) ([From an earlier version](install.md#from-an-earlier-version)) |
 
 The commands the fix lines name start with `oasis`. `doctor` and `setup` are the commands the entry point runs in a checkout without a workspace file: doctor then reports `FAIL configuration=Missing tooling configuration: ...` with `fix: oasis setup --apply`.
 
 | Check | Passes when | Otherwise |
 | --- | --- | --- |
-| `configuration` | the workspace file loads; the value is `workspace` | `FAIL configuration=<error>` (a checkout that still has the file of earlier versions gives the refusal that names `oasis migrate`, see [Migrating](migrating.md)); the checks after `proc` are left out |
+| `configuration` | the workspace file loads; the value is `workspace` | `FAIL configuration=<error>`; the checks after `proc` are left out |
 | `odoo_version` | always, when the configuration loads (only supported series load): the checkout's series | |
 | `series`, `series_exceptions` | with `workspace_version = 2` only: `series=<x.y> from=<checkout\|manifests\|workspace>`, where the checkout's series came from (see [The checkout's series](workspace-file.md#the-checkouts-series)); `series_exceptions=<modules>` when its section lists any | a series without a section fails `configuration` |
 | `series_isolation` | with `workspace_version = 2` and several series: no two series resolve to the same database port (published by their compose files), compose project, `dev_prefix` or `test_prefix`, or env file; the value lists the series (`19.0,15.0`) | `FAIL series_isolation=<db_port\|compose_project\|prefixes\|env_file> series=<x.y>,<x.y>`, one per group of series sharing it (see [Isolation](workspace-file.md#isolation)) |

@@ -1,4 +1,4 @@
-// Which run logs oasis_test_summary may read (lib/tools.ts runLogLocations, isRunLog,
+// Which run logs oasis_test_summary may read (lib/tools.ts runLogLocations, runLogRealPath,
 // formatBackgroundRun): the shape of the named path, then its real path inside the checkout's
 // real log locations. The symlink tests use a private temporary directory, removed afterwards.
 import { test } from "node:test";
@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { formatBackgroundRun, isRunLog, runLogLocations } from "../lib/tools.ts";
+import { formatBackgroundRun, runLogLocations, runLogRealPath } from "../lib/tools.ts";
 
 // tools/config.py values of a main checkout and of a linked worktree. LOGS_DIR is [tooling].logs, else (v0.17.0)
 // the logs directory next to the workspace file: tools/config.py always sets it.
@@ -34,23 +34,23 @@ test("runLogLocations follows the compact log rules of tools/compact.sh", () => 
   assert.deepEqual(runLogLocations(WITHOUT_LOGS), {});
 });
 
-test("isRunLog accepts the run logs of each layout inside the project's log locations", () => {
+test("runLogRealPath accepts the run logs inside the project's log locations", () => {
   const withLogs = runLogLocations(WITH_LOGS);
   for (const path of [
     // <logs>/<main|slug>/run-<id>/ (0.8.0).
     "/p/logs/main/run-1/stdout.log",
     "/p/logs/shop_feature/run-x9/stderr.log",
-    // <logs>/odoo19/<main|slug>/run-<id>/ of runs before 0.8.0.
-    "/p/logs/odoo19/main/run-1/stdout.log",
-    "/p/logs/odoo19/shop_feature/run-x9/stderr.log",
-  ]) assert.equal(isRunLog(path, withLogs, SAME), true, path);
+  ]) assert.notEqual(runLogRealPath(path, withLogs, SAME), null, path);
 });
 
-test("isRunLog rejects paths outside the project's log locations, even with a run log's shape", () => {
+test("runLogRealPath rejects paths outside the project's log locations, even with a run log's shape", () => {
   const withLogs = runLogLocations(WITH_LOGS);
   for (const path of [
     "/tmp/x/main/run-1/stdout.log",
     "/tmp/odoo19/main/run-1/stdout.log",
+    // <logs>/odoo19/<main|slug>/run-<id>/ of runs before 0.8.0 is no run log since v0.21.0 (S6).
+    "/p/logs/odoo19/main/run-1/stdout.log",
+    "/p/logs/odoo19/shop_feature/run-x9/stderr.log",
     "/p/logs-other/main/run-1/stdout.log",
     "/p/logsmain/run-1/stdout.log",
     // dev/logs/odoo19 is not read.
@@ -64,7 +64,7 @@ test("isRunLog rejects paths outside the project's log locations, even with a ru
     "/p/logs/main/../main/run-1/stdout.log",
     "p/logs/main/run-1/stdout.log",
     "/etc/passwd",
-  ]) assert.equal(isRunLog(path, withLogs, SAME), false, path);
+  ]) assert.equal(runLogRealPath(path, withLogs, SAME), null, path);
   // The dev/logs/odoo19 of the checkout or of the main checkout (the default before 0.17.0) is no log location,
   // and without LOGS_DIR nothing is.
   for (const config of [LINKED, WITHOUT_LOGS]) {
@@ -72,22 +72,21 @@ test("isRunLog rejects paths outside the project's log locations, even with a ru
       "/p/shop-wt/dev/logs/odoo19/run-ab_1/stdout.log",
       "/p/shop/dev/logs/odoo19/run-ab_1/stderr.log",
       ...(config === WITHOUT_LOGS ? ["/p/logs/main/run-1/stdout.log"] : []),
-    ]) assert.equal(isRunLog(path, runLogLocations(config), SAME), false, path);
+    ]) assert.equal(runLogRealPath(path, runLogLocations(config), SAME), null, path);
   }
 });
 
-test("isRunLog refuses a path that cannot be resolved", () => {
+test("runLogRealPath refuses a path that cannot be resolved", () => {
   const missing = (path: string): string => {
     throw Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
   };
-  assert.equal(isRunLog("/p/logs/main/run-1/stdout.log", runLogLocations(WITH_LOGS), missing), false);
-  assert.equal(isRunLog("/p/logs/main/run-1/stdout.log", runLogLocations(WITH_LOGS), realpathSync), false);
+  assert.equal(runLogRealPath("/p/logs/main/run-1/stdout.log", runLogLocations(WITH_LOGS), missing), null);
+  assert.equal(runLogRealPath("/p/logs/main/run-1/stdout.log", runLogLocations(WITH_LOGS), realpathSync), null);
 });
 
-test("formatBackgroundRun summarizes a run of each layout", () => {
+test("formatBackgroundRun summarizes a run of the main checkout or a linked one", () => {
   for (const [config, stdoutLog, stderrLog] of [
     [WITH_LOGS, "/p/logs/shop_feature/run-1/stdout.log", "/p/logs/shop_feature/run-1/stderr.log"],
-    [WITH_LOGS, "/p/logs/odoo19/main/run-1/stdout.log", "/p/logs/odoo19/main/run-1/stderr.log"],
     [LINKED, "/p/logs/shop_wt/run-1/stdout.log", "/p/logs/shop_wt/run-1/stderr.log"],
   ] as const) {
     const logs: Record<string, string> = { [stdoutLog]: RESULT, [stderrLog]: "" };

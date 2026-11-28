@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Recreates the PostgreSQL volume of this checkout's compose project (v0.16.0 S2; named recreate-database-volume
-# before v0.20.0 S13, which keeps that name as a deprecated alias: tools/recreate-database-volume): prints the plan,
+# Recreates the PostgreSQL volume of this checkout's compose project (v0.16.0 S2; v0.20.0 S13 renamed it from
+# recreate-database-volume, whose alias v0.21.0 S7 removed): prints the plan,
 # then runs `docker compose -p <compose project> down -v` for that compose project only (it removes the
 # project's containers and networks, every named volume of its compose file and every anonymous volume of
 # its containers, so every database of its PostgreSQL, the trash included), and starts the database
 # service again with the same -p, which initializes a new volume with the account of the env file. The
 # compose project is always passed with -p: a COMPOSE_PROJECT_NAME (in the environment or the env file)
 # that selects another project is refused before anything runs. It is the fix doctor and
-# check-environment name when the compose service refuses the account Odoo uses because the volume was
+# doctor --environment name when the compose service refuses the account Odoo uses because the volume was
 # initialized with other credentials. Tier B in the agent policy (tools/policy.py): it runs only with
 # --confirm <compose project>; without it, after the plan, it refuses naming the exact command and
 # changes nothing. A failure after the volume was deleted says so and names the command that starts the

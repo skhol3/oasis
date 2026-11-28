@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-# Deprecated alias of `doctor --environment [--quick|--full]` (v0.16.0 S5): it keeps working with the same
-# lines, exit codes and usage line; both run tools/environment_checks.sh.
-set -Eeuo pipefail
-source "$(dirname "$0")/environment_checks.sh"

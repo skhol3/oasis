@@ -8,11 +8,9 @@ Usage:
       create the checkout's log directory and print <it>/server.log (start --detach)
 
 The checkout's log directory is <logs_dir>/<slug or main>, which must stay inside <logs_dir>: the LOGS_DIR
-config.py resolved, [tooling].logs or, without it (v0.17.0), logs next to the workspace file. Before 0.17.0 a
-workspace without [tooling].logs used each checkout's dev/logs/odoo19; that directory is no log location any more,
-and runs of the layout before 0.8.0 (<logs>/odoo19/<slug or main>) stay where they are. Each location is checked
-before anything is created; a run directory is checked again once created. Directories are created 0700 (umask
-077). A refusal prints its message to stderr and exits 1, creating nothing.
+config.py resolved, [tooling].logs or, without it (v0.17.0), logs next to the workspace file. Each location is
+checked before anything is created; a run directory is checked again once created. Directories are created 0700
+(umask 077). A refusal prints its message to stderr and exits 1, creating nothing.
 """
 import os
 from pathlib import Path

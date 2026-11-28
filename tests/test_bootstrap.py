@@ -1,6 +1,6 @@
 """bootstrap --apply exits with the result of its own work, the locks and the sync (v0.20.0 S4).
 
-It ends with `doctor --environment --full` (check-environment --full); a failure there, such as
+It ends with `doctor --environment --full` (tools/doctor); a failure there, such as
 PostgreSQL not running yet, is printed as the doctor's results with the command to run next, and
 the exit stays 0 once the sync succeeded. A failure of bootstrap's own work keeps its exit code, and so does
 the doctor's `FAIL locked_environment=drifted` for the environment bootstrap just synced: the sync did not
@@ -38,16 +38,11 @@ class BootstrapExitTests(unittest.TestCase):
             'actual=2.9.5"; echo "missing_packages=0"; echo "version_mismatches=1"; exit 3 ;;'))
 
     def fake_doctor(self, script):
-        """The tools with check-environment (the trailing doctor) replaced by script: links to the others."""
-        tools = Path(self.scratch.name) / 'tools'
-        tools.mkdir()
-        for entry in (lifecycle.STAGE / 'tools').iterdir():
-            if entry.name not in ('check-environment', '__pycache__'):
-                (tools / entry.name).symlink_to(entry)
-        doctor = tools / 'check-environment'
+        """A staged entry point whose doctor (the trailing doctor --environment --full) is script; invoke runs it."""
+        self.entry = lifecycle.staged_bundle(Path(self.scratch.name) / 'staged')
+        doctor = self.entry.parent / 'tools/doctor'
         doctor.write_text('#!/bin/sh\n' + script)
         doctor.chmod(0o755)
-        self.env['OASIS_TOOLS_DIR'] = str(tools)
 
     def header(self):
         return (f'mode=apply\nproject=a project\nenvironment={self.python.parent.parent}\n'

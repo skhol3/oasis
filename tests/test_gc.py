@@ -49,10 +49,8 @@ class GcTrashConfirmTests(trash.TrashFixture):
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, f'dropped {self.old}\ndropped=1\nfailed=0\n', ''))
 
-    def test_apply_without_trash_needs_no_confirmation_and_confirm_needs_both(self):
-        result = self.cli('gc', '--apply')
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (0, f'dropped {self.orphan}\ndropped=1\nfailed=0\n', ''))
+    def test_confirm_needs_both_apply_and_trash(self):
+        # gc --apply without --trash needs no confirmation: tests/test_trash.py GcTrashTests.
         for args in (('--apply', '--confirm', str(self.root)), ('--trash', '--confirm', str(self.root)),
                      ('--apply', '--trash', '--confirm'), ('--apply', '--trash', '--confirm='),
                      ('--apply', '--trash', '--confirm', 'a', '--confirm', 'a')):

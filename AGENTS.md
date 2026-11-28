@@ -4,7 +4,7 @@
 
 - This repository is the source of the global Odoo agent bundle: the `oasis` entry point, its
   guarded `tools/`, the `odoo-<topic>` skills (a reference per series), the Gentle Shell layer
-  (`pi/`), project wrapper templates and docs.
+  (`pi/`) and docs.
 - Agents never read this repository directly. `install.sh` copies the committed HEAD to
   `~/.agents/skills/oasis`; uncommitted edits are never installed.
 - Code, comments, commit messages and documentation are in English.

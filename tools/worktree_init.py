@@ -6,6 +6,7 @@ Tier B in the agent policy (tools/policy.py): an agent proposes it and a person 
 workspace file the main checkout reads (above it, or through git: tools/config.py
 workspace_file), so only `git worktree add` runs: nothing is copied or linked. Nothing is deleted.
 """
+import functools
 import importlib.util
 import os
 from pathlib import Path
@@ -52,22 +53,19 @@ def fail(message, code=2):
     return code
 
 
-def git_env():
-    return {key: value for key, value in os.environ.items()
-            if key not in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_PREFIX')}
+_spec = importlib.util.spec_from_file_location('oasis_siblings', Path(__file__).with_name('siblings.py'))
+_spec.loader.exec_module(siblings := importlib.util.module_from_spec(_spec))
+
+
+@functools.cache
+def load_config():
+    """The packaged parser, tools/config.py, loaded once."""
+    return siblings.load('config', 'oasis_config')
 
 
 def git(cwd, *args, timeout=QUERY_TIMEOUT_SECONDS):
     return subprocess.run(['git', '-C', str(cwd), *args], capture_output=True, text=True,
-                          env=git_env(), timeout=timeout)
-
-
-def load_config():
-    # Load the packaged parser by its own path; never import project Python code.
-    spec = importlib.util.spec_from_file_location('oasis_config', Path(__file__).with_name('config.py'))
-    config = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(config)
-    return config
+                          env=load_config().git_env(), timeout=timeout)
 
 
 def parse_arguments(arguments):

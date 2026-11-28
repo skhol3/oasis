@@ -14,11 +14,6 @@ export const SUBCOMMANDS = [
     summary: "`doctor` checks the environment contract (read-only)",
   },
   {
-    name: "migrate", parameters: [],
-    description: "Plan and apply the move to a workspace file",
-    summary: "`migrate` converts the checkouts' legacy .odoo19-agent.toml profiles into one oasis-workspace.toml after confirmation",
-  },
-  {
     name: "worktree", parameters: ["feature", "branch"],
     description: "Create a worktree: worktree <feature> <branch>",
     summary: "`worktree <feature> <branch>` creates a prepared linked worktree",

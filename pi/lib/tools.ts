@@ -115,8 +115,7 @@ export function formatUpdateRun(
 /**
  * Where a checkout's compact runs write their logs (the rules of tools/log_dirs.py), from its
  * tools/config.py values: `logs` is LOGS_DIR, already resolved: [tooling].logs, else (v0.17.0) logs next
- * to the workspace file. Without it no path is a run log. Before 0.17.0 a workspace without
- * [tooling].logs used each checkout's dev/logs/odoo19, which is no log location any more.
+ * to the workspace file. Without it no path is a run log.
  */
 export interface RunLogLocations {
   logs?: string;
@@ -139,10 +138,8 @@ export function runLogLocations(config: Record<string, string>): RunLogLocations
   return config.LOGS_DIR ? { logs: withoutTrailingSlash(config.LOGS_DIR) } : {};
 }
 
-// <logs>/<checkout>/run-<id>/ (since 0.8.0); <checkout> is `main` or a checkout slug.
+// <logs>/<checkout>/run-<id>/; <checkout> is `main` or a checkout slug.
 const CHECKOUT_RUN = /^[a-z0-9][a-z0-9_]{0,19}\/run-[A-Za-z0-9_]+\/(?:stdout|stderr)\.log$/;
-// <logs>/odoo19/<checkout>/run-<id>/ (before 0.8.0).
-const LEGACY_CHECKOUT_RUN = /^odoo19\/[A-Za-z0-9_]+\/run-[A-Za-z0-9_]+\/(?:stdout|stderr)\.log$/;
 
 function below(path: string, base: string): string | null {
   return base.startsWith("/") && path.startsWith(`${base}/`) ? path.slice(base.length + 1) : null;
@@ -165,12 +162,12 @@ function resolve(realpath: RealPath, path: string): string | null {
 function runLogShape(path: string, logs: string | undefined): boolean {
   if (!logs || !lexical(path)) return false;
   const rest = below(path, logs);
-  return rest !== null && (CHECKOUT_RUN.test(rest) || LEGACY_CHECKOUT_RUN.test(rest));
+  return rest !== null && CHECKOUT_RUN.test(rest);
 }
 
 /**
  * The real path of a log a compact run of this checkout writes, or null: stdout.log or stderr.log
- * in <logs>/<checkout>/run-<id>/ or, from runs before 0.8.0, <logs>/odoo19/<checkout>/run-<id>/.
+ * in <logs>/<checkout>/run-<id>/.
  * The named path must have that shape, and so must its real path inside the real logs directory, so
  * a symlinked run directory or log file cannot lead elsewhere. A path that cannot be resolved is refused.
  */
@@ -180,10 +177,6 @@ export function runLogRealPath(path: string, locations: RunLogLocations, realpat
   if (real === null || !locations.logs) return null;
   const logs = resolve(realpath, locations.logs);
   return logs !== null && runLogShape(real, logs) ? real : null;
-}
-
-export function isRunLog(path: string, locations: RunLogLocations, realpath: RealPath): boolean {
-  return runLogRealPath(path, locations, realpath) !== null;
 }
 
 /**

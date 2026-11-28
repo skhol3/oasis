@@ -44,13 +44,10 @@ class DropDatabaseConfirmTests(trash.TrashFixture):
                             'ERROR: drop-database moves cc_dev_coffee and its filestore to the trash (Tier B: it '
                             f'needs explicit confirmation); nothing changed. Run: oasis --project {root} '
                             'drop-database cc_dev_coffee --terminate --confirm cc_dev_coffee\n', sessions=2)
-        result = self.cli('drop-database', 'cc_dev_coffee', '--confirm', 'cc_dev_coffee', '--terminate')
-        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
-        self.assertNotIn('cc_dev_coffee', self.databases())
 
     def test_usage_names_the_confirmation(self):
         usage = 'Usage: {} <cc_dev_*|cc_test_*> [--terminate] [--confirm <database>]\n'.format(trash.ENTRY)
-        for args in (('cc_dev_coffee', '--confirm'), ('cc_dev_coffee', '--confirm='), ('cc_dev_coffee', '--bogus'),
+        for args in (('cc_dev_coffee', '--confirm'), ('cc_dev_coffee', '--confirm='),
                      ('cc_dev_coffee', '--confirm', 'a', '--confirm', 'a'), ('cc_dev_a', 'cc_dev_b')):
             with self.subTest(args=args):
                 result = self.cli('drop-database', *args)

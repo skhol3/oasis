@@ -64,7 +64,7 @@ function fixedChoices(modules: string[], databases: string[]) {
 test("parseCatalog reads the core catalog and refuses another version or malformed JSON", () => {
   assert.equal(catalog.project, "/work/a project");
   assert.deepEqual(catalog.groups.map((group) => group.id), ["server", "modules", "tests", "maintenance"]);
-  assert.equal(catalog.actions.length, 26);
+  assert.equal(catalog.actions.length, 24);
   assert.throws(() => parseCatalog(FIXTURE.replace('"catalog_version": 1', '"catalog_version": 2')),
     /^Error: unsupported catalog_version 2 \(this panel reads version 1\); update the oasis layer\.$/);
   assert.throws(() => parseCatalog("not json"), /^Error: the catalog is not JSON: /);
@@ -251,7 +251,7 @@ test("confirmRun: typed database or yes for destructive actions, a plain confirm
     run = scripted([typed]);
     assert.equal(await confirmRun(action("maintenance.drop_database"), drop, command, run.prompter), false);
   }
-  for (const id of ["server.stop_database", "maintenance.gc_apply", "maintenance.migrate"]) {
+  for (const id of ["server.stop_database", "maintenance.gc_apply"]) {
     run = scripted(["yes"]);
     assert.equal(await confirmRun(action(id), {}, "c", run.prompter), true, id);
     assert.deepEqual(run.calls, [`input ${action(id).label}\nc\nType yes to confirm`]);
@@ -264,7 +264,7 @@ test("confirmRun: typed database or yes for destructive actions, a plain confirm
   run = scripted([false]);
   assert.equal(await confirmRun(action("maintenance.worktree"), {}, "c w b", run.prompter), false);
   // v0.12.0 (S5): every other action shows its filled command and runs only after Yes.
-  for (const id of ["server.status", "tests.module", "modules.install", "maintenance.migrate_plan", "server.logs"]) {
+  for (const id of ["server.status", "tests.module", "modules.install", "maintenance.doctor", "server.logs"]) {
     run = scripted([true]);
     assert.equal(await confirmRun(action(id), {}, "c", run.prompter), true, id);
     assert.deepEqual(run.calls, [`confirm ${action(id).label}: c\n\nRun this command?`], id);

@@ -3,8 +3,6 @@
 import { POLICY, type PolicyEntry, type Tier } from "./policy.generated.ts";
 
 export type { PolicyEntry, Tier } from "./policy.generated.ts";
-/** A: the agent runs it alone; B: the user confirms it (the dialog); C: only the user runs it. */
-export const HARNESS: Readonly<Record<Tier, "allow" | "ask" | "deny">> = { A: "allow", B: "ask", C: "deny" };
 
 const STRICTNESS: Record<Tier, number> = { A: 0, B: 1, C: 2 };
 const BY_OPERATION = new Map<string, PolicyEntry>(POLICY.map((entry) => [entry.operation, entry]));
@@ -67,9 +65,9 @@ function matchingRow(rows: PolicyEntry[], args: string[], loose: boolean): Polic
 /**
  * The operation an oasis command runs with these arguments, or null for a command the table does
  * not list: the row whose words after the command all appear in args, the most specific one (the
- * stricter on a tie, `migrate --plan --apply`). The oasis tools refuse an abbreviated or `=` form of
+ * stricter on a tie). The oasis tools refuse an abbreviated or `=` form of
  * their flags, and the guard does not rely on it: such a form also counts as the word it may stand
- * for, and the stricter of both readings applies, so `migrate --ap` asks like `migrate --apply` while
+ * for, and the stricter of both readings applies, so `gc --apply --tr` asks like `gc --apply --trash` while
  * `worktree-init f b --dry` does not run like `--dry-run`. With an argument that is not literal
  * (`literal` false: it may expand to anything), or no matching row, the command's strictest row.
  */

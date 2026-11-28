@@ -169,11 +169,12 @@ class StatusJsonTests(unittest.TestCase):
         status = self.status_json()
         self.assertEqual(status['checks']['databases'], {'ready': False, 'detail': 'unknown (the database query failed)'})
         self.assertEqual(status['next'], f'{program} doctor')
-        # A worktree whose slug cannot be read (a legacy profile): the databases are unknown, as list-databases stops.
+        # A worktree whose slug cannot be read (an invalid checkout file): the databases are unknown, as list-databases
+        # stops.
         del self.env['FAKE_QUERY_FAIL']
         worktree = self.checkout.parent / 'wt'
         self.git(self.checkout, 'worktree', 'add', '-q', '-b', 'wt', str(worktree))
-        (worktree / '.odoo19-agent.toml').write_text('')
+        (worktree / 'oasis-checkout.toml').write_text('[tooling\n')
         status = self.status_json()
         self.assertFalse(status['checks']['databases']['ready'])
         self.assertTrue(status['checks']['databases']['detail'].startswith(

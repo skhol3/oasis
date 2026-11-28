@@ -47,6 +47,10 @@ Releases are listed in the [changelog](CHANGELOG.md).
 
 CI: `.github/workflows/tests.yml` runs `node --test pi/tests/*.test.ts` and `python3 -B -m unittest discover -s tests` on Python 3.12 for every pull request and push to `main`, plus a short job that runs the tests of what executes inside Odoo 15 environments (`tools/audit_dependencies.py`, `tools/dev_users_runtime.py`, `tools/check_environment.py`) with Python 3.8 and 3.9, both installed in that job, which fails when one of those tests skips.
 
+The suites (`tests/`, `pi/tests/`) are in this repository only: `install.sh` does not install them. They use
+synthetic projects and fake tools under `tests/fixturesroot`, removed after each test, and need no project
+checkout, database or install; passing them does not authorize an operation on a real environment or database.
+
 [Docs →](docs/install.md) · [Gentle Shell package →](docs/gentle-shell-layer.md#installing-the-package)
 
 ## Five-minute start
@@ -119,7 +123,7 @@ fills an env file's empty account variables in place (never adds absent ones) an
 only when the env file holds the same values (otherwise it warns and changes nothing), and
 `create-database` gives the administrator Odoo's default password (`admin`), or
 `ODOO_ADMIN_PASSWORD` of the env file when you set one, and writes no password file (an earlier
-`<database>.logins` is left alone with a WARN line). [Docs →](docs/setup.md#the-database-account)
+`<database>.logins` is left alone). [Docs →](docs/setup.md#the-database-account)
 
 No command needs a terminal: `oasis setup --plan --json` prints the plan as one JSON object (what it
 inferred and from where, the changes, the questions with their options, the recommended answer and the
@@ -158,7 +162,7 @@ of a checkout and runs them by hand. [Docs →](docs/action-menu.md)
 ### Environment and workspace file
 
 [`oasis setup`](docs/setup.md) configures a clone, `bootstrap` syncs its environment to the locks
-([which one when](docs/setup.md#setup-bootstrap-or-migrate)), `doctor` and `doctor --environment` check the
+([which one when](docs/setup.md#setup-or-bootstrap)), `doctor` and `doctor --environment` check the
 environment; one [`oasis-workspace.toml`](docs/workspace-file.md) configures every checkout, and
 the machine file gives the Odoo source of each series.
 [Docs →](docs/checking-environment.md)
@@ -166,8 +170,9 @@ the machine file gives the Odoo source of each series.
 Contract change in v0.12.0: the legacy per-checkout profile `.odoo19-agent.toml` is no longer
 read. A checkout that still has one is refused (exit 2) with
 `<checkout>/.odoo19-agent.toml is the old profile format, no longer read: run oasis migrate --plan to see its conversion to oasis-workspace.toml, then oasis migrate --apply.`;
-`doctor` reports it as one `FAIL configuration`. [`oasis migrate`](docs/migrating.md), the only
-command that still reads it, converts the profiles of every checkout into one workspace file.
+`doctor` reports it as one `FAIL configuration`. `oasis migrate`, the only
+command that still reads it, converts the profiles of every checkout into one workspace file (both removed in
+v0.21.0, see below).
 
 Contract note in v0.16.0 (S5): `check-environment [--quick|--full]` is a deprecated alias of
 `doctor --environment [--quick|--full]`. Both names keep working through `oasis`, the
@@ -175,24 +180,27 @@ project wrappers and the tool script, with the same lines, exit codes and usage 
 `oasis`, `doctor --help` and the policy table (both Tier A) say so, and the `oasis_check_environment` tool runs
 `doctor --environment`. `doctor`'s usage line now names the option: `Usage: <program> doctor
 [--environment [--quick|--full]]`. setup, bootstrap and migrate stay three commands (none would be an
-identical alias): [which one when](docs/setup.md#setup-bootstrap-or-migrate).
+identical alias): [which one when](docs/setup.md#setup-or-bootstrap). v0.21.0 removed
+`check-environment` (see below).
 
 Contract change in v0.17.0: the `odoo19` name is gone, with no transition. `./install.sh` installs into
-`~/.agents/skills/oasis` and moves a previous install out of `~/.agents/skills/odoo19` into its backups
-(only when it holds `.oasis-install.json`; anything else there is left and named in a warning). The
-`odoo19` entry point, the `odoo19-*` skills, the inactive `odoo19_*` Gentle Shell tools and `/odoo19` are
-removed: run `~/.agents/skills/oasis/oasis`, `/oasis` and the `oasis_*` tools. A project whose wrappers in
-`dev/scripts/` were copied from an earlier version still calls `~/.agents/skills/odoo19/tools`; `oasis
-doctor` reports it as `FAIL project_wrappers=old_install_dir`, and its fix line names the edit: replace
-`.agents/skills/odoo19/` with `.agents/skills/oasis/` in each wrapper it lists (or copy them again from
-`~/.agents/skills/oasis/project-wrappers/`). An overlay or allowlist that names an `odoo19_*` tool needs
-the `oasis_*` name; `/oasis setup` updates an outdated overlay. Only the `OASIS_*` variables are read: a
-legacy `ODOO19_*` one (`ODOO19_PROJECT_ROOT`, `ODOO19_ENTRYPOINT`, `ODOO19_TOOLS_DIR`,
-`ODOO19_COMPOSE_LOCK_TIMEOUT`) is ignored, and neither the entry point nor a project wrapper sets one. A workspace
-without `[tooling].logs` keeps its logs in `logs` next to `oasis-workspace.toml`, as `oasis setup` writes the key
-(`logs/<x.y>` with `workspace_version = 2`), no longer in each checkout's `dev/logs/odoo19/`: runs already there
-stay where they are and are no longer read by `oasis_test_summary` (the runs before 0.8.0 under
-`<logs>/odoo19/` still are). The legacy `.odoo19-agent.toml` is still refused naming `oasis migrate`.
+`~/.agents/skills/oasis` and moves a previous install out of `~/.agents/skills/odoo19` into its backups (only when
+it holds `.oasis-install.json`; anything else there is left and named in a warning; until v0.21.0, which no longer
+moves it). The `odoo19` entry point, the `odoo19-*` skills, the inactive `odoo19_*` Gentle Shell tools and
+`/odoo19` are removed: run `~/.agents/skills/oasis/oasis`, `/oasis` and the `oasis_*` tools. A project whose
+wrappers in `dev/scripts/` were copied from an earlier version still calls `~/.agents/skills/odoo19/tools`; `oasis
+doctor` reports it as `FAIL project_wrappers=old_install_dir` (until v0.21.0, which removed the check), and its fix
+line names the edit: replace `.agents/skills/odoo19/` with `.agents/skills/oasis/` in each wrapper it lists (or
+copy them again from `~/.agents/skills/oasis/project-wrappers/`, until v0.21.0 removed the templates; see below).
+An overlay or allowlist that names an `odoo19_*` tool needs the `oasis_*` name; `/oasis setup` updates an outdated
+overlay. Only the `OASIS_*` variables are read: a legacy `ODOO19_*` one (`ODOO19_PROJECT_ROOT`,
+`ODOO19_ENTRYPOINT`, `ODOO19_TOOLS_DIR`, `ODOO19_COMPOSE_LOCK_TIMEOUT`) is ignored, and neither the entry point nor
+a project wrapper sets one. A workspace without `[tooling].logs` keeps its logs in `logs` next to
+`oasis-workspace.toml`, as `oasis setup` writes the key (`logs/<x.y>` with `workspace_version = 2`), no longer in
+each checkout's `dev/logs/odoo19/`: runs already there stay where they are and are no longer read by
+`oasis_test_summary` (the runs before 0.8.0 under `<logs>/odoo19/` still are, until v0.21.0). The legacy
+`.odoo19-agent.toml` is still refused naming `oasis migrate` (until v0.21.0, which removed the refusal and `oasis
+migrate`; see below).
 
 Contract change in v0.20.0: the exit code of `bootstrap --apply` reports its own work, the locks and the sync: 0
 once they succeeded, also when its trailing `doctor --environment --full` fails outside the sync (for example
@@ -232,9 +240,9 @@ create it with: oasis --project <checkout> create-database --plan` before Odoo s
 Contract change in v0.20.0: `start-database` is renamed `setup-postgres` and `recreate-database-volume` is
 renamed `recreate-postgres-volume`, because "database" now names an Odoo database. The old names keep working
 as deprecated aliases with the same output, exit codes, tier and `--confirm`, after one stderr line: `WARNING:
-<old> is a deprecated alias of <new>: run <new> instead.` `start` and `restart` refuse a database that does not
-exist (`-d`, else each name of `odoo.conf`'s `db_name`) with exit 2, naming `create-database --plan`, because
-Odoo would create it. `tools/dev_users.py` creates a database only with `--confirm <database>` as its first two
+<old> is a deprecated alias of <new>: run <new> instead.` (removed in v0.21.0, see below). `start` and
+`restart` refuse a database that does not exist (`-d`, else each name of `odoo.conf`'s `db_name`) with exit 2,
+naming `create-database --plan`, because Odoo would create it. `tools/dev_users.py` creates a database only with `--confirm <database>` as its first two
 arguments, after the name guards. Odoo's database manager (`/web/database/manager`) and its selector stay available when `start` runs without
 a database, by choice: a database created there is outside oasis (Odoo's default master password applies).
 
@@ -245,6 +253,51 @@ compiles the checkout's `.py` files (none of the code runs, no `.pyc` is written
 rejects too is `WARN code_python=syntax_error`; a timeout or no answer is a `WARN`. `oasis setup` warns in its
 plan when the Python of an environment it adopts or creates may not parse the code; it never blocks
 `--apply`.
+
+Contract change in v0.21.0 (S6): the transition from earlier versions is gone. `.odoo19-agent.toml` is no longer
+read nor refused: a checkout with only that file gets the ordinary `Missing tooling configuration: no
+oasis-workspace.toml at or above <checkout>.`, and next to a workspace file it changes nothing. `oasis migrate`, its
+`/oasis migrate`, its menu actions and its policy rows are removed (`oasis migrate` exits 2 with `Unsupported oasis
+command: migrate`). `./install.sh` no longer moves `~/.agents/skills/odoo19` away, `oasis doctor` no longer has the
+`project_wrappers` check, the bash guard no longer treats `odoo19`, `~/.agents/skills/odoo19/tools` or
+`ODOO19_PROJECT_ROOT` as oasis's, a `lock.sha256` whose entries are relative to the checkout (the format before
+v0.12.0) is stale (`FAIL dependency_locks=stale_or_modified`), `oasis_test_summary` no longer reads the runs before
+0.8.0 under `<logs>/odoo19/`, and `create-database` prints no WARN for an earlier `<database>.logins`. What a project
+from an earlier version runs:
+
+- A checkout that still has `.odoo19-agent.toml`: install v0.20.0 (`git checkout v0.20.0 && ./install.sh` in this
+  repository), run `oasis --project <checkout> migrate --plan`, then the `migrate --apply --confirm <workspace
+  file>` it names, then install this version again. Or create the workspace file with `oasis setup` and delete the
+  old file.
+- Project wrappers in `dev/scripts/` that call `~/.agents/skills/odoo19/tools`: replace `.agents/skills/odoo19/`
+  with `.agents/skills/oasis/` in each (`grep -l .agents/skills/odoo19/ dev/scripts/*` lists them), or call
+  `oasis --project <checkout> <command>` instead and delete them (the templates are gone too: S11 below).
+- An install before 0.17.0 still in `~/.agents/skills/odoo19`: move it out of `~/.agents/skills` yourself.
+- A `lock.sha256` relative to the checkout: in the requirements directory run `sha256sum runtime.in runtime.txt
+  dev.in dev.txt > lock.sha256` (`overrides.txt` last when it exists), which writes the same digests relative to
+  its own directory; `bootstrap --apply` would compile the locks again instead.
+- A `<database>.logins` next to the env file holds the passwords versions before 0.20.0 generated: delete it once
+  you no longer need them.
+
+Contract change in v0.21.0 (S7): the deprecated aliases are gone. `start-database`, `recreate-database-volume` and
+`check-environment` exit 2 with `ERROR: Unsupported oasis command: <name>`, like any unknown command; their tool
+scripts, the `dev/scripts/check-environment` project wrapper, the *Deprecated aliases* line of `oasis --help` and
+their policy rows are removed, and the bash guard treats them as no oasis command. Call the new names:
+
+- `start-database`: `oasis --project <checkout> setup-postgres`.
+- `recreate-database-volume`: `oasis --project <checkout> recreate-postgres-volume --confirm <compose project>`
+  (Tier B, the same `--confirm`).
+- `check-environment [--quick|--full]`, also `dev/scripts/check-environment`: `oasis --project <checkout> doctor
+  --environment [--quick|--full]`, the same checks, lines and exit codes; delete the wrapper from `dev/scripts/`.
+  The `oasis_check_environment` tool keeps its name and runs it.
+
+Contract change in v0.21.0 (S11): the project wrapper templates are gone. The bundle no longer has (nor installs)
+`project-wrappers/`, the scripts a project could copy into its `dev/scripts/` to run a tool without the entry point;
+`oasis` is the one door. A project's existing copies keep working while the tool names exist: each still runs
+`~/.agents/skills/oasis/tools/<command>` (or the directory in `OASIS_TOOLS_DIR`) for the project two levels above
+it, and the bash guard treats them as plain programs, as before. Call `oasis --project <checkout> <command>`
+instead (the same tool, its lines and exit codes; a usage line names the entry point instead of the copy), and
+delete the copies from `dev/scripts/` when convenient.
 
 ## Documentation
 
@@ -258,10 +311,9 @@ plan when the Python of an environment it adopts or creates may not parse the co
 | [Subagents](docs/subagents.md) | The overlay that gives Gentle Shell subagents the `oasis_*` tools |
 | [Setting up a new workspace](docs/new-workspace.md) | From a clone to `doctor` and a database with `oasis setup`; where each value lives, an example tree, the steps by hand |
 | [Setting up a checkout with oasis setup](docs/setup.md) | `oasis setup`: the plan, then `--apply` creates only what is missing |
-| [New project setup](docs/project-setup.md) | Workspace file, entry point and optional project wrappers |
-| [Checking the environment](docs/checking-environment.md) | `doctor`, `doctor --environment` (`check-environment`, a deprecated alias), `lock.sha256` and the installed packages (a drifted adopted environment is a WARN) |
+| [New project setup](docs/project-setup.md) | Workspace file and the entry point |
+| [Checking the environment](docs/checking-environment.md) | `doctor`, `doctor --environment`, `lock.sha256` and the installed packages (a drifted adopted environment is a WARN) |
 | [Workspace file](docs/workspace-file.md) | One `oasis-workspace.toml` for every checkout |
-| [Migrating to the workspace file](docs/migrating.md) | `oasis migrate` |
 | [Path-free odoo.conf](docs/path-free-odoo-conf.md) | What oasis passes on the Odoo command line |
 | [Checkouts and worktrees](docs/checkouts-and-worktrees.md) | Checkout identity, databases per checkout, `worktree-init` |
 | [Servers and ports](docs/servers-and-ports.md) | `start`, `stop`, `status` and ports per checkout |
@@ -272,8 +324,8 @@ plan when the Python of an environment it adopts or creates may not parse the co
 | [Static inspection](docs/static-inspection.md) | `model-info`, `view-info`, `xmlid-info`, `module-info` |
 | [Lint one module](docs/lint-module.md) | `lint-module` with the project's Pylint rcfile |
 | [Action menu](docs/action-menu.md) | `oasis menu` and the Gentle Shell panel |
-| [Portable verification](docs/verification.md) | Running the bundle's fixture tests |
 | [Troubleshooting](docs/troubleshooting.md) | Tool-manager shims and known failures |
+| [How oasis is built](docs/architecture.md) | Layers, commands by job, shared modules, the policy and the known growth problems |
 | [Changelog](CHANGELOG.md) | Releases and contract changes |
 
 ## License

@@ -9,18 +9,16 @@ import { COMMANDS, findEntry, operationOf, policyEntry, type PolicyEntry, PROGRA
 // The tiers come from the core policy table (tools/policy.py, see lib/policy.ts): a Tier C program or
 // oasis command is denied, a Tier B one asks, a Tier A one runs.
 const BLOCKED = new Set([...PROGRAMS].filter((program) => tierOf(program) !== "A"));
-// worktree-init's scripts count in any directory, migrate's in any `tools` directory (unchanged).
-export const WORKTREE_INIT = "worktree-init";
+// worktree-init's scripts count in any directory (unchanged).
+const WORKTREE_INIT = "worktree-init";
 const WORKTREE_INIT_SCRIPTS = new Set([WORKTREE_INIT, "worktree_init.py"]);
-export const MIGRATE = "migrate";
-const MIGRATE_SCRIPTS = new Set([MIGRATE, "migrate.py"]);
 // create-database's Python scripts create the database themselves (v0.20.0 L19): in any directory, with any
 // arguments, they ask like create-database (its Tier B row, never its plan's or dry run's).
-export const CREATE_DATABASE = "create-database";
+const CREATE_DATABASE = "create-database";
 const CREATE_DATABASE_SCRIPTS = new Set(["dev_users.py", "dev_users_runtime.py"]);
 // The interactive action menu (its catalog included) is for the user, in a terminal or the Gentle
 // Shell panel; agents run the commands it lists directly.
-export const MENU = "menu";
+const MENU = "menu";
 // Its scripts are blocked by what they are, not by their spelling: `tools/menu` and
 // `tools/actions.py` are common names in other projects, and the menu itself refuses to run
 // without a terminal. With a GuardContext, a script word is resolved against the session's
@@ -61,11 +59,10 @@ interface Where {
   dir: string | null;
   unsure?: boolean;
 }
-// The entry point, and its name before 0.17.0 so an old install still on disk is guarded too (v0.17.0 S3):
-// worktree-init, migrate, setup --apply and menu are blocked through either.
-const ENTRY_POINTS = new Set(["oasis", "odoo19"]);
-// The installed bundle's tools directory, and the one before 0.17.0.
-const BUNDLE_TOOLS = ["skills/oasis/tools", "skills/odoo19/tools"];
+// The entry point (v0.21.0 S6: only this name).
+const ENTRY_POINTS = new Set(["oasis"]);
+// The installed bundle's tools directory.
+const BUNDLE_TOOLS = ["skills/oasis/tools"];
 const SHELLS = new Set(["bash", "sh", "zsh", "dash"]);
 // Programs that run what they read from a heredoc; its body is then classified as commands.
 const HEREDOC_SHELLS = new Set([...SHELLS, "ksh", "mksh", "ash", "fish", "csh", "tcsh"]);
@@ -146,8 +143,7 @@ function spelledIn(word: string, directory: string): boolean {
  * Whether a word names one of oasis's tool scripts `names` (the menu's `menu` or `actions.py`, or
  * an ask command's). Resolved to a file, it must sit in a `tools` directory whose parent is an
  * oasis tree. When its path is unknown (expansion, an unknown `cd` target), it counts when spelled
- * like the installed bundle (`.../skills/oasis/tools/menu`, or `skills/odoo19` before 0.17.0) or, spelled
- * `tools/<name>`, when the
+ * like the installed bundle (`.../skills/oasis/tools/menu`) or, spelled `tools/<name>`, when the
  * session works inside an oasis tree. Without a context, only the installed bundle's spelling counts.
  */
 function oasisScript(word: string, names: Set<string>, where: Where | undefined): boolean {
@@ -460,14 +456,13 @@ function literalArguments(args: string[]): boolean {
 }
 
 /**
- * The oasis command a script word runs, or null: worktree-init's scripts anywhere, migrate's in a
- * `tools` directory, the menu's and every other tool script's only when they are an oasis tree's or
+ * The oasis command a script word runs, or null: worktree-init's scripts anywhere, the menu's and
+ * every other tool script's only when they are an oasis tree's or
  * spelled like the installed bundle (see oasisScript), since the names are common.
  */
 function scriptCommand(word: string, where: Where | undefined): string | null {
   const name = basename(word);
   if (WORKTREE_INIT_SCRIPTS.has(name)) return WORKTREE_INIT;
-  if (MIGRATE_SCRIPTS.has(name) && /(^|\/)tools\/[^/]+$/.test(word)) return MIGRATE;
   if (CREATE_DATABASE_SCRIPTS.has(name)) return CREATE_DATABASE;
   if (menuScript(word, where)) return MENU;
   if (oasisScript(word, SCRIPT_NAMES, where)) return name === "setup.py" ? "setup" : name;
@@ -476,7 +471,7 @@ function scriptCommand(word: string, where: Where | undefined): string | null {
 
 /**
  * An ask-tier command, a Tier B operation of the policy table (drop-database, gc --apply --trash,
- * migrate --apply, worktree-init, ...; `command` is the operation): the user confirms it before it
+ * worktree-init, ...; `command` is the operation): the user confirms it before it
  * runs (the extension's dialog), unless the project's `[tooling].agent_destructive` says otherwise.
  * `database` is drop-database's first argument when it is a literal database name, else null (the
  * user could not confirm it).
@@ -495,9 +490,8 @@ export interface Target {
   project?: string | null;
 }
 
-// The variables a tool script reads its project root from (tools/oasis_env.sh oasis_variable):
-// OASIS_PROJECT_ROOT when it is not empty, else ODOO19_PROJECT_ROOT.
-const ROOT_VARIABLES = ["OASIS_PROJECT_ROOT", "ODOO19_PROJECT_ROOT"];
+// The variable a tool script reads its project root from (tools/oasis_env.sh oasis_variable), when it is not empty.
+const ROOT_VARIABLE = "OASIS_PROJECT_ROOT";
 
 /** A target path as written: absolute (normalized), or null when the text does not tell it. */
 function targetPath(value: string, where: Where | undefined, tilde: boolean): string | null {
@@ -510,7 +504,7 @@ function targetPath(value: string, where: Where | undefined, tilde: boolean): st
 /**
  * The project the ask command at words[index] targets: the entry point's --project value, or the
  * root variable a tool script gets from the assignments before it (`VAR=<dir> tool`, `env VAR=<dir>
- * tool`; the last one of each name counts). Bash expands `~` in an assignment, not in `--project=~`.
+ * tool`; the last one counts). Bash expands `~` in an assignment, not in `--project=~`.
  * Without --project the entry point takes the git top level of the directory it runs in (v0.14.0
  * S8): that directory after a literal `cd` or `env -C`, null when it is not known, absent when it is
  * the session's own directory.
@@ -523,15 +517,12 @@ function targetOf(words: string[], index: number, where: Where | undefined): Tar
     if (where.unsure || where.dir === null) return { project: null };
     return where.dir === posix.normalize(where.context.cwd) ? {} : { project: where.dir };
   }
-  const values = new Map<string, string>();
+  let value: string | undefined;
   for (const word of words.slice(0, index)) {
     const equals = word.indexOf("=");
-    if (ASSIGNMENT.test(word) && ROOT_VARIABLES.includes(word.slice(0, equals))) {
-      values.set(word.slice(0, equals), word.slice(equals + 1));
-    }
+    if (ASSIGNMENT.test(word) && word.slice(0, equals) === ROOT_VARIABLE) value = word.slice(equals + 1);
   }
-  const value = ROOT_VARIABLES.map((name) => values.get(name)).find((found) => found !== undefined && found !== "");
-  return value === undefined ? {} : { project: targetPath(value, where, true) };
+  return value === undefined || value === "" ? {} : { project: targetPath(value, where, true) };
 }
 
 /** What a simple command runs: a denied program, or an ask command. */
@@ -763,16 +754,8 @@ export function blockedEverywhere(program: string): boolean {
 }
 
 /**
- * The blocked program a bash command would run directly, or null. With the session context, the
- * menu's scripts are judged by the file they resolve to (see menuScript).
- */
-export function blockedProgram(command: string, context?: GuardContext): string | null {
-  return classifyBash(command, context).program;
-}
-
-/**
  * The tiers of a bash command: `programs` are the denied programs it runs, in order, and `program`
- * the first of them (blockedProgram), or null; `asks` lists the ask commands it runs, in order, a
+ * the first of them, or null; `asks` lists the ask commands it runs, in order, a
  * setting file once (see GuardContext.settingFile). Neither: allowed.
  */
 export function classifyBash(

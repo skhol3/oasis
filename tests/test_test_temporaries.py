@@ -136,11 +136,8 @@ exit "$FAKE_EXIT"
                 self.observation.write_text('')
                 shutil.rmtree(self.root / 'logs', ignore_errors=True)
                 self.env['FAKE_WAIT_SIGNAL'] = '1'
-                path = self.root / 'dev/scripts/test-module'
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes((lifecycle.STAGE / 'project-wrappers/test-module').read_bytes())
                 process = subprocess.Popen(
-                    ['bash', str(path), 'coffee'], cwd=self.root, env=self.env, text=True,
+                    lifecycle.oasis_argv(self.root, 'test-module', 'coffee'), cwd=self.root, env=self.env, text=True,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
                 deadline = time.monotonic() + 20
                 while 'waiting' not in self.observation.read_text().splitlines():
@@ -150,7 +147,7 @@ exit "$FAKE_EXIT"
                 scratch = Path(self.observation.read_text().splitlines()[0])
                 os.killpg(process.pid, signum)
                 stdout, stderr = process.communicate(timeout=20)
-                # The wrapper shell either exits 128+N or is itself ended by signal N;
+                # The tool's shell either exits 128+N or is itself ended by signal N;
                 # a calling shell reports both as the same status.
                 code = 128 - process.returncode if process.returncode < 0 else process.returncode
                 self.assertEqual((code, stdout, stderr), (status, '', ''))

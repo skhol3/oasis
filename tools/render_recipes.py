@@ -21,6 +21,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+_spec = importlib.util.spec_from_file_location('oasis_siblings', Path(__file__).with_name('siblings.py'))
+_spec.loader.exec_module(siblings := importlib.util.module_from_spec(_spec))
+
 ROOT = Path(__file__).resolve().parents[1]
 SERIES = re.compile(r'\d+\.0')
 ATTRIBUTES = ('id', 'since')
@@ -43,11 +46,7 @@ def series_key(series):
 
 
 def supported_series():
-    spec = importlib.util.spec_from_file_location('render_recipes_odoo_versions',
-                                                  Path(__file__).with_name('odoo_versions.py'))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.supported()
+    return siblings.load('odoo_versions', 'render_recipes_odoo_versions').supported()
 
 
 class Variant:

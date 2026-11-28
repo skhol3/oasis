@@ -7,7 +7,7 @@
 import { posix } from "node:path";
 import { type AskAction, blockedEverywhere, blockReason, classifyBash } from "./bash-guard.ts";
 import { type MenuEntry, plainLine } from "./menu.ts";
-import { CHECKOUT_NAME, findWorkspaceFile, machineFile, PROFILE_NAME, WORKSPACE_NAME } from "./project.ts";
+import { CHECKOUT_NAME, findWorkspaceFile, machineFile, WORKSPACE_NAME } from "./project.ts";
 
 /** The custom session entry type of a decision: shown to the user, never sent to the model. */
 export const DECISION_ENTRY = "oasis-agent-decision";
@@ -20,12 +20,11 @@ export type AgentDestructive = (typeof AGENT_DESTRUCTIVE)[number];
 const APPROVED = "Agent command approved";
 const REFUSED = "Agent command refused";
 // The files that hold [tooling].agent_destructive: a workspace file in the session's directory or
-// above it, where tools/config.py finds it (an oasis-checkout.toml refuses the key), and a legacy
-// profile there, which config.py no longer reads but oasis migrate converts into the workspace file.
+// above it, where tools/config.py finds it (an oasis-checkout.toml refuses the key).
 // Also the workspace file a linked worktree reads through git (findWorkspaceFile), and the machine
 // file, which holds the Odoo source paths (see settingFiles). A checkout's oasis-checkout.toml
 // sets its checkout_slug, the database namespace, and its environment (see checkoutFiles).
-const SETTING_NAMES = new Set([WORKSPACE_NAME, PROFILE_NAME]);
+const SETTING_NAMES = new Set([WORKSPACE_NAME]);
 // How a write to the machine file is spelled when the text does not tell its directory.
 const MACHINE_TAIL = "oasis/config.toml";
 const NOTE = " (it holds [tooling].agent_destructive)";
@@ -98,7 +97,7 @@ function setting(value: string | undefined): AgentDestructive {
 // How strict a mode is: the stricter of two decides.
 const STRICTNESS: Record<AgentDestructive, number> = { allow: 0, ask: 1, deny: 2 };
 // A tool script whose root variable is set elsewhere on the line reads a root the text does not tell.
-const ROOT_VARIABLE = /\b(?:OASIS|ODOO19)_PROJECT_ROOT\b/;
+const ROOT_VARIABLE = /\bOASIS_PROJECT_ROOT\b/;
 
 /**
  * The mode of one tool call's ask actions: the stricter of the session project's setting and the
@@ -163,7 +162,7 @@ function machineFiles(effects: GateEffects): Set<string> {
 
 /**
  * The setting file a write reaches from a session in cwd (GuardContext.settingFile): a path named
- * oasis-workspace.toml or .odoo19-agent.toml in cwd or above it, the workspace file the session's
+ * oasis-workspace.toml in cwd or above it, the workspace file the session's
  * checkout reads when it is elsewhere (a linked worktree outside the workspace directory reads its
  * main checkout's, found through git), or the machine file (machineFiles); as written or as its real
  * path (a link, or a linked directory, reaches the file it names; above the real cwd too). A path

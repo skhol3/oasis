@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-# Deprecated alias of setup-postgres (v0.20.0 S13: "database" now names an Odoo database, as in create-database and
-# drop-database): it runs tools/setup-postgres with the same arguments, so the same lines, exit codes, usage and tier
-# (tools/policy.py ALIASES), after one line on stderr that names the new name.
-set -Eeuo pipefail
-printf 'WARNING: start-database is a deprecated alias of setup-postgres: run setup-postgres instead.\n' >&2
-exec bash "$(dirname "$0")/setup-postgres" "$@"

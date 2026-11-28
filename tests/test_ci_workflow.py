@@ -1,5 +1,5 @@
-"""The GitHub Actions workflow (v0.17.0 S4): the Odoo 15 Python job installs 3.8 and 3.9 together, runs tests that
-exist and fails when one of them skips; every job has a timeout. Read as text: no YAML parser is needed."""
+"""The GitHub Actions workflow (v0.17.0 S4): the Odoo 15 Python job runs tests that exist and fails when one
+of them skips; every job has a timeout. Read as text: no YAML parser is needed."""
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import importlib
 from pathlib import Path
@@ -33,12 +33,8 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(job=name):
                 self.assertRegex(body, r'(?m)^    timeout-minutes: [1-9][0-9]*$')
 
-    def test_the_odoo15_job_installs_both_pythons_in_one_job_and_fails_on_a_skip(self):
-        body = self.jobs['odoo15-python']
-        self.assertNotIn('matrix', body)
-        self.assertIn('uv python install 3.8 3.9', body)
-        self.assertIn('python3 -B -m unittest -v', body)
-        self.assertIn("if grep -n 'skipped' \"$RUNNER_TEMP/odoo15-python.log\"; then", body)
+    def test_the_odoo15_job_fails_when_a_test_skips(self):
+        self.assertIn("if grep -n 'skipped' \"$RUNNER_TEMP/odoo15-python.log\"; then", self.jobs['odoo15-python'])
 
     def test_the_odoo15_job_runs_tests_that_exist(self):
         body = self.jobs['odoo15-python']

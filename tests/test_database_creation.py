@@ -9,8 +9,7 @@ checked first and a missing one is refused (exit 2) naming the create-database p
 that variable, over the configuration file; 15.0 does not read it) and from the configuration file of a later
 -c/--config among the passed options instead of odoo.conf (v0.20.0 L22 (b)).
 
-Synthetic fixtures with the fake docker and python of test_lifecycle, through the project wrappers (restart, which
-has none, through the oasis entry point)."""
+Synthetic fixtures with the fake docker and python of test_lifecycle, through the oasis entry point."""
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import re
 import shlex

@@ -120,8 +120,8 @@ def report(root: Path) -> dict:
                              'detail': str(environment)}
     requirements = Path(values['REQUIREMENTS_DIR'])
     try:
-        current = locks.current(requirements, Path(values['PROJECT_ROOT']))
-        state = 'current' if current else locks.state(requirements, Path(values['PROJECT_ROOT']))
+        current = locks.current(requirements)
+        state = 'current' if current else locks.state(requirements)
     except (OSError, ValueError) as exc:
         current, state = False, f'unknown ({exc})'
     checks['locks'] = {'ready': current, 'detail': state}

@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
-exec python3 -I -B "$(dirname "$0")/migrate.py" "$@"

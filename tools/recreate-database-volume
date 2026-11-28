@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-# Deprecated alias of recreate-postgres-volume (v0.20.0 S13: "database" now names an Odoo database, as in create-database and
-# drop-database): it runs tools/recreate-postgres-volume with the same arguments, so the same lines, exit codes, usage and tier
-# (tools/policy.py ALIASES, the same --confirm <compose project>), after one line on stderr that names the new name.
-set -Eeuo pipefail
-printf 'WARNING: recreate-database-volume is a deprecated alias of recreate-postgres-volume: run recreate-postgres-volume instead.\n' >&2
-exec bash "$(dirname "$0")/recreate-postgres-volume" "$@"

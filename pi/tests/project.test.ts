@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative as relativePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  findProjectRoot, findWorkspaceFile, legacyProfile, migrateFlow, notProject, type PlanFlow, planConfirmation,
+  findProjectRoot, findWorkspaceFile, notProject, type PlanFlow, planConfirmation,
   projectContext, projectRootResolver, worktreeFlow,
 } from "../lib/project.ts";
 
@@ -18,17 +18,15 @@ function scratch(): string {
 // series, so the bound moved from 1200 to 1300 characters.
 const COMPACT = 1300;
 
-// tools/config.py no longer reads a legacy profile but refuses a checkout that has one: outside a
-// workspace the directory holding it stays the root, so every command shows that refusal.
-
-test("findProjectRoot without a workspace file walks up to a legacy profile, so its refusal shows", () => {
+// v0.21.0 S6: the profile format before v0.12.0 (.odoo19-agent.toml) is not read, so it makes no project root.
+test("findProjectRoot without a workspace file ignores an old profile", () => {
   const root = scratch();
   try {
     writeFileSync(join(root, ".odoo19-agent.toml"), "[tooling]\n");
     const nested = join(root, "addons", "coffee", "models");
     mkdirSync(nested, { recursive: true });
-    assert.equal(findProjectRoot(nested), root);
-    assert.equal(findProjectRoot(root), root);
+    assert.equal(findProjectRoot(nested), null);
+    assert.equal(findProjectRoot(root), null);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -135,15 +133,11 @@ test("projectRootResolver retries a failed git lookup and caches a found top lev
     assert.equal(await resolve(nested), checkout);
     assert.equal(await resolve(nested), checkout);
     assert.deepEqual(asked, [nested, nested]);
-    // A profile needs no git lookup.
-    const plain = scratch();
+    // Outside a workspace no git lookup is needed.
     const outside = scratch();
     try {
-      writeFileSync(join(plain, ".odoo19-agent.toml"), "[tooling]\n");
-      assert.equal(await resolve(plain), plain);
       assert.equal(await resolve(outside), null);
     } finally {
-      rmSync(plain, { recursive: true, force: true });
       rmSync(outside, { recursive: true, force: true });
     }
     assert.deepEqual(asked, [nested, nested]);
@@ -152,55 +146,20 @@ test("projectRootResolver retries a failed git lookup and caches a found top lev
   }
 });
 
-test("findWorkspaceFile and findProjectRoot cross a legacy profile above the checkout, as config.py does", () => {
-  const { project, checkout, nested } = workspaceLayout();
-  try {
-    const codigo = join(project, "codigo");
-    writeFileSync(join(codigo, ".odoo19-agent.toml"), "[tooling]\n");
-    assert.equal(findWorkspaceFile(nested), join(project, "oasis-workspace.toml"));
-    assert.equal(findWorkspaceFile(codigo), join(project, "oasis-workspace.toml"));
-    assert.equal(findProjectRoot(nested, () => checkout), checkout);
-    assert.equal(legacyProfile(checkout), null);
-  } finally {
-    rmSync(project, { recursive: true, force: true });
-  }
-});
-
-test("findProjectRoot keeps a checkout that has its own legacy profile below a workspace file", () => {
-  const { project, checkout, nested } = workspaceLayout();
-  try {
-    const profile = join(checkout, ".odoo19-agent.toml");
-    writeFileSync(profile, "[tooling]\n");
-    // With git, the checkout is its top level; config.py refuses it there.
-    assert.equal(findProjectRoot(nested, () => checkout), checkout);
-    // Without git, the directory holding .git, as git finds it; the profile never picks the root.
-    writeFileSync(join(checkout, ".git"), "gitdir: /elsewhere\n");
-    assert.equal(findProjectRoot(nested, () => null), checkout);
-    assert.equal(findProjectRoot(nested), checkout);
-    assert.equal(legacyProfile(checkout), profile);
-    assert.equal(legacyProfile(nested), null);
-  } finally {
-    rmSync(project, { recursive: true, force: true });
-  }
-});
-
 // Without git (or with a top level outside the workspace directory) the root is the directory
 // git would report: the nearest one holding .git, from the start directory up to the workspace
-// directory, else the start directory. A legacy profile on the way never becomes the root:
-// tools/config.py checks only <root>/.odoo19-agent.toml and crosses every other one.
-test("findProjectRoot without git crosses a legacy profile between the workspace and the checkout", () => {
+// directory, else the start directory.
+test("findProjectRoot without git takes the directory holding .git up to the workspace directory", () => {
   const { project, checkout, nested } = workspaceLayout();
   try {
     const codigo = join(project, "codigo");
-    writeFileSync(join(codigo, ".odoo19-agent.toml"), "[tooling]\n");
     const noGit = [undefined, () => null, () => tmpdir(), () => join(project, "..")];
-    // No .git: the start directory, as with no profile at all.
+    // No .git: the start directory.
     for (const gitTopLevel of noGit) assert.equal(findProjectRoot(nested, gitTopLevel), nested);
     // A checkout holding .git (a directory, or a linked worktree's file): that checkout.
     mkdirSync(join(checkout, ".git"));
     for (const gitTopLevel of noGit) assert.equal(findProjectRoot(nested, gitTopLevel), checkout);
-    assert.equal(legacyProfile(checkout), null);
-    // Started in the directory holding the profile, that directory is the root and config.py refuses it.
+    // Started in a directory between the workspace and the checkout, that directory.
     for (const gitTopLevel of noGit) assert.equal(findProjectRoot(codigo, gitTopLevel), codigo);
     // The workspace directory itself may be the checkout.
     rmSync(join(checkout, ".git"), { recursive: true });
@@ -219,36 +178,31 @@ test("findProjectRoot without git crosses a legacy profile between the workspace
     const start = join(codigo, "acme", "addons");
     mkdirSync(start, { recursive: true });
     writeFileSync(join(workspace, "oasis-workspace.toml"), "workspace_version = 1\n");
-    writeFileSync(join(codigo, ".odoo19-agent.toml"), "[tooling]\n");
     for (const gitTopLevel of [() => outer, () => null]) assert.equal(findProjectRoot(start, gitTopLevel), start);
   } finally {
     rmSync(outer, { recursive: true, force: true });
   }
 });
 
-// The extension's before_agent_start handler names the workspace file only for a root without its
-// own legacy profile: projectContext then says the profile is no longer read.
-test("before_agent_start passes projectContext the workspace file, or null for a root with a legacy profile", () => {
+// The extension's before_agent_start handler names the workspace file of the root (v0.21.0 S6: no old profile).
+test("before_agent_start passes projectContext the workspace file of the root", () => {
   const source = readFileSync(new URL("../extensions/oasis.ts", import.meta.url), "utf8");
   const handler = source.match(/pi\.on\("before_agent_start", async \(event, ctx\) => \{[^]*?\n {2}\}\);\n/);
   assert.ok(handler, "before_agent_start handler");
   const flat = handler[0].split(/\s+/).join(" ");
   for (const part of [
     "const root = await projectRoot(ctx.cwd); if (!root) return;",
-    "const workspace = legacyProfile(root) ? null : findWorkspaceFile(root);",
+    "const workspace = findWorkspaceFile(root); if (!workspace) return;",
     "const context = projectContext(root, workspace, pi.getActiveTools(), await projectVersion(root));",
   ]) {
     assert.ok(flat.includes(part), part);
   }
-  // What each branch gives projectContext.
   const { project, checkout } = workspaceLayout();
   try {
     const workspace = join(project, "oasis-workspace.toml");
-    assert.equal(legacyProfile(checkout) ? null : findWorkspaceFile(checkout), workspace);
-    assert.ok(projectContext(checkout, workspace).includes(`(workspace ${workspace}).`));
     writeFileSync(join(checkout, ".odoo19-agent.toml"), "[tooling]\n");
-    assert.equal(legacyProfile(checkout) ? null : findWorkspaceFile(checkout), null);
-    assert.match(projectContext(checkout, null), /\(legacy \.odoo19-agent\.toml, no longer read: the user runs \/oasis migrate\)/);
+    assert.equal(findWorkspaceFile(checkout), workspace);
+    assert.ok(projectContext(checkout, workspace).includes(`(workspace ${workspace}).`));
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
@@ -269,10 +223,9 @@ test("findWorkspaceFile returns the nearest workspace file at or above the start
 });
 
 test("projectContext names the root and routes the agent to the oasis tools", () => {
-  const text = projectContext("/work/coffee");
-  // Without a workspace file the root holds a legacy profile, which no command reads any more.
-  assert.match(text, /Odoo project root: \/work\/coffee \(legacy \.odoo19-agent\.toml, no longer read: the user /);
-  assert.ok(text.includes("runs /oasis migrate"), text);
+  const text = projectContext("/work/coffee", "/work/coffee/oasis-workspace.toml");
+  assert.match(text, /Odoo project root: \/work\/coffee \(workspace \/work\/coffee\/oasis-workspace\.toml\)/);
+  assert.ok(!text.includes("migrate"), text);
   for (const tool of [
     "oasis_test_module",
     "oasis_test_summary",
@@ -311,7 +264,7 @@ test("projectContext names the workspace file of the checkout", () => {
 });
 
 test("projectContext names only the oasis tools the session has", () => {
-  const some = projectContext("/work/coffee", null, ["read", "bash", "oasis_model_info", "oasis_lint_module"]);
+  const some = projectContext("/work/coffee", "/work/coffee/oasis-workspace.toml", ["read", "bash", "oasis_model_info", "oasis_lint_module"]);
   assert.ok(some.includes("- oasis_model_info:") && some.includes("- oasis_lint_module:"), some);
   for (const absent of ["oasis_test_module", "oasis_test_summary", "oasis_module_status", "oasis_find_module"]) {
     assert.ok(!some.includes(absent), absent);
@@ -320,7 +273,7 @@ test("projectContext names only the oasis tools the session has", () => {
 });
 
 test("projectContext points a session without oasis tools to the guarded CLI", () => {
-  const none = projectContext("/work/coffee", null, ["read", "grep"]);
+  const none = projectContext("/work/coffee", "/work/coffee/oasis-workspace.toml", ["read", "grep"]);
   assert.match(none, /Odoo project root: \/work\/coffee/);
   assert.ok(!none.includes("oasis_"), none);
   assert.ok(none.includes("`oasis --project /work/coffee <command>`"), none);
@@ -330,18 +283,18 @@ test("projectContext points a session without oasis tools to the guarded CLI", (
 test("projectContext names the configured Odoo series and its recipe directories", () => {
   // v0.19.0 S5: the recipes of the project's series are named in the context, so an agent sees the
   // route without opening a skill first.
-  const text = projectContext("/work/coffee", null, undefined, "19.0");
+  const text = projectContext("/work/coffee", "/work/coffee/oasis-workspace.toml", undefined, "19.0");
   assert.match(text, /^Odoo 19\.0 project root: \/work\/coffee /);
   assert.ok(text.includes("load the odoo-* skill for series 19.0 first "
     + "(recipes: ~/.agents/skills/oasis/odoo-*/references/19.0/)."), text);
-  const other = projectContext("/work/coffee", null, undefined, "15.0");
+  const other = projectContext("/work/coffee", "/work/coffee/oasis-workspace.toml", undefined, "15.0");
   assert.match(other, /^Odoo 15\.0 project root: /);
   assert.ok(other.includes("load the odoo-* skill for series 15.0 first "
     + "(recipes: ~/.agents/skills/oasis/odoo-*/references/15.0/)."), other);
   assert.ok(!other.includes("references/19.0/"), other);
   for (const context of [text, other]) assert.ok(!/odoo\d+-\*/.test(context), context);
   // Unknown series (the configuration could not be read): no number is made up.
-  const unknown = projectContext("/work/coffee");
+  const unknown = projectContext("/work/coffee", "/work/coffee/oasis-workspace.toml");
   assert.match(unknown, /^Odoo project root: /);
   assert.ok(unknown.includes("load the odoo-* skill first."), unknown);
   assert.ok(!/odoo\d+-\*|references\//.test(unknown), unknown);
@@ -458,25 +411,17 @@ test("project detection and tools/config.py give one root and workspace for a wo
   }
 });
 
-// v0.16.0 S1: /oasis worktree and /oasis migrate confirm with the exact name the dry run names.
-// The plans as tools/worktree_init.py and tools/migrate.py print them (tests/test_workspace.py and
-// tests/test_migrate.py pin those lines).
+// v0.16.0 S1: /oasis worktree confirms with the exact name the dry run names.
+// The plan as tools/worktree_init.py prints it (tests/test_workspace.py pins those lines).
 const WORKTREE_PLAN = "worktree: /work/shop feat\nbranch: feature/x (new, from HEAD)\nslug: feat\nworkspace: /work\n" +
   "dry run: nothing changed\n";
-const MIGRATE_PLAN = "workspace: /work\ncheckout: /work/shop (main)\nwrite /work/oasis-workspace.toml\n" +
-  "  workspace_version = 1\n  write /work/elsewhere/oasis-workspace.toml\nwrite /work/shop/oasis-checkout.toml\n" +
-  "dry run: nothing changed; run with --apply to migrate\n";
 
-test("planConfirmation reads the --confirm value from the plan of worktree-init and migrate", () => {
-  assert.equal(planConfirmation("worktree", WORKTREE_PLAN), "/work/shop feat");
-  assert.equal(planConfirmation("migrate", MIGRATE_PLAN), "/work/oasis-workspace.toml");
-  // Only a line of the plan itself counts: indented file content and other kinds' lines do not.
-  assert.equal(planConfirmation("migrate", "workspace: /work\n  write /work/oasis-workspace.toml\n"), null);
-  assert.equal(planConfirmation("migrate", "write /work/shop/oasis-checkout.toml\n"), null);
-  assert.equal(planConfirmation("worktree", MIGRATE_PLAN), null);
-  assert.equal(planConfirmation("migrate", WORKTREE_PLAN), null);
-  assert.equal(planConfirmation("worktree", "dry run: nothing changed\n"), null);
-  assert.equal(planConfirmation("migrate", ""), null);
+test("planConfirmation reads the --confirm value from the plan of worktree-init", () => {
+  assert.equal(planConfirmation(WORKTREE_PLAN), "/work/shop feat");
+  // Only a line of the plan itself counts.
+  assert.equal(planConfirmation("workspace: /work\n  worktree: /work/shop feat\n"), null);
+  assert.equal(planConfirmation("dry run: nothing changed\n"), null);
+  assert.equal(planConfirmation(""), null);
 });
 
 type Call = string[];
@@ -527,36 +472,10 @@ test("/oasis worktree shows the dry run, then runs worktree-init --confirm <the 
   assert.deepEqual(unnamed.notices, [["oasis worktree:\nERROR: Run: x", "error"]]);
 });
 
-test("/oasis migrate shows the plan, then runs migrate --apply --confirm <the workspace file it writes> on yes", async () => {
-  const yes = flow([{ code: 0, stdout: MIGRATE_PLAN }, { code: 0, stdout: "verified: 1 checkouts\n" }], true);
-  await migrateFlow(yes.value);
-  assert.deepEqual(yes.calls, [["migrate"], ["migrate", "--apply", "--confirm", "/work/oasis-workspace.toml"]]);
-  assert.equal(yes.dialogs.length, 1);
-  assert.equal(yes.dialogs[0][0], "oasis migrate");
-  assert.ok(yes.dialogs[0][1].endsWith("write /work/shop/oasis-checkout.toml\n\nMigrate to this workspace file?"));
-  assert.ok(!yes.dialogs[0][1].includes("dry run: "));
-  assert.deepEqual(yes.notices, [["oasis migrate:\nverified: 1 checkouts", "info"]]);
-  const no = flow([{ code: 0, stdout: MIGRATE_PLAN }], false);
-  await migrateFlow(no.value);
-  assert.deepEqual(no.calls, [["migrate"]]);
-  assert.deepEqual(no.notices, [["oasis migrate: nothing changed.", "info"]]);
-  const done = flow([{ code: 0, stdout: "nothing to migrate: /work/shop has no .odoo19-agent.toml\n" }], true);
-  await migrateFlow(done.value);
-  assert.deepEqual(done.dialogs, []);
-  assert.deepEqual(done.notices, [["oasis migrate: nothing to migrate: /work/shop has no .odoo19-agent.toml", "info"]]);
-  const failing = flow([{ code: 0, stdout: MIGRATE_PLAN }, { code: 1, stderr: "ERROR: Verification failed\n" }], true);
-  await migrateFlow(failing.value);
-  assert.deepEqual(failing.notices, [["oasis migrate:\nERROR: Verification failed", "error"]]);
-  const thrown = flow([], true);
-  await migrateFlow(thrown.value);
-  assert.deepEqual(thrown.notices, [["oasis migrate failed: unexpected run: migrate", "error"]]);
-});
-
-test("the extension's /oasis worktree and /oasis migrate are these flows over the CLI in the project root", () => {
+test("the extension's /oasis worktree is this flow over the CLI in the project root", () => {
   const flat = readFileSync(new URL("../extensions/oasis.ts", import.meta.url), "utf8").split(/\s+/).join(" ");
   for (const part of [
     "await worktreeFlow(planFlow(root, ctx.ui), feature, branch);",
-    "await migrateFlow(planFlow(root, ctx.ui));",
     "run: (args) => run(root, args, undefined, TOOL_TIMEOUT_MS),",
   ]) {
     assert.ok(flat.includes(part), part);

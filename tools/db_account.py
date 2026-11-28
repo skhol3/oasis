@@ -20,7 +20,7 @@ Usage:
   db_account.py compose-project <compose file>
       the compose file's top-level name, or nothing.
   db_account.py fix <odoo.conf> <env_file> <compose file> <program> <project root>
-      what fixes an authentication failure (doctor and check-environment print it): recreating the volume
+      what fixes an authentication failure (doctor and doctor --environment print it): recreating the volume
       only when odoo.conf names the endpoint the compose service publishes, correcting the account on the
       server odoo.conf names when it is another one, and both when the port the compose file publishes to
       5432 cannot be read (several ports, the long syntax, a variable or a range).

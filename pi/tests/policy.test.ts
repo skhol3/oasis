@@ -2,7 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { classifyBash } from "../lib/bash-guard.ts";
 import { POLICY } from "../lib/policy.generated.ts";
-import { HARNESS, tierOf } from "../lib/policy.ts";
+import { tierOf } from "../lib/policy.ts";
+
+// What the guard does with each tier (tools/policy.py HARNESS): A runs, B asks, C is denied.
+const HARNESS = { A: "allow", B: "ask", C: "deny" } as const;
 
 // v0.16.0 S1: the guard takes its tiers from the core policy table (tools/policy.py, generated into
 // lib/policy.generated.ts; tests/test_policy.py fails when that module drifts from the table).
@@ -30,21 +33,16 @@ test("Tier A operations an agent was denied before now run", () => {
     "oasis --project /p setup --community $SRC --apply",
     "~/.agents/skills/oasis/tools/setup --apply",
     "oasis --project /p worktree-init feat feature/x --dry-run",
-    "oasis --project /p migrate",
-    "oasis --project /p migrate --plan",
   ]) {
     assert.deepEqual(classifyBash(command), { program: null, programs: [], asks: [] }, command);
   }
 });
 
-test("Tier B worktree-init and migrate --apply ask instead of being denied", () => {
+test("Tier B worktree-init asks instead of being denied", () => {
   const cases: [string, object[]][] = [
     ["oasis --project /p worktree-init feat feature/x", [{ command: "worktree-init", project: "/p" }]],
     ["tools/worktree-init feat x", [{ command: "worktree-init" }]],
     ["python3 -I -B tools/worktree_init.py feat x --dry-run $MORE", [{ command: "worktree-init" }]],
-    ["oasis --project /p migrate --apply", [{ command: "migrate --apply", project: "/p" }]],
-    ["oasis --project /p migrate $ARGS", [{ command: "migrate --apply", project: "/p" }]],
-    ["python3 -I -B ~/.agents/skills/oasis/tools/migrate.py --apply", [{ command: "migrate --apply" }]],
   ];
   for (const [command, asks] of cases) {
     assert.deepEqual(classifyBash(command), { program: null, programs: [], asks }, command);

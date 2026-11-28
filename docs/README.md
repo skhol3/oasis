@@ -10,8 +10,8 @@ One topic per file. Start from the group that matches what you are doing; the
 | [Install or update](install.md) | Which install does what: `install.sh` (skills and CLI) and the package (tools, `/oasis`, panel) |
 | [Setting up a new workspace](new-workspace.md) | Start here: from a clone to `doctor` and a database with `oasis setup`; where each value lives, an example tree, the steps by hand |
 | [Setting up a checkout with oasis setup](setup.md) | `oasis setup` reference: the plan, then `--apply` creates only what is missing |
-| [New project: deliberate setup](project-setup.md) | Workspace file, entry point and optional project wrappers |
-| [Checking the environment](checking-environment.md) | `doctor`, `doctor --environment` (`check-environment`, a deprecated alias) and `lock.sha256` |
+| [New project: deliberate setup](project-setup.md) | Workspace file and the entry point |
+| [Checking the environment](checking-environment.md) | `doctor`, `doctor --environment` and `lock.sha256` |
 | [Workspace file](workspace-file.md) | One `oasis-workspace.toml` for every checkout |
 | [Gentle Shell layer](gentle-shell-layer.md) | Installing the package, the agent tools and `/oasis` |
 
@@ -27,7 +27,6 @@ One topic per file. Start from the group that matches what you are doing; the
 | [Fresh development database with role accounts](dev-database.md) | `create-database`, demo data and credentials |
 | [Checkouts and worktrees](checkouts-and-worktrees.md) | Checkout identity, databases per checkout and `worktree-init` |
 | [Path-free odoo.conf](path-free-odoo-conf.md) | `--addons-path` and `--data-dir` on the command line |
-| [Migrating to the workspace file](migrating.md) | `oasis migrate` |
 | [Troubleshooting](troubleshooting.md) | Tool-manager shims and known failures |
 
 ## Agent and skill author
@@ -48,8 +47,7 @@ One topic per file. Start from the group that matches what you are doing; the
 
 | Documentation | Purpose |
 | --- | --- |
-| [Portable verification](verification.md) | Running the bundle's fixture tests |
+| [How oasis is built](architecture.md) | The layers and who calls whom, the commands by job, the shared modules, where the policy lives, how to add a command and the known growth problems |
 | [Changelog](../CHANGELOG.md) | Releases and contract changes |
-| [Headless Chromium socket path](odoo19-chromium-socket-path-too-long.md) | Incident note: browser tests and a long `TMPDIR` |
 
 Contributor rules are in `AGENTS.md` in the source repository; it is not installed.

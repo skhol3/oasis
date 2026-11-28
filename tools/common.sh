@@ -298,23 +298,11 @@ run_odoo() {
   "$PYTHON" "$ODOO_BIN" "${ODOO_CONFIG_ARGUMENTS[@]}" "$@"
 }
 
-lock_fingerprint_arg() {
-  local fingerprint="$REQUIREMENTS_DIR/lock.sha256"
-  if [[ "$REQUIREMENTS_DIR" == "$PROJECT_ROOT/"* ]]; then
-    fingerprint=${fingerprint#"$PROJECT_ROOT/"}
-  fi
-  printf '%s\n' "$fingerprint"
-}
-
 # Whether lock.sha256 matches the dependency inputs and locks. Its entries are relative to its
-# own directory (as oasis migrate writes them, or `sha256sum ... > lock.sha256` run there); a
-# legacy lock lists them relative to the project root, so that is checked next.
+# own directory (as tools/locks.py writes them, or `sha256sum ... > lock.sha256` run there).
 dependency_locks_current() {
   [[ -f "$REQUIREMENTS_DIR/lock.sha256" ]] || return 1
-  if (cd "$REQUIREMENTS_DIR" && sha256sum --check --strict lock.sha256 >/dev/null 2>&1); then
-    return 0
-  fi
-  (cd "$PROJECT_ROOT" && sha256sum --check --strict "$(lock_fingerprint_arg)" >/dev/null 2>&1)
+  (cd "$REQUIREMENTS_DIR" && sha256sum --check --strict lock.sha256 >/dev/null 2>&1)
 }
 
 run_audit() {

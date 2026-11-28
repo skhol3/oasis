@@ -31,31 +31,14 @@ python3 -B -m unittest discover -s tests
 ./install.sh --target /absolute/scratch/oasis # try it somewhere else first
 ```
 
-The installer copies the committed HEAD only (uncommitted edits are never installed), drops repository-only files (`AGENTS.md`, `.gitignore`, `install.sh`), records the installed version (from `package.json`) and commit in `.oasis-install.json`, and moves the previous install to `${XDG_STATE_HOME:-~/.local/state}/oasis/backups/`, outside any skill discovery directory. `OASIS_STATE_DIR` overrides that state directory. Run it again to update.
+The installer copies the committed HEAD only (uncommitted edits are never installed), drops repository-only files (`AGENTS.md`, `.gitignore`, `install.sh`, and since v0.21.0 the plans in `odd/` and the test suites in `tests/` and `pi/tests/`), records the installed version (from `package.json`) and commit in `.oasis-install.json`, and moves the previous install to `${XDG_STATE_HOME:-~/.local/state}/oasis/backups/`, outside any skill discovery directory. `OASIS_STATE_DIR` overrides that state directory. Run it again to update.
 
 ### From an earlier version
 
-Before 0.17.0 the install directory was `~/.agents/skills/odoo19`, with an `odoo19` alias of the entry
-point. Installing into the default target moves that directory to the backups too
-(`previous odoo19 install removed from <dir>; kept in <backup>`), so its `odoo19-*` skills are no longer
-discovered. It does so only for an oasis install, a directory holding `.oasis-install.json`; a symlink, a
-file or any other directory there is left as it is, with
-`install.sh: warning: <dir> is not an oasis install (no .oasis-install.json); not removed`. With `--target`
-it is never touched. Then:
-
-- Run `~/.agents/skills/oasis/oasis` (there is no `odoo19` command any more), and in Gentle Shell
-  `/oasis` and the `oasis_*` tools (`/odoo19` and the `odoo19_*` aliases are gone; `/oasis setup`
-  updates an overlay that still names them).
-- Project wrappers copied into a project's `dev/scripts/` from an earlier version call
-  `~/.agents/skills/odoo19/tools`. `oasis doctor` reports them as `FAIL project_wrappers=old_install_dir`;
-  its fix line lists them: replace `.agents/skills/odoo19/` with `.agents/skills/oasis/` in each (or copy
-  them again from `~/.agents/skills/oasis/project-wrappers/`).
-- Only the `OASIS_*` variables are read: `ODOO19_PROJECT_ROOT`, `ODOO19_ENTRYPOINT`, `ODOO19_TOOLS_DIR` and
-  `ODOO19_COMPOSE_LOCK_TIMEOUT` are ignored, and neither the entry point nor the wrapper templates set them.
-  A script that sets one needs the `OASIS_*` name.
-- A workspace without `[tooling].logs` keeps its logs in `logs` next to `oasis-workspace.toml` (`logs/<x.y>`
-  with `workspace_version = 2`), no longer in each checkout's `dev/logs/odoo19/`; runs already there stay where
-  they are and `oasis_test_summary` no longer reads them.
+Since v0.21.0 nothing of an install before 0.17.0 (`~/.agents/skills/odoo19`) is moved, read or reported: the
+[README](../README.md) contract note of v0.21.0 says what a project from an earlier version runs (its
+`.odoo19-agent.toml`, project wrappers that call `~/.agents/skills/odoo19/tools`, an old `lock.sha256`). Only the
+`OASIS_*` variables are read; the entry point sets no `ODOO19_*` one (v0.21.0 removed the project wrapper templates).
 
 ## Running the CLI
 
@@ -112,4 +95,4 @@ directory holds, including a branch under development; use it only to try change
 
 ## What gets installed
 
-The `install.sh` target contains the six `odoo-<topic>` skill directories, `tools/`, `project-wrappers/`, `tests/`, `docs/`, the `oasis` entry point, the Gentle Shell layer (`package.json` and `pi/`), and the [README](../README.md). Restart the agent session or use `/reload` where supported, then check that exactly six skills are discovered. The skill entrypoints are [backend](../odoo-backend/SKILL.md), [security](../odoo-security/SKILL.md), [views/frontend](../odoo-views-frontend/SKILL.md), [testing](../odoo-testing/SKILL.md), [environment](../odoo-environment/SKILL.md), and [module lifecycle](../odoo-module-lifecycle/SKILL.md). Each SKILL.md is common to every series. The backend, security, views/frontend and testing skills send the agent to the task recipes of its series in `references/<series>/` (since 0.19.0; one recipe per task and series, rendered from `recipes/`); the environment and module lifecycle skills send it to their `references/<series>.md`. The series is the one `oasis doctor` prints (`series=`, else `odoo_release=`). Since 0.17.0 the skills are named `odoo-<topic>`; the `odoo19-*` skills of earlier versions are gone: installing replaces the whole target and moves a previous `~/.agents/skills/odoo19` install away, so none is left behind. See the [project capability contract](../odoo-environment/references/project-contract.md).
+The `install.sh` target contains the six `odoo-<topic>` skill directories, `tools/`, `docs/`, the `oasis` entry point, the Gentle Shell layer (`package.json` and `pi/` without its tests), and the [README](../README.md). Restart the agent session or use `/reload` where supported, then check that exactly six skills are discovered. The skill entrypoints are [backend](../odoo-backend/SKILL.md), [security](../odoo-security/SKILL.md), [views/frontend](../odoo-views-frontend/SKILL.md), [testing](../odoo-testing/SKILL.md), [environment](../odoo-environment/SKILL.md), and [module lifecycle](../odoo-module-lifecycle/SKILL.md). Each SKILL.md is common to every series. The backend, security, views/frontend and testing skills send the agent to the task recipes of its series in `references/<series>/` (since 0.19.0; one recipe per task and series, rendered from `recipes/`); the environment and module lifecycle skills send it to their `references/<series>.md`. The series is the one `oasis doctor` prints (`series=`, else `odoo_release=`). Since 0.17.0 the skills are named `odoo-<topic>`; the `odoo19-*` skills of earlier versions are gone: installing replaces the whole target (since v0.21.0 it leaves a previous `~/.agents/skills/odoo19` install where it is: see [From an earlier version](#from-an-earlier-version)). See the [project capability contract](../odoo-environment/references/project-contract.md).

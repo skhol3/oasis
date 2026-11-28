@@ -3,7 +3,6 @@ import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oa
 import json
 import os
 from pathlib import Path
-import shlex
 import shutil
 import subprocess
 import sys
@@ -16,20 +15,17 @@ CLI = ROOT / 'oasis'
 PROGRAMS = ('oasis',)
 
 
-def legacy_refusal(profile, program='oasis'):
-    """The refusal of a checkout with a legacy profile, here where the fake bundle has no migrate.py to plan
-    it: its runnable --plan (tests/test_migrate.py covers the exact --apply --confirm <workspace file>)."""
-    plan = shlex.join([program, '--project', str(profile.parent), 'migrate', '--plan'])
-    return (f'ERROR: {profile} is the old profile format, no longer read: run {plan} to see its conversion to '
-            'oasis-workspace.toml or what stops it.\n')
 # v0.20.0 S12: create-database is the one creator (init-dev-database is gone); S13: setup-postgres and
-# recreate-postgres-volume, with start-database and recreate-database-volume kept as deprecated aliases.
-PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
+# recreate-postgres-volume. v0.21.0 S7: the deprecated aliases are gone.
+PUBLIC = ('audit-dependencies', 'bootstrap', 'create-database', 'doctor',
           'drop-database', 'gc', 'install-module', 'lint-module', 'list-databases',
-          'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy',
-          'recreate-database-volume', 'recreate-postgres-volume', 'restart', 'setup', 'setup-postgres', 'start',
-          'start-database', 'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info',
+          'menu', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy',
+          'recreate-postgres-volume', 'restart', 'setup', 'setup-postgres', 'start',
+          'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info',
           'worktree-init', 'xmlid-info')
+# v0.21.0 S7: the deprecated aliases (v0.16.0 S5, v0.20.0 S13) and the command each named.
+REMOVED_ALIASES = {'check-environment': 'doctor --environment', 'start-database': 'setup-postgres',
+                   'recreate-database-volume': 'recreate-postgres-volume'}
 
 
 class GlobalCliTests(unittest.TestCase):
@@ -47,8 +43,9 @@ class GlobalCliTests(unittest.TestCase):
             shutil.copyfile(ROOT / program, self.bundle / program)
         self.project = self.temp / 'a project'
         self.project.mkdir()
-        # The entry point finds the workspace file with the packaged tools/config.py.
-        shutil.copyfile(ROOT / 'tools' / 'config.py', tools / 'config.py')
+        # The entry point finds the workspace file with the packaged tools/config.py (and the loader it uses).
+        for name in ('config.py', 'siblings.py'):
+            shutil.copyfile(ROOT / 'tools' / name, tools / name)
         (self.project / 'oasis-workspace.toml').write_text('workspace_version = 1\n')
         self.log = self.temp / 'calls.json'
         self.fake = ('#!/bin/bash\nFAKE_TOOL="$0" exec python3 -c '\
@@ -88,12 +85,10 @@ class GlobalCliTests(unittest.TestCase):
         self.assertIn('--project', result.stdout)
         self.assertIn('/absolute/project', result.stdout)
         self.assertIn('doctor --environment --quick', result.stdout)
-        # v0.16.0 S5: the deprecated name keeps its place in the command list, and the help says it is one.
-        # v0.20.0 S13: start-database and recreate-database-volume join it, each naming its new name.
-        self.assertIn('Deprecated aliases (they keep working): check-environment runs doctor --environment, '
-                      'start-database runs setup-postgres, recreate-database-volume runs recreate-postgres-volume\n',
-                      result.stdout)
-        self.assertNotIn('init-dev-database', result.stdout)
+        # v0.21.0 S7: the deprecated aliases are gone from the command list and the help.
+        self.assertNotIn('Deprecated aliases', result.stdout)
+        for name in ('init-dev-database', *REMOVED_ALIASES):
+            self.assertNotIn(name, result.stdout)
         for name in PUBLIC:
             self.assertIn(name, result.stdout)
         [listed] = [line for line in result.stdout.splitlines() if line.startswith('Commands: ')]
@@ -190,25 +185,24 @@ class GlobalCliTests(unittest.TestCase):
         self.assert_no_calls(self.invoke('--project', str(self.project), 'status'),
                              f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above {self.project}.\n')
 
-    def test_a_legacy_profile_is_refused_before_dispatch_except_for_migrate_and_doctor(self):
-        profile = self.project / '.odoo19-agent.toml'
-        profile.write_text('[tooling]\nversion = "19.0"\n')
-        for program in PROGRAMS:
-            with self.subTest(program=program):
-                self.assert_no_calls(self.invoke('--project', str(self.project), 'status', program=program),
-                                     legacy_refusal(profile, program))
-        # Without the workspace file next to it, the same refusal (not the missing configuration).
+    def test_an_old_profile_is_not_read(self):
+        # v0.21.0 S6: `.odoo19-agent.toml` is neither read nor refused: next to a workspace file the command runs,
+        # without one the checkout is unconfigured like any other.
+        (self.project / '.odoo19-agent.toml').write_text('[tooling]\nversion = "19.0"\n')
+        result = self.invoke('--project', str(self.project), 'status')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (17, 'delegated\n', 'delegated error\n'))
+        self.log.unlink()
         (self.project / 'oasis-workspace.toml').unlink()
-        self.assertIn('is the old profile format', self.invoke('--project', str(self.project), 'list-databases').stderr)
-        # migrate converts it and doctor reports it: both still run.
-        for command in ('migrate', 'doctor'):
-            with self.subTest(command=command):
-                result = self.invoke('--project', str(self.project), command, '--plan')
-                self.assertEqual((result.returncode, result.stdout, result.stderr),
-                                 (17, 'delegated\n', 'delegated error\n'))
-                self.assertEqual(json.loads(self.log.read_text()), {
-                    'argv': ['--plan'], 'root': str(self.project), 'stdin': '', 'tool': command})
-                self.log.unlink()
+        self.assert_no_calls(self.invoke('--project', str(self.project), 'list-databases'),
+                             f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above {self.project}.\n')
+
+    def test_migrate_is_gone(self):
+        # v0.21.0 S6: migrate only converted `.odoo19-agent.toml`; the name runs nothing, even with its tool on disk.
+        (self.bundle / 'tools/migrate').write_text(self.fake)
+        (self.project / '.odoo19-agent.toml').write_text('[tooling]\n')
+        for args in (('migrate',), ('migrate', '--plan')):
+            self.assert_no_calls(self.invoke('--project', str(self.project), *args),
+                                 'ERROR: Unsupported oasis command: migrate\n')
 
     def test_setup_runs_without_a_workspace_file_and_every_other_command_still_needs_one(self):
         # v0.14.0 S1: setup creates the workspace file, so it is the one command that runs before it.
@@ -235,17 +229,12 @@ class GlobalCliTests(unittest.TestCase):
             self.assert_no_calls(self.invoke('--project', str(self.project), 'status', program=program),
                                  f'ERROR: Missing tooling configuration: no oasis-workspace.toml at or above '
                                  f'{self.project}.\n')
-        # A legacy profile is still refused before setup: migrate converts it.
-        profile = self.project / '.odoo19-agent.toml'
-        profile.write_text('[tooling]\n')
-        self.assert_no_calls(self.invoke('--project', str(self.project), 'setup'), legacy_refusal(profile))
 
-    def test_policy_runs_without_a_workspace_file_and_in_a_legacy_checkout(self):
+    def test_policy_runs_without_a_workspace_file(self):
         # v0.16.0 S1: the agent contract is readable before any configuration exists.
         (self.project / 'oasis-workspace.toml').unlink()
         plain = self.temp / 'plain'
         plain.mkdir()
-        (plain / '.odoo19-agent.toml').write_text('[tooling]\n')
         for program in PROGRAMS:
             for args, cwd in ((('--project', str(self.project), 'policy', '--json'), self.temp),
                               (('policy', '--json'), plain)):
@@ -304,13 +293,10 @@ class GlobalCliTests(unittest.TestCase):
                                                f'at or above {plain}.\n')
                 self.assertEqual((implicit.returncode, implicit.stdout, implicit.stderr),
                                  (explicit.returncode, explicit.stdout, explicit.stderr))
-        # A legacy profile in the current directory: the same refusal, and migrate still runs.
-        profile = plain / '.odoo19-agent.toml'
-        profile.write_text('[tooling]\n')
-        self.assert_no_calls(self.invoke('status', cwd=plain), legacy_refusal(profile))
-        result = self.invoke('migrate', '--plan', cwd=plain)
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (17, 'delegated\n', 'delegated error\n'))
-        self.assertEqual(json.loads(self.log.read_text())['root'], str(plain))
+        # An old profile in the current directory is not read: the same refusal.
+        (plain / '.odoo19-agent.toml').write_text('[tooling]\n')
+        self.assert_no_calls(self.invoke('status', cwd=plain), f'ERROR: Missing tooling configuration: no '
+                                                               f'oasis-workspace.toml at or above {plain}.\n')
 
     def test_help_says_where_the_project_comes_from_without_project(self):
         for program in PROGRAMS:
@@ -329,6 +315,33 @@ class GlobalCliTests(unittest.TestCase):
         self.assert_no_calls(self.invoke('--project', str(self.project), 'init-dev-database', 'coffee', 'cc_dev_x'),
                              'ERROR: Unsupported oasis command: init-dev-database\n')
 
+    def test_the_deprecated_aliases_are_gone(self):
+        # v0.21.0 S7: each old name runs nothing, even with its tool on disk: refused like any unknown command
+        # (as migrate is), with or without arguments and a workspace file.
+        for name in REMOVED_ALIASES:
+            (self.bundle / 'tools' / name).write_text(self.fake)
+        plain = self.temp / 'plain'
+        plain.mkdir()
+        for name in REMOVED_ALIASES:
+            for args in ((), ('--full',), ('--confirm', 'cc-shop'), ('--help',)):
+                for project in (self.project, plain):
+                    with self.subTest(name=name, args=args, project=project.name):
+                        self.assert_no_calls(self.invoke('--project', str(project), name, *args),
+                                             f'ERROR: Unsupported oasis command: {name}\n')
+        # The bundle ships none of their tool scripts (nor, since S11, any project wrapper: tests/test_bundle.py).
+        for name in REMOVED_ALIASES:
+            self.assertFalse((ROOT / 'tools' / name).exists(), name)
+        # The commands they named still run.
+        for name, args in (('doctor', ('--environment', '--full')), ('setup-postgres', ()),
+                           ('recreate-postgres-volume', ('--confirm', 'cc-shop'))):
+            with self.subTest(command=name):
+                self.log.unlink(missing_ok=True)
+                result = self.invoke('--project', str(self.project), name, *args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (17, 'delegated\n', 'delegated error\n'))
+                self.assertEqual(json.loads(self.log.read_text()),
+                                 {'argv': list(args), 'root': str(self.project), 'stdin': '', 'tool': name})
+
     def test_rejects_unknown_internal_and_pathlike_before_dispatch(self):
         for name in ('unknown', 'config.py', 'common.sh', 'audit_dependencies.py',
                      '../tools/status', '/bin/bash', 'status/../start'):
@@ -340,7 +353,7 @@ class GlobalCliTests(unittest.TestCase):
         self.assert_no_calls(self.invoke('--project', str(self.project), 'status'),
                              f'oasis tools are not installed: {self.bundle / "tools/status"}\n')
 
-    def test_staged_guidance_describes_full_path_and_optional_wrappers(self):
+    def test_staged_guidance_describes_full_path_and_no_wrapper_templates(self):
         # The setup and tool-manager sections moved from the README to their topic files.
         setup = (ROOT / 'docs/project-setup.md').read_text()
         troubleshooting = (ROOT / 'docs/troubleshooting.md').read_text()
@@ -350,12 +363,15 @@ class GlobalCliTests(unittest.TestCase):
                    'doctor --environment --quick')
         self.assertIn(example, setup)
         self.assertIn(example, environment)
-        self.assertIn('Alternatively, if the project wants legacy local CLI entrypoints', setup)
-        self.assertIn('Missing project wrappers alone are not a blocker', lifecycle)
+        # v0.21.0 S11: no wrapper templates to copy; a project's existing copies keep working.
+        self.assertNotIn('Alternatively, if the project wants legacy local CLI entrypoints', setup)
+        self.assertIn('oasis ships no project wrapper templates since v0.21.0', setup)
+        self.assertIn('Use the installed `~/.agents/skills/oasis/oasis --project /absolute/project <command>` entry point', lifecycle)
+        self.assertNotIn('project wrappers', lifecycle)
         self.assertIn('mise', troubleshooting)
 
     def test_existing_config_guards_reject_bad_workspace_before_effects(self):
-        for name in ('common.sh', 'oasis_env.sh', 'config.py', 'odoo_versions.py', 'status'):
+        for name in ('common.sh', 'oasis_env.sh', 'config.py', 'siblings.py', 'odoo_versions.py', 'status'):
             shutil.copyfile(ROOT / 'tools' / name, self.bundle / 'tools' / name)
         workspace = self.project / 'oasis-workspace.toml'
         for text, error in (

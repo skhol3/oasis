@@ -629,22 +629,17 @@ class DevelopmentUsersTests(unittest.TestCase):
                              (2, '', f'ERROR: Cannot read {env_file}.\n'))
             self.assertFalse(self.state.exists())
 
-    def test_an_earlier_logins_file_is_left_alone_with_one_warning(self):
+    def test_an_earlier_logins_file_is_left_alone_without_a_word(self):
+        # v0.21.0 S6: no WARN for the <database>.logins file versions before 0.20.0 wrote; it is never read.
         path = self.logins_file()
         path.write_text('# earlier\nlocal_admin earlier-generated-value\n')
         path.chmod(0o600)
         before = path.read_bytes()
         result = self.invoke('coffee', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, (
-            'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n' + ACCOUNTS), (
-            f'WARN: {path} is from an earlier oasis version: oasis no longer writes or reads it; it is left as '
-            'it is.\n')))
+            'Development database initialized: cc_dev_coffee\nAccounts ready: 3\n' + ACCOUNTS), ''))
         self.assertEqual((path.read_bytes(), path.stat().st_mode & 0o777), (before, 0o600))
         self.assert_passwords()
-        # A refusal runs nothing, and says nothing of it.
-        result = self.invoke('coffee', 'cc_dev_coffee', confirm=False)
-        self.assertEqual((result.returncode, result.stdout), (2, ''))
-        self.assertNotIn('WARN', result.stderr)
 
     def test_on_a_terminal_only_declared_users_are_asked_and_nothing_is_stored(self):
         code, output = self.terminal('coffee', 'cc_dev_coffee', generated=('planner',))

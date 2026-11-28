@@ -123,7 +123,7 @@ DEVELOPMENT_COMMENT = ("# The administrator of the databases create-database cre
 # A clone in <project>/code/<repo> or <project>/codigo/<repo> gets <project> as its recommended workspace (v0.16.0
 # S4.11), unless <project> holds one of these: then it is not a project folder of its own.
 CODE_FOLDERS = ('code', 'codigo')
-PROJECT_MARKERS = ('.git', 'oasis-checkout.toml', '.odoo19-agent.toml', '__manifest__.py', 'odoo-bin')
+PROJECT_MARKERS = ('.git', 'oasis-checkout.toml', '__manifest__.py', 'odoo-bin')
 WORKSPACE_HEADER = ('# Written by oasis setup. Paths are relative to this file, addons_paths to each checkout;\n'
                     '# the Odoo source comes from the machine file (docs/workspace-file.md#machine-file).\n')
 MACHINE_HEADER = ('# Written by oasis setup: the Odoo source of each series on this machine '
@@ -193,7 +193,7 @@ can never apply. With --apply it creates only what is missing and keeps everythi
     by default at the checkout's root with config/, data/, logs/ and the environment under .oasis/,
     both excluded from git in .git/info/exclude; --workspace <dir> puts them in <dir>, which must
     be at or above the checkout; for a clone at <project>/code/<repo> or <project>/codigo/<repo>
-    (<project> holding no .git, oasis-checkout.toml, legacy profile, __manifest__.py or odoo-bin)
+    (<project> holding no .git, oasis-checkout.toml, __manifest__.py or odoo-bin)
     the question workspace recommends <project> (applied without a terminal) and offers the clone;
     an existing workspace file is adopted, and one setup created in the clone moves with
     --workspace <dir> above it (the file, its relative paths rewritten, .oasis/ and the clone's
@@ -286,17 +286,84 @@ class Interrupted(Exception):
     """Ctrl-C at a question, before any change: exit 130."""
 
 
-def sibling(name: str):
-    """A packaged helper loaded from its file (python3 -I keeps the tools directory off sys.path)."""
-    spec = importlib.util.spec_from_file_location(f'oasis_setup_{name}', Path(__file__).with_name(f'{name}.py'))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+_spec = importlib.util.spec_from_file_location('oasis_siblings', Path(__file__).with_name('siblings.py'))
+_spec.loader.exec_module(siblings := importlib.util.module_from_spec(_spec))
+sibling = siblings.loader('oasis_setup_')
 
 
-config, migrate, locks, db_account = sibling('config'), sibling('migrate'), sibling('locks'), sibling('db_account')
+config, locks, db_account = sibling('config'), sibling('locks'), sibling('db_account')
 known_problems, environment_origin = sibling('known_problems'), sibling('environment_origin')
 code_python = sibling('code_python')
+
+
+# -- files and git ---------------------------------------------------------------------------------
+
+def untrusted(directory: Path) -> str:
+    """Why a file written in directory would be refused by tools/config.py (trusted), or ''."""
+    try:
+        info = directory.stat()
+    except OSError:
+        return f'cannot inspect {directory}'
+    if info.st_uid not in (os.getuid(), 0):
+        return f'{directory} is not owned by the current user or root'
+    if info.st_mode & 0o022:
+        return f'{directory} is writable by group or others'
+    if not os.access(directory, os.W_OK | os.X_OK):
+        return f'{directory} is not writable'
+    return ''
+
+
+def write_in_place(path: Path, data: bytes, opened=None):
+    """Replace a file's content, keeping its inode, mode and owner.
+
+    `opened` is called once the file is open for writing and before anything is written, so a
+    caller can register its undo step only for a file that may actually change.
+    """
+    with path.open('r+b') as stream:
+        if opened is not None:
+            opened()
+        stream.write(data)
+        stream.truncate()
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+# -- TOML ------------------------------------------------------------------------------------------
+
+def toml_string(value: str) -> str:
+    if "'" not in value and all(char == '\t' or (ord(char) >= 0x20 and ord(char) != 0x7f) for char in value):
+        return f"'{value}'"
+    escaped = []
+    for char in value:
+        if char in '\\"':
+            escaped.append('\\' + char)
+        elif ord(char) < 0x20 or ord(char) == 0x7f:
+            escaped.append(f'\\u{ord(char):04x}')
+        else:
+            escaped.append(char)
+    return '"' + ''.join(escaped) + '"'
+
+
+def toml_key(key: str) -> str:
+    return key if re.fullmatch(r'[A-Za-z0-9_-]+', key) else toml_string(key)
+
+
+def toml_value(value) -> str:
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, str):
+        return toml_string(value)
+    if isinstance(value, list):
+        return '[' + ', '.join(toml_value(item) for item in value) + ']'
+    if isinstance(value, dict):
+        return '{' + ', '.join(f'{toml_key(key)} = {toml_value(item)}' for key, item in value.items()) + '}'
+    raise Refused(f'Cannot write a value of type {type(value).__name__} to the workspace file.')
+
+
+def toml_table(name: str, table: dict) -> str:
+    return f'[{name}]\n' + ''.join(f'{toml_key(key)} = {toml_value(value)}\n' for key, value in table.items())
 
 
 def usage() -> str:
@@ -657,7 +724,7 @@ def environment_choice(options: dict, questions: Questions, series: str, environ
 def development_choice(questions: Questions, workspace: Path) -> bool:
     """Whether a new workspace file gets the [development] table create-database needs (v0.16.0 S6): the question
     development, add (recommended; applied without a terminal and without an answer) or none."""
-    login = migrate.toml_string(DEVELOPMENT['administrator_login'])
+    login = toml_string(DEVELOPMENT['administrator_login'])
     question = {'id': 'development',
                 'text': f'create-database needs a [development] table in {workspace}: add one with '
                         f"administrator_login = {login} (its password: Odoo's default, or ODOO_ADMIN_PASSWORD of the "
@@ -738,12 +805,12 @@ def choose_sources(root, series, options, machine, questions):
                                 'recommended': None, 'flag': '--enterprise <dir> | --no-enterprise'})
         enterprise = directory_answer(answer, 'The answer') if answer else None
         enterprise_origin = 'answered'
-    entry = f'{table}\ncommunity = {migrate.toml_string(str(community))}\n'
+    entry = f'{table}\ncommunity = {toml_string(str(community))}\n'
     if enterprise is not None:
-        entry += f'enterprise = {migrate.toml_string(str(enterprise))}\n'
+        entry += f'enterprise = {toml_string(str(enterprise))}\n'
     if raw is None:
-        if path.parent.exists() and migrate.untrusted(path.parent):
-            raise Refused(f'Refusing to write {path}: {migrate.untrusted(path.parent)}.')
+        if path.parent.exists() and untrusted(path.parent):
+            raise Refused(f'Refusing to write {path}: {untrusted(path.parent)}.')
         text = MACHINE_HEADER + entry
         lines = [f'create {path} (mode 0600):'] + [f'  {line}' for line in text.splitlines()]
         actions = [*directories(path.parent, set()), ('create', path, text.encode(), 0o600)]
@@ -769,7 +836,7 @@ def project_folder(root: Path) -> Path | None:
     project = folder.parent
     if folder.name not in CODE_FOLDERS or project == folder:
         return None
-    if any(os.path.lexists(project / marker) for marker in PROJECT_MARKERS) or migrate.untrusted(project):
+    if any(os.path.lexists(project / marker) for marker in PROJECT_MARKERS) or untrusted(project):
         return None
     return project
 
@@ -825,7 +892,7 @@ def free_port(taken=()) -> int:
 
 def git_exclude(root: Path) -> tuple[Path, list[str]]:
     """The checkout's info/exclude file and the EXCLUDES git does not ignore yet."""
-    env = migrate.git_env()
+    env = config.git_env()
     try:
         result = subprocess.run(['git', '-C', str(root), 'rev-parse', '--path-format=absolute', '--git-path',
                                  'info/exclude'], capture_output=True, text=True, env=env, timeout=30)
@@ -924,7 +991,7 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                 note = (f'; the project folder above {root.parent.name}/; --workspace {root} keeps it in the '
                         'clone')
         workspace = directory / config.WORKSPACE_NAME
-        reason = migrate.untrusted(directory)
+        reason = untrusted(directory)
         if reason:
             raise Refused(f'Refusing to write {workspace}: {reason}.')
         questions.infer('workspace', directory, 'new')
@@ -983,12 +1050,12 @@ def make_plan(root: Path, options: dict, questions: Questions) -> dict:
                 del tooling['environment']
             # Modules of another series (series_exceptions) need a [series."<x.y>"] section: version 2.
             version = 2 if exceptions else 1
-            text = (WORKSPACE_HEADER + f'workspace_version = {version}\nodoo_version = {migrate.toml_string(series)}\n\n'
-                    + migrate.toml_table('tooling', tooling)
-                    + ('\n' + DEVELOPMENT_COMMENT + migrate.toml_table('development', DEVELOPMENT)
+            text = (WORKSPACE_HEADER + f'workspace_version = {version}\nodoo_version = {toml_string(series)}\n\n'
+                    + toml_table('tooling', tooling)
+                    + ('\n' + DEVELOPMENT_COMMENT + toml_table('development', DEVELOPMENT)
                        if development else '')
-                    + ('\n' + migrate.toml_table('environments.default', named) if named is not None else '')
-                    + ('\n' + SECTION_COMMENT.format(series=series) + migrate.toml_table(
+                    + ('\n' + toml_table('environments.default', named) if named is not None else '')
+                    + ('\n' + SECTION_COMMENT.format(series=series) + toml_table(
                         f'series.{json.dumps(series)}', {'series_exceptions': exceptions}) if exceptions else ''))
             sources = {'community': str(community), **({'enterprise': str(enterprise)} if enterprise else {})}
             document = {'workspace_version': version, 'odoo_version': series,
@@ -1079,7 +1146,7 @@ def move_plan(root: Path, workspace: Path, target: Path, options: dict, question
         raise Refused(f'--workspace {target}: {root} is already configured by {workspace}; setup only fills what is '
                       'missing.')
     layout, destination = root / LAYOUT, target / config.WORKSPACE_NAME
-    reason = migrate.untrusted(target)
+    reason = untrusted(target)
     for path in (destination, *((target / LAYOUT,) if os.path.lexists(layout) else ())):
         if os.path.lexists(path):
             raise Refused(f'Refusing to move {workspace if path == destination else f"{layout}/"} to {target}: {path} '
@@ -1087,7 +1154,7 @@ def move_plan(root: Path, workspace: Path, target: Path, options: dict, question
     if reason:
         raise Refused(f'Refusing to write {destination}: {reason}.')
     tracked = subprocess.run(['git', '-C', str(root), 'ls-files', '--error-unmatch', '--', config.WORKSPACE_NAME],
-                             capture_output=True, env=migrate.git_env(), timeout=30)
+                             capture_output=True, env=config.git_env(), timeout=30)
     if tracked.returncode == 0:
         raise Refused(f'Refusing to move {workspace}: git tracks it; move it yourself.')
     try:
@@ -1100,7 +1167,7 @@ def move_plan(root: Path, workspace: Path, target: Path, options: dict, question
     moved, expected = moved_paths(document, root, target), copy.deepcopy(document)
     for key, value, new in moved:
         pattern = re.compile(rf'''(?m)^([ \t]*{re.escape(key)}[ \t]*=[ \t]*)(?:'{re.escape(value)}'|"{re.escape(value)}")''')
-        text = pattern.sub(lambda match: match.group(1) + migrate.toml_string(new), text)
+        text = pattern.sub(lambda match: match.group(1) + toml_string(new), text)
         for table in [expected.get('tooling', {}), *expected.get('series', {}).values(),
                       *(expected.get('environments') or {}).values()]:
             if isinstance(table, dict) and table.get(key) == value:
@@ -1143,8 +1210,6 @@ def section_target(root: Path, workspace: Path, options: dict) -> tuple[str, str
     checkout file's odoo_version, else the one its module manifests declare (config.detected_series,
     the series_exceptions of every section and the --exception modules left out), also for a version 1
     file; manifests of several series are left to the existing refusal."""
-    if (root / config.PROFILE_NAME).is_file():
-        return None
     try:
         document = config.checked_workspace(workspace)
         declared = config.checkout_file(root).get('odoo_version', config.MISSING)
@@ -1390,7 +1455,7 @@ def extended_workspace(workspace: Path, document: dict, series: str, section: di
                           f'set workspace_version = 2 yourself, then run {config.program_name()} setup again.')
         text = text[:found[0].start(2)] + '2' + text[found[0].end(2):]
         lines.append(f'change workspace_version = 1 to workspace_version = 2 in {workspace} (that line only)')
-    addition = SECTION_COMMENT.format(series=series) + migrate.toml_table(f'series.{json.dumps(series)}', section)
+    addition = SECTION_COMMENT.format(series=series) + toml_table(f'series.{json.dumps(series)}', section)
     separator = '' if not text.strip() else '\n' if text.endswith('\n') else '\n\n'
     lines += [f'add {table} to {workspace}:', *(f'  {line}' if line else '' for line in addition.splitlines())]
     expected = copy.deepcopy(document)
@@ -1611,7 +1676,7 @@ def worktree_slugs(root: Path, main: Path) -> set[str]:
     one their directory name gives, as tools/gc.py checkout_slugs reads them; those it cannot read are left out."""
     try:
         result = subprocess.run(['git', '-C', str(root), 'worktree', 'list', '--porcelain'], capture_output=True,
-                                text=True, env=migrate.git_env(), timeout=30)
+                                text=True, env=config.git_env(), timeout=30)
     except (OSError, subprocess.SubprocessError):
         return set()
     slugs = set()
@@ -1652,9 +1717,9 @@ def slug_change(root: Path, kind: str, main: Path | None):
     path, why = root / config.CHECKOUT_NAME, f'{len(raw)} characters; a slug has at most 20'
     if 'tooling' in current:
         raise Refused(f'The worktree directory name {root.name} gives the checkout slug {raw} ({why}) and {path} has '
-                      f'a [tooling] table, which setup never edits: add checkout_slug = {migrate.toml_string(slug)} '
+                      f'a [tooling] table, which setup never edits: add checkout_slug = {toml_string(slug)} '
                       f'to it, then run {config.program_name()} setup again.')
-    text = CHECKOUT_SLUG.format(name=root.name, raw=raw, slug=migrate.toml_string(slug))
+    text = CHECKOUT_SLUG.format(name=root.name, raw=raw, slug=toml_string(slug))
     document = {**current, 'tooling': {'checkout_slug': slug}}
     why = f'the worktree directory name {root.name} gives {raw}, {why}'
     if not os.path.lexists(path):
@@ -1665,7 +1730,7 @@ def slug_change(root: Path, kind: str, main: Path | None):
         if tomllib.loads(new.decode('utf-8')) != document:
             raise ValueError
     except (ValueError, UnicodeError):
-        raise Refused(f'Cannot add checkout_slug to {path}: add checkout_slug = {migrate.toml_string(slug)} under '
+        raise Refused(f'Cannot add checkout_slug to {path}: add checkout_slug = {toml_string(slug)} under '
                       '[tooling] yourself.') from None
     return document, f'add [tooling] checkout_slug {slug} to {path} ({why})', ('extend', path, original, new)
 
@@ -1989,9 +2054,9 @@ def gaps(plan: dict, directory: Path, planned: set):
                 lines.append(f'create {path}/')
     python = values['PYTHON_VERSION']
     usable = True
-    if 'inputs' not in plan['created'] and locks.current(requirements, root):
+    if 'inputs' not in plan['created'] and locks.current(requirements):
         lines.append(f'kept the locks in {requirements}: current')
-    elif 'inputs' not in plan['created'] and locks.state(requirements, root) == 'edited':
+    elif 'inputs' not in plan['created'] and locks.state(requirements) == 'edited':
         lines.append(f'kept the locks in {requirements}: a lock was changed by hand; move it away or fingerprint '
                      f'it again (see {config.program_name()} bootstrap)')
         usable = False
@@ -2147,12 +2212,12 @@ class Changes:
                 raise OSError(0, f'{path} changed since the plan')
             self.keep(path)
             os.chmod(path, 0o600)
-            migrate.write_in_place(path, data)
+            write_in_place(path, data)
         else:
             original, data = action[2], action[3]
             if path.read_bytes() != original:
                 raise OSError(0, f'{path} changed since the plan')
-            migrate.write_in_place(path, data, lambda: self.undo.append(('restore', path, original)))
+            write_in_place(path, data, lambda: self.undo.append(('restore', path, original)))
 
     def keep(self, path: Path):
         """Before a command setup runs (uv) may write path: rollback gives it back its bytes and mode, or
@@ -2186,7 +2251,7 @@ class Changes:
                         os.unlink(step[1])
                 elif step[0] == 'rewrite':
                     if os.path.lexists(step[1]):
-                        migrate.write_in_place(step[1], step[2])
+                        write_in_place(step[1], step[2])
                         os.chmod(step[1], step[3])
                     else:
                         descriptor = os.open(step[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, step[3])
@@ -2194,7 +2259,7 @@ class Changes:
                             os.fchmod(stream.fileno(), step[3])
                             stream.write(step[2])
                 else:
-                    migrate.write_in_place(step[1], step[2])
+                    write_in_place(step[1], step[2])
             except OSError as exc:
                 failed.append(f'{step[1]}: {exc.strerror or exc}')
         self.undo = []
@@ -2264,7 +2329,7 @@ def apply_plan(plan: dict) -> int:
     except config.InvalidConfig:
         development = None
     if development is False:
-        lines = migrate.toml_table('development', DEVELOPMENT).splitlines()
+        lines = toml_table('development', DEVELOPMENT).splitlines()
         steps.append(f'add these lines to {workspace_file} (docs/dev-database.md):'
                      + ''.join(f'\n       {line}' for line in lines))
     # A database is the user's decision (v0.20.0 S6): the step names the plan that asks its name, module and demo.

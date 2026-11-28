@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The environment checks (v0.16.0 S5): `doctor --environment [--quick|--full]` runs this file with bash,
-# and tools/check-environment, its deprecated alias, sources it, so both print the same lines and exit
-# codes; bootstrap --apply ends with `check-environment --full`. Its helpers sit next to it: $(dirname "$0") is the tools directory either way.
+# The environment checks (v0.16.0 S5): `doctor --environment [--quick|--full]` runs this file with bash;
+# bootstrap --apply ends with `doctor --environment --full`. Its helpers sit next to it: $(dirname "$0") is the
+# tools directory.
 set -Eeuo pipefail
 source "$(dirname "$0")/common.sh"
 mode=${1:---quick}
@@ -55,7 +55,7 @@ fi
 # An overrides.txt next to the inputs (v0.15.0 S7) must be recorded in lock.sha256 too, which
 # `sha256sum --check` alone cannot require (tools/locks.py recorded).
 if dependency_locks_current && { [[ ! -f "$requirements_dir/overrides.txt" ]] \
-    || python3 -I -B "$(dirname "$0")/locks.py" recorded "$requirements_dir" "$PROJECT_ROOT"; }; then
+    || python3 -I -B "$(dirname "$0")/locks.py" recorded "$requirements_dir"; }; then
   pass "dependency_locks=current"
 else fail "dependency_locks=stale_or_modified"
 fi

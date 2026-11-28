@@ -14,7 +14,6 @@ const PURGE = "oasis --project /work/shop gc --apply --trash --older-than 0";
 const SECONDS = ASK_TIMEOUT_MS / 1000;
 // v0.16.0 S1: Tier B in the policy table, so they ask like drop-database (before: denied).
 const WORKTREE = "oasis --project /work/shop worktree-init feat feature/x";
-const MIGRATE = "oasis --project /work/shop migrate --apply";
 
 interface Setup {
   root?: string | null;
@@ -143,9 +142,9 @@ test("a wrong answer, `yes` for drop-database, cancel or no answer blocks and re
   }
 });
 
-test("stop --database, gc --apply --trash, worktree-init and migrate --apply ask to type yes", async () => {
+test("stop --database, gc --apply --trash and worktree-init ask to type yes", async () => {
   for (const [command, label] of [[STOP, "stop --database"], [PURGE, "gc --apply --trash"],
-    [WORKTREE, "worktree-init"], [MIGRATE, "migrate --apply"]]) {
+    [WORKTREE, "worktree-init"]]) {
     const approved = harness({ answers: [" yes "] });
     assert.equal(await approved.gate(command), undefined, command);
     assert.equal(approved.prompts[0].title,
@@ -213,8 +212,8 @@ test("agent_destructive = deny turns ask into deny; allow runs without a dialog;
   assert.deepEqual(await allowed.gate(`${PURGE}; psql`), { block: true, reason: blockReason("psql", ROOT) });
 });
 
-test("worktree-init and migrate --apply honor agent_destructive like drop-database (v0.16.0 S1)", async () => {
-  for (const [command, label] of [[WORKTREE, "worktree-init"], [MIGRATE, "migrate --apply"]]) {
+test("worktree-init honors agent_destructive like drop-database (v0.16.0 S1)", async () => {
+  for (const [command, label] of [[WORKTREE, "worktree-init"]]) {
     const denied = harness({ setting: "deny" });
     assert.deepEqual(await denied.gate(command), {
       block: true,
@@ -225,10 +224,9 @@ test("worktree-init and migrate --apply honor agent_destructive like drop-databa
     assert.equal(await allowed.gate(command), undefined, command);
     assert.deepEqual([allowed.prompts, allowed.entries],
       [[], [{ label: "Agent command approved", command, note: "agent_destructive = allow", output: "" }]], command);
-    // Their dry run and plan are Tier A: no dialog, no entry, no setting read.
+    // Its dry run is Tier A: no dialog, no entry, no setting read.
     const plan = harness({ setting: "deny" });
-    assert.equal(await plan.gate(command.replace("--apply", "--plan").replace("feature/x", "feature/x --dry-run")),
-      undefined, command);
+    assert.equal(await plan.gate(command.replace("feature/x", "feature/x --dry-run")), undefined, command);
     assert.deepEqual([plan.prompts, plan.entries, plan.settingsRead], [[], [], []], command);
   }
 });
@@ -254,8 +252,8 @@ test("the dialog and the entry show the command without terminal control sequenc
   assert.equal(run.entries[0].command, "oasis --project /work/shop stop --database # hidden");
 });
 
-// L7: the project an ask command targets (`--project`, or a tool script's OASIS_PROJECT_ROOT or
-// ODOO19_PROJECT_ROOT) has a say too: the stricter of its setting and the session's decides.
+// L7: the project an ask command targets (`--project`, or a tool script's OASIS_PROJECT_ROOT) has a say too:
+// the stricter of its setting and the session's decides.
 const OTHER = "/work/other";
 const OTHER_DROP = "oasis --project /work/other drop-database other_dev_old";
 const roots = (dir: string) => (dir === OTHER || dir.startsWith(`${OTHER}/`) ? OTHER : dir.startsWith(ROOT) ? ROOT : null);
@@ -304,7 +302,7 @@ test("a target whose setting cannot be read, outside a project or not literal co
     ["oasis --project /tmp/elsewhere stop --database", { settings: { [ROOT]: "allow" } }],
     ["oasis --project $TARGET stop --database", { settings: { [ROOT]: "allow" } }],
     ["oasis --proj /work/other gc --apply --trash", { settings: { [ROOT]: "allow", [OTHER]: "ask" } }],
-    ["ODOO19_PROJECT_ROOT=/work/other ~/.agents/skills/oasis/tools/stop --database", { settings: { [ROOT]: "allow" } }],
+    ["OASIS_PROJECT_ROOT=/work/other ~/.agents/skills/oasis/tools/stop --database", { settings: { [ROOT]: "allow" } }],
     ["OASIS_PROJECT_ROOT=$P ~/.agents/skills/oasis/tools/stop --database", { settings: { [ROOT]: "allow" } }],
     // Set elsewhere on the line: the tool reads a root the text does not tell.
     ["export OASIS_PROJECT_ROOT=/work/other; ~/.agents/skills/oasis/tools/stop --database", { settings: { [ROOT]: "allow" } }],
@@ -324,7 +322,7 @@ test("a target whose setting cannot be read, outside a project or not literal co
   assert.equal(await allowed.gate("env OASIS_PROJECT_ROOT=/work/other ~/.agents/skills/oasis/tools/stop --database"), undefined);
   // deny there blocks a tool script too.
   const denied = harness({ roots, settings: { [ROOT]: "ask", [OTHER]: "deny" } });
-  assert.match((await denied.gate("ODOO19_PROJECT_ROOT=/work/other ~/.agents/skills/oasis/tools/stop --database") as
+  assert.match((await denied.gate("OASIS_PROJECT_ROOT=/work/other ~/.agents/skills/oasis/tools/stop --database") as
     { reason: string }).reason, /in the configuration of \/work\/other;/);
 });
 
@@ -578,10 +576,8 @@ const NOTE = "(it holds [tooling].agent_destructive)";
 test("the agent's edit and write of a setting file ask to type yes, naming the file, and are recorded", async () => {
   for (const [tool, path, file] of [
     ["edit", "../oasis-workspace.toml", WORKSPACE],
-    ["write", `${ROOT}/.odoo19-agent.toml`, `${ROOT}/.odoo19-agent.toml`],
     ["edit", "@../oasis-workspace.toml", WORKSPACE],
     ["write", "/work/oasis-workspace.toml", "/work/oasis-workspace.toml"],
-    ["edit", "./.odoo19-agent.toml", `${ROOT}/addons/.odoo19-agent.toml`],
   ] as const) {
     const run = harness({ answers: ["yes"] });
     assert.equal(await run.file(tool, path), undefined, path);
@@ -638,6 +634,8 @@ test("other files, setting names below the session directory and symlinks are ju
     `${ROOT}/addons/coffee/oasis-workspace.toml`, "/tmp/oasis-workspace.toml", `${ROOT}/oasis-workspace.toml.bak`,
     // An oasis-checkout.toml below the checkout root: tools/config.py never reads it.
     `${ROOT}/addons/coffee/oasis-checkout.toml`,
+    // The profile format before v0.12.0: nothing reads it since v0.21.0 (S6).
+    `${ROOT}/.odoo19-agent.toml`, `${ROOT}/addons/.odoo19-agent.toml`,
   ]) {
     assert.equal(await run.file("write", path), undefined, path);
   }
@@ -647,7 +645,7 @@ test("other files, setting names below the session directory and symlinks are ju
     hasUI: false,
     realpath: (path) => (path === "/tmp/link.toml" ? WORKSPACE : path.replace(/^\/tmp\/dir\//, `${ROOT}/`)),
   });
-  for (const path of ["/tmp/link.toml", "/tmp/dir/.odoo19-agent.toml"]) {
+  for (const path of ["/tmp/link.toml", "/tmp/dir/oasis-workspace.toml"]) {
     assert.equal((await linked.file("edit", path))?.block, true, path);
   }
   assert.match(linked.entries[0].command, /^edit \/tmp\/link\.toml$/);

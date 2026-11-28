@@ -53,6 +53,7 @@ def contents(requirements):
 class EnvironmentTests(unittest.TestCase):
     setUp = lifecycle.LifecycleTests.setUp
     invoke = lifecycle.LifecycleTests.invoke
+    doctor_environment = lifecycle.LifecycleTests.doctor_environment
     unchanged = lifecycle.LifecycleTests.unchanged
 
     def prepare(self, runtime=True):
@@ -75,7 +76,7 @@ class EnvironmentTests(unittest.TestCase):
             '  case "$2" in *"sys.prefix"*) echo "' + str(self.python.parent.parent) + '" ;; *) echo 3.12 ;; esac\n'
             '  exit 0\nfi').replace(
                 'if [ "$2" = "--version" ]; then',
-                # The connection probe of check-environment --full (tools/db_account.py, v0.16.0 S2).
+                # The connection probe of doctor --environment --full (tools/db_account.py, v0.16.0 S2).
                 'case "$3" in */db_account.py) echo "${FAKE_CONNECTION:-ready}"; exit 0 ;; esac\n'
                 'case "$1" in */audit_dependencies.py) exec "$FAKE_HOST_PYTHON" -B "$@" ;; '
                 '*/check_environment.py) echo "locked_packages=0"; echo "missing_packages=0"; '
@@ -107,19 +108,15 @@ class EnvironmentTests(unittest.TestCase):
         return [f'uv pip compile --python-version {python} runtime.in -o runtime.txt (in {requirements})',
                 f'uv pip compile --python-version {python} dev.in -o dev.txt (in {requirements})']
 
-    def test_invalid_option_usage_names_project_wrapper(self):
+    def test_invalid_option_usage_names_the_entry_point(self):
         self.prepare()
-        for command, tail in (
-                ('bootstrap', ' [--preview|--apply]'),
-                ('check-environment', ' [--quick|--full]')):
-            result = self.invoke(command, '--invalid')
-            self.assertEqual((result.returncode, result.stdout, result.stderr),
-                             (2, '', 'Usage: ' + str(self.root / 'dev/scripts' / command) + tail + '\n'))
-            self.unchanged()
+        result = self.invoke('bootstrap', '--invalid')
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (2, '', 'Usage: ' + str(lifecycle.STAGE / 'oasis') + ' [--preview|--apply]\n'))
+        self.unchanged()
         result = self.invoke('audit-dependencies', 'coffee', 'extra')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (2, '', 'Usage: ' + str(self.root / 'dev/scripts/audit-dependencies') +
-                          ' [module]\n'))
+                         (2, '', 'Usage: ' + str(lifecycle.STAGE / 'oasis') + ' [module]\n'))
         self.unchanged()
 
     def as_workspace(self, python=None, logs=False):
@@ -414,7 +411,7 @@ esac
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, self.preview_output(self.python.parent.parent, 'missing'), ''))
         self.unchanged()
-        result = self.invoke('check-environment')
+        result = self.doctor_environment()
         self.assertEqual(result.returncode, 1)
         self.assertIn('FAIL missing_file:dev/requirements/lock.sha256\n', result.stderr)
         self.assertIn('FAIL dependency_locks=stale_or_modified\n', result.stderr)
@@ -569,18 +566,18 @@ esac
                          (0, self.preview_output(self.python.parent.parent, 'stale'), ''))
         self.unchanged()
 
-    def test_check_environment_fails_an_overrides_file_the_fingerprint_does_not_record(self):
+    def test_doctor_environment_fails_an_overrides_file_the_fingerprint_does_not_record(self):
         self.prepare()
         requirements = self.lockable()
-        result = self.invoke('check-environment')
+        result = self.doctor_environment()
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, self.expected_quick_output(), ''))
         (requirements / 'overrides.txt').write_text('cryptography==3.4.8\n')
-        result = self.invoke('check-environment')
+        result = self.doctor_environment()
         self.assertEqual((result.returncode, result.stderr), (1, 'FAIL dependency_locks=stale_or_modified\n'))
         self.assertEqual(result.stdout, self.expected_quick_output().replace(
             'PASS dependency_locks=current\n', '').replace('environment_failures=0', 'environment_failures=1'))
         (requirements / 'lock.sha256').write_text(fingerprint_with_overrides(requirements))
-        result = self.invoke('check-environment')
+        result = self.doctor_environment()
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, self.expected_quick_output(), ''))
 
     def test_a_lock_edited_by_hand_with_overrides_names_overrides_in_the_refusal(self):
@@ -635,7 +632,7 @@ esac
 
     def test_check_quick_reports_fixture_and_skips_full_checks(self):
         self.prepare()
-        result = self.invoke('check-environment')
+        result = self.doctor_environment()
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, self.expected_quick_output(), ''))
         self.assertNotIn('uv pip check', self.commands.read_text() if self.commands.exists() else '')
@@ -644,13 +641,13 @@ esac
         self.prepare(runtime=False)
         self.as_workspace(python='3.13')
         self.python.write_text(self.python.read_text().replace('echo 3.12', 'echo 3.13'))
-        result = self.invoke('check-environment', '--quick')
+        result = self.doctor_environment('--quick')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, self.expected_quick_output('3.13'), ''))
 
     def assert_python_mismatch(self, declared, found):
         self.python.write_text(self.python.read_text().replace('echo 3.12', f'echo {found}'))
-        result = self.invoke('check-environment')
+        result = self.doctor_environment()
         self.assertEqual((result.returncode, result.stdout, result.stderr), (
             2, '', f'Python {declared} is required; found {found}.\n'
                    f'Move {self.python.parent.parent} away and run oasis bootstrap --apply '
@@ -678,34 +675,16 @@ esac
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (2, '', 'ERROR: Module not found in this repository: bad-name\n'))
 
-    def test_audit_python_helper_path_runs_as_python_with_project_args(self):
+    def test_audit_help_omits_internal_config_arguments(self):
         self.prepare()
-        (self.root / 'dev/requirements/dev.in').write_text('# no imports\n')
-        helper = self.root / 'dev/scripts/audit_dependencies.py'
-        helper.parent.mkdir(parents=True, exist_ok=True)
-        helper.write_bytes((lifecycle.STAGE / 'project-wrappers/audit_dependencies.py').read_bytes())
-        result = subprocess.run([sys.executable, '-B', str(helper), 'coffee'],
-                                text=True, capture_output=True, env=self.env)
-        self.assertEqual((result.returncode, result.stdout, result.stderr),
-                         (0, 'scope=coffee\ndeclared_distributions=0\nexternal_imports=0\n'
-                          'undeclared_dependencies=0\n', ''))
-
-    def test_audit_python_helper_help_omits_internal_config_arguments(self):
-        self.prepare()
-        helper = self.root / 'dev/scripts/audit_dependencies.py'
-        helper.parent.mkdir(parents=True, exist_ok=True)
-        helper.write_bytes((lifecycle.STAGE / 'project-wrappers/audit_dependencies.py').read_bytes())
-        result = subprocess.run([sys.executable, '-B', str(helper), '--help'],
-                                text=True, capture_output=True, env=self.env)
+        result = self.invoke('audit-dependencies', '--help')
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertIn('usage: audit_dependencies.py [-h] [module]\n', result.stdout)
         self.assertNotIn('--project-root', result.stdout)
 
     def test_lock_helper_public_cli_and_missing_lock(self):
         self.prepare()
-        helper = self.root / 'dev/scripts/check_environment.py'
-        helper.parent.mkdir(parents=True, exist_ok=True)
-        helper.write_bytes((lifecycle.STAGE / 'project-wrappers/check_environment.py').read_bytes())
+        helper = lifecycle.STAGE / 'tools/check_environment.py'
         result = subprocess.run([sys.executable, '-B', str(helper),
                                  str(self.root / 'dev/requirements/absent.txt')],
                                 text=True, capture_output=True, env=self.env)

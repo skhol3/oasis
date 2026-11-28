@@ -260,12 +260,13 @@ class RecipeEvalsTest(unittest.TestCase):
                 self.assertEqual((result.stdout, result.stderr, result.returncode), ('hits=0\n', '', 0))
 
     def bundle_without_forms(self):
-        """A copy of the checker (with odoo_versions.py) in a scratch root without recipes/eval_forms.py;
-        (script, the forms path it reads)."""
+        """A copy of the checker (with odoo_versions.py and siblings.py) in a scratch root without
+        recipes/eval_forms.py; (script, the forms path it reads)."""
         root = self.module.parent / 'bundle'
         (root / 'tools').mkdir(parents=True)
         shutil.copy(SCRIPT, root / 'tools')
         shutil.copy(ROOT / 'tools/odoo_versions.py', root / 'tools')
+        shutil.copy(ROOT / 'tools/siblings.py', root / 'tools')
         return root / 'tools/recipe_evals.py', root.resolve() / 'recipes/eval_forms.py'
 
     def run_copy(self, script):

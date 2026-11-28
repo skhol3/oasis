@@ -6,10 +6,9 @@ own (global installation) location. A checkout reads the nearest `oasis-workspac
 above it (a linked worktree without one, the file its main checkout reads, found through git), with
 its own optional `oasis-checkout.toml`, over the optional machine file
 (`$XDG_CONFIG_HOME/oasis/config.toml`, else `~/.config/oasis/config.toml`), whose per-series
-source paths are defaults the workspace overrides. A checkout that still has the legacy
-profile `.odoo19-agent.toml` is refused: only tools/migrate.py reads that file, to convert it.
-So is a checkout whose module manifests declare another Odoo series than its odoo_version (load,
-series_mismatch). Path declarations do not grant access consent.
+source paths are defaults the workspace overrides. A checkout whose module manifests declare
+another Odoo series than its odoo_version is refused (load, series_mismatch). Path declarations do
+not grant access consent.
 
 workspace_version 2 (v0.15.0 S3, S4) holds several series: a checkout's series is its
 oasis-checkout.toml odoo_version, else the series of its module manifests (checkout_series), else
@@ -31,7 +30,7 @@ import tomllib
 
 
 def variable(name: str) -> str:
-    """OASIS_<name>, else '' (since 0.17.0 the legacy ODOO19_<name> is not read).
+    """OASIS_<name>, else ''.
 
     For the variables a user, a project wrapper or a test may set (PROJECT_ROOT, ENTRYPOINT,
     TOOLS_DIR, COMPOSE_LOCK_TIMEOUT); tools/oasis_env.sh oasis_variable in the shell tools.
@@ -64,14 +63,11 @@ def usage_name() -> str:
 
 @functools.cache
 def versions():
-    """tools/odoo_versions.py, loaded from its file when first needed: callers import this file
-    by location (python3 -I does not put the script directory on sys.path), and the entry
-    point's workspace finder must not depend on it."""
-    spec = importlib.util.spec_from_file_location('oasis_odoo_versions',
-                                                  Path(__file__).with_name('odoo_versions.py'))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    """tools/odoo_versions.py, loaded when first needed: the entry point's workspace finder must not
+    depend on it (nor on tools/siblings.py, loaded here too)."""
+    spec = importlib.util.spec_from_file_location('oasis_siblings', Path(__file__).with_name('siblings.py'))
+    spec.loader.exec_module(siblings := importlib.util.module_from_spec(spec))
+    return siblings.load('odoo_versions', 'oasis_odoo_versions')
 
 PATHS = {
     'community': 'ODOO_SOURCE', 'enterprise': 'ENTERPRISE_SOURCE',
@@ -81,8 +77,6 @@ PATHS = {
 }
 
 
-# The legacy per-checkout profile: never read here, only refused (legacy_profile_refusal).
-PROFILE_NAME = '.odoo19-agent.toml'
 WORKSPACE_NAME = 'oasis-workspace.toml'
 CHECKOUT_NAME = 'oasis-checkout.toml'
 WORKSPACE_VERSION = 1
@@ -110,49 +104,6 @@ class MissingSeries(InvalidConfig):
     """A checkout of a series its workspace file has no section for: oasis setup adds it."""
 
 
-@functools.cache
-def migrate_target(checkout: Path) -> Path | None:
-    """The workspace file `oasis migrate --apply` would write for a checkout with the legacy profile
-    (the `write <dir>/oasis-workspace.toml` line of its plan): tools/migrate.py makes the plan without
-    --workspace, read-only (it lists the worktrees with git and reads their profiles and odoo.conf).
-    None when migrate refuses to plan (its --plan names why) or cannot run."""
-    try:
-        spec = importlib.util.spec_from_file_location('oasis_config_migrate', Path(__file__).with_name('migrate.py'))
-        migrate = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(migrate)
-        return migrate.planned_workspace(checkout)
-    except Exception:  # noqa: BLE001  any refusal or failure only drops the confirmation from the message
-        return None
-
-
-def legacy_profile_commands(profile: Path, program: str) -> tuple[str, str | None]:
-    """The commands that convert a legacy profile, as shell words: `migrate --plan` (Tier A), and the
-    exact `migrate --apply --confirm <workspace file>` (Tier B) when its plan can be made, else None."""
-    checkout = profile.parent
-    plan = shlex.join([program, '--project', str(checkout), 'migrate', '--plan'])
-    target = migrate_target(checkout)
-    if target is None:
-        return plan, None
-    return plan, shlex.join([program, '--project', str(checkout), 'migrate', '--apply', '--confirm', str(target)])
-
-
-def legacy_profile_refusal(profile: Path, program: str) -> str:
-    """Why a checkout with the legacy profile is refused, and the fix (`oasis migrate`, see
-    legacy_profile_commands)."""
-    plan, apply = legacy_profile_commands(profile, program)
-    if apply is None:
-        return (f'{profile} is the old profile format, no longer read: run {plan} to see its conversion to '
-                f'{WORKSPACE_NAME} or what stops it.')
-    return (f'{profile} is the old profile format, no longer read: run {plan} to see its conversion to '
-            f'{WORKSPACE_NAME}, then {apply}.')
-
-
-def legacy_profile_fix(profile: Path, program: str) -> str:
-    """doctor's fix for a legacy profile: the commands of legacy_profile_commands."""
-    plan, apply = legacy_profile_commands(profile, program)
-    return plan if apply is None else f'{plan}, then {apply}'
-
-
 def missing_configuration(root: Path) -> str:
     """The error of a checkout without a workspace file at or above it."""
     return f'Missing tooling configuration: no {WORKSPACE_NAME} at or above {root}.'
@@ -166,6 +117,13 @@ GIT_TIMEOUT_SECONDS = 5
 
 class GitFailed(Exception):
     """git could not report the checkout; the message is the reason."""
+
+
+def git_env() -> dict[str, str]:
+    """The environment of a git command a tool runs on a checkout (setup, worktree-init): without the
+    variables that would point it at another repository, index or prefix."""
+    return {key: value for key, value in os.environ.items()
+            if key not in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_PREFIX')}
 
 
 def git_checkout(root: Path) -> tuple[str, Path, Path]:
@@ -625,8 +583,7 @@ def configuration(root: Path) -> tuple[dict, Path, Path]:
 
 
 def workspace_configuration(root: Path) -> tuple[dict, Path, Path, str]:
-    """configuration() plus the selected environment name; a legacy profile in root is refused
-    first, also next to a workspace file."""
+    """configuration() plus the selected environment name."""
     document, base, workspace, name, _origins, _refusal = layered_configuration(root)
     return document, base, workspace, name
 
@@ -642,9 +599,6 @@ def layered_configuration(root: Path, planned: dict | None = None,
     planned, when given, is the checked document oasis setup is about to write to the workspace file,
     read in its place (it is changed); checkout, when given, is the checkout file it is about to write.
     """
-    profile = root / PROFILE_NAME
-    if profile.is_file():
-        raise InvalidConfig(legacy_profile_refusal(profile, program_name()))
     workspace = workspace_file(root)
     if workspace is None:
         raise InvalidConfig(missing_configuration(root))
@@ -854,15 +808,13 @@ def origins(root: Path) -> dict[str, str]:
     return found
 
 
-def assignments(document: dict, root: Path, base: Path, workspace: Path | None, name: str, *,
+def assignments(document: dict, root: Path, base: Path, workspace: Path, name: str, *,
                 missing_source: str = '') -> dict[str, str]:
     """The assignments of a configuration document whose [tooling] carries version and
-    python_version. workspace None (WORKSPACE_ROOT empty) is only tools/migrate.py's reading of
-    a legacy profile, to compare a checkout before and after converting it. missing_source: see
-    resolve."""
+    python_version. missing_source: see resolve."""
     output = resolve(document, root, base, missing_source=missing_source)
     # Appended last, so the previous assignments stay unchanged.
-    output['WORKSPACE_ROOT'] = str(workspace.parent) if workspace is not None else ''
+    output['WORKSPACE_ROOT'] = str(workspace.parent)
     # Appended after it: the Odoo series and the options that differ between series, which
     # tools render instead of writing them (odoo_versions.py), then the selected environment.
     version = document['tooling']['version']
@@ -902,7 +854,7 @@ DEFAULT_LOGS = 'logs'
 def default_logs(document: dict, tooling: dict) -> str:
     """The logs directory of a workspace without [tooling].logs, relative to its directory: DEFAULT_LOGS as setup
     writes it, and DEFAULT_LOGS/<x.y> with workspace_version 2 (setup writes logs/<x.y> in each series section), so
-    two series never share one server.log. Before 0.17.0 it was each checkout's dev/logs/odoo19."""
+    two series never share one server.log."""
     if document.get('workspace_version') == 2:
         return f'{DEFAULT_LOGS}/{tooling["version"]}'
     return DEFAULT_LOGS

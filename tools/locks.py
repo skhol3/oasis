@@ -5,15 +5,14 @@ bootstrap (tools/bootstrap) and setup (tools/setup.py) compile runtime.txt and d
 runtime.in and dev.in when they are missing or stale, as docs/new-workspace.md does by hand, with
 the same code here (compile), which then writes lock.sha256.
 
-  locks.py state <requirements dir> <project root>
+  locks.py state <requirements dir>
       For locks that common.sh dependency_locks_current did not accept, prints one word:
       missing  runtime.txt, dev.txt or lock.sha256 does not exist;
       stale    lock.sha256 does not record the current runtime.in and dev.in (an input
                changed, or the file cannot be read): compiling again brings them up to date;
       edited   it records them, so a lock (or another entry) was changed by hand: bootstrap
                refuses, it never overwrites such a lock.
-      Entries resolve from the requirements directory, then, for a legacy lock, from the
-      project root, like dependency_locks_current.
+      Entries resolve from the requirements directory, like dependency_locks_current.
   locks.py fingerprint <requirements dir>
       Writes lock.sha256 exactly as `sha256sum runtime.in runtime.txt dev.in dev.txt >
       lock.sha256` run in that directory would (with overrides.txt last when it exists).
@@ -22,9 +21,9 @@ the same code here (compile), which then writes lock.sha256.
       runtime.in, then dev.in (dev.in constrains itself with -c runtime.txt; uv's echo of the lock is
       dropped; its messages pass through to stderr as uv writes them), then fingerprint. A failed
       compile stops before lock.sha256 (exit 2), naming the input and the command to run again.
-  locks.py recorded <requirements dir> <project root>
+  locks.py recorded <requirements dir>
       Exit 0 when overrides.txt does not exist or lock.sha256 records it, else 1: bootstrap and
-      check-environment add it to `sha256sum --check`, which cannot see a file lock.sha256 omits.
+      doctor --environment add it to `sha256sum --check`, which cannot see a file lock.sha256 omits.
   locks.py uv-env
       Prints `export UV_LEGACY_TAR_BACKEND=1` when the uv on PATH needs it (below), else nothing:
       bootstrap evaluates it before its uv commands.
@@ -69,7 +68,7 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def recorded(requirements, root):
+def recorded(requirements):
     """The digest lock.sha256 records for each file it names, keyed by its resolved path."""
     entries = {}
     try:
@@ -80,15 +79,14 @@ def recorded(requirements, root):
         match = ENTRY.fullmatch(line)
         if not match:
             continue
-        for base in (requirements, root):
-            entries.setdefault(os.path.realpath(base / match.group(2)), match.group(1).lower())
+        entries.setdefault(os.path.realpath(requirements / match.group(2)), match.group(1).lower())
     return entries
 
 
-def state(requirements, root):
+def state(requirements):
     if any(not (requirements / name).is_file() for name in (*LOCKS, FINGERPRINT)):
         return 'missing'
-    entries = recorded(requirements, root)
+    entries = recorded(requirements)
     for name in INPUTS:
         if entries.get(os.path.realpath(requirements / name)) != digest(requirements / name):
             return 'stale'
@@ -102,10 +100,10 @@ def state(requirements, root):
     return 'edited'
 
 
-def overrides_recorded(requirements, root):
-    """Whether overrides.txt is absent or lock.sha256 names it (from either base, as recorded reads it)."""
+def overrides_recorded(requirements):
+    """Whether overrides.txt is absent or lock.sha256 names it (as recorded reads it)."""
     return (not (requirements / OVERRIDES).is_file()
-            or os.path.realpath(requirements / OVERRIDES) in recorded(requirements, root))
+            or os.path.realpath(requirements / OVERRIDES) in recorded(requirements))
 
 
 def matches(line, base):
@@ -119,16 +117,14 @@ def matches(line, base):
         return False
 
 
-def current(requirements, root):
+def current(requirements):
     """Whether lock.sha256 matches, as common.sh dependency_locks_current checks it with
-    `sha256sum --check --strict`: every line from the requirements directory, else every line from
-    the project root (a legacy lock)."""
+    `sha256sum --check --strict`: every line from the requirements directory."""
     try:
         lines = (requirements / FINGERPRINT).read_text().splitlines()
     except (OSError, UnicodeDecodeError):
         return False
-    return (bool(lines) and any(all(matches(line, base) for line in lines) for base in (requirements, root))
-            and overrides_recorded(requirements, root))
+    return bool(lines) and all(matches(line, requirements) for line in lines) and overrides_recorded(requirements)
 
 
 def uv_version():
@@ -215,23 +211,22 @@ def fingerprint(requirements):
 
 
 def main(argv):
-    if len(argv) == 3 and argv[0] == 'state':
-        print(state(Path(argv[1]), Path(argv[2])))
+    if len(argv) == 2 and argv[0] == 'state':
+        print(state(Path(argv[1])))
         return 0
     if len(argv) == 2 and argv[0] == 'fingerprint':
         fingerprint(Path(argv[1]))
         return 0
     if len(argv) == 4 and argv[0] == 'compile':
         return compile_locks(Path(argv[1]), argv[2], argv[3])
-    if len(argv) == 3 and argv[0] == 'recorded':
-        return 0 if overrides_recorded(Path(argv[1]), Path(argv[2])) else 1
+    if len(argv) == 2 and argv[0] == 'recorded':
+        return 0 if overrides_recorded(Path(argv[1])) else 1
     if argv == ['uv-env']:
         if uv_environment().get(LEGACY_TAR) == '1' and LEGACY_TAR not in os.environ:
             print(f'export {LEGACY_TAR}=1')
         return 0
-    print('Usage: locks.py state <requirements dir> <project root> | fingerprint <requirements dir> | '
-          'compile <requirements dir> <python> <command to rerun> | recorded <requirements dir> <project root> | '
-          'uv-env',
+    print('Usage: locks.py state <requirements dir> | fingerprint <requirements dir> | '
+          'compile <requirements dir> <python> <command to rerun> | recorded <requirements dir> | uv-env',
           file=sys.stderr)
     return 2
 

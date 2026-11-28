@@ -1,6 +1,5 @@
-"""`oasis setup-postgres` (v0.16.0 S1, S6; named start-database before v0.20.0 S13): starts this checkout's database
-service, Tier A, naming no env file. `start-database` stays as its deprecated alias: the same output and exit codes,
-and one stderr line naming setup-postgres.
+"""`oasis setup-postgres` (v0.16.0 S1, S6; named start-database before v0.20.0 S13, whose alias v0.21.0 S7 removed):
+starts this checkout's database service, Tier A, naming no env file.
 
 An agent harness may refuse any command that names an env file, so setup's next steps, `status --json` and
 doctor name this command instead of the raw `docker compose --env-file ... up -d --wait`. The fake docker of
@@ -93,35 +92,6 @@ class StartDatabaseTests(unittest.TestCase):
         self.assertTrue(result.stdout.startswith(usage), result.stdout)
         self.assertIn('stop --database stops it', result.stdout)
         self.assertEqual(self.calls(), [])
-
-
-class StartDatabaseAliasTests(unittest.TestCase):
-    """v0.20.0 S13: start-database runs setup-postgres exactly, with one deprecation line first on stderr."""
-    setUp_fixture = lifecycle.LifecycleTests.setUp
-    setUp = StartDatabaseTests.setUp
-    cli = StartDatabaseTests.cli
-    calls = StartDatabaseTests.calls
-    DEPRECATION = 'WARNING: start-database is a deprecated alias of setup-postgres: run setup-postgres instead.\n'
-
-    def test_the_alias_runs_the_same_and_prints_the_deprecation_line(self):
-        cases = [((), {}), (('--help',), {}), (('extra',), {}), ((), {'FAKE_UP_FAIL': '1'})]
-        for args, variables in cases:
-            with self.subTest(args=args, variables=variables):
-                self.env.update(variables)
-                self.commands.unlink(missing_ok=True)
-                new = self.cli(*args)
-                new_calls = self.calls()
-                self.commands.unlink(missing_ok=True)
-                old = self.cli(*args, command='start-database')
-                self.assertEqual((old.returncode, old.stdout, old.stderr),
-                                 (new.returncode, new.stdout, self.DEPRECATION + new.stderr))
-                self.assertEqual(self.calls(), new_calls)
-                for name in variables:
-                    del self.env[name]
-        # What it prints names the new name only (setup-postgres), never the alias, apart from that line.
-        self.env['FAKE_UP_FAIL'] = '1'
-        old = self.cli(command='start-database')
-        self.assertNotIn('start-database', old.stdout + old.stderr.removeprefix(self.DEPRECATION))
 
 
 if __name__ == '__main__':

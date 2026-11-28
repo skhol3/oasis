@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sourced by the tools (common.sh sources it too); defines functions only.
 # A variable a user, a project wrapper or a test may set is read as OASIS_<NAME> only (tools/config.py
-# variable() in Python); since 0.17.0 the legacy ODOO19_<NAME> is not read.
+# variable() in Python).
 
 # oasis_variable <NAME>: the value of OASIS_<NAME>, else nothing.
 oasis_variable() {

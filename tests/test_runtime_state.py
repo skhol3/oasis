@@ -572,10 +572,8 @@ class ServerLifecycleTests(unittest.TestCase):
         path.write_text(lifecycle.conf_text(f'http_port = {self.port}\n{extra}'))
 
     def invoke(self, root, command, *args, input=None):
-        path = root / 'dev/scripts' / command
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes((lifecycle.STAGE / 'project-wrappers' / command).read_bytes())
-        return subprocess.run(['bash', str(path), *args], text=True, input=input, cwd=root,
+        return subprocess.run(lifecycle.oasis_argv(root, command, *args, entry=getattr(self, 'entry', None)),
+                              text=True, input=input, cwd=root,
                               env=self.env, capture_output=True)
 
     def odoo_lines(self):
@@ -598,10 +596,7 @@ class ServerLifecycleTests(unittest.TestCase):
     def serve(self, root, *args):
         """Start a long-running fake server; return it once Odoo has been exec'd."""
         lines = len(self.odoo_lines())
-        path = root / 'dev/scripts/start'
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes((lifecycle.STAGE / 'project-wrappers/start').read_bytes())
-        process = subprocess.Popen(['bash', str(path), *args], cwd=root, text=True,
+        process = subprocess.Popen(lifecycle.oasis_argv(root, 'start', *args), cwd=root, text=True,
                                    env={**self.env, 'FAKE_SERVE': '1'}, start_new_session=True,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.addCleanup(self.reap, process)
@@ -769,12 +764,9 @@ class ServerLifecycleTests(unittest.TestCase):
                          (process.pid, str(self.python), str(self.source / 'odoo-bin')))
 
     def staged_tools_with_state_helper(self, source):
-        """A copy of the tools whose runtime_state.py is replaced by source."""
-        tools = Path(self.scratch.name) / 'staged-tools'
-        shutil.copytree(lifecycle.STAGE / 'tools', tools, ignore=shutil.ignore_patterns('__pycache__'),
-                        dirs_exist_ok=True)
-        (tools / 'runtime_state.py').write_text(source)
-        self.env['OASIS_TOOLS_DIR'] = str(tools)
+        """A staged entry point whose tools' runtime_state.py is replaced by source; invoke runs it."""
+        self.entry = lifecycle.staged_bundle(Path(self.scratch.name) / 'staged')
+        (self.entry.parent / 'tools/runtime_state.py').write_text(source)
 
     def test_status_ignores_stderr_of_a_successful_state_read(self):
         for stdout, expected in (('pid=4242 port=8070', 'server: running pid 4242 port 8070\n'),

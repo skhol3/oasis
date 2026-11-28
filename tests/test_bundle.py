@@ -32,25 +32,22 @@ def series_named(text, series):
 OLD_NAMES = re.compile(r'odoo19-(?:backend|security|views-frontend|testing|environment|module-lifecycle)\b')
 SECTIONS = ('Activation Contract', 'Hard Rules', 'Decision Gates',
             'Execution Steps', 'Output Contract', 'References')
-# The legacy per-checkout profile: no longer read; only docs/migrating.md describes it (how to
-# convert one), the README notes the contract change and the bash guard keeps it in its setting files.
+# The per-checkout profile before v0.12.0: nothing reads it since v0.21.0 (S6); only the contract notes (README,
+# bash guard) and the upgrade section of the install guide name it.
 LEGACY_PROFILE = '.odoo19-agent.toml'
-LEGACY_MENTIONS = {'README.md', 'docs/migrating.md', 'docs/bash-guard.md'}
+LEGACY_MENTIONS = {'README.md', 'docs/bash-guard.md', 'docs/install.md'}
 
 
-# v0.17.0 S3: the `odoo19` name is gone. These files still name it, each for what an earlier version left:
-# install.sh moves the old install directory away, doctor reports a wrapper that calls it, the bash guard
-# keeps guarding the old entry point and directory, and the docs say so (the README and AGENTS.md
-# contract notes, the upgrade section, the doctor and guard references, an incident note of that time).
-# Not counted: the legacy profile .odoo19-agent.toml, the default log directory before 0.17.0 dev/logs/odoo19 (only
-# named where its removal is explained) and the runs before 0.8.0 under <logs>/odoo19/, which keep their names, and
-# the incident note's file name.
-ODOO19_KEPT = re.compile(r'\.odoo19-agent|logs/odoo19|logs>/odoo19|\^odoo19\\/|odoo19-chromium-socket-path-too-long')
-ODOO19_MENTIONS = {'AGENTS.md', 'README.md', 'docs/bash-guard.md', 'docs/checking-environment.md',
-                   'docs/gentle-shell-layer.md', 'docs/install.md', 'docs/odoo19-chromium-socket-path-too-long.md',
-                   'install.sh', 'pi/lib/bash-guard.ts', 'tools/doctor.py'}
+# v0.17.0 S3: the `odoo19` name is gone; v0.21.0 S6: so is its transition (install.sh, doctor and the bash guard
+# no longer handle it). These files still name it: the README and AGENTS.md contract notes, the upgrade section,
+# the guard's and the Gentle Shell layer's notes of the removed names (v0.21.0 S5: the incident note of that time
+# is folded into docs/troubleshooting.md).
+# Not counted: the legacy profile .odoo19-agent.toml, the default log directory before 0.17.0 dev/logs/odoo19 and the
+# runs before 0.8.0 under <logs>/odoo19/ (only named where their removal is explained).
+ODOO19_KEPT = re.compile(r'\.odoo19-agent|logs/odoo19|logs>/odoo19')
+ODOO19_MENTIONS = {'AGENTS.md', 'README.md', 'docs/bash-guard.md', 'docs/gentle-shell-layer.md', 'docs/install.md'}
 # Repository-only paths: install.sh does not install them, so no installed document may link to them.
-NOT_INSTALLED = ('AGENTS.md', '.gitignore', 'install.sh', 'odd')
+NOT_INSTALLED = ('AGENTS.md', '.gitignore', 'install.sh', 'odd', 'tests', 'pi/tests')
 
 
 def documents(root):
@@ -94,7 +91,7 @@ def broken_links(files, root):
             except ValueError:
                 broken.append(f'{here}: {link} (outside the bundle)')
                 continue
-            if relative.parts and relative.parts[0] in NOT_INSTALLED:
+            if any(relative.parts[:len(Path(name).parts)] == Path(name).parts for name in NOT_INSTALLED):
                 broken.append(f'{here}: {link} (not installed)')
             elif not target.is_file():
                 broken.append(f'{here}: {link} (missing)')
@@ -223,15 +220,16 @@ class BundleTests(unittest.TestCase):
                 named.add(relative.as_posix())
         self.assertEqual(sorted(named), sorted(ODOO19_MENTIONS))
 
-    def test_the_project_wrapper_templates_call_the_oasis_install_directory(self):
-        # v0.17.0 S3: `oasis doctor` reports a project wrapper that still calls the old one.
-        for path in sorted((ROOT / 'project-wrappers').iterdir()):
-            with self.subTest(wrapper=path.name):
-                text = path.read_text(encoding='utf-8')
-                self.assertIn('.agents/skills/oasis/tools', text)
-                self.assertNotIn('.agents/skills/odoo19', text)
+    def test_the_project_wrapper_templates_are_gone_and_only_the_contract_notes_name_them(self):
+        # v0.21.0 S11: one door, `oasis <command>`. A project's existing dev/scripts copies keep working while the
+        # tool names exist; only the README contract notes name the directory the templates were in.
+        self.assertFalse((ROOT / 'project-wrappers').exists())
+        shipped = [*documents(ROOT), *skill_documents(ROOT)]
+        mentions = {path.relative_to(ROOT).as_posix() for path in shipped
+                    if 'project-wrappers' in path.read_text(encoding='utf-8')}
+        self.assertEqual(mentions, {'README.md'})
 
-    def test_the_legacy_profile_example_is_gone_and_only_migrating_describes_the_format(self):
+    def test_the_legacy_profile_example_is_gone_and_only_the_contract_notes_name_the_format(self):
         self.assertFalse((ROOT / 'odoo-environment/assets/odoo19-agent.example.toml').exists())
         shipped = [*documents(ROOT), *skill_documents(ROOT), *sorted(ROOT.glob('odoo-*/assets/*'))]
         mentions = {path.relative_to(ROOT).as_posix() for path in shipped

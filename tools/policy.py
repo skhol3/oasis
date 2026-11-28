@@ -57,9 +57,6 @@ OPERATIONS = (
     ('setup-postgres', 'A', 'oasis',
      'starts the database service (PostgreSQL) every checkout shares, as every database command does; names no env '
      'file', 'oasis --project /p setup-postgres'),
-    ('start-database', 'A', 'oasis',
-     'deprecated alias of setup-postgres; starts the database service every checkout shares, names no env file',
-     'oasis --project /p start-database'),
     ('stop --database', 'B', 'oasis',
      'stops the database service every checkout shares, ending the sessions of a server on it',
      'oasis --project /p stop --database'),
@@ -86,8 +83,6 @@ OPERATIONS = (
     ('doctor', 'A', 'oasis', 'reads and reports; changes nothing', 'oasis --project /p doctor'),
     ('doctor --environment', 'A', 'oasis', 'checks the environment against its locks; reads and reports, changes nothing',
      'oasis --project /p doctor --environment --quick'),
-    ('check-environment', 'A', 'oasis', 'deprecated alias of doctor --environment; reads and reports, changes nothing',
-     'oasis --project /p check-environment --quick'),
     ('policy', 'A', 'oasis', 'prints this policy table; changes nothing', 'oasis --project /p policy --json'),
     ('gc', 'A', 'oasis', 'lists leftover disposable test databases; changes nothing', 'oasis --project /p gc'),
     ('gc --apply', 'A', 'oasis', 'drops disposable test databases no live run holds; rebuildable',
@@ -102,16 +97,7 @@ OPERATIONS = (
      'runs docker compose down -v for the compose project (-p), which removes its containers and networks, '
      'every named volume of its compose file and every anonymous volume of its containers (every database of its '
      'PostgreSQL), then starts the service again', 'oasis --project /p recreate-postgres-volume'),
-    ('recreate-database-volume', 'B', 'oasis',
-     'deprecated alias of recreate-postgres-volume; deletes every database of the PostgreSQL volume of the compose '
-     'project, then starts the service again', 'oasis --project /p recreate-database-volume'),
     ('trash', 'A', 'oasis', 'lists the trash; trash restore brings an entry back', 'oasis --project /p trash'),
-    ('migrate', 'A', 'oasis', 'without --apply it prints the migration plan; changes nothing',
-     'oasis --project /p migrate'),
-    ('migrate --plan', 'A', 'oasis', 'prints the migration plan; changes nothing',
-     'oasis --project /p migrate --plan'),
-    ('migrate --apply', 'B', 'oasis', "rewrites the project's configuration files",
-     'oasis --project /p migrate --apply'),
     ('worktree-init --dry-run', 'A', 'oasis', 'prints the worktree plan; changes nothing',
      'oasis --project /p worktree-init feat feature/x --dry-run'),
     ('worktree-init', 'B', 'oasis', 'adds a git worktree and, when it does not exist, a new branch',
@@ -132,16 +118,11 @@ OPERATIONS = (
     ('type a password', 'C', 'action', 'only when the person wants their own; no oasis workflow needs one', None),
 )
 KEYS = ('operation', 'tier', 'kind', 'reason', 'example')
-# Deprecated command names (v0.16.0 S5; v0.20.0 S13) and the operation each runs: the alias keeps a row of its own,
-# with the tier (and the --confirm) of its target (the entry point's DEPRECATED_ALIASES; tests/test_policy.py checks
-# both).
-ALIASES = {'check-environment': 'doctor --environment', 'start-database': 'setup-postgres',
-           'recreate-database-volume': 'recreate-postgres-volume'}
 # What `--confirm` takes for a Tier B oasis command (its refusal names the exact command); a Tier B
 # operation without one is confirmed only by a person or a harness dialog (stop --database).
 CONFIRM = {'drop-database': 'database name', 'gc --apply --trash': 'project root',
-           'migrate --apply': 'workspace file', 'worktree-init': 'worktree path',
-           'recreate-postgres-volume': 'compose project', 'recreate-database-volume': 'compose project',
+           'worktree-init': 'worktree path',
+           'recreate-postgres-volume': 'compose project',
            'create-database': 'database name'}
 
 
@@ -172,7 +153,6 @@ def as_typescript() -> str:
             '  example: string | null;\n'
             '  confirm: string | null;\n'
             '}\n'
-            f'export const POLICY_VERSION = {VERSION};\n'
             f'export const POLICY: readonly PolicyEntry[] = [\n{data}];\n')
 
 

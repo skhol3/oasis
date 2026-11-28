@@ -37,7 +37,6 @@ name for that drop time is exactly this name. Other names are never listed, rest
 """
 from datetime import datetime, timedelta, timezone
 import hashlib
-import importlib.util
 import os
 from pathlib import Path
 import re
@@ -46,18 +45,11 @@ import sys
 
 import config
 import odoo_addons_path
+import siblings
 import test_temp
 
 
-def sibling(name):
-    """A packaged helper loaded from its file: `gc` is also the name of a built-in module."""
-    spec = importlib.util.spec_from_file_location(f'oasis_trash_{name}', Path(__file__).with_name(f'{name}.py'))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-gc = sibling('gc')
+gc = siblings.load('gc', 'oasis_trash_gc')  # `gc` is also the name of a built-in module
 
 MAX_BYTES = 63
 KEEP_BYTES = 34  # 34 + len('_<6 hex>') + len('_trash_YYYYMMDD_HHMMSS') == 63

@@ -23,7 +23,7 @@ Changing a tier is a contract change: a decision, a note in the README and in th
 
 ## Tier B in the CLI: `--confirm <exact name>`
 
-`drop-database`, `gc --apply --trash`, `migrate --apply`, `worktree-init`,
+`drop-database`, `gc --apply --trash`, `worktree-init`,
 `recreate-postgres-volume` and, since v0.20.0, `create-database` (the one command that creates a database)
 run only with `--confirm` naming exactly what they change:
 
@@ -31,14 +31,9 @@ run only with `--confirm` naming exactly what they change:
 | --- | --- |
 | `drop-database <name> [--terminate]` | the database name |
 | `gc --apply --trash [--older-than <days>]` | the project root (`--project`) |
-| `migrate [--workspace <dir>] --apply` | the workspace file the plan writes (`write <dir>/oasis-workspace.toml`) |
 | `worktree-init <feature> <branch> [--path <dir>]` | the worktree path the plan names (`worktree: <path>`) |
 | `recreate-postgres-volume` | the compose project (the top-level `name:` of the compose file, `compose_project=<name>` in the plan); see [The database account](setup.md#the-database-account) |
 | `create-database [--with-demo] [--lang <code>] [--country <code>] <module> <name>` | the database name |
-
-`recreate-database-volume`, the deprecated alias of `recreate-postgres-volume` (v0.20.0), takes the same
-`--confirm` and is Tier B too; `start-database`, the deprecated alias of `setup-postgres`, stays Tier A. Both
-keep working and print one stderr line naming the new name; what oasis prints names the new names only.
 
 Without it, or with another value, the command changes nothing, exits 2 and names the exact
 command to run, for example:
@@ -49,8 +44,8 @@ ERROR: drop-database moves shop_dev_old and its filestore to the trash (Tier B: 
 
 `--confirm` records explicit intent: the agent proposes the command, a person agrees, then it runs
 with `--confirm`. It is not a guarantee against an agent that adds it by itself; where a harness
-exists, its dialog is the confirmation (see [Bash guard](bash-guard.md)). `worktree-init --dry-run`,
-`migrate --plan` and resuming an existing worktree need none.
+exists, its dialog is the confirmation (see [Bash guard](bash-guard.md)). `worktree-init --dry-run`
+and resuming an existing worktree need none.
 
 Decision (v0.20.0): a database is created only when the user asks for it, with what Odoo's database
 manager form asks, as the user chose it. `create-database` is the one command that creates a database,
@@ -87,7 +82,6 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `stop` | A | stops this checkout's Odoo server; start runs it again |  |
 | `status` | A | reads and reports; changes nothing |  |
 | `setup-postgres` | A | starts the database service (PostgreSQL) every checkout shares, as every database command does; names no env file |  |
-| `start-database` | A | deprecated alias of setup-postgres; starts the database service every checkout shares, names no env file |  |
 | `stop --database` | B | stops the database service every checkout shares, ending the sessions of a server on it |  |
 | `install-module` | A | installs a module in an existing managed database; it never creates one (create-database does) |  |
 | `update-module` | A | updates a module in a managed database |  |
@@ -104,7 +98,6 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `audit-dependencies` | A | reads and reports; changes nothing |  |
 | `doctor` | A | reads and reports; changes nothing |  |
 | `doctor --environment` | A | checks the environment against its locks; reads and reports, changes nothing |  |
-| `check-environment` | A | deprecated alias of doctor --environment; reads and reports, changes nothing |  |
 | `policy` | A | prints this policy table; changes nothing |  |
 | `gc` | A | lists leftover disposable test databases; changes nothing |  |
 | `gc --apply` | A | drops disposable test databases no live run holds; rebuildable |  |
@@ -112,11 +105,7 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `gc --apply --trash` | B | drops the expired trash entries for good | project root |
 | `drop-database` | B | takes a database (and its filestore) out of use; only trash restore brings it back | database name |
 | `recreate-postgres-volume` | B | runs docker compose down -v for the compose project (-p), which removes its containers and networks, every named volume of its compose file and every anonymous volume of its containers (every database of its PostgreSQL), then starts the service again | compose project |
-| `recreate-database-volume` | B | deprecated alias of recreate-postgres-volume; deletes every database of the PostgreSQL volume of the compose project, then starts the service again | compose project |
 | `trash` | A | lists the trash; trash restore brings an entry back |  |
-| `migrate` | A | without --apply it prints the migration plan; changes nothing |  |
-| `migrate --plan` | A | prints the migration plan; changes nothing |  |
-| `migrate --apply` | B | rewrites the project's configuration files | workspace file |
 | `worktree-init --dry-run` | A | prints the worktree plan; changes nothing |  |
 | `worktree-init` | B | adds a git worktree and, when it does not exist, a new branch | worktree path |
 | `menu` | C | the interactive menu for a person at a terminal; agents run the commands it lists |  |
