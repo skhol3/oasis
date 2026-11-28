@@ -9,6 +9,80 @@ names) may still change in a minor release; every such change is listed here und
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-27
+
+### Added
+
+- `doctor` checks that the environment's Python can load the checkout's code (`code_python`). The
+  environment's own interpreter compiles every `.py` file once, with a time limit that scales with the number
+  of files. It reports the first file it cannot load, the lowest Python the code needs (best-effort) and the
+  fix; a syntax error in the code is a WARN that does not blame the environment. Every doctor report gains a
+  `code_python` line.
+- `setup` warns in its plan when the code does not parse with the grammar of the Python of an environment it
+  adopts or plans (best-effort; the adopted Python is not run). It also reports syntax errors in the code;
+  neither blocks `--apply`.
+
+### Changed
+
+- Contract change: `start-database` is renamed `setup-postgres` and `recreate-database-volume` is renamed
+  `recreate-postgres-volume`; the old names are deprecated aliases that print one stderr line naming the new
+  name. Next steps, doctor fixes, `status --json`, the menu, the policy and the docs use the new names.
+- Contract change: `start` and `restart` check that each database Odoo would open exists (`-d`, else `odoo.conf`'s
+  `db_name` list) and refuse a missing one with exit 2, naming `create-database --plan`, before Odoo starts or
+  the running server is stopped.
+- Contract change: `init-dev-database` no longer writes `<database>.logins` and never asks the administrator's
+  password: the administrator keeps Odoo's default password (`admin`), or `ODOO_ADMIN_PASSWORD` of the env file
+  when it sets a non-empty one (read as `ODOO_DB_PASSWORD` is; a value with compose interpolation or a
+  double-quoted escape is refused, exit 2, before anything runs). `[[development.users]]` passwords are still
+  asked on a terminal (Enter generates one) and generated otherwise, but are no longer stored. The output names
+  what each account uses, never a value (`Account <login> (administrator), password: Odoo's default`, or `from
+  <env file> ODOO_ADMIN_PASSWORD`, `typed on the terminal`, `generated, not stored or shown`). An existing
+  `<database>.logins` from an earlier version is left as it is, with a WARN line.
+- Contract change: creating a database needs the user, and one command does it. `create-database` (named
+  `init-dev-database` until this version; that name is removed, no alias; Odoo's own database creation) is Tier B (`--confirm <database>`; `--dry-run` and `--plan` are Tier A); its plan
+  (`--plan [--json]`, setup's question shape, `--answer`/`--answers`) asks the suffix, dev, test or both, the
+  module, demo data (recommended off, still asked), the language and the country, then prints each dry run and
+  `--confirm` command; it creates test databases too and takes `--lang` and `--country`. `install-module`
+  refuses a missing database (exit 2, naming the plan) and has no `--confirm` or `--dry-run`; `update-module`
+  and `odoo-shell` name the same plan. The bash guard asks for `init-dev-database`; the menu passes `--confirm`;
+  `status --json` `next` and `setup`'s next steps name the plan instead of a `<dev_prefix>manual` name.
+- Contract change: `bootstrap --apply` exits with the result of its own work, the locks and the sync: 0 once
+  they succeeded, also when its trailing `doctor --environment --full` fails outside the sync (before, exit 1, for
+  example with PostgreSQL not running yet). The doctor's lines are printed as they are, then `sync=succeeded`,
+  `doctor=failed exit=<n>: the checks above are the results of the trailing doctor --environment --full; the sync
+  succeeded` and `  next: fix what they report (their fix: lines), then run oasis --project <checkout> doctor
+  --environment --full`. These keep the exit non-zero, as before: a refusal or a failed compile (exit 2), a failed
+  `uv venv` or `uv pip sync` (their code), and the doctor's `FAIL locked_environment=drifted` for the environment
+  bootstrap just synced (exit 1, nothing added: the sync did not produce the locked environment). A passing
+  doctor leaves the output as before.
+- Contract change: without a terminal, `setup` no longer chooses the Python environment it would create (a new
+  workspace or a new series section) nor its Python (the v0.17.0 field run saw an agent's plan pick both silently).
+  They are open questions, `environment` (`create` at the path the question shows, recommended, or an existing
+  environment) and `python` (recommended: the configuration's), with `open question environment: ...` and `open
+  question python: ...` lines in the plan, `"open": ["environment", "python"]` and `ready_to_apply: false` in
+  `--plan --json`, and `setup --apply` refuses them (exit 2, nothing changed) until answered with `--answer
+  environment=create`, `--environment <dir>` or `--python <x.y>`, which answers both. The JSON question
+  `environment` has the flag `--answer environment=create | --environment <dir>`, and an answer by `--python` or
+  `--answer python=<x.y>` has the origin `from --python` or `from --answer python` (before: `recommended (no
+  terminal)`). On a terminal the questions are asked as before.
+- `setup`: a new series section whose `[tooling]` environment is an adopted one (no `.oasis-created` mark) gets an
+  environment named after the project, `<name><major>` like its prefixes, in that environment's folder when it is
+  in the workspace directory, else in the workspace's; before, `<that environment>-<x.y>`, named after what may be
+  another project's environment.
+
+### Fixed
+
+- Security: `tools/dev_users.py`, called directly, created a database without `--confirm` and skipped the name
+  guards. It now requires `--confirm <database>` and runs the guards itself; `tools/dev_users_runtime.py` runs only
+  with the payload `dev_users.py` sends; the Gentle Shell bash guard asks for a direct call of either script like
+  for `create-database`.
+
+### Removed
+
+- `init-dev-database`, renamed `create-database` (no alias).
+- The `create-database` command, its project wrapper template, the menu action *Create a database*, and the
+  policy rows for `create-database`: `init-dev-database` creates databases (see Changed).
+
 ## [0.19.0] - 2026-11-27
 
 ### Added
@@ -1397,7 +1471,8 @@ First tagged release: one project checkout per Odoo project.
 - The bash guard is a guard rail, not a sandbox: piping into a shell, scripts and `ssh` are
   not detected.
 
-[Unreleased]: https://github.com/skhol3/oasis/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/skhol3/oasis/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/skhol3/oasis/releases/tag/v0.20.0
 [0.19.0]: https://github.com/skhol3/oasis/releases/tag/v0.19.0
 [0.18.0]: https://github.com/skhol3/oasis/releases/tag/v0.18.0
 [0.17.0]: https://github.com/skhol3/oasis/releases/tag/v0.17.0

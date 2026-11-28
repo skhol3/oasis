@@ -511,16 +511,16 @@
       "superseded_by": null
     },
     {
-      "id": "modules.init_dev",
+      "id": "modules.create_database",
       "group": "modules",
-      "label": "Create a development database with role accounts",
+      "label": "Create a database with role accounts",
       "kind": "command",
-      "command": "init-dev-database",
+      "command": "create-database",
       "argv": [
         "/opt/oasis/oasis",
         "--project",
         "/work/a project",
-        "init-dev-database",
+        "create-database",
         {
           "input": "demo",
           "flag": "--with-demo"
@@ -530,6 +530,10 @@
         },
         {
           "input": "database"
+        },
+        {
+          "input": "database",
+          "option": "--confirm"
         }
       ],
       "inputs": [
@@ -573,8 +577,8 @@
           "choices": null
         }
       ],
-      "destructive": false,
-      "confirm": null,
+      "destructive": true,
+      "confirm": "database",
       "user_run": false,
       "terminal_only": true,
       "follow": false,
@@ -762,43 +766,6 @@
           "error": "--only takes a test class or Class.method.",
           "default": null,
           "hint": "Enter for every test of the module",
-          "choices": null
-        }
-      ],
-      "destructive": false,
-      "confirm": null,
-      "user_run": false,
-      "terminal_only": false,
-      "follow": false,
-      "superseded_by": null
-    },
-    {
-      "id": "maintenance.create_database",
-      "group": "maintenance",
-      "label": "Create a database",
-      "kind": "command",
-      "command": "create-database",
-      "argv": [
-        "/opt/oasis/oasis",
-        "--project",
-        "/work/a project",
-        "create-database",
-        {
-          "input": "database"
-        }
-      ],
-      "inputs": [
-        {
-          "id": "database",
-          "label": "New database name",
-          "kind": "text",
-          "source": null,
-          "required": true,
-          "allow_new": false,
-          "pattern": "^[A-Za-z0-9_]+$",
-          "error": "Database name must use only letters, numbers, and underscores.",
-          "default": null,
-          "hint": null,
           "choices": null
         }
       ],

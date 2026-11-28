@@ -10,11 +10,12 @@ The checks, in order, each {"ready": bool, "detail": ...}: workspace, environmen
 databases, server; `next` is the command of the first one that is not ready (null when all are), shell-quoted:
   workspace         setup --plan --json (no workspace file), doctor (a configuration that does not load)
   environment/locks bootstrap --apply (doctor for a lock changed by hand or locks that cannot be read)
-  database_service  start-database, which starts it (stopped or starting) and names no env file (an agent harness
+  database_service  setup-postgres, which starts it (stopped or starting) and names no env file (an agent harness
                     may refuse a command that does; list-databases would start it too, but the policy says it only
                     reads), doctor when it is unhealthy or its state cannot be read
-  databases         init-dev-database <module> <name> with [development], else install-module <module>
-                    (create-database <name> without modules); doctor when they cannot be read
+  databases         create-database --plan --json, the plan of the one command that creates a database: creating
+                    one is the user's decision, its name included (v0.20.0 S5, S6, S12: the plan asks it); doctor
+                    when they cannot be read
   server            start
 """
 from __future__ import annotations
@@ -36,7 +37,7 @@ import trash  # noqa: E402
 CHECKS = ('workspace', 'environment', 'locks', 'database_service', 'databases', 'server')
 PSQL = ('set -eu\nexport PGPASSWORD="$ODOO_DB_PASSWORD"\n'
         'exec psql -U "$ODOO_DB_USER" -d "$POSTGRES_DB" "$@"\n')
-# The database service states whose next command starts it (start-database waits until it is healthy).
+# The database service states whose next command starts it (setup-postgres waits until it is healthy).
 STARTS = ('stopped', 'starting')
 
 
@@ -84,17 +85,6 @@ def databases(values: dict, root: Path) -> list[str] | str:
         return str(exc)
     return [name for name in (line.strip() for line in result.stdout.splitlines())
             if name and trash.owned(name, dev, test, slug, slugs)]
-
-
-def first_module(values: dict) -> str | None:
-    for addon_root in values['ADDON_ROOTS'].splitlines():
-        try:
-            found = sorted(path.parent.name for path in Path(addon_root).glob('*/__manifest__.py'))
-        except OSError:
-            continue
-        if found:
-            return found[0]
-    return None
 
 
 def report(root: Path) -> dict:
@@ -154,20 +144,13 @@ def report(root: Path) -> dict:
         return done(command('doctor') if state == 'edited' or state.startswith('unknown')
                     else command('bootstrap', '--apply'))
     if not checks['database_service']['ready']:
-        return done(command('start-database') if service in STARTS else command('doctor'))
+        return done(command('setup-postgres') if service in STARTS else command('doctor'))
     if not checks['databases']['ready']:
         if isinstance(checks['databases']['detail'], str):
             return done(command('doctor'))
-        slug = values.get('CHECKOUT_SLUG', '')
-        name = f'{values["DEV_PREFIX"]}{slug + "_" if slug else ""}manual'
-        module = first_module(values)
-        try:
-            development = isinstance(config.read_toml(workspace).get('development'), dict)
-        except config.InvalidConfig:
-            development = False
-        if module is None:
-            return done(command('create-database', name))
-        return done(command('init-dev-database', module, name) if development else command('install-module', module))
+        # v0.20.0 S5, S6, S12: the plan asks the user the name, the kind, the module, the demo data, the language and
+        # the country; none is chosen here.
+        return done(command('create-database', '--plan', '--json'))
     return done(None if checks['server']['ready'] else command('start'))
 
 

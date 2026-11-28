@@ -24,8 +24,9 @@ import test_lifecycle as lifecycle
 import test_shared_conf as shared
 
 READER = lifecycle.STAGE / 'tools' / 'config.py'
-# The five commands that start Odoo, with their arguments and whether the database exists.
-COMMANDS = (('test-module', ('coffee',), '0'), ('install-module', ('coffee',), '0'),
+# The five commands that start Odoo, with their arguments and whether the database exists (install-module's does:
+# it never creates one since v0.20.0 S12).
+COMMANDS = (('test-module', ('coffee',), '0'), ('install-module', ('coffee',), '1'),
             ('update-module', ('coffee', 'cc_dev_coffee'), '1'), ('odoo-shell', ('cc_dev_coffee',), '1'),
             ('start', ('--workers=0',), '0'))
 
@@ -128,6 +129,7 @@ class ComposedAddonsPathTests(PathFreeConfFixture):
         (self.root / 'a,b/coffee').mkdir(parents=True)
         (self.root / 'a,b/coffee/__manifest__.py').touch()
         self.conf.write_text('[options]\n')
+        self.env['FAKE_EXISTS'] = '1'
         result = self.invoke('install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (2, '', f'ERROR: Cannot compose --addons-path: {self.root.resolve()}/a,b contains a comma.\n'))
@@ -188,6 +190,8 @@ class PathFreeLinkedWorktreeTests(unittest.TestCase):
         shared.shared_layout(self)
         # The shared conf names no addons_path: oasis composes it for every checkout.
         self.conf.write_text(f'[options]\nhttp_port = {self.http_port}\ngevent_port = {self.gevent_port}\n')
+        # install-module runs on an existing database only (v0.20.0 S12: it never creates one).
+        self.env['FAKE_EXISTS'] = '1'
 
     def install(self, root, database):
         result = self.invoke(root, 'install-module', 'coffee')
@@ -218,7 +222,7 @@ class PathFreeLinkedWorktreeTests(unittest.TestCase):
 
 
 class PathFreeDevelopmentTests(unittest.TestCase):
-    """init-dev-database (dev_users_runtime.py) passes the same configuration options."""
+    """create-database (dev_users_runtime.py) passes the same configuration options."""
     setUp_fixture = test_dev_users.DevelopmentUsersTests.setUp
     command = test_dev_users.DevelopmentUsersTests.command
     terminal = test_dev_users.DevelopmentUsersTests.terminal
@@ -381,6 +385,7 @@ python = '3.13'
 
     def test_the_declared_python_runs(self):
         self.python.write_text(self.python.read_text().replace('echo 3.12', 'echo 3.13'))
+        self.env['FAKE_EXISTS'] = '1'
         result = self.invoke('install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertIn(' -d cc_dev_coffee -i coffee --without-demo --stop-after-init\n', self.commands.read_text())

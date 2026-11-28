@@ -37,7 +37,9 @@ class PrintCommandTests(menu.MenuFixture):
         self.port = lifecycle.quiet_ports(3)
         self.conf = self.root / 'dev/odoo.conf'
         self.conf.write_text(lifecycle.conf_text(f'http_port = {self.port}\n'))
-        self.env.update(OASIS_DETACH_WAIT='5')
+        # v0.20.0 L19: start and restart open existing databases only (tests/test_database_creation.py pins a
+        # missing one); every database of these servers exists.
+        self.env.update(OASIS_DETACH_WAIT='5', FAKE_EXISTS='1')
         self.server_log = self.root.resolve() / 'logs/main/server.log'
         self.checkout = self.root
         self.addCleanup(self.kill_recorded)

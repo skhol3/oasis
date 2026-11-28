@@ -39,7 +39,7 @@ Keys:
   --stop-after-init or --test-tags, as that value. Any value turns demo data off for every module
   installed (config.py:522-523), so 15.0 passes --without-demo=all.
 - demo_on_args: the options that install with demo data (install-module --with-demo,
-  init-dev-database --with-demo). 15.0 has no --with-demo option and loads demo data by default:
+  create-database --with-demo). 15.0 has no --with-demo option and loads demo data by default:
   nothing to pass.
 - test_tags_implies_stop: whether --test-tags implies --stop-after-init. The tests path
   (test-module, and verify-module through it) passes --stop-after-init in every series, so a test
@@ -55,7 +55,7 @@ Keys:
 - dev_reload_packages: the Python packages of which one must be importable for the `reload`
   feature (19.0: odoo/service/server.py:1663-1675; 15.0: server.py:28-47); without any, Odoo logs a
   warning and disables reload. Empty for a series without `reload`.
-- user_groups_field: the res.users field of a user's groups (init-dev-database writes it).
+- user_groups_field: the res.users field of a user's groups (create-database writes it).
 - runtime_requirements: what the series needs at run time that the requirements.txt of its source
   does not list, as (requirement, reason) pairs; a new runtime.in that `oasis setup` writes requires
   each after the source's requirements, below a comment with its reason (v0.15.0 S9). 19.0: none.
@@ -98,6 +98,8 @@ CAPABILITIES = {
         'user_groups_field': 'group_ids',
         'runtime_requirements': [],
         'ldap_override': None,
+        # -d reads PGDATABASE and -c expands variables and ~ (odoo/tools/config.py:377, :1063-1066).
+        'configuration_reads_environment': True,
     },
     '15.0': {
         'python': ('3.7', '3.12'),
@@ -120,6 +122,8 @@ CAPABILITIES = {
                                   'which provides it: an environment uv creates has none and uv pip sync would '
                                   'remove it; setuptools advises <81 to keep pkg_resources.')],
         'ldap_override': ('python-ldap==3.4.0', 'python-ldap==3.4.4'),
+        # -d has no variable and -c is taken as given (odoo/tools/config.py:239, :426-427).
+        'configuration_reads_environment': False,
     },
 }
 

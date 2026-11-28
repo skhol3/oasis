@@ -377,13 +377,12 @@ class DropToTrashTests(TrashFixture):
         trash = 'cc_dev_coffee_trash_20261101_120000'
         test_trash = 'cc_test_coffee_trash_20261101_120000'
         for command, args, database in (
-                ('create-database', (trash,), trash),
                 ('install-module', ('coffee', trash), trash),
                 ('update-module', ('coffee', trash), trash),
                 ('odoo-shell', (trash,), trash),
                 ('start', ('-d', trash), trash),
                 ('start', (f'--database={trash}',), trash),
-                ('init-dev-database', ('coffee', trash), trash),
+                ('create-database', ('coffee', trash), trash),
                 ('module-status', ('coffee', trash), trash),
                 ('drop-database', (trash,), trash),
                 ('test-module', ('coffee', test_trash), test_trash),
@@ -398,10 +397,10 @@ class DropToTrashTests(TrashFixture):
         for database in ('cc_dev_coffee_trash_2026110_120000', 'cc_dev_coffee_trash_20261101_120000_x',
                          'cc_dev_coffee_trash'):
             with self.subTest(database=database):
-                self.seed({})
-                result = self.cli('create-database', database)
-                self.assertEqual((result.returncode, result.stdout, result.stderr),
-                                 (0, f'Database ready: {database}\n', ''))
+                # install-module takes the name (v0.20.0 S12: an existing database; nothing creates one here).
+                self.seed({database: {}})
+                result = self.cli('install-module', 'coffee', database)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
 
 
 class SluggedTrashTests(TrashFixture):

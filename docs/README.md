@@ -20,11 +20,11 @@ One topic per file. Start from the group that matches what you are doing; the
 | Documentation | Purpose |
 | --- | --- |
 | [Action menu](action-menu.md) | `oasis menu` and the Gentle Shell panel (`alt+o`) |
-| [Servers and ports per checkout](servers-and-ports.md) | `start`, `restart`, `stop`, `status`, ports and the database service (`start-database`) |
+| [Servers and ports per checkout](servers-and-ports.md) | `start`, `restart`, `stop`, `status`, ports and the database service (`setup-postgres`) |
 | [Tests and test databases](testing.md) | `test-module`, `verify-module`, `--only`, `--reuse` and compact evidence |
 | [Disposable test databases](disposable-test-databases.md) | Per-run databases and `gc` after interrupted runs |
 | [Database trash](trash.md) | `drop-database` moves to the trash; `trash`, `trash restore` and `gc --trash` |
-| [Fresh development database with role accounts](dev-database.md) | `init-dev-database`, demo data and credentials |
+| [Fresh development database with role accounts](dev-database.md) | `create-database`, demo data and credentials |
 | [Checkouts and worktrees](checkouts-and-worktrees.md) | Checkout identity, databases per checkout and `worktree-init` |
 | [Path-free odoo.conf](path-free-odoo-conf.md) | `--addons-path` and `--data-dir` on the command line |
 | [Migrating to the workspace file](migrating.md) | `oasis migrate` |

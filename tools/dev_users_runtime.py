@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Private stdin-only credential transport; invoked by the guarded development CLI.
+"""Private stdin-only credential transport; invoked by the guarded development CLI (create-database, through
+tools/dev_users.py).
+
+It runs only with the payload dev_users.py sends (v0.20.0 L19): its `confirmed` key names the database of its
+arguments, the one the user confirmed and dev_users.py checked against the name guards; a call without it (arguments
+alone, a terminal on stdin, another payload) is refused with one line and exit 3, and nothing is created.
 
 It runs with the project environment's Python (3.7+ for Odoo 15), so it imports only the standard library
 of that version: dev_users.py (the host's Python) reads the configuration and passes the values this needs
@@ -13,18 +18,40 @@ import sys
 # The exits dev_users.py reads: 0 initialized, CREATED_THEN_FAILED the database was created and a later step
 # failed, 3 nothing was created; any other (1: an uncaught error) is unknown.
 CREATED_THEN_FAILED = 4
+NOT_STARTED_BY_DEV_USERS = ('ERROR: dev_users_runtime.py runs only under create-database (tools/dev_users.py), which '
+                            'confirms the database; nothing was created.')
+
+
+def confirmed_payload(database):
+    """The payload of stdin when dev_users.py sent it for this database (its `confirmed` key), else None. A terminal on
+    stdin is never read."""
+    if sys.stdin is None or sys.stdin.isatty():
+        return None
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict) or not database or payload.get('confirmed') != database:
+        return None
+    return payload
 
 
 def main():
     created = False
     # Do not expose credentials through initialization/authentication exception logs.
     logging.disable(logging.CRITICAL)
+    database = sys.argv[3] if len(sys.argv) == 4 else None
+    payload = confirmed_payload(database)
+    if payload is None:
+        print(NOT_STARTED_BY_DEV_USERS, file=sys.stderr)
+        return 3
     try:
-        module, database = sys.argv[2], sys.argv[3]
-        payload = json.load(sys.stdin)
+        module = sys.argv[2]
         declaration = payload['declaration']
         passwords = payload['passwords']
         with_demo = payload['with_demo']
+        # The language and the country (None: none) dev_users.py checked against the Odoo source's lists.
+        lang, country = payload['lang'], payload['country']
         # Decided by dev_users.py (runtime_values): the demo options and users' groups field of the series,
         # and common.sh's odoo_config_arguments.
         runtime = payload['runtime']
@@ -39,11 +66,11 @@ def main():
 
         odoo.tools.config.parse_config([*config_args, '--no-http',
                                        *demo_flags, '--log-level=critical'])
-        # Odoo creates the DB itself: an existing name or a concurrent CREATE fails,
-        # never the ensure_database behavior that might reuse another caller's DB.
+        # Odoo creates the DB itself, as its database manager form does (every supported series takes the same
+        # arguments): an existing name or a concurrent CREATE fails, never reusing another caller's DB.
         odoo.service.db.exp_create_database(
-            database, with_demo, 'en_US', user_password=passwords[0],
-            login=declaration['administrator_login'])
+            database, with_demo, lang, user_password=passwords[0],
+            login=declaration['administrator_login'], country_code=country)
         created = True
         if not odoo.service.common.exp_authenticate(
                 database, declaration['administrator_login'], passwords[0], {}):

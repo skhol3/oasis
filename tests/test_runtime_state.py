@@ -564,6 +564,9 @@ class ServerLifecycleTests(unittest.TestCase):
         (self.source / 'odoo-bin').write_text(SLEEPER)
         self.port = free_ports(4)
         self.write_conf(self.root / 'dev/odoo.conf')
+        # v0.20.0 L19: start and restart open existing databases only (tests/test_database_creation.py pins a
+        # missing one); every database of these servers exists.
+        self.env['FAKE_EXISTS'] = '1'
 
     def write_conf(self, path, extra=''):
         path.write_text(lifecycle.conf_text(f'http_port = {self.port}\n{extra}'))

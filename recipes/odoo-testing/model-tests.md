@@ -206,12 +206,12 @@ class TestLibraryBook(TransactionCase):
 <!-- since=15.0 id=demo-data -->
 - A new database loads demo data unless `--without-demo` says otherwise (`odoo/tools/config.py:111-113`); oasis
   passes `--without-demo=all` to its test runs, and `install-module --with-demo` and
-  `init-dev-database --with-demo` pass nothing, so they get the default demo data.
+  `create-database --with-demo` pass nothing, so they get the default demo data.
 <!-- end -->
 
 <!-- since=19.0 id=demo-data -->
 - A new database loads no demo data unless `--with-demo` (`odoo/tools/config.py:238-239`); oasis still passes
-  `--without-demo` to its test runs, and `install-module --with-demo` and `init-dev-database --with-demo` pass
+  `--without-demo` to its test runs, and `install-module --with-demo` and `create-database --with-demo` pass
   `--with-demo`.
 <!-- end -->
 

@@ -65,12 +65,12 @@ CI: `.github/workflows/tests.yml` runs `node --test pi/tests/*.test.ts` and `pyt
 2. Start the database service and run `doctor` until `doctor_failures=0` (each `FAIL` says how to
    fix it). setup generated the database account in the environment file, which the service and
    Odoo both read; no step needs a password read, copied or typed
-   ([The database account](docs/setup.md#the-database-account)). `start-database` starts the
+   ([The database account](docs/setup.md#the-database-account)). `setup-postgres` starts the
    service the way every database command does and names no environment file, so an agent harness
    that refuses commands naming one runs it too:
 
    ```bash
-   ~/.agents/skills/oasis/oasis start-database
+   ~/.agents/skills/oasis/oasis setup-postgres
    ~/.agents/skills/oasis/oasis doctor
    ```
 
@@ -107,7 +107,7 @@ Tier A in the skills too. In the CLI, `drop-database`, `gc --apply --trash`, `mi
 `worktree-init` run only with `--confirm <exact name>` (the database, the project root, the
 workspace file, the worktree path); without it they exit 2 and name the exact command. The menu,
 `/oasis worktree` and `/oasis migrate` pass it after your confirmation. New Tier B command:
-`recreate-database-volume --confirm <compose project>` runs `docker compose -p <compose project> down -v`
+`recreate-postgres-volume --confirm <compose project>` runs `docker compose -p <compose project> down -v`
 (the project's containers and networks, every named volume of its compose file and every anonymous
 volume of its containers: every database of its PostgreSQL) and starts the service again with the
 account of the env file; it replaces a raw `docker compose down -v`.
@@ -117,8 +117,9 @@ and by Odoo; `odoo.conf` stays password-free), so no oasis workflow requires rea
 typing a password, and no command takes or prints one. An existing project keeps its files: setup
 fills an env file's empty account variables in place (never adds absent ones) and moves `db_user` and `db_password` out of `odoo.conf`
 only when the env file holds the same values (otherwise it warns and changes nothing), and
-`init-dev-database` generates the development passwords into `<database>.logins` (mode 0600) unless
-you type your own on a terminal. [Docs →](docs/setup.md#the-database-account)
+`create-database` gives the administrator Odoo's default password (`admin`), or
+`ODOO_ADMIN_PASSWORD` of the env file when you set one, and writes no password file (an earlier
+`<database>.logins` is left alone with a WARN line). [Docs →](docs/setup.md#the-database-account)
 
 No command needs a terminal: `oasis setup --plan --json` prints the plan as one JSON object (what it
 inferred and from where, the changes, the questions with their options, the recommended answer and the
@@ -127,8 +128,8 @@ asks in advance about what would fail later (python-ldap 3.4.0 against OpenLDAP 
 requirements missing or conflicting with Odoo's pins; uv 0.13 gets `UV_LEGACY_TAR_BACKEND=1`). Without a
 terminal an unanswered question is listed in the plan and `--apply` refuses, naming its flag.
 `oasis status --json` says what is ready, what is missing and the next oasis command to run
-(`start-database` for a stopped database service). A new workspace gets the `[development]` table
-`init-dev-database` needs (the question `development`, recommended `add`: `administrator_login =
+(`setup-postgres` for a stopped database service). A new workspace gets the `[development]` table
+`create-database` needs (the question `development`, recommended `add`: `administrator_login =
 'admin'`, its password generated), so no step edits the workspace file by hand.
 [Docs →](docs/setup.md#questions-and-answers)
 
@@ -193,6 +194,58 @@ without `[tooling].logs` keeps its logs in `logs` next to `oasis-workspace.toml`
 stay where they are and are no longer read by `oasis_test_summary` (the runs before 0.8.0 under
 `<logs>/odoo19/` still are). The legacy `.odoo19-agent.toml` is still refused naming `oasis migrate`.
 
+Contract change in v0.20.0: the exit code of `bootstrap --apply` reports its own work, the locks and the sync: 0
+once they succeeded, also when its trailing `doctor --environment --full` fails outside the sync (for example
+PostgreSQL not running yet), whose failures it prints as doctor results followed by `sync=succeeded`,
+`doctor=failed exit=<n>: ...` and the command to run next. Non-zero, as before: a failure of its own work (a refusal
+or a failed compile, exit 2; `uv venv` or `uv pip sync`, their code) and the doctor's `FAIL locked_environment=drifted`
+for the environment it just synced (exit 1, nothing added). A script that read exit 1 from `bootstrap --apply` as
+any failed check runs `doctor --environment --full` after it instead.
+[The exit code of bootstrap](docs/checking-environment.md#the-exit-code-of-bootstrap).
+
+Contract change in v0.20.0: without a terminal, `oasis setup` no longer chooses the Python environment it would
+create (a new workspace or a new series section) and its Python. Both are open questions, `environment` and
+`python`, with their recommended answers (create at the path the question shows; the configuration's Python), in
+the plan and in `--plan --json` (`open`, `ready_to_apply: false`), and `setup --apply` refuses them (exit 2,
+nothing changed) until answered: `--answer environment=create` or `--environment <dir>`, and `--python <x.y>`
+(which answers both: a Python only makes sense for a new environment). A script or agent that ran `setup --apply`
+without a terminal adds `--answer environment=create --python <x.y>`, the recommended answers its plan lists. On a
+terminal setup asks them as before. A new series section next to an adopted `[tooling]` environment gets one named
+after the project (`<name><major>`), no longer `<that environment>-<x.y>`.
+[A new environment and its Python](docs/setup.md#a-new-environment-and-its-python).
+
+Contract change in v0.20.0: `create-database` (named `init-dev-database` until this version) is the one oasis command that creates a database, through
+Odoo's own database creation (what the database manager form uses), and only with `--confirm <database>`
+(Tier B in `oasis policy --json`; without it, exit 2 naming the exact command; `--dry-run` prints what would be
+created). `create-database --plan [--json]` asks what an agent relays: the name (the suffix after the
+workspace's prefix), dev, test or both, the module, demo data (recommended no), the language (recommended
+en_US) and the country (`none` or a code), then prints the dry run and the `--confirm` command of each
+database; it also creates test databases (`<test_prefix>[<slug>_]<suffix>`) and takes `--lang <code>` and
+`--country <code>`. The `create-database <name>` of v0.19.0 and earlier, which created an empty PostgreSQL database, is replaced by
+`create-database --plan` and `--confirm`; `oasis init-dev-database` exits 2 (`Unsupported oasis command`), with no
+alias: use `create-database` in scripts and wrappers.
+`install-module` never creates a database: on a missing one it exits 2 with `Database <name> does not exist;
+create it with: oasis --project <checkout> create-database --plan` before Odoo starts (`update-module` and
+`odoo-shell` name the same plan). `status --json` and `setup`'s next steps name the plan. `test-module` and
+`verify-module` (`--reuse`, `[tooling].test_database`) are unchanged.
+
+Contract change in v0.20.0: `start-database` is renamed `setup-postgres` and `recreate-database-volume` is
+renamed `recreate-postgres-volume`, because "database" now names an Odoo database. The old names keep working
+as deprecated aliases with the same output, exit codes, tier and `--confirm`, after one stderr line: `WARNING:
+<old> is a deprecated alias of <new>: run <new> instead.` `start` and `restart` refuse a database that does not
+exist (`-d`, else each name of `odoo.conf`'s `db_name`) with exit 2, naming `create-database --plan`, because
+Odoo would create it. `tools/dev_users.py` creates a database only with `--confirm <database>` as its first two
+arguments, after the name guards. Odoo's database manager (`/web/database/manager`) and its selector stay available when `start` runs without
+a database, by choice: a database created there is outside oasis (Odoo's default master password applies).
+
+v0.20.0: `oasis doctor` has a new check, `code_python`, right after `python`: the environment's Python
+compiles the checkout's `.py` files (none of the code runs, no `.pyc` is written). Every report has a
+`PASS code_python=<x.y> files=<n>` line; a file that Python cannot load is `FAIL code_python=<x.y>
+<file>:<line>: <message>; needs Python <a.b> or newer (best-effort)` with its fix; a file oasis' own Python
+rejects too is `WARN code_python=syntax_error`; a timeout or no answer is a `WARN`. `oasis setup` warns in its
+plan when the Python of an environment it adopts or creates may not parse the code; it never blocks
+`--apply`.
+
 ## Documentation
 
 | Documentation | Purpose |
@@ -215,7 +268,7 @@ stay where they are and are no longer read by `oasis_test_summary` (the runs bef
 | [Tests and test databases](docs/testing.md) | `test-module`, `verify-module`, `--only`, `--reuse` |
 | [Disposable test databases](docs/disposable-test-databases.md) | Per-run databases and `gc` |
 | [Database trash](docs/trash.md) | `drop-database` moves to the trash; `trash restore`, `gc --trash` |
-| [Development database](docs/dev-database.md) | `init-dev-database` with role accounts and demo data |
+| [Development database](docs/dev-database.md) | `create-database` with role accounts and demo data |
 | [Static inspection](docs/static-inspection.md) | `model-info`, `view-info`, `xmlid-info`, `module-info` |
 | [Lint one module](docs/lint-module.md) | `lint-module` with the project's Pylint rcfile |
 | [Action menu](docs/action-menu.md) | `oasis menu` and the Gentle Shell panel |

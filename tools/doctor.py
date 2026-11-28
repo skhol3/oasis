@@ -15,11 +15,18 @@ series-style version, S11). Its one connection is postgres_connection (v0.16.0
 S2): the environment's Python logs in with Odoo's account to the PostgreSQL odoo.conf names
 (tools/db_account.py probe) and reports one word, never a value. The only external programs it runs
 are `git --version`, `docker compose version` and the environment's Python (its version and that
-probe); tools are found on PATH, like `command -v`, never through a tool manager.
+probe, and the compile of the checkout's code, code_python, v0.20.0 S3); tools are found on PATH, like `command -v`,
+never through a tool manager.
 
 A check that needs another one is left out when that one failed: every configuration check
 when the configuration does not load, `docker_compose` without docker, `http_port` when the
-odoo.conf cannot be read, `postgres_connection` when python, odoo_conf or env_file failed.
+odoo.conf cannot be read, `postgres_connection` when python, odoo_conf or env_file failed,
+`code_python` when python failed.
+
+`code_python` (v0.20.0 S3), after `python`: the environment's Python compiles every .py file of the checkout
+(tools/code_python.py check; none of the code runs, no .pyc is written). A file it cannot load is a FAIL with that file,
+the message and the lowest Python the code needs (best-effort); a file oasis' own Python rejects too is a
+syntax error in the code, a WARN that does not blame the environment.
 
 The last check, `project_wrappers`, reads the project wrappers copied into <checkout>/dev/scripts
 (docs/project-setup.md) for one fact: whether one still calls the install directory oasis used before
@@ -145,6 +152,38 @@ def check_python(report: Report, values: dict, versions, program: str):
     if found != expected or not versions.python_supported(values['ODOO_VERSION'], found):
         return report.fail('python', f'{found} expected={expected}', recreate)
     return report.check('python', found)
+
+
+def check_code_python(report: Report, values: dict, program: str, timeout=None):
+    """The environment's Python compiles the checkout's code (v0.20.0 S3, tools/code_python.py check): PASS with the
+    number of files; FAIL naming the first file it cannot load, the lowest Python the code needs (best-effort) and
+    the fix; WARN for a syntax error in the code (oasis' own Python rejects the file too), a compile that timed out
+    or an interpreter that did not answer. timeout: seconds, by default scaled with the files."""
+    python = values['PYTHON_VERSION']
+    result = sibling('code_python').check(values['PYTHON'], values['PROJECT_ROOT'], int(python.split('.')[1]),
+                                          environment=values['PROJECT_ENVIRONMENT'], timeout=timeout)
+    status = result['status']
+    if status == 'ok':
+        return report.check('code_python', f'{python} files={result["files"]}')
+    if status == 'timeout':
+        return report.warn('code_python', f'timeout files={result["files"]} seconds={result["seconds"]:g}')
+    if status == 'unchecked':
+        return report.warn('code_python', 'unchecked')
+    where = f'{result["path"]}' + (f':{result["line"]}' if result['line'] is not None else '')
+    if status == 'syntax_error':
+        report.warn('code_python', f'syntax_error {where}: {result["message"]}')
+        print(f"  fix: correct {result['path']}: it does not compile with oasis' own Python either, so it is a "
+              "syntax error in the code, not a limit of the environment's Python")
+        return True
+    needs = result['needs']
+    hint = f'needs Python {needs} or newer (best-effort)' if needs else 'the lowest Python it needs is unknown'
+    workspace = Path(values['WORKSPACE_ROOT']) / sibling('config').WORKSPACE_NAME
+    return report.fail('code_python', f'{python} {where}: {result["message"]}; {hint}',
+                       'use an environment whose Python can load the code'
+                       + (f' (Python {needs} or newer)' if needs else '')
+                       + f': set that Python for the environment in {workspace} (docs/workspace-file.md), move '
+                       f'{values["PROJECT_ENVIRONMENT"]} away, then {program} bootstrap --apply; where setup plans '
+                       'an environment, --environment <dir> or --python <x.y> chooses it')
 
 
 def declared_release(path: Path) -> str | None:
@@ -318,7 +357,7 @@ def check_conf(report: Report, values: dict, conf_reader, program: str):
 
 def compose_project(path: Path) -> str | None:
     """The top-level `name:` of a compose file (quotes removed), None without a non-empty one; raises
-    OSError or UnicodeError when it cannot be read (tools/db_account.py, which recreate-database-volume
+    OSError or UnicodeError when it cannot be read (tools/db_account.py, which recreate-postgres-volume
     reads it with)."""
     return sibling('db_account').compose_project(path)
 
@@ -381,7 +420,7 @@ def check_connection(report: Report, values: dict, program: str):
     """Odoo's account logs in to the PostgreSQL odoo.conf names (v0.16.0 S2): tools/db_account.py probe with
     the environment's Python and psycopg2. Refused credentials FAIL with what fixes them (odoo.conf's own
     values that differ from the env file's, else the Tier B volume recreate); a service that does not answer is a
-    WARN followed by the fix start-database, and a probe that cannot run is a WARN."""
+    WARN followed by the fix setup-postgres, and a probe that cannot run is a WARN."""
     helper = Path(__file__).with_name('db_account.py')
     output = probe([values['PYTHON'], '-I', '-B', str(helper), 'probe', values['ODOO_CONFIG'], values['ENV_FILE']])
     outcome = (output or '').strip()
@@ -394,7 +433,7 @@ def check_connection(report: Report, values: dict, program: str):
     if outcome == 'not_running':
         # Nothing answered: the oasis command that starts the service, which names no env file (v0.16.0 S6).
         report.warn('postgres_connection', 'not_running')
-        print(f'  fix: {shlex.join([program, "--project", values["PROJECT_ROOT"], "start-database"])}')
+        print(f'  fix: {shlex.join([program, "--project", values["PROJECT_ROOT"], "setup-postgres"])}')
         return True
     return report.warn('postgres_connection', 'unchecked')
 
@@ -499,13 +538,15 @@ HELP = '''
 Checks the environment contract of this checkout, read-only: the configuration (the workspace
 file; a legacy profile is one FAIL naming oasis migrate), its agent_destructive setting and where
 its layered values came from (machine, workspace or checkout file, or derived), git 2.31 or newer,
-docker and `docker compose version`, flock, /proc, the environment's Python, the Odoo source
-release, the series of the module manifests, odoo.conf, the compose file's top-level name, the env
-file (exists, and the database account's variables are not empty and are written as oasis reads them),
+docker and `docker compose version`, flock, /proc, the environment's Python, that it compiles the
+checkout's .py files (code_python: a file it cannot load is a FAIL naming the file, the message and
+the lowest Python the code needs, best-effort; a file oasis' own Python rejects too is a WARN, a
+syntax error in the code), the Odoo source release, the series of the module manifests, odoo.conf,
+the compose file's top-level name, the env file (exists, and the database account's variables are not empty and are written as oasis reads them),
 whether odoo.conf holds a db_password (a WARN naming setup --apply, which moves it to the env file), the
 logs and data directories,
 and the HTTP port, and that Odoo's database account logs in to the PostgreSQL odoo.conf names (a refused
-account names its fix; a service that does not answer is a WARN whose fix is start-database). With workspace_version 2: the checkout's series and where it came from, its
+account names its fix; a service that does not answer is a WARN whose fix is setup-postgres). With workspace_version 2: the checkout's series and where it came from, its
 series exceptions, and that the workspace's series share no database port, prefixes, compose
 project or env file. Last, project_wrappers: a FAIL when a project wrapper in dev/scripts still calls
 ~/.agents/skills/odoo19, the install directory before 0.17.0 (now ~/.agents/skills/oasis).
@@ -518,7 +559,7 @@ Never starts services or prints file contents or values; it connects only to che
 --quick (the default) checks the requirement files and lock.sha256, the environment's Python, the
 virtualenv, uv, the Odoo version and compose config; --full also checks the installed packages against
 the locks, audits the dependencies and logs in to PostgreSQL with Odoo's account (the database service
-running; when it is not, the fix is start-database). Package names are compared normalized (PEP 503:
+running; when it is not, the fix is setup-postgres). Package names are compared normalized (PEP 503:
 zope.event satisfies zope-event). Installed packages that do not match the locks are FAIL
 locked_environment=drifted for an environment oasis created (bootstrap --apply or setup --apply; it
 carries <environment>/.oasis-created), and WARN locked_environment=drifted, not counted as a failure, for an
@@ -628,6 +669,8 @@ def main(arguments: list[str]) -> int:
     if values is not None:
         conf_reader = sibling('odoo_addons_path')
         python_ok = check_python(report, values, config.versions(), program)
+        if python_ok:
+            check_code_python(report, values, program)
         check_release(report, values, source_fix(values, found, config))
         check_module_series(report, values, config)
         conf_ok = check_conf(report, values, conf_reader, program)

@@ -22,12 +22,14 @@ def legacy_refusal(profile, program='oasis'):
     plan = shlex.join([program, '--project', str(profile.parent), 'migrate', '--plan'])
     return (f'ERROR: {profile} is the old profile format, no longer read: run {plan} to see its conversion to '
             'oasis-workspace.toml or what stops it.\n')
+# v0.20.0 S12: create-database is the one creator (init-dev-database is gone); S13: setup-postgres and
+# recreate-postgres-volume, with start-database and recreate-database-volume kept as deprecated aliases.
 PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
-          'drop-database', 'gc', 'init-dev-database', 'install-module', 'lint-module', 'list-databases',
+          'drop-database', 'gc', 'install-module', 'lint-module', 'list-databases',
           'menu', 'migrate', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy',
-          'recreate-database-volume', 'restart', 'setup', 'start', 'start-database',
-          'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info', 'worktree-init',
-          'xmlid-info')
+          'recreate-database-volume', 'recreate-postgres-volume', 'restart', 'setup', 'setup-postgres', 'start',
+          'start-database', 'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info',
+          'worktree-init', 'xmlid-info')
 
 
 class GlobalCliTests(unittest.TestCase):
@@ -87,8 +89,11 @@ class GlobalCliTests(unittest.TestCase):
         self.assertIn('/absolute/project', result.stdout)
         self.assertIn('doctor --environment --quick', result.stdout)
         # v0.16.0 S5: the deprecated name keeps its place in the command list, and the help says it is one.
-        self.assertIn('Deprecated aliases (they keep working): check-environment runs doctor --environment\n',
+        # v0.20.0 S13: start-database and recreate-database-volume join it, each naming its new name.
+        self.assertIn('Deprecated aliases (they keep working): check-environment runs doctor --environment, '
+                      'start-database runs setup-postgres, recreate-database-volume runs recreate-postgres-volume\n',
                       result.stdout)
+        self.assertNotIn('init-dev-database', result.stdout)
         for name in PUBLIC:
             self.assertIn(name, result.stdout)
         [listed] = [line for line in result.stdout.splitlines() if line.startswith('Commands: ')]
@@ -317,6 +322,12 @@ class GlobalCliTests(unittest.TestCase):
                               '(the current directory outside git)', text)
                 self.assertIn(f'Example: cd /absolute/project && {program} doctor --environment --quick', result.stdout)
         self.assertFalse(self.log.exists())
+
+    def test_init_dev_database_is_gone_without_an_alias(self):
+        # v0.20.0 S12: create-database replaces it; the old name runs nothing, even with its tool on disk.
+        (self.bundle / 'tools/init-dev-database').write_text(self.fake)
+        self.assert_no_calls(self.invoke('--project', str(self.project), 'init-dev-database', 'coffee', 'cc_dev_x'),
+                             'ERROR: Unsupported oasis command: init-dev-database\n')
 
     def test_rejects_unknown_internal_and_pathlike_before_dispatch(self):
         for name in ('unknown', 'config.py', 'common.sh', 'audit_dependencies.py',

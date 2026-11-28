@@ -23,7 +23,8 @@ class CapabilityTableTests(unittest.TestCase):
         'test_tags_implies_stop': True, 'test_class_filter': True,
         'dev_option': '--dev', 'dev_features': ['access', 'qweb', 'reload', 'replica', 'xml'],
         'dev_all': ['access', 'qweb', 'reload', 'xml'], 'dev_reload_packages': ['inotify', 'watchdog'],
-        'user_groups_field': 'group_ids', 'runtime_requirements': [], 'ldap_override': None}
+        'user_groups_field': 'group_ids', 'runtime_requirements': [], 'ldap_override': None,
+        'configuration_reads_environment': True}
     # v0.15.0 S2, read from the local 15.0 source (tools/odoo_versions.py cites the lines).
     ODOO_15 = {
         'python': ('3.7', '3.12'), 'python_default': '3.9', 'postgres_min': 12,
@@ -38,7 +39,7 @@ class CapabilityTableTests(unittest.TestCase):
                                   'which provides it: an environment uv creates has none and uv pip sync would '
                                   'remove it; setuptools advises <81 to keep pkg_resources.')],
         # v0.16.0 S3: python-ldap 3.4.0 links libldap_r, which OpenLDAP 2.6 removed.
-        'ldap_override': ('python-ldap==3.4.0', 'python-ldap==3.4.4')}
+        'ldap_override': ('python-ldap==3.4.0', 'python-ldap==3.4.4'), 'configuration_reads_environment': False}
 
     def test_odoo_19_and_15_are_supported_with_their_capabilities(self):
         self.assertEqual(odoo_versions.CAPABILITIES, {'19.0': self.ODOO_19, '15.0': self.ODOO_15})
@@ -118,16 +119,18 @@ class VersionNeutralToolsTests(unittest.TestCase):
     # Version-specific Odoo options are rendered from the table through config.py's
     # ODOO_SECOND_PORT_OPTION and ODOO_DEMO_OFF_ARGS (and odoo_versions.py demo_on_args), never
     # written in a tool. --with-demo is also the oasis option of install-module and
-    # init-dev-database (and the menu's flag for them): only those lines may name it.
+    # create-database (and the menu's flag for them): only those lines may name it.
     FLAGS = re.compile(r'--(gevent-port|longpolling-port|without-demo|with-demo)(?![\w-])')
     OASIS_OPTIONS = {
         ('tools/actions.py', "[flag('demo', '--with-demo'), value('module'), value('database')],"),
-        ('tools/init-dev-database', "printf '%s\\n' 'Usage: init-dev-database [--with-demo] <module> <database>' \\"),
-        ('tools/init-dev-database', "'--with-demo opts in to the native Odoo demo loader and project development.demo_modules.'"),
-        ('tools/init-dev-database', 'if [[ ${1:-} == --with-demo ]]; then'),
-        ('tools/init-dev-database', "printf 'Usage: init-dev-database [--with-demo] <module> <database>\\n' >&2"),
+        ('tools/create-database',
+         "usage_line='Usage: create-database [--with-demo] [--lang <code>] [--country <code>] <module> <database>'"),
+        ('tools/create-database', "'--with-demo opts in to the native Odoo demo loader and project development.demo_modules.'"),
+        ('tools/create-database', 'if [[ ${1:-} == --with-demo ]]; then'),
         ('tools/install-module', "usage='Usage: install-module [--with-demo] <module> [database]'"),
         ('tools/install-module', 'if [[ ${1:-} == --with-demo ]]; then'),
+        ('tools/database_plan.py', "DEMO_OPTION = '--with-demo'"),
+        ('tools/dev_users.py', "DEMO_OPTION = '--with-demo'"),
     }
 
     def test_no_tool_writes_a_version_specific_odoo_option(self):

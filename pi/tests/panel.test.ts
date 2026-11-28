@@ -161,12 +161,12 @@ test("closing the picker runs nothing", async () => {
 });
 
 test("a terminal-only action is shown as an entry with its command and never run", async () => {
-  const { open, context, events, entries } = harness({ pick: "modules.init_dev" });
+  const { open, context, events, entries } = harness({ pick: "modules.create_database" });
   await open(context());
   assert.deepEqual(events.slice(1), ["pick", "status -"]);
   assert.deepEqual(entries, [{
-    label: "Create a development database with role accounts",
-    command: `${ENTRY} init-dev-database [--with-demo] <module> <database>`,
+    label: "Create a database with role accounts",
+    command: `${ENTRY} create-database [--with-demo] <module> <database> [--confirm <database>]`,
     note: "terminal only: run it in a terminal, or use oasis menu there",
     output: "",
   }]);

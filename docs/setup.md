@@ -88,13 +88,14 @@ oasis [--project <checkout>] setup [--series <x.y>] [--community <dir>] [--enter
 - The Python environment, when setup would create one (a new workspace, or a new
   [series section](#another-odoo-series)) and neither `--environment` nor `--python` is given: on a
   terminal it asks whether to create it or to use an existing one, and the Python of a new one
-  ([A new environment and its Python](#a-new-environment-and-its-python)). Without a terminal nothing is
-  asked: the environment is created with the configuration's Python, as before.
-- The `[development]` table of a new workspace (v0.16.0), which `init-dev-database` needs: the question
-  `development`, `init-dev-database needs a [development] table in <workspace file>: add one with
-  administrator_login = 'admin' (its password is generated)?`, answered `add` (recommended) or `none` with
-  `--answer development=<add|none>` or on a terminal (Enter: `add`). Without a terminal and without an
-  answer, `add` applies, as the environment's recommended answers do. `add` writes the table after
+  ([A new environment and its Python](#a-new-environment-and-its-python)). Without a terminal (v0.20.0)
+  both are open questions, `environment` and `python`, with their recommended answers (create, the
+  configuration's Python) until answered: setup never chooses them for you.
+- The `[development]` table of a new workspace (v0.16.0), which `create-database` needs: the question
+  `development`, `create-database needs a [development] table in <workspace file>: add one with
+  administrator_login = 'admin' (its password: Odoo's default, or ODOO_ADMIN_PASSWORD of the env file)?`,
+  answered `add` (recommended) or `none` with `--answer development=<add|none>` or on a terminal (Enter:
+  `add`). Without a terminal and without an answer, `add` applies. `add` writes the table after
   `[tooling]`, below a comment; `none` leaves it out and the [next steps](#next-steps) name the lines to
   add. An existing workspace is never asked (an answer is refused as one setup does not use).
 - Questions are asked only when standard input and standard error are a terminal (never with `--json`).
@@ -116,7 +117,7 @@ question has an id that `--answer <id>=<value>` (repeatable) or `--answers <file
 | `series` | `<x.y>` | `--series <x.y>` |
 | `community` | an absolute directory | `--community <dir>` |
 | `enterprise` | an absolute directory, or `none` | `--enterprise <dir>`, `--no-enterprise` |
-| `environment` | `create`, or the absolute directory of an existing environment | `--environment <dir>` |
+| `environment` | `create`, or the absolute directory of an existing environment | `--environment <dir>` (`--python <x.y>` answers `create`) |
 | `python` | `<x.y>` | `--python <x.y>` |
 | `workspace` | the project folder or the clone (the options it lists) | `--workspace <dir>` ([Where the files go](#where-the-files-go)) |
 | `series_exceptions` | `add` or `no` | [Modules of another series](#modules-of-another-series) |
@@ -131,19 +132,20 @@ question has an id that `--answer <id>=<value>` (repeatable) or `--answers <file
 - The file is one JSON object of ids and text answers; anything else, an unknown id, or an answer given
   twice (by a flag and by an answer) is refused (exit 2) and changes nothing. An answer to a question that
   does not arise is not used.
-- Without a terminal and without an answer, setup uses the recommended answer only where it did before:
-  the environment is created, with the configuration's Python; and a new workspace gets its
-  `[development]` table (`development`, v0.16.0). Every other question is open: the plan
+- Without a terminal and without an answer, setup uses the recommended answer only for `workspace` and
+  for `development` (a new workspace gets its `[development]` table, v0.16.0). Every other question is
+  open, `environment` and `python` too (v0.20.0: an agent relays them instead of setup choosing them): the plan
   prints the lines it has, then `open question <id>: <what it needs and the flag that answers it>` and
   `nothing changed: answer the open questions above (docs/setup.md#questions-and-answers), then run with
   --apply to set up` (exit 0). A question setup cannot go on without (the series, the source) ends the
-  plan there, and `--apply` refuses with the message it always had. A question of an
-  [anticipated problem](#anticipated-problems) does not stop the plan; `--apply` refuses with one
+  plan there, and `--apply` refuses with the message it always had. The questions `environment` and
+  `python`, and those of an [anticipated problem](#anticipated-problems), do not stop the plan (it shows
+  what their recommended answers would create); `--apply` refuses with one
   `ERROR: open question <id>: ...` line per open question, then `ERROR: nothing changed: answer the open
   questions, then run oasis setup --apply again.` (exit 2).
 - On a terminal, a question of an anticipated problem is asked like the others: Enter takes the
   recommended answer (a question without one asks again); an answer that is not an option is asked again.
-- `init-dev-database` needs no terminal either: on one it asks each password with the echo off (Enter
+- `create-database` needs no terminal either: on one it asks each password with the echo off (Enter
   generates one), otherwise it generates them ([Development database](dev-database.md)).
 
 ## The plan as JSON
@@ -171,13 +173,16 @@ An example, formatted:
               "summary": "compile /w/shop/.oasis/config/requirements/runtime.txt, dev.txt and lock.sha256 with Python 3.9 (uv pip compile)"}],
  "questions": [{"id": "environment", "text": "Python environment for Odoo 15.0: create /w/shop/.oasis/venv, or use an existing environment",
                 "options": [{"value": "create", "label": "create /w/shop/.oasis/venv"}], "recommended": "create",
-                "flag": "--environment <dir>", "answer": "create", "origin": "recommended (no terminal)"},
+                "flag": "--answer environment=create | --environment <dir>", "answer": null, "origin": null},
+               {"id": "python", "text": "Python of the new environment /w/shop/.oasis/venv",
+                "options": [{"value": "3.7", "label": "Python 3.7"}, "...", {"value": "3.12", "label": "Python 3.12"}],
+                "recommended": "3.9", "flag": "--python <x.y>", "answer": null, "origin": null},
                {"id": "python_ldap",
                 "text": "Odoo 15.0 pins python-ldap==3.4.0, which does not build against this machine's OpenLDAP 2.6.8 (no libldap_r): pin python-ldap==3.4.4 in /w/shop/.oasis/config/requirements/overrides.txt?",
                 "options": [{"value": "yes", "label": "pin python-ldap==3.4.4 (uv pip compile --override)"},
                             {"value": "no", "label": "keep Odoo's pin: its build may fail"}],
                 "recommended": "yes", "flag": "--answer python_ldap=<yes|no>", "answer": null, "origin": null}],
- "open": ["python_ldap"],
+ "open": ["environment", "python", "python_ldap"],
  "lines": ["checkout: /w/shop (main)", "series: 15.0 (from the module manifests)", "..."]}
 ```
 
@@ -189,7 +194,7 @@ An example, formatted:
 | `ready_to_apply` | `complete` and no open question: `--apply` with the same flags and answers would run. |
 | `inferred` | Each value setup found, with its `origin`: `checkout` (`main`, `linked`, `outside git`), `workspace` (its directory; `new` or `existing`), `series`, `community`, `enterprise` (`null`: none), `name` (a new workspace), `db_port` (`a free port`, `from <odoo.conf>`, `from <compose file>`), `environment` (`new`, `existing`, `from --environment`, `answered`) and `python`. A plan that stopped lists what it found before. |
 | `changes` | Every change `--apply` would make, in order: `kind` (`mkdir`, `create`, `extend` (appended), `fill` (account variables filled in), `edit` (lines removed), `compile`, `environment`), `path`, and `summary` (its plan line). Never a value of the account. |
-| `questions` | Every question the plan met: `id`, `text`, `options` (`value`, `label`), `recommended` (or `null`), `flag` (what answers it), and `answer` with its `origin` (`from --answer`, `from --answers`, `recommended (no terminal)`), both `null` while it is open. |
+| `questions` | Every question the plan met: `id`, `text`, `options` (`value`, `label`), `recommended` (or `null`), `flag` (what answers it), and `answer` with its `origin` (`from --answer`, `from --answers`, `from --python` or `from --answer python` for both environment questions when `--python` or `--answer python=<x.y>` answers them, `answered` on a terminal, `recommended (no terminal)` for `workspace` and `development`), both `null` while it is open. |
 | `open` | The ids of the open questions. |
 | `lines` | The human plan, line by line (without the open questions, which are in `questions`). |
 
@@ -374,7 +379,14 @@ that series' files, next to the other series and without touching them:
   already uses `{series}` is left to `[tooling]`): `config`, `env_file`, `compose` and `requirements` in
   `<folder of [tooling].config>/<x.y>/` (`config/15.0/`), the environment next to `[tooling]`'s
   (`environments/acme` gives `environments/acme-15.0`; with the machine file's `environments` for the
-  series, `<environments>/<name><major>`), `logs` and `data_dir` in `<logs>/<x.y>` and `<data_dir>/<x.y>`
+  series, `<environments>/<name><major>`). When `[tooling]`'s environment is an adopted one (it exists
+  without the `.oasis-created` mark of an environment oasis created), it may be another project's, so
+  the new one is named after the project, `<name><major>` as the prefixes (v0.20.0): in the adopted one's
+  folder when that folder is in the workspace directory (`environments/billing` gives
+  `environments/cc15`), else in the workspace directory (`.oasis/cc15` when `[tooling].config` is in
+  `.oasis/`, else `cc15`). An environment oasis created before 0.17.0 has no mark either, so it counts as
+  adopted here and the new one is named after the project too (create the mark by hand to keep
+  `<environment>-<x.y>`). `logs` and `data_dir` in `<logs>/<x.y>` and `<data_dir>/<x.y>`
   (an adopted folder's own, below),
   the prefixes `<name><major>_dev_` and `<name><major>_test_` (`cc_dev_` gives `cc15_dev_`), the source
   when `[tooling]` sets one, and `series_exceptions` from `--exception`.
@@ -612,12 +624,15 @@ options: `--environment: <checkout> is already configured by <file>; setup only 
 - On a terminal, the path can also be the answer to the environment question
   ([below](#a-new-environment-and-its-python)): it is checked and adopted exactly as `--environment`, with
   the same refusals, and the plan line says `(answered)` instead of `(from --environment)`.
+- When its Python may not load the checkout's code, the plan says so after the `adopt` line
+  ([The Python of the environment and the code](#the-python-of-the-environment-and-the-code)).
 
 ### A new environment and its Python
 
 When setup would create the environment (a new workspace, or a new series section; not when the
 environment's directory already has a `pyvenv.cfg`, which is kept) and neither `--environment` nor
-`--python` is given, it asks on a terminal, in the plan and with `--apply` alike:
+`--python` is given, it asks two questions, `environment` and `python`, in the plan and with `--apply`
+alike. On a terminal:
 
 ```text
 Python environment for Odoo 15.0: Enter creates <corpus-cafe>/environments/corpus-cafe-15.0, or type the absolute path of an existing environment to use instead:
@@ -631,9 +646,22 @@ Python of the new environment <corpus-cafe>/environments/corpus-cafe-15.0, one o
   or the `python` of a default named environment the series uses). Any other answer is asked again:
   `3.13 is not a Python Odoo 15.0 supports; answer one of 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, or Enter for
   3.9.`
-- Enter twice gives the same plan as without a terminal.
+- Enter twice gives the same plan as `--answer environment=create` with the recommended `--python`.
+- Without a terminal (`--plan --json` included) both are [open questions](#questions-and-answers) until
+  answered (v0.20.0; in the v0.17.0 field run an agent's plan chose them silently): `open question
+  environment: Python environment for Odoo 15.0: create <dir>, or use an existing environment. Answer with
+  --answer environment=create | --environment <dir> (recommended: create).` and `open question python:
+  Python of the new environment <dir>, one of 3.7, 3.8, 3.9, 3.10, 3.11, 3.12. Answer with --python <x.y>
+  (recommended: 3.9).`. The plan shows what the recommended answers would create; `--apply` refuses them.
+  `--answer environment=create` answers the first, `--environment <dir>` (or `--answer environment=<dir>`)
+  answers it with an existing environment, whose Python is then its own (no `python` question).
+- The question shows where a new environment goes, the path setup proposes; the answer is to create it
+  there or to use an existing environment. Another folder for a new environment is not an answer.
 
-`--python <x.y>` gives that Python without asking, also without a terminal. It is refused (exit 2, nothing
+`--python <x.y>` gives that Python without asking, also without a terminal, and answers `environment` with
+`create`: a Python only makes sense for a new environment, so it means a new environment of that Python.
+Given as `--answer python=<x.y>`, its origin in the [JSON plan](#the-plan-as-json) is `from --answer python`.
+It is refused (exit 2, nothing
 changed) when the series does not support it (`--python 3.13 is not a Python Odoo 15.0 supports (3.7 to
 3.12).`), with `--environment` (`--python cannot be combined with --environment: an adopted environment
 keeps the Python of its pyvenv.cfg.`), when the environment already exists (`--python 3.8: the environment
@@ -648,6 +676,29 @@ would use a default named environment of another Python also gets that environme
 section's `environment`, so the section's `python` applies); in a new workspace as the
 `[environments.default]` table with the environment's `path` and that `python`, instead of
 `[tooling].environment`.
+
+### The Python of the environment and the code
+
+A Python the series supports may still not load the checkout's code (v0.20.0; in the v0.17.0 field run an
+environment of Python 3.8 was adopted for a 15.0 checkout whose code uses `match`, which needs 3.10). When setup
+adopts an environment or plans a new one, it parses the checkout's `.py` files with the grammar of that Python
+(the version of the adopted environment's `pyvenv.cfg`, or the Python of the new one), skipping `.git`,
+`node_modules`, `__pycache__` and directories holding a `pyvenv.cfg`. When a file does not parse, the plan says so
+after the `adopt` or `create the environment` line:
+
+```text
+adopt the environment <environments>/billing-o15 (from --environment): Python 3.8 (its pyvenv.cfg); setup never creates, syncs or deletes it
+WARN: Python 3.8 of the adopted environment <environments>/billing-o15 cannot load the code (best-effort: parsed with its grammar): <checkout>/cafe_sale/models.py:3: Pattern matching is only supported in Python 3.10 and greater; the code needs Python 3.10 or newer: use --environment <dir> with an environment whose Python can load it, or --python <x.y> for a new one; oasis doctor compiles the code with the environment's own Python
+```
+
+For a new environment the line says `of the new environment <dir>`. A file that oasis' own Python does not
+compile either is a syntax error in the code, not a limit of that Python: `WARN: syntax error in the code:
+<file>:<line>: <message> (oasis' own Python rejects it too, so no environment loads it): correct it`. The line is
+a warning, also in the `lines` of the [JSON plan](#the-plan-as-json): it never blocks `--apply`, and a plan
+whose code parses has no line. The check is best-effort, since setup never runs the adopted environment's Python:
+the grammar of a Python knows `match`, `except*` and type parameters, not every change.
+[`oasis doctor`](checking-environment.md#the-environments-python-and-the-code) compiles the code with the
+environment's own Python (`code_python`).
 
 ## The database account
 
@@ -686,10 +737,14 @@ logs, errors).
   repeated, or continued on an indented line, is never edited (a `WARN` line says so).
 - The compose service reads it: `docker compose --env-file <env file>` gives `POSTGRES_USER` and
   `POSTGRES_PASSWORD`, which PostgreSQL uses when it initializes a new volume, and the database commands
-  run `psql`, `createdb` and `dropdb` in the service with it.
+  run `psql`, `createdb` and `dropdb` in the service with it. Docker compose also reads a file named
+  `.env` in the compose file's directory on its own, for `${...}` interpolation only; oasis still passes
+  `--env-file` because `[tooling].env_file` may name another file or another directory, so the account
+  never depends on where the file sits. With the default layout (`config/.env` next to
+  `config/compose.yml`) both name the same file and the result is the same.
 - Odoo reads the same file: `odoo.conf` stays path-free and password-free, and every command that starts
   Odoo (`start`, `restart`, `install-module`, `update-module`, `odoo-shell`, `test-module`,
-  `verify-module`, `init-dev-database`) exports `ODOO_DB_USER` and `ODOO_DB_PASSWORD` as `PGUSER` and
+  `verify-module`, `create-database`) exports `ODOO_DB_USER` and `ODOO_DB_PASSWORD` as `PGUSER` and
   `PGPASSWORD`, which libpq reads when Odoo passes no user or password of its own; they never appear on
   Odoo's command line (`start --print-command` shows none). A `db_user` or `db_password` that `odoo.conf`
   sets (other than empty, `False` or `None`, which Odoo reads as unset) is kept, and that one is not
@@ -709,7 +764,7 @@ logs, errors).
   [The doctor report](checking-environment.md#the-doctor-report)). When the compose service refuses it,
   its volume was initialized with other credentials (the environment file changed after the service first
   started, or a volume from an older setup), and the fix is the Tier B
-  `oasis --project <checkout> recreate-database-volume --confirm <compose project>`. That fix is named
+  `oasis --project <checkout> recreate-postgres-volume --confirm <compose project>`. That fix is named
   only when `odoo.conf` points at the compose service: `db_host` `127.0.0.1` or `localhost` and the
   `db_port` the compose file publishes to 5432 (5432 without a `db_port`). Another server refusing the
   account gets `correct that account on that server, or set db_host = 127.0.0.1 and the db_port <compose
@@ -720,7 +775,7 @@ logs, errors).
   `environment:` and other keys are not port entries), the fix says that oasis could not read
   the port (`it cannot be read`, `several ports` or `an entry other than - [<address>:]<port>:5432`) and
   names both: the recreate if that server is the compose service, correcting the account if it is not.
-- `recreate-database-volume` prints the plan, then runs `docker compose -p <compose project> down -v`:
+- `recreate-postgres-volume` prints the plan, then runs `docker compose -p <compose project> down -v`:
   it removes the compose project's containers and networks, every named volume of its compose file and
   every anonymous volume of its containers, so every database of its PostgreSQL, the trash included
   (filestores under `data_dir` are not touched). Then it starts the service again with the same `-p`,
@@ -731,8 +786,14 @@ logs, errors).
   one. Without `--confirm` and the compose project (the top-level `name:` of the compose file) it changes
   nothing and names the exact command. When `down -v` fails, or the service does not start again after
   it, the command exits 1, says the volume may already be gone (or is), and names the command that starts
-  the service again: `oasis --project <checkout> start-database` (v0.16.0; it runs the same compose project,
+  the service again: `oasis --project <checkout> setup-postgres` (v0.16.0; it runs the same compose project,
   since a `COMPOSE_PROJECT_NAME` that selects another one was refused first, and names no environment file).
+- Names (v0.20.0): `setup-postgres` was `start-database` and `recreate-postgres-volume` was
+  `recreate-database-volume`, since "database" names an Odoo database (`create-database`, `drop-database`,
+  `list-databases`). The old names are deprecated aliases: they run the new command with the same arguments,
+  output, exit codes and tier (`recreate-database-volume` takes the same `--confirm <compose project>`), after one
+  line on stderr, `WARNING: <old> is a deprecated alias of <new>: run <new> instead.`; what oasis prints
+  (next steps, fixes, the menu, `status --json`) names the new names.
 
 ## Next steps
 
@@ -740,15 +801,18 @@ After `--apply`, setup prints what is left, numbered, for example:
 
 ```text
 next steps:
-  1. oasis --project <checkout> start-database
+  1. oasis --project <checkout> setup-postgres
   2. oasis --project <checkout> doctor
-  3. oasis --project <checkout> init-dev-database <module> <name>_dev_manual
+  3. oasis --project <checkout> create-database --plan
 ```
 
 Nothing asks for an account: setup generated it ([The database account](#the-database-account)).
-`start-database` starts the service as every database command does and names no environment file, so an
+`setup-postgres` starts the service as every database command does and names no environment file, so an
 agent harness that refuses a command naming one runs it. A workspace without a `[development]` table (an
-existing one, or the answer `none`) gets a step before `init-dev-database` that names the exact lines:
+existing one, or the answer `none`) gets a step before `create-database` that names the exact lines. The
+last step is the plan of a new development database, never a name chosen for you: creating a database is
+Tier B (v0.20.0), and the plan asks its name, module and demo data, then prints the exact `--confirm`
+command ([The plan of a new database](dev-database.md#the-plan-of-a-new-database)):
 
 ```text
   3. add these lines to <workspace file> (docs/dev-database.md):

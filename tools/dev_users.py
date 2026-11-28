@@ -1,62 +1,181 @@
 #!/usr/bin/env python3
 """Validate project account declarations and get the passwords of the new database's accounts.
 
-On a terminal each password is asked with the echo off; Enter at its first prompt generates it. Without a
-terminal every password is generated (v0.16.0 S2: no oasis workflow requires typing one). Generated
-passwords (secrets.token_urlsafe(24)) are stored, never printed, in <database>.logins next to the env file
-(mode 0600), once the database exists: written to a 0600 temporary file in that directory first (removed when
-it cannot be written), then renamed into place only when the runner says the database was created (exit 0, or
-4: created, then a later step failed), so a refused existing database keeps its file (exit 3). When the outcome
-is unknown (another exit, such as 1 for an uncaught error, or an interrupt after the runner started) or the
-rename fails, the temporary file is kept and its path printed, never a password.
+The administrator keeps Odoo's default password (admin), or ODOO_ADMIN_PASSWORD of the env file
+([tooling].env_file, the file of ODOO_DB_USER and ODOO_DB_PASSWORD) when it sets a non-empty one (v0.20.0 S7);
+it is never asked. On a terminal each [[development.users]] password is asked with the echo off; Enter at its
+first prompt generates it. Without a terminal every declared user's password is generated
+(token_urlsafe(24); v0.16.0 S2: no oasis workflow requires typing one). No password is written to a file or
+printed (v0.20.0 S8): the output says what each account's password is ("Odoo's default", "from <env file>
+ODOO_ADMIN_PASSWORD", typed, or generated and not stored), never a value. A <database>.logins file an earlier
+version wrote next to the env file is left as it is, with one WARN line.
+
+The language and the country of the new database (v0.20.0 S12: create-database's --lang and --country, what
+Odoo's database manager form asks) are checked against the lists the form shows, read from the Odoo source, before
+anything runs; the runner passes them to exp_create_database, which takes them the same way in every supported
+series.
+
+A direct call is guarded like create-database (v0.20.0 L19): the database's name passes the name guards of
+tools/common.sh (database_refusal) and, to create it, the first two arguments are `--confirm <database>`, the
+confirmation create-database checked (Tier B); without it, or with another name, it refuses (exit 2) naming the
+exact create-database command, and nothing changes. dev_users_runtime.py gets that confirmation in its stdin
+payload and refuses to run without it.
+
+Usage (through create-database): dev_users.py --validate | --confirm <database>  <root> <module> <database>
+<true|false> <language> <country, empty for none>
 """
-import contextlib
+import csv
 import getpass
 import json
-import os
 from pathlib import Path
 import re
 import secrets
 import shlex
 import subprocess
 import sys
-import tempfile
 import warnings
+from xml.etree import ElementTree
 
 from config import InvalidConfig, configuration, load, program_name, versions
+from db_account import UNSUPPORTED, AccountError, UnsupportedValue, env_values
 from dev_users_runtime import CREATED_THEN_FAILED
 from odoo_addons_path import ConfError, config_arguments
 
 INVALID = 'ERROR: Invalid development user configuration.'
 TERMINAL = 'ERROR: Password entry failed on the terminal; no database was created.'
-LOGINS_HEADER = ('# Written by oasis init-dev-database: the generated passwords of {database} (docs/dev-database.md).\n'
-                 '# One "<login> <password>" per line. Never commit this file.\n')
+# The administrator's password (v0.20.0 S7): Odoo's own default, unless the env file sets this variable.
+ADMIN_VARIABLE = 'ODOO_ADMIN_PASSWORD'
+ODOO_DEFAULT_PASSWORD = 'admin'
+TYPED = 'typed on the terminal'
+GENERATED = 'generated, not stored or shown ({administrator} can set one in Odoo)'
+# The language and country lists of Odoo's database manager form, in the Odoo source (every supported series), and the
+# language of a database created without --lang (v0.20.0 S12).
+LANGUAGES = 'odoo/addons/base/data/res.lang.csv'
+COUNTRIES = 'odoo/addons/base/data/res_country_data.xml'
+DEFAULT_LANGUAGE = 'en_US'
+# create-database's oasis option for demo data (tools/create-database), which its refusal repeats.
+DEMO_OPTION = '--with-demo'
 
 
-def logins_file(values, database) -> Path:
-    """Where the generated passwords of database go: <database>.logins next to the env file."""
+def legacy_logins(values, database) -> Path:
+    """Where versions before 0.20.0 wrote the generated passwords of database: <database>.logins next to the
+    env file. oasis no longer writes or reads it."""
     return Path(values['ENV_FILE']).parent / f'{database}.logins'
 
 
-def staged(path: Path, database, generated) -> Path:
-    """A 0600 temporary file next to path with the generated passwords; renamed to path once the database
-    exists. Removed again when it cannot be written (OSError raised)."""
-    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f'.{path.name}.')
+def administrator_password(values):
+    """(the administrator's password, what the output says of it): ODOO_ADMIN_PASSWORD of the env file when it
+    sets a non-empty value (db_account.env_values: the last assignment wins), else Odoo's default. Raises
+    AccountError when the env file cannot be read, UnsupportedValue when its value is one oasis does not read."""
+    env_file = values['ENV_FILE']
+    value = env_values(env_file, [ADMIN_VARIABLE]).get(ADMIN_VARIABLE)
+    if value is UNSUPPORTED:
+        raise UnsupportedValue(env_file, [ADMIN_VARIABLE])
+    if value:
+        return value, f'from {env_file} {ADMIN_VARIABLE}'
+    return ODOO_DEFAULT_PASSWORD, "Odoo's default"
+
+
+def languages(source) -> list:
+    """[(code, name)] of the languages Odoo offers, sorted by name: what its database manager form lists (exp_list_lang
+    of odoo/service/db.py, odoo.tools.misc.scan_languages in every supported series: base/data/res.lang.csv), and
+    like it [('en_US', 'English')] when that file cannot be read."""
     try:
-        with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            stream.write(LOGINS_HEADER.format(database=database)
-                         + ''.join(f'{login} {password}\n' for login, password in generated))
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(name)
-        raise
-    return Path(name)
+        with (Path(source) / LANGUAGES).open(encoding='utf-8', newline='') as handle:
+            reader = csv.reader(handle, delimiter=',', quotechar='"')
+            fields = next(reader)
+            code, name = fields.index('code'), fields.index('name')
+            found = [(row[code], row[name]) for row in reader]
+    except (OSError, UnicodeError, ValueError, IndexError, StopIteration, csv.Error):
+        found = []
+    return sorted(found or [(DEFAULT_LANGUAGE, 'English')], key=lambda item: item[1])
 
 
-def kept(pending: Path, note, generated) -> str:
-    """The line that names a staged logins file left in place (never a password)."""
-    return f'Generated passwords: {pending} (mode 0600; {note}): {", ".join(login for login, _password in generated)}'
+def countries(source) -> list:
+    """[(code, name)] of the countries Odoo offers, sorted by name: what its database manager form lists
+    (exp_list_countries of odoo/service/db.py in every supported series: the res.country records of
+    base/data/res_country_data.xml, lowercase codes). Raises CountryError when that file cannot be read, as
+    exp_list_countries fails there."""
+    path = Path(source) / COUNTRIES
+    try:
+        records = ElementTree.parse(path).getroot().find('data').findall('record[@model="res.country"]')
+        found = [(record.find('field[@name="code"]').text, record.find('field[@name="name"]').text)
+                 for record in records]
+    except (OSError, ElementTree.ParseError, AttributeError) as exc:
+        raise CountryError(path) from exc
+    if any(not isinstance(code, str) or not isinstance(name, str) for code, name in found):
+        raise CountryError(path)
+    return sorted(found, key=lambda item: item[1])
+
+
+class CountryError(Exception):
+    """The countries' file of the Odoo source cannot be read (its path)."""
+
+
+def check_language_and_country(values, language, country):
+    """The refusal of a language or country Odoo does not offer (an empty country: none), or None. The codes are the
+    ones the database manager form takes: exp_create_database's lang and country_code (every supported series)."""
+    source, series = values['ODOO_SOURCE'], values['ODOO_VERSION']
+    if language not in [code for code, _name in languages(source)]:
+        return (f'ERROR: Unknown language {language}: Odoo {series} lists its languages in {Path(source) / LANGUAGES}; '
+                'create-database --plan --json shows them. No database was created.')
+    if country:
+        try:
+            codes = [code for code, _name in countries(source)]
+        except CountryError as error:
+            return f'ERROR: Cannot read the countries of Odoo {series}: {error}. No database was created.'
+        if country not in codes:
+            return (f'ERROR: Unknown country {country}: Odoo {series} lists its countries in '
+                    f'{Path(source) / COUNTRIES}; create-database --plan --json shows them. No database was '
+                    'created.')
+    return None
+
+
+# The name guards of tools/common.sh that create-database applies (its own prefix check, then
+# require_working_database_name and, for a test database, require_update_sibling_room), with the same lines.
+NAME = re.compile(r'[A-Za-z0-9_]+')
+TRASH_NAME = re.compile(r'.*_trash_[0-9]{8}_[0-9]{6}')
+RUN_NAME = re.compile(r'.*_r[0-9a-f]{6}(_update)?')
+
+
+def database_refusal(values, database):
+    """The refusal of a name create-database does not create (tools/common.sh's guards), or None: letters, digits
+    and underscores after [tooling].dev_prefix or test_prefix (more than the prefix), the checkout's namespace (its
+    slug after the prefix), at most 63 bytes, no trash name, no disposable run name (_r<6 hex>: a direct call is never
+    one of a run's phases) and, for a test database, at most 56 bytes (room for verify-module's _update sibling)."""
+    dev, test, slug = values['DEV_PREFIX'], values['TEST_PREFIX'], values.get('CHECKOUT_SLUG') or ''
+    if (not NAME.fullmatch(database) or not (database.startswith(dev) or database.startswith(test))
+            or database in (dev, test)):
+        return 'ERROR: Initialization requires a named development or test database.'
+    if slug:
+        dev_namespace, test_namespace = f'{dev}{slug}_', f'{test}{slug}_'
+        if (not (database.startswith(dev_namespace) or database.startswith(test_namespace))
+                or database in (dev_namespace, test_namespace)):
+            return (f'Databases of checkout {slug} must use {dev_namespace}<name> or {test_namespace}<name>: '
+                    f'{database}')
+    size = len(database.encode('utf-8'))
+    if size > 63:
+        return f'Database names must be at most 63 bytes: {database}'
+    if TRASH_NAME.fullmatch(database):
+        return f'Database names ending in _trash_<YYYYMMDD>_<HHMMSS> are reserved for the trash: {database}'
+    if RUN_NAME.fullmatch(database):
+        return f'Database names ending in _r<6 hex> are reserved for disposable runs: {database}'
+    if database.startswith(test) and size > 56:
+        return f'Test databases with an _update sibling must be at most 56 bytes: {database}'
+    return None
+
+
+def create_command(root, module, database, with_demo, language, country) -> str:
+    """The create-database command that confirms this database, with the options given (en_US is the default)."""
+    options = [*([DEMO_OPTION] if with_demo else []), *(['--lang', language] if language != DEFAULT_LANGUAGE else []),
+               *(['--country', country] if country else [])]
+    return shlex.join([program_name(), '--project', str(root), 'create-database', *options, module, database,
+                       '--confirm', database])
+
+
+def account_line(login, source, administrator=False) -> str:
+    """What the output says of an account's password: where it comes from, never its value."""
+    return f'Account {login}{" (administrator)" if administrator else ""}, password: {source}'
 
 
 def created(result) -> bool:
@@ -115,21 +234,44 @@ def declaration(root):
 
 def main():
     validate_only = len(sys.argv) > 1 and sys.argv[1] == '--validate'
-    args = sys.argv[2:] if validate_only else sys.argv[1:]
-    if len(args) != 4 or args[3] not in ('true', 'false'):
+    confirmed = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == '--confirm' else None
+    if validate_only:
+        args = sys.argv[2:]
+    elif confirmed is not None:
+        args = sys.argv[3:]
+    else:
+        # Without --validate or --confirm <database>: the old shape, refused below once the name is checked.
+        args = sys.argv[1:]
+    if len(args) != 6 or args[3] not in ('true', 'false') or any(arg.startswith('--') for arg in args):
         print(INVALID, file=sys.stderr)
         return 2
-    root, module, database = Path(args[0]), args[1], args[2]
+    root, module, database, language, country = Path(args[0]), args[1], args[2], args[4], args[5]
     try:
         values = load(root)
         section, logins = declaration(root)
     except (OSError, ValueError, TypeError, InvalidConfig):
         print(INVALID, file=sys.stderr)
         return 2
-    target = logins_file(values, database)
-    if not target.parent.is_dir():
-        print(f'ERROR: {target.parent} does not exist: run {program_name()} setup --apply; no '
+    refusal = database_refusal(values, database)
+    if refusal:
+        print(refusal, file=sys.stderr)
+        return 2
+    if not validate_only and confirmed != database:
+        # Tier B (v0.20.0 S5): only the confirmation create-database asks for creates a database.
+        print(f'ERROR: dev_users.py creates the database {database} only with --confirm {database}, the confirmation '
+              'create-database asks (Tier B); nothing changed. Run: '
+              + create_command(root, module, database, args[3] == 'true', language, country), file=sys.stderr)
+        return 2
+    env_directory = Path(values['ENV_FILE']).parent
+    if not env_directory.is_dir():
+        print(f'ERROR: {env_directory} does not exist: run {program_name()} setup --apply; no '
               'database was created.', file=sys.stderr)
+        return 2
+    try:
+        admin_password, admin_source = administrator_password(values)
+    except (AccountError, UnsupportedValue) as error:
+        # The message names the file and the variable, never a value (db_account.py).
+        print(f'ERROR: {error}', file=sys.stderr)
         return 2
     with_demo = args[3] == 'true'
     try:
@@ -138,25 +280,36 @@ def main():
         # The message names the path, never content (odoo_addons_path.py).
         print(f'ERROR: {error}', file=sys.stderr)
         return 2
+    refusal = check_language_and_country(values, language, country)
+    if refusal:
+        print(refusal, file=sys.stderr)
+        return 2
     if validate_only:
         return 0
-    passwords, generated = [], []
-    # Only a terminal is asked (getpass never falls back to visible piped input); otherwise every password
-    # is generated.
-    interactive = sys.stdin.isatty() and sys.stderr.isatty()
+    legacy = legacy_logins(values, database)
+    if legacy.exists():
+        print(f'WARN: {legacy} is from an earlier oasis version: oasis no longer writes or reads it; it is left as '
+              'it is.', file=sys.stderr)
+    administrator = account_line(logins[0], admin_source, administrator=True)
+    passwords, sources = [admin_password], [administrator]
+    # Only a terminal is asked, and only for the declared users (getpass never falls back to visible piped
+    # input); otherwise their passwords are generated.
+    interactive = len(logins) > 1 and sys.stdin.isatty() and sys.stderr.isatty()
     try:
         with warnings.catch_warnings():
             warnings.simplefilter('error', getpass.GetPassWarning)
             if interactive:
-                print(f'Enter at a password prompt generates one into {target} (mode 0600).', file=sys.stderr)
-            for login in logins:
+                print('Enter at a password prompt generates one, which is not stored or shown.', file=sys.stderr)
+            for login in logins[1:]:
                 password = getpass.getpass(f'Password for {login}: ') if interactive else ''
                 if not password:
                     password = secrets.token_urlsafe(24)
-                    generated.append((login, password))
+                    sources.append(account_line(login, GENERATED.format(administrator=logins[0])))
                 elif password != getpass.getpass(f'Confirm password for {login}: '):
                     print('ERROR: Passwords must match; no database was created.', file=sys.stderr)
                     return 2
+                else:
+                    sources.append(account_line(login, TYPED))
                 passwords.append(password)
     except (EOFError, KeyboardInterrupt, getpass.GetPassWarning, OSError):
         print(TERMINAL, file=sys.stderr)
@@ -168,69 +321,40 @@ def main():
         print('ERROR: Local database service is unavailable; no initialization was attempted.',
               file=sys.stderr)
         return 1
-    payload = {'declaration': section, 'passwords': passwords, 'with_demo': with_demo, 'runtime': runtime}
+    # confirmed: the database the user confirmed, checked above; the runner refuses to run without it.
+    payload = {'declaration': section, 'passwords': passwords, 'with_demo': with_demo, 'lang': language,
+               'country': country or None, 'runtime': runtime, 'confirmed': database}
     runner = Path(__file__).with_name('dev_users_runtime.py')
-    # Typed passwords exist only in process memory and the anonymous stdin pipe; generated ones also in the
-    # 0600 logins file, staged before the database exists so that none is lost once it does.
-    try:
-        pending = staged(target, database, generated) if generated else None
-    except OSError:
-        print(f'ERROR: Cannot write the generated passwords next to {target}; no database was created.',
-              file=sys.stderr)
-        return 2
-    unknown = f'rename it to {target} if {database} exists'
+    # The passwords exist only in process memory and the anonymous stdin pipe: no file holds them.
     try:
         result = subprocess.run([values['PYTHON'], '-B', str(runner), str(root), module, database],
                                 input=json.dumps(payload), text=True, capture_output=True)
     except KeyboardInterrupt:
-        # The runner may have created the database already: its generated passwords stay where they are.
+        # The runner may have created the database already, with the administrator's password set.
         print(f'ERROR: Interrupted while creating {database}; it may exist: {program_name()} list-databases shows it.',
               file=sys.stderr)
-        if pending is not None:
-            print(kept(pending, unknown, generated))
+        print(administrator)
         return 130
-    except BaseException:
-        if pending is not None:
-            pending.unlink(missing_ok=True)
-        raise
     if result.returncode != 3 and not created(result):
         # Never relay the child's output; whether the database exists is unknown.
         print(f'ERROR: Development setup stopped unexpectedly (exit {result.returncode}); {database} may exist: '
               f'{program_name()} list-databases shows it.', file=sys.stderr)
-        if pending is not None:
-            print(kept(pending, unknown, generated))
+        print(administrator)
         return 1
-    stored = renamed = ''
-    if pending is not None:
-        if result.returncode == 3:
-            # No database was created: an existing one keeps its logins file.
-            pending.unlink(missing_ok=True)
-        else:
-            try:
-                os.replace(pending, target)
-                stored = (f'Generated passwords: {target} (mode 0600): '
-                          f'{", ".join(login for login, _password in generated)}')
-            except OSError:
-                renamed = f'ERROR: Cannot rename {pending} to {target}; the generated passwords stay in {pending}.'
-                stored = kept(pending, f'it could not be renamed to {target}', generated)
-    if result.returncode:
+    if result.returncode == 3:
         # Never relay Odoo exceptions, SQL logs, or an unexpected child traceback.
-        message = ('Could not create a fresh development database; existing data was not modified.'
-                   if result.returncode == 3 else
-                   'Development setup failed; the new database was retained.')
-        print('ERROR: ' + message, file=sys.stderr)
-        if renamed:
-            print(renamed, file=sys.stderr)
-        if stored:
-            print(stored)
+        print('ERROR: Could not create a fresh development database; existing data was not modified.',
+              file=sys.stderr)
+        return 1
+    if result.returncode:
+        # Created, then a later step failed: the administrator's password is already set.
+        print('ERROR: Development setup failed; the new database was retained.', file=sys.stderr)
+        print(administrator)
         return 1
     print(f'Development database initialized: {database}')
     print(f'Accounts ready: {len(logins)}')
-    if stored:
-        print(stored)
-    if renamed:
-        print(renamed, file=sys.stderr)
-        return 1
+    for line in sources:
+        print(line)
     return 0
 
 

@@ -24,6 +24,7 @@ import tempfile
 import unittest
 
 from test_setup import ADD_DEVELOPMENT, GIT, UV
+import test_code_python
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'oasis'
@@ -106,6 +107,9 @@ SETUPTOOLS_15 = ('# Odoo 15.0 imports pkg_resources without listing setuptools, 
                  'uv creates has none and uv pip sync would remove it; setuptools advises <81 to keep '
                  'pkg_resources.\nsetuptools<81\n')
 
+# The recommended answers of the environment questions of a new 15.0 section (v0.20.0 S1), as an agent relays
+# them.
+CREATE = ('--answer', 'environment=create', '--answer', f'python={PYTHON_15}')
 
 def first_free_port():
     for port in range(5432, 5532):
@@ -255,7 +259,8 @@ class SeriesSetupTests(unittest.TestCase):
     def test_the_plan_adds_the_section_and_the_machine_entry_and_changes_nothing(self):
         self.workspace.write_text(V1)
         before = self.tree()
-        result = self.setup_cmd('--community', str(self.source15), '--no-enterprise', '--exception', 'report_xlsx')
+        result = self.setup_cmd('--community', str(self.source15), '--no-enterprise', '--exception', 'report_xlsx',
+                                *CREATE)
         port = self.port_of(result.stdout)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, self.new_plan(port) + DRY_RUN, ''))
         # A free port, and not the one the 19.0 series' files use (nothing listens there in this test).
@@ -284,11 +289,19 @@ class SeriesSetupTests(unittest.TestCase):
             'db_port': {'value': port, 'origin': 'a free port'},
             'environment': {'value': str(environment), 'origin': 'new'},
             'python': {'value': PYTHON_15, 'origin': 'the default of Odoo 15.0'}})
-        self.assertEqual((plan['complete'], plan['ready_to_apply'], plan['open']), (True, True, []))
+        # v0.20.0 S1: the environment and its Python are open questions with a recommended answer until answered.
+        self.assertEqual((plan['complete'], plan['ready_to_apply'], plan['open']),
+                         (True, False, ['environment', 'python']))
         self.assertEqual(plan['lines'], self.new_plan(port).splitlines())
-        self.assertEqual([(question['id'], question['answer'], question['origin']) for question in plan['questions']],
-                         [('environment', 'create', 'recommended (no terminal)'),
-                          ('python', PYTHON_15, 'recommended (no terminal)')])
+        self.assertEqual([(question['id'], question['recommended'], question['answer'], question['origin'])
+                          for question in plan['questions']],
+                         [('environment', 'create', None, None), ('python', PYTHON_15, None, None)])
+        answered = json.loads(self.setup_cmd(*arguments, '--answer', 'environment=create', '--answer',
+                                             f'python={PYTHON_15}').stdout)
+        self.assertEqual((answered['ready_to_apply'], answered['open']), (True, []))
+        self.assertEqual([(question['id'], question['answer'], question['origin'])
+                          for question in answered['questions']],
+                         [('environment', 'create', 'from --answer'), ('python', PYTHON_15, 'from --answer python')])
         self.assertEqual(plan['changes'][:2], [
             {'kind': 'extend', 'path': str(self.machine), 'summary': f'add [series."15.0"] to {self.machine}'},
             {'kind': 'extend', 'path': str(self.workspace),
@@ -306,7 +319,7 @@ class SeriesSetupTests(unittest.TestCase):
         before19 = self.reader(self.checkout19)
         self.assertEqual((before19.returncode, before19.stderr), (0, ''))
         result = self.setup_cmd('--apply', '--community', str(self.source15), '--no-enterprise',
-                                '--exception', 'report_xlsx')
+                                '--exception', 'report_xlsx', *CREATE)
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         port = self.port_of(result.stdout)
         series = self.project / 'config/15.0'
@@ -318,10 +331,10 @@ class SeriesSetupTests(unittest.TestCase):
             f'compiled {requirements}/runtime.txt, dev.txt and lock.sha256',
             f'created the environment {environment}',
             'next steps:',
-            f'  1. oasis --project {self.checkout} start-database',
+            f'  1. oasis --project {self.checkout} setup-postgres',
             f'  2. oasis --project {self.checkout} doctor',
             f'  3. {ADD_DEVELOPMENT.format(workspace=self.workspace)}',
-            f'  4. oasis --project {self.checkout} init-dev-database <module> cc15_dev_manual']) + '\n')
+            f'  4. oasis --project {self.checkout} create-database --plan']) + '\n')
         # Only the version line changed; the section is appended; the mode is kept.
         self.assertEqual(self.workspace.read_text(),
                          V1.replace('workspace_version = 1', 'workspace_version = 2') + '\n' + SECTION)
@@ -394,10 +407,10 @@ class SeriesSetupTests(unittest.TestCase):
             f'create the environment {project / "environments/corpus-cafe-15.0"} with Python {PYTHON_15} (uv venv) '
             'and sync dev.txt (uv pip sync)']) + '\n'
         before = self.tree()
-        result = self.setup_cmd('--exception', 'report_xlsx')
+        result = self.setup_cmd('--exception', 'report_xlsx', *CREATE)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, plan + DRY_RUN, ''))
         self.assertEqual(self.tree(), before)
-        applied = self.setup_cmd('--apply', '--exception', 'report_xlsx')
+        applied = self.setup_cmd('--apply', '--exception', 'report_xlsx', *CREATE)
         self.assertEqual((applied.returncode, applied.stderr), (0, ''), applied.stdout)
         self.assertTrue(applied.stdout.startswith(plan), applied.stdout)
         self.assertNotIn(MARKER, applied.stdout)
@@ -443,7 +456,7 @@ class SeriesSetupTests(unittest.TestCase):
         folder = self.adopted_conf(self.project / 'data/odoo-15')
         (self.project / 'logs/odoo-15').mkdir(parents=True)
         before = self.tree()
-        result = self.setup_cmd('--exception', 'report_xlsx')
+        result = self.setup_cmd('--exception', 'report_xlsx', *CREATE)
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertIn("  dev_prefix = 'cc15_dev_'\n  test_prefix = 'cc15_test_'\n  logs = 'logs/odoo-15'\n"
                       "  data_dir = 'data/odoo-15'\n  series_exceptions = ['report_xlsx']\n"
@@ -457,7 +470,7 @@ class SeriesSetupTests(unittest.TestCase):
         self.assertNotIn(MARKER, result.stdout)
         self.assertTrue(result.stdout.endswith(DRY_RUN))
         self.assertEqual(self.tree(), before)
-        applied = self.setup_cmd('--apply', '--exception', 'report_xlsx')
+        applied = self.setup_cmd('--apply', '--exception', 'report_xlsx', *CREATE)
         self.assertEqual((applied.returncode, applied.stderr), (0, ''), applied.stdout)
         self.assertNotIn(MARKER, applied.stdout)
         self.assertIn("logs = 'logs/odoo-15'\ndata_dir = 'data/odoo-15'\n", self.workspace.read_text())
@@ -727,14 +740,16 @@ class SeriesSetupTests(unittest.TestCase):
         return (text.replace(re.search(r"environment = '[^']*'\n", text).group(0), '')
                 + f"\n[environments.default]\npath = '{path}'\npython = '{python}'\n")
 
-    def apply_named(self, text):
-        """Apply the 15.0 setup to a workspace with named environments; the section written, and the 15.0 and
-        19.0 checkouts' values before and after."""
+    def apply_named(self, text, python=PYTHON_15):
+        """Apply the 15.0 setup to a workspace with named environments, the environment questions answered with
+        their recommended answers (python: the recommended Python); the section written, and the 15.0 and 19.0
+        checkouts' values before and after."""
         self.workspace.write_text(text)
         before19 = self.reader(self.checkout19)
         self.assertEqual((before19.returncode, before19.stderr), (0, ''))
         result = self.setup_cmd('--apply', '--community', str(self.source15), '--no-enterprise',
-                                '--exception', 'report_xlsx')
+                                '--exception', 'report_xlsx', '--answer', 'environment=create',
+                                '--answer', f'python={python}')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         section = self.workspace.read_text()[len(text):]
         values, after19 = self.reader(self.checkout), self.reader(self.checkout19)
@@ -744,7 +759,7 @@ class SeriesSetupTests(unittest.TestCase):
         return result.stdout, section, values.stdout
 
     def test_named_environments_whose_path_uses_series_give_the_series_its_own_environment(self):
-        stdout, section, values = self.apply_named(self.named(V2, 'environments/cc-{series}', '3.12'))
+        stdout, section, values = self.apply_named(self.named(V2, 'environments/cc-{series}', '3.12'), python='3.12')
         environment = self.project / 'environments/cc-15.0'
         self.assertNotIn('environment', section.split('[series."15.0"]')[1])
         self.assertIn(f'create the environment {environment} with Python 3.12 (uv venv)', stdout)
@@ -778,6 +793,40 @@ class SeriesSetupTests(unittest.TestCase):
         self.assertIn("  [series.\"15.0\"]\n  environment = '/srv/envs15/cc15'\n", result.stdout)
         self.assertIn(f'create the environment /srv/envs15/cc15 with Python {PYTHON_15} (uv venv)', result.stdout)
 
+    # -- a new series' environment is named after the project (v0.20.0 S2) ----------------------
+
+    def test_a_new_series_environment_is_named_after_the_project_never_after_an_adopted_one(self):
+        # The v0.17.0 field run: [tooling].environment was another project's adopted environment (corpus-cafe), and
+        # the new series' environment was proposed as corpus-cafe-15.0. It takes the project's name, cc15, as its
+        # prefixes do: next to the adopted one when that one is in the workspace directory, else in the workspace.
+        flags = ('--community', str(self.source15), '--no-enterprise', '--exception', 'report_xlsx', '--python',
+                 PYTHON_15)
+        cfg = 'home = /usr/bin\nversion = 3.12.3\n'
+        outside = self.existing_environment(self.scratch / 'elsewhere/billing', cfg)
+        self.existing_environment(self.project / 'environments/billing', cfg)
+        layout = V1.replace("config = 'config/odoo.conf'", "config = '.oasis/config/odoo.conf'")
+        for text, written, created in ((V1, str(outside), self.project / 'cc15'),
+                                       (layout, str(outside), self.project / '.oasis/cc15'),
+                                       (V1, 'environments/billing', self.project / 'environments/cc15')):
+            with self.subTest(adopted=written, config=text.split('config = ')[1].split('\n')[0]):
+                self.workspace.write_text(text.replace("environment = 'environments/cc'", f"environment = '{written}'"))
+                before = self.tree()
+                result = self.setup_cmd(*flags)
+                self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+                self.assertIn(f"  [series.\"15.0\"]\n  environment = '{created.relative_to(self.project)}'\n",
+                              result.stdout)
+                self.assertIn(f'create the environment {created} with Python {PYTHON_15} (uv venv)', result.stdout)
+                self.assertNotIn('billing-15.0', result.stdout)
+                self.assertEqual(self.tree(), before)
+        # An environment oasis created (its .oasis-created mark), or one not created yet, keeps its own name.
+        own = self.existing_environment(self.project / 'environments/cc', 'home = /usr/bin\nversion = 3.12.3\n')
+        (own / '.oasis-created').write_text('created by oasis setup --apply (uv venv)\n')
+        self.workspace.write_text(V1)
+        result = self.setup_cmd(*flags)
+        self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
+        self.assertIn("  [series.\"15.0\"]\n  environment = 'environments/cc-15.0'\n", result.stdout)
+        self.assertFalse(self.log.exists())
+
     # -- a failure after the workspace edit -----------------------------------------------------
 
     def assert_undone(self, result, stderr, before):
@@ -795,7 +844,7 @@ class SeriesSetupTests(unittest.TestCase):
         environment = self.project / 'environments/cc-15.0'
         before = self.tree()
         result = self.setup_cmd('--apply', '--community', str(self.source15), '--no-enterprise',
-                                '--exception', 'report_xlsx')
+                                '--exception', 'report_xlsx', *CREATE)
         self.assertEqual((result.returncode, result.stderr), (1, (
             f'ERROR: Verification failed (Unsafe tooling environment target: {environment} exists and is not a '
             'Python environment (no pyvenv.cfg).); every change was undone.\n')), result.stdout)
@@ -812,7 +861,7 @@ class SeriesSetupTests(unittest.TestCase):
         before = self.tree()
         self.env['FAKE_COMPILE_FAIL'] = '1'
         result = self.setup_cmd('--apply', '--community', str(self.source15), '--no-enterprise',
-                                '--exception', 'report_xlsx')
+                                '--exception', 'report_xlsx', *CREATE)
         self.assert_undone(result, (
             'error: No solution found\nuv pip compile of runtime.in failed (exit 1); lock.sha256 was left as it was.\n'
             f'Fix {requirements / "runtime.in"} or its access to the package index, then run oasis setup --apply '
@@ -821,7 +870,7 @@ class SeriesSetupTests(unittest.TestCase):
         # Run again without the failure: the same plan applies.
         del self.env['FAKE_COMPILE_FAIL']
         again = self.setup_cmd('--apply', '--community', str(self.source15), '--no-enterprise',
-                               '--exception', 'report_xlsx')
+                               '--exception', 'report_xlsx', *CREATE)
         self.assertEqual((again.returncode, again.stderr), (0, ''), again.stdout)
         self.assertEqual(self.workspace.read_text(),
                          V1.replace('workspace_version = 1', 'workspace_version = 2') + '\n' + SECTION)
@@ -836,7 +885,7 @@ class SeriesSetupTests(unittest.TestCase):
         before = self.tree()
         self.env['FAKE_VENV_FAIL'] = '1'
         result = self.setup_cmd('--apply', '--community', str(self.source15), '--no-enterprise',
-                                '--exception', 'report_xlsx')
+                                '--exception', 'report_xlsx', *CREATE)
         self.assert_undone(result, (
             'error: no interpreter\nERROR: uv venv failed (exit 3); every change was undone: fix it, then run oasis '
             'setup --apply again.\n'), before)
@@ -920,10 +969,10 @@ series_exceptions = ['report_xlsx']
             f'  1. the locks in {requirements} describe runtime.in, dev.in and overrides.txt: oasis --project '
             f'{self.checkout} bootstrap --apply syncs the adopted environment {environment} to them (it changes '
             'the packages installed there)',
-            f'  2. oasis --project {self.checkout} start-database',
+            f'  2. oasis --project {self.checkout} setup-postgres',
             f'  3. oasis --project {self.checkout} doctor',
             f'  4. {ADD_DEVELOPMENT.format(workspace=self.workspace)}',
-            f'  5. oasis --project {self.checkout} init-dev-database <module> cc15_dev_manual']) + '\n')
+            f'  5. oasis --project {self.checkout} create-database --plan']) + '\n')
         self.assertEqual(self.workspace.read_text(),
                          V1.replace('workspace_version = 1', 'workspace_version = 2') + '\n' + section)
         # Both compiles with the overrides, with the environment's Python; no uv venv, no uv pip sync.
@@ -964,6 +1013,26 @@ series_exceptions = ['report_xlsx']
         self.assert_refused(self.setup_cmd('--environment', str(environment)),
                             f'--environment: {self.checkout} is already configured by {self.workspace}; setup only '
                             'fills what is missing.', before)
+
+    def test_an_adopted_python_3_8_that_cannot_load_match_is_a_warn_of_the_plan(self):
+        # The field run (v0.20.0 S3): billing-o15, Python 3.8, adopted for a 15.0 checkout whose code uses match.
+        _folder, environment = self.billing_o15()
+        models = self.checkout / 'cafe_sale/models.py'
+        models.write_text(test_code_python.MATCH)
+        error = test_code_python.feature_error(test_code_python.MATCH, models, 8)
+        adopt = (f'adopt the environment {environment} (from --environment): Python 3.8 (its pyvenv.cfg); setup never '
+                 'creates, syncs or deletes it\n')
+        warning = (f'WARN: Python 3.8 of the adopted environment {environment} cannot load the code (best-effort: '
+                   f'parsed with its grammar): {models}:{error.lineno}: {error.msg}; the code needs Python 3.10 or '
+                   'newer: use --environment <dir> with an environment whose Python can load it, or --python <x.y> '
+                   "for a new one; oasis doctor compiles the code with the environment's own Python\n")
+        result = self.setup_cmd('--environment', str(environment), '--exception', 'report_xlsx')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.endswith(adopt + warning + DRY_RUN), result.stdout)
+        applied = self.setup_cmd('--apply', '--environment', str(environment), '--exception', 'report_xlsx')
+        self.assertEqual((applied.returncode, applied.stderr), (0, ''), applied.stdout)
+        self.assertIn(adopt + warning + f'verified: {self.checkout} loads', applied.stdout)
+        self.assertFalse((self.scratch / 'python-ran').exists())
 
     def test_the_documented_billing_o15_example_plans_the_documented_lines(self):
         _folder, environment = self.billing_o15()

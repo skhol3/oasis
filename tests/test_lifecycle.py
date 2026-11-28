@@ -182,6 +182,8 @@ exit 0
                     # Keep git discovery inside the scratch project: no checkout identity
                     # leaks from the repository that holds the fixtures.
                     'GIT_CEILING_DIRECTORIES': self.scratch.name}
+        # 19.0's -d reads PGDATABASE (start checks that database): the host's must not reach the fixtures.
+        self.env.pop('PGDATABASE', None)
         # Server records (tools/runtime_state.py) stay in a private runtime directory per test.
         self.runtime = tempfile.TemporaryDirectory(prefix='oasis-runtime-')
         self.addCleanup(self.runtime.cleanup)
@@ -257,6 +259,8 @@ exit 0
         self.unchanged()
 
     def test_install_default_and_piped_shell(self):
+        # The default database exists: install-module never creates one (v0.20.0 S12).
+        self.env['FAKE_EXISTS'] = '1'
         result = self.invoke('install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertIn('odoo ' + str(self.source / 'odoo-bin') + ' -c ' + str(self.root / 'dev/odoo.conf') +
@@ -508,7 +512,10 @@ exit 0
     def test_custom_prefixes_and_verify_distinct_names(self):
         path = self.root / 'oasis-workspace.toml'
         path.write_text(WORKSPACE.replace('cc_dev_', 'demo_dev_').replace('cc_test_', 'demo_test_'))
+        # The default database exists: install-module never creates one (v0.20.0 S12).
+        self.env['FAKE_EXISTS'] = '1'
         result = self.invoke('install-module', 'coffee')
+        del self.env['FAKE_EXISTS']
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         self.assertIn('-d demo_dev_coffee -i coffee', self.commands.read_text())
         before = self.commands.read_text()
@@ -647,7 +654,7 @@ exit 0
         for command, args, exists, line in (
                 ('test-module', ('coffee',), '0', f'{odoo} -c {conf} --http-port=<free> --gevent-port=<free> -d cc_test_coffee_r<run> '
                  '-i coffee --without-demo --test-tags /coffee --stop-after-init'),
-                ('install-module', ('coffee',), '0',
+                ('install-module', ('coffee',), '1',
                  f'{odoo} -c {conf} -d cc_dev_coffee -i coffee --without-demo --stop-after-init'),
                 ('update-module', ('coffee', 'cc_dev_coffee'), '1',
                  f'{odoo} -c {conf} -d cc_dev_coffee -u coffee --stop-after-init'),
@@ -678,7 +685,8 @@ exit 0
                 ('install-module', [odoo, '-c', conf, '-d', 'cc_dev_coffee', '-i', 'coffee', '--without-demo',
                                     '--stop-after-init'])):
             with self.subTest(command=command):
-                self.env['FAKE_EXISTS'] = '0'
+                # install-module on an existing database: it never creates one (v0.20.0 S12).
+                self.env['FAKE_EXISTS'] = '1' if command == 'install-module' else '0'
                 result = self.invoke(command, 'coffee', input='')
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
                 self.assertEqual([any_run_database(any_test_port(entry))
@@ -691,7 +699,7 @@ exit 0
         self.assertEqual(result.stdout.splitlines()[1], 'Default: --without-demo. The database must be managed '
                                                         '(cc_dev_/cc_test_) and defaults to cc_dev_<module>.')
 
-    def test_start_status_stop_create_list_and_module_status(self):
+    def test_start_status_stop_list_and_module_status(self):
         port = free_port()
         (self.root / 'dev/odoo.conf').write_text(conf_text(f'http_port = {port}\n'))
         result = self.invoke('start')
@@ -700,7 +708,6 @@ exit 0
         for command, args, output in (
                 ('status', (), 'server: stopped\n'),
                 ('stop', (), 'No Odoo server running for this checkout.\n'),
-                ('create-database', ('cc_dev_coffee',), 'Database ready: cc_dev_coffee\n'),
                 ('list-databases', (), ''),
                 ('module-status', ('coffee', 'cc_dev_coffee'),
                  'database=cc_dev_coffee\nmodule=coffee\ndatabase_state=missing\nmodule_state=unknown\n')):
@@ -755,7 +762,9 @@ class Odoo15CommandLineTests(unittest.TestCase):
             f'{self.odoo} -c {self.conf} -d cc_dev_coffee -u coffee --stop-after-init'])
 
     def test_install_without_and_with_demo(self):
-        # Demo data is on by default in 15.0 (no --with-demo option): the opt-in passes nothing.
+        # Demo data is on by default in 15.0 (no --with-demo option): the opt-in passes nothing. The databases
+        # exist: install-module never creates one (v0.20.0 S12).
+        self.env['FAKE_EXISTS'] = '1'
         result = self.invoke('install-module', 'coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
         result = self.invoke('install-module', '--with-demo', 'coffee', 'cc_dev_other')
@@ -790,6 +799,7 @@ class Odoo15CommandLineTests(unittest.TestCase):
                 else:
                     self.assertRegex(' '.join(added), r'^--http-port=\d+$')
                 self.unchanged()
+        self.env['FAKE_EXISTS'] = '1'  # v0.20.0 L19: start opens an existing database only
         # The batch run execs that kind of line.
         result = self.invoke('start', '--stop-after-init', '-u', 'coffee', '-d', 'cc_dev_coffee')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, '', ''))
@@ -806,6 +816,68 @@ class Odoo15CommandLineTests(unittest.TestCase):
             '-i coffee --without-demo=all --test-tags /coffee --stop-after-init',
             f'{self.odoo} -c {self.conf} -d cc_test_coffee_r<run>_update -i coffee --without-demo=all --stop-after-init',
             f'{self.odoo} -c {self.conf} -d cc_test_coffee_r<run>_update -u coffee --stop-after-init'])
+
+    def test_odoo_shell_opens_the_shell_subcommand_on_the_dev_database(self):
+        # v0.20.0 S11: the shell subcommand with the conf and the database only (no second port: it serves
+        # nothing); the piped command reaches the shell and its output comes back.
+        self.env['FAKE_EXISTS'] = '1'
+        result = self.invoke('odoo-shell', 'cc_dev_coffee', input='print(42)\n')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, 'print(42)\n', ''))
+        self.assertEqual(self.odoo_lines(), [f'{self.odoo} shell -c {self.conf} -d cc_dev_coffee'])
+
+    def test_start_dev_passes_the_15_dev_features(self):
+        # v0.20.0 S11: the main checkout's server on its odoo.conf port with 15.0's own dev features
+        # (pdb, werkzeug: 19.0 has neither) and `all`, as given; no second port on the main checkout.
+        self.env['FAKE_EXISTS'] = '1'  # v0.20.0 L19: start opens an existing database only
+        port = free_port()
+        (self.root / 'dev/odoo.conf').write_text(conf_text(f'http_port = {port}\n'))
+        for dev in ('pdb,werkzeug,xml', 'all'):
+            with self.subTest(dev=dev):
+                self.commands.unlink(missing_ok=True)
+                result = self.invoke('start', '-d', 'cc_dev_coffee', '--dev', dev, input='')
+                self.assertEqual((result.returncode, result.stdout), (0, ''))
+                self.assertRegex(result.stderr, rf'^oasis start: http://localhost:{port} \(pid \d+\)\n$')
+                self.assertEqual(self.odoo_lines(),
+                                 [f'{self.odoo} -c {self.conf} --http-port={port} -d cc_dev_coffee --dev {dev}'])
+
+    def test_restart_keeps_the_port_and_database_and_takes_the_new_dev_features(self):
+        # v0.20.0 S11: restart stops the running 15.0 server and starts it detached again with its port and
+        # database and the dev features given now.
+        import test_menu as menu  # it imports this module: load it once both exist
+        self.python.write_text(self.python.read_text() + menu.SERVE)
+        (self.source / 'odoo-bin').write_text(menu.SERVING)
+        port = quiet_ports(2)
+        (self.root / 'dev/odoo.conf').write_text(conf_text(f'http_port = {port}\n'))
+        self.env.update(FAKE_SERVE='1', OASIS_DETACH_WAIT='5', FAKE_EXISTS='1')
+
+        def kill_recorded():
+            recorded = re.match(r'pid=(\d+) ', menu.DetachTests.record(self))
+            if recorded:
+                menu.DetachTests.kill(self, int(recorded.group(1)))
+        self.addCleanup(kill_recorded)
+
+        def oasis(*args):
+            # restart has no project wrapper: the oasis entry point runs it, bounded.
+            return subprocess.run([sys.executable, '-B', str(STAGE / 'oasis'), '--project', str(self.root), *args],
+                                  text=True, cwd=self.root, env=self.env, capture_output=True,
+                                  stdin=subprocess.DEVNULL, timeout=60)
+        log = self.root.resolve() / 'logs/main/server.log'
+        detached = rf'pid=(\d+) port={port} log={re.escape(str(log))}\n'
+        result = oasis('start', '--detach', '-d', 'cc_dev_coffee', '--dev', 'pdb,werkzeug')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        first = int(re.fullmatch(detached, result.stdout).group(1))
+        self.addCleanup(menu.DetachTests.kill, self, first)
+        result = oasis('restart', '--dev', 'reload,qweb')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        match = re.fullmatch(rf'Stopped Odoo for this checkout: pid {first}, port {port}\.\n{detached}', result.stdout)
+        self.assertIsNotNone(match, result.stdout)
+        second = int(match.group(1))
+        self.addCleanup(menu.DetachTests.kill, self, second)
+        self.assertNotEqual(first, second)
+        self.assertEqual(menu.DetachTests.record(self), f'pid={second} port={port}\n')
+        self.assertEqual(self.odoo_lines(), [
+            f'{self.odoo} -c {self.conf} --http-port={port} -d cc_dev_coffee --dev pdb,werkzeug',
+            f'{self.odoo} -c {self.conf} --http-port={port} -d cc_dev_coffee --dev reload,qweb'])
 
 
 

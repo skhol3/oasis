@@ -11,13 +11,16 @@
 #                       is given (with `=<address>` or as a separate word), as Odoo's optparse reads it
 #   explicit_interface  its address
 #   explicit_database   the last database given (-d, --database and their forms), or empty
+#   explicit_config     the last configuration file given (-c <file>, -c<file>, --config <file>, --config=<file> and
+#                       the unambiguous prefixes of --config down to --c), or empty: Odoo reads that one instead of
+#                       the odoo.conf start passes first (optparse keeps the last value)
 #   explicit_gevent     true when the series' second port option is given
 #   informational       true for -h, --help or --version
 #   batch               true for --stop-after-init
 # Nothing after `--` is read.
 parse_server_arguments() {
   local arguments=("$@") index
-  explicit_port='' explicit_interface='' explicit_database=''
+  explicit_port='' explicit_interface='' explicit_database='' explicit_config=''
   interface_given=false explicit_gevent=false informational=false batch=false
   for (( index = 0; index < ${#arguments[@]}; index++ )); do
     case ${arguments[index]} in
@@ -32,6 +35,11 @@ parse_server_arguments() {
       --datab=*|--databa=*|--databas=*|--database=*)
         require_working_database_name "${arguments[index]#*=}"
         explicit_database=${arguments[index]#*=} ;;
+      -c|--c|--co|--con|--conf|--confi|--config)
+        explicit_config=${arguments[index + 1]:-}
+        (( index += 1 )) ;;
+      -c*) explicit_config=${arguments[index]#-c} ;;
+      --c=*|--co=*|--con=*|--conf=*|--confi=*|--config=*) explicit_config=${arguments[index]#*=} ;;
       -p|--http-port)
         explicit_port=${arguments[index + 1]:-}
         (( index += 1 )) ;;
@@ -206,16 +214,48 @@ busy() {
   printf 'Port %s is in use by another process; %s or stop that process.\n' "$port" "$pass" >&2
 }
 
-# conf_database: the db_name of the configured odoo.conf, or nothing when it sets none (Odoo writes
-# False for none) or cannot be read (Odoo then reports the file itself). Read with odoo_addons_path.py
-# read_option, the reader of every other odoo.conf option.
+# configuration_reads_environment: the series' answer in tools/odoo_versions.py (true or false, with the Odoo
+# source lines): whether -d reads PGDATABASE (after the command line, before the configuration file) and whether -c
+# expands variables and ~. A table that cannot be read prints one WARNING and answers "unknown".
+configuration_reads_environment() {
+  local answer
+  answer=$(python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/odoo_versions.py" "$ODOO_VERSION" \
+    configuration_reads_environment 2>/dev/null) || answer=
+  case "$answer" in
+    true | false) printf '%s\n' "$answer" ;;
+    *)
+      printf 'WARNING: cannot read configuration_reads_environment of Odoo %s from tools/odoo_versions.py; checking PGDATABASE too.\n' \
+        "${ODOO_VERSION:-?}" >&2
+      printf 'unknown\n' ;;
+  esac
+}
+
+# odoo_reads_pgdatabase: fails closed, only an explicit false skips PGDATABASE (the check covers more, never less).
+odoo_reads_pgdatabase() {
+  [[ "$(configuration_reads_environment)" != false ]]
+}
+
+# odoo_expands_config_path: only an explicit true expands the -c path; unknown keeps it as given.
+odoo_expands_config_path() {
+  [[ "$(configuration_reads_environment)" == true ]]
+}
+
+# conf_database [<file>]: the db_name of that configuration file (the configured odoo.conf by default), or nothing
+# when it sets none (Odoo writes False for none) or cannot be read (Odoo then reports the file itself). Read with
+# odoo_addons_path.py read_option, the reader of every other odoo.conf option. A path given with -c is expanded as
+# the series' Odoo expands it.
 conf_database() {
-  python3 -I -B - "$(dirname "${BASH_SOURCE[0]}")/odoo_addons_path.py" "$ODOO_CONFIG" 2>/dev/null <<'PYTHON' || true
-import importlib.util, sys
+  local expand=''
+  if [[ -n "${1:-}" ]] && odoo_expands_config_path; then expand=expand; fi
+  python3 -I -B - "$(dirname "${BASH_SOURCE[0]}")/odoo_addons_path.py" "${1:-$ODOO_CONFIG}" "$expand" 2>/dev/null <<'PYTHON' || true
+import importlib.util, os.path, sys
 spec = importlib.util.spec_from_file_location('oasis_odoo_addons_path', sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-value = (module.read_option(sys.argv[2], 'db_name') or '').strip()
+conf = sys.argv[2]
+if sys.argv[3]:
+    conf = os.path.expanduser(os.path.expandvars(conf.strip()))
+value = (module.read_option(conf, 'db_name') or '').strip()
 if value and value != 'False':
     print(value)
 PYTHON
@@ -229,4 +269,45 @@ warn_without_database() {
   if [[ -n "$named" ]]; then
     printf "WARNING: no database given (-d); Odoo will use odoo.conf's db_name (%s).\n" "$named" >&2
   fi
+}
+
+# database_list <names>: a comma-separated list of databases, one per line, each stripped, empty items left out (as
+# Odoo splits db_name and PGDATABASE).
+database_list() {
+  local name names=()
+  IFS=',' read -ra names <<< "$1"
+  for name in "${names[@]}"; do
+    name=${name#"${name%%[![:space:]]*}"}
+    name=${name%"${name##*[![:space:]]}"}
+    if [[ -n "$name" ]]; then printf '%s\n' "$name"; fi
+  done
+}
+
+# server_databases: the databases odoo-bin would open, one per line, from the first source Odoo reads: the one given
+# with -d (or a form of it); else, on a series whose -d reads it, PGDATABASE when it is set (oasis never sets it, so it
+# is the user's own; set but empty, it is an empty list that hides the file's db_name); else the db_name of the
+# configuration file Odoo reads (a later -c/--config among the options, else odoo.conf). Lists are comma-separated.
+# None from any source is Odoo's database selector.
+server_databases() {
+  if [[ -n "$explicit_database" ]]; then
+    printf '%s\n' "$explicit_database"
+    return
+  fi
+  if odoo_reads_pgdatabase && [[ -v PGDATABASE ]]; then
+    database_list "$PGDATABASE"
+    return
+  fi
+  database_list "$(conf_database "$explicit_config")"
+}
+
+# require_existing_server_databases: odoo-bin creates every database it is given that does not exist (odoo/cli/server.py
+# of every supported series), so each one server_databases names must exist (common.sh require_existing_database:
+# exit 2 naming create-database --plan, the one command that creates a database, v0.20.0 S12). Called right before
+# Odoo would start, never for --print-command or Odoo's informational options; without a database nothing is checked.
+require_existing_server_databases() {
+  local database databases=()
+  mapfile -t databases < <(server_databases)
+  for database in "${databases[@]}"; do
+    require_existing_database "$database" </dev/null
+  done
 }

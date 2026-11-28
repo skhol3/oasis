@@ -70,8 +70,8 @@ SHA-256 of the original name, then `_trash_<YYYYMMDD>_<HHMMSS>`: exactly 63 byte
   still applies. A prefix and slug of 34 bytes or more leave no room for a shortened name: the
   command exits 2 (`Database prefix and checkout slug leave no room for a trash name: <namespace>`).
 - The suffix `_trash_` + 8 digits + `_` + 6 digits is reserved. Every command that takes a
-  database (`create-database`, `install-module`, `update-module`, `odoo-shell`, `start
-  -d`/`--database`, `init-dev-database`, `test-module`, `verify-module`, `module-status` and
+  database (`install-module`, `update-module`, `odoo-shell`, `start -d`/`--database`,
+  `create-database`, `test-module`, `verify-module`, `module-status` and
   `drop-database` itself) refuses such a name with `Database names ending in
   _trash_<YYYYMMDD>_<HHMMSS> are reserved for the trash: <name>` (exit 2, nothing runs). Only
   `trash restore` and `gc --trash` take them.

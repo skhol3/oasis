@@ -7,6 +7,7 @@ project, the real ~/.config or a package index.
 """
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
 import hashlib
+import json
 import os
 from pathlib import Path
 import pty
@@ -18,6 +19,8 @@ import sys
 import tempfile
 import time
 import unittest
+
+import test_code_python
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'oasis'
@@ -58,8 +61,8 @@ exit 0
 '''
 # The [development] table of a new workspace (v0.16.0 S6: the question development, recommended add), and the
 # step that names its lines when a workspace has none.
-DEVELOPMENT = ("\n# The administrator of the databases init-dev-database creates; its password is generated "
-               "(docs/dev-database.md).\n[development]\nadministrator_login = 'admin'\n")
+DEVELOPMENT = ("\n# The administrator of the databases create-database creates; its password is Odoo's default, or "
+               "ODOO_ADMIN_PASSWORD of the env file (docs/dev-database.md).\n[development]\nadministrator_login = 'admin'\n")
 ADD_DEVELOPMENT = ("add these lines to {workspace} (docs/dev-database.md):\n       [development]\n"
                    "       administrator_login = 'admin'")
 WORKSPACE = '''# Written by oasis setup. Paths are relative to this file, addons_paths to each checkout;
@@ -92,6 +95,8 @@ SECTION = ('# Added by oasis setup: what differs for the Odoo 19.0 checkouts (do
            '[series."19.0"]\nseries_exceptions = [{modules}]\n')
 OPEN_PLAN = ('nothing changed: answer the open questions above (docs/setup.md#questions-and-answers), then run '
              'with --apply to set up\n')
+# The recommended answers of the environment questions (v0.20.0 S1), as an agent relays them.
+CREATE = ('--answer', 'environment=create', '--answer', 'python=3.12')
 NOT_TTY_SERIES = ('ERROR: Cannot infer the Odoo series of {root}: no module manifest declares one and the '
                   'machine file has no single series; pass --series <x.y> (supported: 19.0, 15.0).\n')
 
@@ -206,14 +211,15 @@ class SetupTests(unittest.TestCase):
 
     def test_the_default_prints_the_plan_of_a_new_workspace_and_changes_nothing(self):
         before = self.tree()
-        result = self.setup_cmd('--community', str(self.source), '--no-enterprise')
+        result = self.setup_cmd('--community', str(self.source), '--no-enterprise', *CREATE)
         port = self.port_of(result.stdout)
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, self.plan(port) + DRY_RUN, ''))
         self.assertTrue(5432 <= port < 5532)
         self.assertEqual(self.tree(), before)
         self.assertFalse(self.log.exists())
         # --plan asks for the same plan explicitly; without --project the checkout is the git top level.
-        explicit = self.setup_cmd('--plan', '--community', str(self.source), '--no-enterprise', project=False,
+        explicit = self.setup_cmd('--plan', '--community', str(self.source), '--no-enterprise', *CREATE,
+                                  project=False,
                                   cwd=self.checkout / 'shop_sale')
         self.assertEqual((explicit.returncode, explicit.stderr), (0, ''))
         self.assertEqual(re.sub(r'\b\d{4}\b', 'P', explicit.stdout), re.sub(r'\b\d{4}\b', 'P', result.stdout))
@@ -241,7 +247,7 @@ class SetupTests(unittest.TestCase):
     # -- apply ----------------------------------------------------------------------------------
 
     def test_apply_creates_the_missing_pieces_and_a_second_run_keeps_them(self):
-        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *CREATE)
         port = self.port_of(result.stdout)
         config = self.checkout / '.oasis/config'
         requirements = config / 'requirements'
@@ -251,9 +257,9 @@ class SetupTests(unittest.TestCase):
                  f'compiled {requirements}/runtime.txt, dev.txt and lock.sha256\n'
                  f'created the environment {environment}\n'
                  'next steps:\n'
-                 f'  1. oasis --project {self.checkout} start-database\n'
+                 f'  1. oasis --project {self.checkout} setup-postgres\n'
                  f'  2. oasis --project {self.checkout} doctor\n'
-                 f'  3. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n')
+                 f'  3. oasis --project {self.checkout} create-database --plan\n')
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, self.plan(port) + steps, ''))
         # S10: the source goes to the machine file (0600), not to the workspace file.
         self.assertEqual(self.machine.read_text(), MACHINE_HEADER + f"[series.\"19.0\"]\ncommunity = '{self.source}'\n")
@@ -321,7 +327,7 @@ class SetupTests(unittest.TestCase):
 
     def test_a_failed_compile_keeps_the_written_files_and_says_how_to_continue(self):
         self.env['FAKE_COMPILE_FAIL'] = '1'
-        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *CREATE)
         requirements = self.checkout / '.oasis/config/requirements'
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stderr, 'error: No solution found\n'
@@ -335,7 +341,8 @@ class SetupTests(unittest.TestCase):
     def test_workspace_option_puts_the_layout_in_another_directory(self):
         directory = self.scratch / 'work'
         before = self.tree()
-        result = self.setup_cmd('--workspace', str(directory), '--community', str(self.source), '--no-enterprise')
+        result = self.setup_cmd('--workspace', str(directory), '--community', str(self.source), '--no-enterprise',
+                                *CREATE)
         port = self.port_of(result.stdout)
         self.assertEqual((result.returncode, result.stdout, result.stderr),
                          (0, self.plan(port, base='', directory=directory) + DRY_RUN, ''))
@@ -425,10 +432,11 @@ class SetupTests(unittest.TestCase):
                                   'environment to use instead: ', ''),
                                  (f'Python of the new environment {self.checkout / ".oasis/venv"}, one of 3.10, '
                                   '3.11, 3.12, 3.13, 3.14 [Enter: 3.12]: ', ''),
-                                 # v0.16.0 S6: the [development] table of init-dev-database.
-                                 ('init-dev-database needs a [development] table in '
+                                 # v0.16.0 S6: the [development] table of create-database.
+                                 ('create-database needs a [development] table in '
                                   f'{self.checkout / "oasis-workspace.toml"}: add one with administrator_login = '
-                                  "'admin' (its password is generated)? (add/none) [Enter: add]: ", 'none')):
+                                  "'admin' (its password: Odoo's default, or ODOO_ADMIN_PASSWORD of the env file)? "
+                                  '(add/none) [Enter: add]: ', 'none')):
             deadline = time.monotonic() + 30
             while expected not in prompts and time.monotonic() < deadline:
                 if select.select([master], [], [], 1)[0]:
@@ -446,7 +454,7 @@ class SetupTests(unittest.TestCase):
 
     def test_an_existing_machine_file_is_extended_but_an_existing_entry_is_never_edited(self):
         self.write_machine('# my machine\n')
-        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *CREATE)
         self.assertEqual((result.returncode, result.stderr), (0, ''))
         self.assertIn(f'add [series."19.0"] to {self.machine}:\n  [series."19.0"]\n', result.stdout)
         self.assertEqual(self.machine.read_text(), f"# my machine\n\n[series.\"19.0\"]\ncommunity = '{self.source}'\n")
@@ -504,7 +512,7 @@ class SetupTests(unittest.TestCase):
         self.assertEqual((project / 'config/compose.yml').read_text(), 'name: mine\n')
         self.assertFalse(self.machine.exists())
         self.assertNotIn('fill in', applied.stdout)
-        self.assertIn(f'  1. oasis --project {self.checkout} start-database\n', applied.stdout)
+        self.assertIn(f'  1. oasis --project {self.checkout} setup-postgres\n', applied.stdout)
         self.assertNotIn(str(env_file), applied.stdout.split('next steps:')[1])
 
     def test_a_workspace_without_a_source_gets_the_machine_entry(self):
@@ -586,9 +594,9 @@ class SetupTests(unittest.TestCase):
             f'  1. the locks in {requirements} describe runtime.in and dev.in: oasis --project {self.checkout} '
             f'bootstrap --apply syncs the adopted environment {environment} to them (it changes the packages '
             'installed there)\n'
-            f'  2. oasis --project {self.checkout} start-database\n'
+            f'  2. oasis --project {self.checkout} setup-postgres\n'
             f'  3. oasis --project {self.checkout} doctor\n'
-            f'  4. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n'))
+            f'  4. oasis --project {self.checkout} create-database --plan\n'))
         self.assertEqual(workspace.read_text(), WORKSPACE.format(base='.oasis/').replace(
             "environment = '.oasis/venv'", f"environment = '{environment}'"))
         self.assertEqual(self.log.read_text().splitlines(), [
@@ -626,6 +634,135 @@ class SetupTests(unittest.TestCase):
                                            '--no-enterprise'),
                             f'--environment {other} has Python 3.9, which Odoo 19.0 does not support (3.10 to 3.14).',
                             before)
+
+    # -- the environment's Python and the code (v0.20.0 S3) -------------------------------------
+
+    def code_warning(self, python, which, environment, path, source, minor, needs):
+        """The plan's WARN line for a Python whose grammar does not parse source (best-effort)."""
+        error = test_code_python.feature_error(source, path, minor)
+        return (f'WARN: Python {python} of {which} {environment} cannot load the code (best-effort: parsed with its '
+                f'grammar): {path}:{error.lineno}: {error.msg}; the code needs Python {needs} or newer: use '
+                '--environment <dir> with an environment whose Python can load it, or --python <x.y> for a new one; '
+                "oasis doctor compiles the code with the environment's own Python\n")
+
+    def test_a_new_or_adopted_python_that_cannot_load_the_code_is_a_warn_of_the_plan_that_does_not_block(self):
+        source = 'type Amount = float\n'
+        types = self.checkout / 'shop_sale/types.py'
+        types.write_text(source)
+        flags = ('--community', str(self.source), '--no-enterprise')
+        venv = self.checkout / '.oasis/venv'
+        created = f'create the environment {venv} with Python {{python}} (uv venv) and sync dev.txt (uv pip sync)\n'
+        before = self.tree()
+        # A new environment of Python 3.11: PEP 695 needs 3.12.
+        result = self.setup_cmd(*flags, '--python', '3.11')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.endswith(created.format(python='3.11') + self.code_warning(
+            '3.11', 'the new environment', venv, types, source, 11, '3.12') + DRY_RUN), result.stdout)
+        # The recommended 3.12 loads it: no line.
+        result = self.setup_cmd(*flags, *CREATE)
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.endswith(created.format(python='3.12') + DRY_RUN), result.stdout)
+        self.assertEqual(self.tree(), before)
+        # An adopted Python 3.11: the same WARN; the JSON plan holds it, and it does not block --apply.
+        environment = self.existing_environment('shop-311', '3.11.9')
+        adopt = (f'adopt the environment {environment} (from --environment): Python 3.11 (its pyvenv.cfg); setup never '
+                 'creates, syncs or deletes it\n')
+        warning = self.code_warning('3.11', 'the adopted environment', environment, types, source, 11, '3.12')
+        result = self.setup_cmd(*flags, '--environment', str(environment))
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.endswith(adopt + warning + DRY_RUN), result.stdout)
+        plan = json.loads(self.setup_cmd('--plan', '--json', *flags, '--environment', str(environment)).stdout)
+        self.assertEqual((plan['ready_to_apply'], plan['lines'][-1]), (True, warning.rstrip('\n')))
+        self.assertFalse(self.log.exists())
+        applied = self.setup_cmd('--apply', *flags, '--environment', str(environment))
+        self.assertEqual((applied.returncode, applied.stderr), (0, ''), applied.stdout)
+        self.assertIn(adopt + warning + f'verified: {self.checkout} loads', applied.stdout)
+        # Setup reads the adopted environment's Python from its pyvenv.cfg and never runs it.
+        self.assertFalse((self.scratch / 'python-ran').exists())
+
+    def test_a_syntax_error_in_the_code_is_a_warn_that_does_not_blame_the_environment(self):
+        broken = self.checkout / 'shop_sale/broken.py'
+        broken.write_text('def broken(:\n')
+        error = test_code_python.host_error('def broken(:\n', broken)
+        result = self.setup_cmd('--community', str(self.source), '--no-enterprise', *CREATE)
+        venv = self.checkout / '.oasis/venv'
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        self.assertTrue(result.stdout.endswith(
+            f'create the environment {venv} with Python 3.12 (uv venv) and sync dev.txt (uv pip sync)\n'
+            f'WARN: syntax error in the code: {broken}:{error.lineno}: {error.msg} (oasis\' own Python rejects it too, '
+            'so no environment loads it): correct it\n' + DRY_RUN), result.stdout)
+
+    # -- the environment and its Python, open until answered (v0.20.0 S1) -----------------------
+
+    def test_without_a_terminal_the_environment_and_its_python_are_open_questions_until_answered(self):
+        # The v0.17.0 field run: `setup --plan --json` (an agent: no terminal) listed no environment question and
+        # silently chose the environment and the series' default Python. They are open, with a recommended answer.
+        environment = self.checkout / '.oasis/venv'
+        flags = ('--community', str(self.source), '--no-enterprise')
+        environment_text = (f'Python environment for Odoo 19.0: create {environment}, or use an existing '
+                            'environment')
+        python_text = f'Python of the new environment {environment}'
+        refusals = (f'{environment_text}. Answer with --answer environment=create | --environment <dir> '
+                    '(recommended: create).',
+                    f'{python_text}, one of 3.10, 3.11, 3.12, 3.13, 3.14. Answer with --python <x.y> (recommended: '
+                    '3.12).')
+        before = self.tree()
+        result = self.setup_cmd('--plan', '--json', *flags)
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        plan = json.loads(result.stdout)
+        self.assertEqual((plan['complete'], plan['ready_to_apply'], plan['open']),
+                         (True, False, ['environment', 'python']))
+        asked = {question['id']: question for question in plan['questions']}
+        self.assertEqual(asked['environment'], {
+            'id': 'environment', 'text': environment_text,
+            'options': [{'value': 'create', 'label': f'create {environment}'}], 'recommended': 'create',
+            'flag': '--answer environment=create | --environment <dir>', 'answer': None, 'origin': None})
+        self.assertEqual(asked['python'], {
+            'id': 'python', 'text': python_text,
+            'options': [{'value': python, 'label': f'Python {python}'} for python in ('3.10', '3.11', '3.12', '3.13',
+                                                                                      '3.14')],
+            'recommended': '3.12', 'flag': '--python <x.y>', 'answer': None, 'origin': None})
+        # The plan still shows what the recommended answers would create.
+        self.assertEqual(plan['inferred']['environment'], {'value': str(environment), 'origin': 'new'})
+        self.assertIn(f'create the environment {environment} with Python 3.12 (uv venv) and sync dev.txt '
+                      '(uv pip sync)', plan['lines'])
+        # The text plan lists them too, and --apply refuses them; nothing changes.
+        text = self.setup_cmd(*flags)
+        port = self.port_of(text.stdout)
+        self.assertEqual((text.returncode, text.stdout, text.stderr), (
+            0, self.plan(port) + f'open question environment: {refusals[0]}\nopen question python: {refusals[1]}\n'
+            + OPEN_PLAN, ''))
+        refused = self.setup_cmd('--apply', *flags)
+        self.assertEqual((refused.returncode, refused.stdout, refused.stderr), (2, '', (
+            f'ERROR: open question environment: {refusals[0]}\nERROR: open question python: {refusals[1]}\n'
+            'ERROR: nothing changed: answer the open questions, then run oasis setup --apply again.\n')))
+        self.assertEqual(self.tree(), before)
+        self.assertFalse(self.log.exists())
+        # Answered: the recommended answers an agent relays, or --python alone (a new environment of that Python).
+        for answers, expected in (
+                (('--answer', 'environment=create', '--answer', 'python=3.12'),
+                 [('environment', 'create', 'from --answer'), ('python', '3.12', 'from --answer python')]),
+                (('--python', '3.13'),
+                 [('environment', 'create', 'from --python'), ('python', '3.13', 'from --python')])):
+            with self.subTest(answers=answers):
+                plan = json.loads(self.setup_cmd('--plan', '--json', *flags, *answers).stdout)
+                self.assertEqual((plan['ready_to_apply'], plan['open']), (True, []))
+                self.assertEqual([(question['id'], question['answer'], question['origin'])
+                                  for question in plan['questions'] if question['id'] in ('environment', 'python')],
+                                 expected)
+                self.assertEqual(plan['inferred']['python'], {'value': expected[1][1], 'origin': expected[1][2]})
+        # --environment answers where the environment goes; its Python is the environment's: nothing is open.
+        adopted = self.existing_environment('shop', '3.12.3')
+        plan = json.loads(self.setup_cmd('--plan', '--json', *flags, '--environment', str(adopted)).stdout)
+        self.assertEqual((plan['ready_to_apply'], plan['open']), (True, []))
+        self.assertEqual(plan['inferred']['environment'], {'value': str(adopted), 'origin': 'from --environment'})
+        self.assertEqual(self.tree(), {**before, **{path: data for path, data in self.tree().items()
+                                                    if path.startswith('envs')}})
+        self.assertFalse(self.log.exists())
+        # Once answered, --apply sets up with those answers.
+        applied = self.setup_cmd('--apply', *flags, '--answer', 'environment=create', '--python', '3.13')
+        self.assertEqual((applied.returncode, applied.stderr), (0, ''), applied.stdout)
+        self.assertIn(f'uv venv --python 3.13 {environment}', self.log.read_text())
 
     # -- review follow-ups (review-f6708244dde86835) and the series guard (S11) ----------------
 
@@ -720,7 +857,7 @@ class SetupTests(unittest.TestCase):
         # The plan of a new workspace does not read oasis-checkout.toml; the verification does.
         (self.checkout / 'oasis-checkout.toml').write_text('[tooling]\nunknown = 1\n')
         before = self.tree()
-        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *CREATE)
         self.assertEqual((result.returncode, result.stderr), (1, (
             'ERROR: Verification failed (oasis-checkout.toml may only set odoo_version, [tooling].checkout_slug and '
             '[tooling].environment: tooling.unknown); every change was undone.\n')))
@@ -737,7 +874,7 @@ class SetupTests(unittest.TestCase):
         environment = self.checkout / '.oasis/venv'
         requirements = self.checkout / '.oasis/config/requirements'
         self.env['FAKE_VENV_FAIL'] = '1'
-        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        result = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *CREATE)
         self.assertEqual((result.returncode, result.stderr), (2, (
             'error: no interpreter\nERROR: uv venv failed (exit 3); the files above are kept: fix it, then run '
             'oasis setup --apply again.\n')))
@@ -762,7 +899,7 @@ class SetupTests(unittest.TestCase):
         (self.checkout / 'oasis-workspace.toml').unlink()
         shutil.rmtree(self.checkout / '.oasis')
         self.env['FAKE_SYNC_FAIL'] = '1'
-        failed = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise')
+        failed = self.setup_cmd('--apply', '--community', str(self.source), '--no-enterprise', *CREATE)
         self.assertEqual((failed.returncode, failed.stderr), (2, (
             'error: no index\nERROR: uv pip sync failed (exit 4); the files above and the environment '
             f'{environment} are kept: fix it, then run oasis --project {self.checkout} bootstrap --apply to '
@@ -810,10 +947,10 @@ class SetupTests(unittest.TestCase):
         """The next steps setup --apply prints for existing_workspace() with every other piece created."""
         config = project / 'config'
         workspace = project / 'oasis-workspace.toml'
-        steps = [f'oasis --project {self.checkout} start-database', f'oasis --project {self.checkout} doctor']
+        steps = [f'oasis --project {self.checkout} setup-postgres', f'oasis --project {self.checkout} doctor']
         if add_development:
             steps.append(ADD_DEVELOPMENT.format(workspace=workspace))
-        steps.append(f'oasis --project {self.checkout} init-dev-database <module> shop_dev_manual')
+        steps.append(f'oasis --project {self.checkout} create-database --plan')
         return 'next steps:\n' + ''.join(f'  {number}. {step}\n' for number, step in enumerate(steps, 1))
 
     def test_a_workspace_with_a_development_table_gets_no_step_to_add_one(self):
@@ -825,7 +962,7 @@ class SetupTests(unittest.TestCase):
         self.assertIn(f'created the environment {project / "envs/shop"}\n', result.stdout)
         self.assertTrue(result.stdout.endswith(self.adopted_next_steps(project, add_development=False)), result.stdout)
         self.assertNotIn('add these lines', result.stdout)
-        # Without the table the step is there and init-dev-database comes after it.
+        # Without the table the step is there and create-database comes after it.
         shutil.rmtree(project / 'config')
         shutil.rmtree(project / 'envs')
         self.existing_workspace()
@@ -847,19 +984,19 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn('add these lines', result.stdout)
 
     def test_a_new_workspace_gets_the_development_table_unless_the_answer_is_none(self):
-        # v0.16.0 S6: init-dev-database needs [development]; setup asks the question development (recommended add,
+        # v0.16.0 S6: create-database needs [development]; setup asks the question development (recommended add,
         # applied without a terminal), so no manual edit of the workspace file comes before it.
         workspace = self.checkout / 'oasis-workspace.toml'
         flags = ('--community', str(self.source), '--no-enterprise')
-        result = self.setup_cmd('--apply', *flags, '--answer', 'development=none')
+        result = self.setup_cmd('--apply', *flags, *CREATE, '--answer', 'development=none')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         self.assertEqual(workspace.read_text(), WORKSPACE.format(base='.oasis/').replace(DEVELOPMENT, ''))
         self.assertTrue(result.stdout.endswith(
             'next steps:\n'
-            f'  1. oasis --project {self.checkout} start-database\n'
+            f'  1. oasis --project {self.checkout} setup-postgres\n'
             f'  2. oasis --project {self.checkout} doctor\n'
             f'  3. {ADD_DEVELOPMENT.format(workspace=workspace)}\n'
-            f'  4. oasis --project {self.checkout} init-dev-database <module> shop_dev_manual\n'), result.stdout)
+            f'  4. oasis --project {self.checkout} create-database --plan\n'), result.stdout)
         # The lines the step names are the table setup writes.
         self.assertIn("\n[development]\nadministrator_login = 'admin'\n", DEVELOPMENT)
         # An answer setup does not take, and the question asked of an existing workspace, are refused.
@@ -913,7 +1050,7 @@ class SetupTests(unittest.TestCase):
         flags = ('--series', '19.0', '--community', str(self.source), '--no-enterprise')
         self.assert_refused(self.setup_cmd(*flags, '--answer', 'series_exceptions=no'),
                             message.replace(str(workspace), str(new)), before)
-        result = self.setup_cmd('--apply', *flags, '--answer', 'series_exceptions=add')
+        result = self.setup_cmd('--apply', *flags, *CREATE, '--answer', 'series_exceptions=add')
         self.assertEqual((result.returncode, result.stderr), (0, ''), result.stdout)
         self.assertEqual(new.read_text(), WORKSPACE.format(base='.oasis/').replace('workspace_version = 1',
                                                                                     'workspace_version = 2')

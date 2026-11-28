@@ -39,21 +39,32 @@ OPERATIONS = (
      'oasis --project /p setup --apply'),
     ('bootstrap', 'A', 'oasis', 'creates the virtual environment from the lock; rebuildable',
      'oasis --project /p bootstrap'),
-    ('create-database', 'A', 'oasis', 'creates a managed database; drop-database moves it to the trash',
-     'oasis --project /p create-database cc_dev_x'),
-    ('init-dev-database', 'A', 'oasis', 'creates a development database with role accounts; rebuildable',
-     'oasis --project /p init-dev-database coffee cc_dev_x'),
+    ('create-database --plan', 'A', 'oasis',
+     'prints the questions of a new database (its name, dev, test or both, module, demo data, language and country) '
+     'and, once answered, the dry run and --confirm command of each database; changes nothing',
+     'oasis --project /p create-database --plan --json'),
+    ('create-database --dry-run', 'A', 'oasis',
+     'prints the database it would create, its kind, module, demo data, language and country; changes nothing',
+     'oasis --project /p create-database coffee cc_dev_x --dry-run'),
+    ('create-database', 'B', 'oasis',
+     'creates a dev or test database with role accounts through Odoo, the one oasis command that creates a '
+     'database: the user decides it, its name, module, demo data, language and country (drop-database moves it '
+     'to the trash)', 'oasis --project /p create-database coffee cc_dev_x --confirm cc_dev_x'),
     ('start', 'A', 'oasis', "starts this checkout's Odoo server", 'oasis --project /p start'),
     ('restart', 'A', 'oasis', "restarts this checkout's Odoo server", 'oasis --project /p restart'),
     ('stop', 'A', 'oasis', "stops this checkout's Odoo server; start runs it again", 'oasis --project /p stop'),
     ('status', 'A', 'oasis', 'reads and reports; changes nothing', 'oasis --project /p status'),
+    ('setup-postgres', 'A', 'oasis',
+     'starts the database service (PostgreSQL) every checkout shares, as every database command does; names no env '
+     'file', 'oasis --project /p setup-postgres'),
     ('start-database', 'A', 'oasis',
-     'starts the database service every checkout shares, as every database command does; names no env file',
+     'deprecated alias of setup-postgres; starts the database service every checkout shares, names no env file',
      'oasis --project /p start-database'),
     ('stop --database', 'B', 'oasis',
      'stops the database service every checkout shares, ending the sessions of a server on it',
      'oasis --project /p stop --database'),
-    ('install-module', 'A', 'oasis', 'installs a module in a managed database',
+    ('install-module', 'A', 'oasis',
+     'installs a module in an existing managed database; it never creates one (create-database does)',
      'oasis --project /p install-module coffee cc_dev_x'),
     ('update-module', 'A', 'oasis', 'updates a module in a managed database',
      'oasis --project /p update-module coffee cc_dev_x'),
@@ -87,10 +98,13 @@ OPERATIONS = (
      'oasis --project /p gc --apply --trash'),
     ('drop-database', 'B', 'oasis', 'takes a database (and its filestore) out of use; only trash restore brings it back',
      'oasis --project /p drop-database cc_dev_x'),
-    ('recreate-database-volume', 'B', 'oasis',
+    ('recreate-postgres-volume', 'B', 'oasis',
      'runs docker compose down -v for the compose project (-p), which removes its containers and networks, '
      'every named volume of its compose file and every anonymous volume of its containers (every database of its '
-     'PostgreSQL), then starts the service again', 'oasis --project /p recreate-database-volume'),
+     'PostgreSQL), then starts the service again', 'oasis --project /p recreate-postgres-volume'),
+    ('recreate-database-volume', 'B', 'oasis',
+     'deprecated alias of recreate-postgres-volume; deletes every database of the PostgreSQL volume of the compose '
+     'project, then starts the service again', 'oasis --project /p recreate-database-volume'),
     ('trash', 'A', 'oasis', 'lists the trash; trash restore brings an entry back', 'oasis --project /p trash'),
     ('migrate', 'A', 'oasis', 'without --apply it prints the migration plan; changes nothing',
      'oasis --project /p migrate'),
@@ -118,14 +132,17 @@ OPERATIONS = (
     ('type a password', 'C', 'action', 'only when the person wants their own; no oasis workflow needs one', None),
 )
 KEYS = ('operation', 'tier', 'kind', 'reason', 'example')
-# Deprecated command names (v0.16.0 S5) and the operation each runs: the alias keeps a row of its own, with
-# the tier of its target (the entry point's DEPRECATED_ALIASES; tests/test_policy.py checks both).
-ALIASES = {'check-environment': 'doctor --environment'}
+# Deprecated command names (v0.16.0 S5; v0.20.0 S13) and the operation each runs: the alias keeps a row of its own,
+# with the tier (and the --confirm) of its target (the entry point's DEPRECATED_ALIASES; tests/test_policy.py checks
+# both).
+ALIASES = {'check-environment': 'doctor --environment', 'start-database': 'setup-postgres',
+           'recreate-database-volume': 'recreate-postgres-volume'}
 # What `--confirm` takes for a Tier B oasis command (its refusal names the exact command); a Tier B
 # operation without one is confirmed only by a person or a harness dialog (stop --database).
 CONFIRM = {'drop-database': 'database name', 'gc --apply --trash': 'project root',
            'migrate --apply': 'workspace file', 'worktree-init': 'worktree path',
-           'recreate-database-volume': 'compose project'}
+           'recreate-postgres-volume': 'compose project', 'recreate-database-volume': 'compose project',
+           'create-database': 'database name'}
 
 
 def operations() -> list[dict]:

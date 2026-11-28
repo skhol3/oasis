@@ -86,7 +86,7 @@ if [[ "$mode" == "--full" ]]; then
     printf 'WARN locked_environment=drifted\n'
     printf '  fix: %s (syncs the adopted environment %s to the locks: it changes the packages installed there)\n' \
       "$(confirm_command bootstrap --apply)" "$PROJECT_ENVIRONMENT"
-  else fail "locked_environment=drifted"
+  else fail "locked_environment=drifted"  # tools/bootstrap reads this line (doctor_drift_line)
   fi
   if "$(dirname "$0")/audit-dependencies"; then pass "dependency_audit=clean"
   else fail "dependency_audit=failed"
@@ -98,7 +98,7 @@ if [[ "$mode" == "--full" ]]; then
   else
     fail "postgres_service=not_running"
     # The oasis command that starts it, which names no env file (v0.16.0 S6).
-    printf '  fix: %s\n' "$(confirm_command start-database)" >&2
+    printf '  fix: %s\n' "$(confirm_command setup-postgres)" >&2
   fi
   if "$running" && [[ -z "$unsupported" ]]; then
     # Odoo's own account over the connection odoo.conf names, with the environment's Python and
@@ -124,5 +124,5 @@ else
   printf 'SKIP postgres_connection=use_--full\n'
 fi
 printf 'environment_mode=%s\n' "${mode#--}"
-printf 'environment_failures=%s\n' "$failures"
+printf 'environment_failures=%s\n' "$failures"  # tools/bootstrap reads it (doctor_summary_pattern)
 exit "$((failures > 0))"

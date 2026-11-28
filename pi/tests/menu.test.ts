@@ -64,7 +64,7 @@ function fixedChoices(modules: string[], databases: string[]) {
 test("parseCatalog reads the core catalog and refuses another version or malformed JSON", () => {
   assert.equal(catalog.project, "/work/a project");
   assert.deepEqual(catalog.groups.map((group) => group.id), ["server", "modules", "tests", "maintenance"]);
-  assert.equal(catalog.actions.length, 27);
+  assert.equal(catalog.actions.length, 26);
   assert.throws(() => parseCatalog(FIXTURE.replace('"catalog_version": 1', '"catalog_version": 2')),
     /^Error: unsupported catalog_version 2 \(this panel reads version 1\); update the oasis layer\.$/);
   assert.throws(() => parseCatalog("not json"), /^Error: the catalog is not JSON: /);
@@ -122,8 +122,9 @@ test("lastLines and logView: the end of a log, without control sequences, that f
 test("shellJoin quotes like shlex.join and terminalCommand shows a terminal-only action with placeholders", () => {
   assert.equal(shellJoin(["a", "b c", "", "it's", "-d", "x=1", "/p/a_b.c"]), "a 'b c' '' 'it'\"'\"'s' -d x=1 /p/a_b.c");
   assert.equal(shellJoin(fillTemplate(action("server.stop"), {}, true)), "/opt/oasis/oasis --project '/work/a project' stop");
-  assert.equal(terminalCommand(action("modules.init_dev")),
-    "/opt/oasis/oasis --project '/work/a project' init-dev-database [--with-demo] <module> <database>");
+  assert.equal(terminalCommand(action("modules.create_database")),
+    "/opt/oasis/oasis --project '/work/a project' create-database [--with-demo] <module> <database> " +
+      "[--confirm <database>]");
   assert.equal(terminalCommand(action("tests.class")),
     "/opt/oasis/oasis --project '/work/a project' test-module --compact [--only <only>] <module>");
 });
@@ -138,7 +139,7 @@ test("textError applies required, the catalog pattern and refuses option-like va
   assert.equal(textError(only, "TestCup.test_fill"), null);
   assert.equal(textError(feature, "--force"), "A value cannot start with -.");
   assert.equal(textError(feature, "shop"), null);
-  const database = action("maintenance.create_database").inputs[0];
+  const database = action("modules.create_database").inputs[1];
   assert.equal(textError(database, "bad-name"), "Database name must use only letters, numbers, and underscores.");
 });
 
@@ -332,7 +333,7 @@ test("pickerRows lists the groups with their actions; selection skips group rows
     ["Server", "Start / restart the server", "Stop the server", "Show the end of the server log"]);
   assert.equal(rows.some((row) => row.action?.superseded_by), false);
   assert.equal(rows.filter((row) => row.kind === "group").length, 4);
-  assert.equal(rows.find((row) => row.action?.id === "modules.init_dev")?.tag, "terminal only");
+  assert.equal(rows.find((row) => row.action?.id === "modules.create_database")?.tag, "terminal only");
   assert.equal(rows.find((row) => row.action?.id === "maintenance.drop_database")?.tag, "confirm");
   assert.equal(rows.find((row) => row.action?.id === "maintenance.worktree")?.tag, "confirm");
   assert.equal(rows.find((row) => row.action?.id === "server.stop")?.tag, "");

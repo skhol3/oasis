@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Installs a module in an existing managed database. It never creates one (v0.20.0 S12): create-database is the
+# one command that does. Odoo itself creates a missing database (odoo-bin -d <name>: odoo/cli/server.py of every
+# supported series), so the database must exist before Odoo starts: a missing one is refused (exit 2) naming
+# create-database --plan, and nothing changes.
 set -Eeuo pipefail
 source "$(dirname "$0")/common.sh"
 usage='Usage: install-module [--with-demo] <module> [database]'
@@ -8,16 +12,20 @@ if [[ ${1:-} == --help ]]; then
   printf '%s\nDefault: %s. The database must be managed (%s/%s) and defaults to %s.\n' \
     "$usage" "${ODOO_DEMO_OFF_ARGS:-no demo data}" "$DEV_PREFIX" "$TEST_PREFIX" \
     "$(checkout_database_name "$DEV_PREFIX" '<module>')"
-  printf 'In a checkout with a slug it must use that checkout namespace. Creates a missing database.\n'
+  printf 'In a checkout with a slug it must use that checkout namespace.\n'
+  printf 'The database must exist: install-module never creates one (create-database --plan does).\n'
   exit 0
 fi
 if [[ ${1:-} == --with-demo ]]; then
   with_demo=true
   shift
-elif [[ ${1:-} == --* ]]; then
-  printf 'Unknown option: %s\n' "$1" >&2
-  exit 2
 fi
+for argument in "$@"; do
+  if [[ "$argument" == --* ]]; then
+    printf 'Unknown option: %s\n' "$argument" >&2
+    exit 2
+  fi
+done
 if (( $# > 2 )); then
   printf '%s\n' "$usage" >&2
   exit 2
@@ -27,7 +35,8 @@ database=${2:-$(checkout_database_name "$DEV_PREFIX" "$module")}
 require_module "$module"
 require_working_database_name "$database"
 require_runtime
-ensure_database "$database" </dev/null
+# Before Odoo starts, which would create a missing database.
+require_existing_database "$database" </dev/null
 if [[ "$with_demo" == true ]]; then
   # The series' demo-on options (odoo_versions.py demo_on_args; none where demo data is the default).
   eval "demo_on=($(python3 -I -B "$(dirname "$0")/odoo_versions.py" "$ODOO_VERSION" demo_on_args))"
