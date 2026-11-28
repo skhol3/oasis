@@ -217,8 +217,10 @@ busy() {
 # odoo_configuration_reads_environment: whether the series' configuration reads -d from PGDATABASE (after the
 # command line and before the configuration file) and expands variables and ~ in the -c path; the series' answer is
 # tools/odoo_versions.py's configuration_reads_environment, with the Odoo source lines.
+# It fails closed: only an explicit false skips PGDATABASE, so a table that cannot be read checks more, never less.
 odoo_configuration_reads_environment() {
-  [[ "$(python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/odoo_versions.py" "$ODOO_VERSION" configuration_reads_environment)" == true ]]
+  [[ "$(python3 -I -B "$(dirname "${BASH_SOURCE[0]}")/odoo_versions.py" "$ODOO_VERSION" configuration_reads_environment \
+    2>/dev/null)" != false ]]
 }
 
 # conf_database [<file>]: the db_name of that configuration file (the configured odoo.conf by default), or nothing
