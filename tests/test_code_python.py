@@ -175,6 +175,15 @@ class CodePythonTests(unittest.TestCase):
                          {'status': 'syntax_error', 'files': 2, 'path': str(broken), 'line': error.lineno,
                           'message': error.msg})
 
+    def test_a_planned_python_newer_than_oasis_own_is_checked_with_oasis_grammar(self):
+        # Review review-d12f1db671db3666 (R3-parse-check-newer-than-host) feared a spurious WARN when the planned
+        # Python is newer than oasis' own; pinned: clean code passes and a genuine syntax error stays one.
+        self.write('a.py', 'x = 1\n')
+        newer = f'3.{sys.version_info[1] + 1}'
+        self.assertEqual(self.helper.parse_check(self.root, newer), {'status': 'ok', 'files': 1})
+        broken = self.write('b.py', 'def broken(:\n')
+        self.assertEqual(self.helper.parse_check(self.root, newer)['status'], 'syntax_error')
+
     def test_code_that_only_warns_adds_nothing_to_stderr(self):
         # Review review-d12f1db671db3666: an invalid escape (\d in a plain string) or `is` with a literal only
         # warns; compiling it in oasis' own process must print nothing, in setup's check and in doctor's hint.

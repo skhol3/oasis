@@ -814,6 +814,67 @@ class Odoo15CommandLineTests(unittest.TestCase):
             f'{self.odoo} -c {self.conf} -d cc_test_coffee_r<run>_update -i coffee --without-demo=all --stop-after-init',
             f'{self.odoo} -c {self.conf} -d cc_test_coffee_r<run>_update -u coffee --stop-after-init'])
 
+    def test_odoo_shell_opens_the_shell_subcommand_on_the_dev_database(self):
+        # v0.20.0 S11: the shell subcommand with the conf and the database only (no second port: it serves
+        # nothing); the piped command reaches the shell and its output comes back.
+        self.env['FAKE_EXISTS'] = '1'
+        result = self.invoke('odoo-shell', 'cc_dev_coffee', input='print(42)\n')
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, 'print(42)\n', ''))
+        self.assertEqual(self.odoo_lines(), [f'{self.odoo} shell -c {self.conf} -d cc_dev_coffee'])
+
+    def test_start_dev_passes_the_15_dev_features(self):
+        # v0.20.0 S11: the main checkout's server on its odoo.conf port with 15.0's own dev features
+        # (pdb, werkzeug: 19.0 has neither) and `all`, as given; no second port on the main checkout.
+        port = free_port()
+        (self.root / 'dev/odoo.conf').write_text(conf_text(f'http_port = {port}\n'))
+        for dev in ('pdb,werkzeug,xml', 'all'):
+            with self.subTest(dev=dev):
+                self.commands.unlink(missing_ok=True)
+                result = self.invoke('start', '-d', 'cc_dev_coffee', '--dev', dev, input='')
+                self.assertEqual((result.returncode, result.stdout), (0, ''))
+                self.assertRegex(result.stderr, rf'^oasis start: http://localhost:{port} \(pid \d+\)\n$')
+                self.assertEqual(self.odoo_lines(),
+                                 [f'{self.odoo} -c {self.conf} --http-port={port} -d cc_dev_coffee --dev {dev}'])
+
+    def test_restart_keeps_the_port_and_database_and_takes_the_new_dev_features(self):
+        # v0.20.0 S11: restart stops the running 15.0 server and starts it detached again with its port and
+        # database and the dev features given now.
+        import test_menu as menu  # it imports this module: load it once both exist
+        self.python.write_text(self.python.read_text() + menu.SERVE)
+        (self.source / 'odoo-bin').write_text(menu.SERVING)
+        port = quiet_ports(2)
+        (self.root / 'dev/odoo.conf').write_text(conf_text(f'http_port = {port}\n'))
+        self.env.update(FAKE_SERVE='1', OASIS_DETACH_WAIT='5')
+
+        def kill_recorded():
+            recorded = re.match(r'pid=(\d+) ', menu.DetachTests.record(self))
+            if recorded:
+                menu.DetachTests.kill(self, int(recorded.group(1)))
+        self.addCleanup(kill_recorded)
+
+        def oasis(*args):
+            # restart has no project wrapper: the oasis entry point runs it, bounded.
+            return subprocess.run([sys.executable, '-B', str(STAGE / 'oasis'), '--project', str(self.root), *args],
+                                  text=True, cwd=self.root, env=self.env, capture_output=True,
+                                  stdin=subprocess.DEVNULL, timeout=60)
+        log = self.root.resolve() / 'logs/main/server.log'
+        detached = rf'pid=(\d+) port={port} log={re.escape(str(log))}\n'
+        result = oasis('start', '--detach', '-d', 'cc_dev_coffee', '--dev', 'pdb,werkzeug')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        first = int(re.fullmatch(detached, result.stdout).group(1))
+        self.addCleanup(menu.DetachTests.kill, self, first)
+        result = oasis('restart', '--dev', 'reload,qweb')
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        match = re.fullmatch(rf'Stopped Odoo for this checkout: pid {first}, port {port}\.\n{detached}', result.stdout)
+        self.assertIsNotNone(match, result.stdout)
+        second = int(match.group(1))
+        self.addCleanup(menu.DetachTests.kill, self, second)
+        self.assertNotEqual(first, second)
+        self.assertEqual(menu.DetachTests.record(self), f'pid={second} port={port}\n')
+        self.assertEqual(self.odoo_lines(), [
+            f'{self.odoo} -c {self.conf} --http-port={port} -d cc_dev_coffee --dev pdb,werkzeug',
+            f'{self.odoo} -c {self.conf} --http-port={port} -d cc_dev_coffee --dev reload,qweb'])
+
 
 
 class SecondPortConfTests(unittest.TestCase):

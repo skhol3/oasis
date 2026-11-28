@@ -31,7 +31,21 @@ copy) and a scratch install (`./install.sh --target <dir>/oasis`):
    - When a series is added: a fresh agent also builds the module by following the recipes by hand.
    Each point where a recipe was wrong or missing goes into its source in `recipes/` before the release
    and is named in the row's Notes, with the evals result per series.
-8. Remove the compose project (`docker compose -p <name> down -v`) and the scratch directory.
+8. Daily commands (since 0.20.0), on every supported series' checkout, against its real Odoo and
+   PostgreSQL:
+   - `oasis create-database --plan --json`, answer it without demo data, run its dry run, then the
+     same with `--confirm <database>` (a genuine decision: Tier B); again with demo data on a second
+     database.
+   - `oasis start --detach -d <database> --dev <features>` on the dev database, with dev features of that
+     series (15.0 and 19.0 offer different ones: `tools/odoo_versions.py`), then `oasis restart` (expect
+     the port and the database kept) and `oasis stop`.
+   - `oasis update-module <module> <database>` on the dev database (expect exit 0).
+   - `oasis odoo-shell <database>` with one command piped in (for example
+     `print(env['res.users'].search_count([]))`; expect its output back and exit 0).
+   Record per series each command's exit and what it proved (the database created with or without demo
+   data, the dev features in the server's command line, the kept port and database, the updated module,
+   the shell output); the row's Notes name them.
+9. Remove the compose project (`docker compose -p <name> down -v`) and the scratch directory.
 
 ## Results
 
