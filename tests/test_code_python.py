@@ -175,6 +175,22 @@ class CodePythonTests(unittest.TestCase):
                          {'status': 'syntax_error', 'files': 2, 'path': str(broken), 'line': error.lineno,
                           'message': error.msg})
 
+    def test_code_that_only_warns_adds_nothing_to_stderr(self):
+        # Review review-d12f1db671db3666: an invalid escape (\d in a plain string) or `is` with a literal only
+        # warns; compiling it in oasis' own process must print nothing, in setup's check and in doctor's hint.
+        import contextlib
+        import io
+        import warnings
+        self.write('a.py', "import re\nPATTERN = re.compile('\\d+')\nSAME = 1 is 1\n")
+        stderr = io.StringIO()
+        with warnings.catch_warnings():
+            warnings.simplefilter('default')
+            with contextlib.redirect_stderr(stderr):
+                self.assertEqual(self.helper.parse_check(self.root, '3.12'), {'status': 'ok', 'files': 1})
+                self.assertIsNone(self.helper.compile_error(Path(self.root / 'a.py').read_bytes(), 'a.py'))
+                self.helper.lowest_python([self.root / 'a.py'], 7)
+        self.assertEqual(stderr.getvalue(), '')
+
     def test_the_helper_parses_as_python_3_7_since_the_environment_runs_it(self):
         # Best-effort (ast feature_version), as for the code: Odoo 15.0 supports Python 3.7.
         ast.parse(HELPER.read_text(encoding='utf-8'), str(HELPER), feature_version=(3, 7))

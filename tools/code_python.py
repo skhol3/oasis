@@ -74,12 +74,17 @@ def read(path):
 def compile_error(source, path, minor=None):
     """(line, message) of the error compiling source, None when it compiles; with minor, only parsed with the
     grammar of Python 3.<minor> (ast feature_version)."""
+    import warnings
     try:
-        if minor is None:
-            compile(source, path, 'exec', dont_inherit=True)
-        else:
-            import ast
-            ast.parse(source, path, feature_version=(3, minor))
+        # Code that only warns (an invalid escape, `is` with a literal) compiles: its SyntaxWarning stays
+        # silent, so oasis' output never gains a line per such file.
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            if minor is None:
+                compile(source, path, 'exec', dont_inherit=True)
+            else:
+                import ast
+                ast.parse(source, path, feature_version=(3, minor))
     except SyntaxError as exc:
         return exc.lineno, exc.msg
     except (ValueError, RecursionError, MemoryError) as exc:
