@@ -50,25 +50,25 @@ class OasisVariableTests(unittest.TestCase):
         return result.returncode, result.stdout, result.stderr
 
     def test_shell_tools_read_oasis_names_first(self):
-        result = self.tool('check-environment', '--bogus', OASIS_PROJECT_ROOT=str(self.root),
+        result = self.tool('environment_checks.sh', '--bogus', OASIS_PROJECT_ROOT=str(self.root),
                            OASIS_ENTRYPOINT='/opt/bin/oasis', ODOO19_PROJECT_ROOT=self.wrong,
                            ODOO19_ENTRYPOINT='/opt/old/oasis')
         self.assertEqual(self.observed(result), (2, '', 'Usage: /opt/bin/oasis [--quick|--full]\n'))
 
     def test_shell_tools_ignore_the_legacy_variable_names(self):
         # v0.17.0 S3: ODOO19_PROJECT_ROOT, ODOO19_ENTRYPOINT and ODOO19_COMPOSE_LOCK_TIMEOUT are not read.
-        result = self.tool('check-environment', '--bogus', ODOO19_PROJECT_ROOT=str(self.root),
+        result = self.tool('environment_checks.sh', '--bogus', ODOO19_PROJECT_ROOT=str(self.root),
                            ODOO19_ENTRYPOINT='/opt/old/oasis')
         self.assertEqual(self.observed(result), (2, '', ROOT_ERROR_SHELL))
-        result = self.tool('check-environment', '--bogus', OASIS_PROJECT_ROOT=str(self.root),
+        result = self.tool('environment_checks.sh', '--bogus', OASIS_PROJECT_ROOT=str(self.root),
                            ODOO19_ENTRYPOINT='/opt/old/oasis')
-        self.assertEqual(self.observed(result), (2, '', f'Usage: {TOOLS / "check-environment"} [--quick|--full]\n'))
-        result = self.tool('check-environment', '--bogus', OASIS_PROJECT_ROOT=self.wrong,
+        self.assertEqual(self.observed(result), (2, '', f'Usage: {TOOLS / "environment_checks.sh"} [--quick|--full]\n'))
+        result = self.tool('environment_checks.sh', '--bogus', OASIS_PROJECT_ROOT=self.wrong,
                            ODOO19_PROJECT_ROOT=str(self.root))
         self.assertEqual(self.observed(result), (2, '', ROOT_ERROR_SHELL))
 
     def test_shell_tools_name_oasis_project_root_when_neither_is_set(self):
-        self.assertEqual(self.observed(self.tool('check-environment')), (2, '', ROOT_ERROR_SHELL))
+        self.assertEqual(self.observed(self.tool('environment_checks.sh')), (2, '', ROOT_ERROR_SHELL))
 
     def test_python_tools_name_oasis_project_root_when_neither_is_set(self):
         for command, args in PYTHON_TOOLS:
@@ -156,7 +156,7 @@ class WrapperVariableTests(unittest.TestCase):
         self.env['ODOO19_TOOLS_DIR'] = str(self.root / 'legacy tools')
         scripts = self.root / 'dev/scripts'
         scripts.mkdir(parents=True)
-        self.assertEqual(len(WRAPPERS), 17)  # v0.20.0: no create-database wrapper
+        self.assertEqual(len(WRAPPERS), 16)  # v0.20.0: no create-database wrapper; v0.21.0 S7: no check-environment
         for wrapper in WRAPPERS:
             with self.subTest(wrapper=wrapper.name):
                 path = scripts / wrapper.name

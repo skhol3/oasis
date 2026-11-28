@@ -949,15 +949,18 @@ test("calling create-database's scripts directly asks like create-database", () 
     [{ command: "create-database", project: "/p" }]);
 });
 
-// v0.20.0 S13: the deprecated aliases keep the tiers of their new names.
-test("setup-postgres and its alias run; recreate-postgres-volume and its alias ask", () => {
+// v0.20.0 S13: setup-postgres runs and recreate-postgres-volume asks. v0.21.0 S7: their deprecated aliases are gone,
+// so no form of them asks (the entry point refuses them like any unknown command).
+test("setup-postgres runs and recreate-postgres-volume asks; the removed aliases are no oasis commands", () => {
   const cases: [string, string[]][] = [
     ["oasis --project /p setup-postgres", []],
-    ["oasis --project /p start-database", []],
     ["oasis --project /p recreate-postgres-volume --confirm cc-shop", ["recreate-postgres-volume"]],
-    ["oasis --project /p recreate-database-volume --confirm cc-shop", ["recreate-database-volume"]],
-    ["~/.agents/skills/oasis/tools/recreate-database-volume", ["recreate-database-volume"]],
+    ["~/.agents/skills/oasis/tools/recreate-postgres-volume", ["recreate-postgres-volume"]],
     ["oasis --project /p recreate-postgres-volume --help", []],
+    ["oasis --project /p start-database", []],
+    ["oasis --project /p check-environment --full", []],
+    ["oasis --project /p recreate-database-volume --confirm cc-shop", []],
+    ["~/.agents/skills/oasis/tools/recreate-database-volume", []],
   ];
   for (const [command, asks] of cases) {
     const { programs, asks: found } = classifyBash(command);

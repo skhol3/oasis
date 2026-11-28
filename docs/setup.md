@@ -789,10 +789,9 @@ logs, errors).
   since a `COMPOSE_PROJECT_NAME` that selects another one was refused first, and names no environment file).
 - Names (v0.20.0): `setup-postgres` was `start-database` and `recreate-postgres-volume` was
   `recreate-database-volume`, since "database" names an Odoo database (`create-database`, `drop-database`,
-  `list-databases`). The old names are deprecated aliases: they run the new command with the same arguments,
-  output, exit codes and tier (`recreate-database-volume` takes the same `--confirm <compose project>`), after one
-  line on stderr, `WARNING: <old> is a deprecated alias of <new>: run <new> instead.`; what oasis prints
-  (next steps, fixes, the menu, `status --json`) names the new names.
+  `list-databases`). The old names were deprecated aliases until v0.21.0, which removed them: each exits 2 with
+  `ERROR: Unsupported oasis command: <old>`, like any unknown command. Run the new names (`recreate-postgres-volume`
+  takes the same `--confirm <compose project>`).
 
 ## Next steps
 

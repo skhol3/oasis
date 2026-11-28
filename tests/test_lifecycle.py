@@ -196,6 +196,12 @@ exit 0
         return subprocess.run(['bash', str(path), *args], text=True, input=input,
                               cwd=self.root, env=self.env, capture_output=True)
 
+    def doctor_environment(self, *args):
+        """`oasis --project <root> doctor --environment <args>`, the environment checks (v0.21.0 S7: they have no
+        project wrapper since check-environment is gone)."""
+        return subprocess.run([sys.executable, '-B', str(STAGE / 'oasis'), '--project', str(self.root), 'doctor',
+                               '--environment', *args], text=True, cwd=self.root, env=self.env, capture_output=True)
+
     def unchanged(self):
         self.assertFalse(self.commands.exists(), self.commands.read_text() if self.commands.exists() else '')
 

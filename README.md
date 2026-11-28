@@ -176,7 +176,8 @@ project wrappers and the tool script, with the same lines, exit codes and usage 
 `oasis`, `doctor --help` and the policy table (both Tier A) say so, and the `oasis_check_environment` tool runs
 `doctor --environment`. `doctor`'s usage line now names the option: `Usage: <program> doctor
 [--environment [--quick|--full]]`. setup, bootstrap and migrate stay three commands (none would be an
-identical alias): [which one when](docs/setup.md#setup-or-bootstrap).
+identical alias): [which one when](docs/setup.md#setup-or-bootstrap). v0.21.0 removed
+`check-environment` (see below).
 
 Contract change in v0.17.0: the `odoo19` name is gone, with no transition. `./install.sh` installs into
 `~/.agents/skills/oasis` and moves a previous install out of `~/.agents/skills/odoo19` into its backups
@@ -233,9 +234,9 @@ create it with: oasis --project <checkout> create-database --plan` before Odoo s
 Contract change in v0.20.0: `start-database` is renamed `setup-postgres` and `recreate-database-volume` is
 renamed `recreate-postgres-volume`, because "database" now names an Odoo database. The old names keep working
 as deprecated aliases with the same output, exit codes, tier and `--confirm`, after one stderr line: `WARNING:
-<old> is a deprecated alias of <new>: run <new> instead.` `start` and `restart` refuse a database that does not
-exist (`-d`, else each name of `odoo.conf`'s `db_name`) with exit 2, naming `create-database --plan`, because
-Odoo would create it. `tools/dev_users.py` creates a database only with `--confirm <database>` as its first two
+<old> is a deprecated alias of <new>: run <new> instead.` (removed in v0.21.0, see below). `start` and
+`restart` refuse a database that does not exist (`-d`, else each name of `odoo.conf`'s `db_name`) with exit 2,
+naming `create-database --plan`, because Odoo would create it. `tools/dev_users.py` creates a database only with `--confirm <database>` as its first two
 arguments, after the name guards. Odoo's database manager (`/web/database/manager`) and its selector stay available when `start` runs without
 a database, by choice: a database created there is outside oasis (Odoo's default master password applies).
 
@@ -272,6 +273,18 @@ from an earlier version runs:
 - A `<database>.logins` next to the env file holds the passwords versions before 0.20.0 generated: delete it once
   you no longer need them.
 
+Contract change in v0.21.0 (S7): the deprecated aliases are gone. `start-database`, `recreate-database-volume` and
+`check-environment` exit 2 with `ERROR: Unsupported oasis command: <name>`, like any unknown command; their tool
+scripts, the `dev/scripts/check-environment` project wrapper, the *Deprecated aliases* line of `oasis --help` and
+their policy rows are removed, and the bash guard treats them as no oasis command. Call the new names:
+
+- `start-database`: `oasis --project <checkout> setup-postgres`.
+- `recreate-database-volume`: `oasis --project <checkout> recreate-postgres-volume --confirm <compose project>`
+  (Tier B, the same `--confirm`).
+- `check-environment [--quick|--full]`, also `dev/scripts/check-environment`: `oasis --project <checkout> doctor
+  --environment [--quick|--full]`, the same checks, lines and exit codes; delete the wrapper from `dev/scripts/`.
+  The `oasis_check_environment` tool keeps its name and runs it.
+
 ## Documentation
 
 | Documentation | Purpose |
@@ -285,7 +298,7 @@ from an earlier version runs:
 | [Setting up a new workspace](docs/new-workspace.md) | From a clone to `doctor` and a database with `oasis setup`; where each value lives, an example tree, the steps by hand |
 | [Setting up a checkout with oasis setup](docs/setup.md) | `oasis setup`: the plan, then `--apply` creates only what is missing |
 | [New project setup](docs/project-setup.md) | Workspace file, entry point and optional project wrappers |
-| [Checking the environment](docs/checking-environment.md) | `doctor`, `doctor --environment` (`check-environment`, a deprecated alias), `lock.sha256` and the installed packages (a drifted adopted environment is a WARN) |
+| [Checking the environment](docs/checking-environment.md) | `doctor`, `doctor --environment`, `lock.sha256` and the installed packages (a drifted adopted environment is a WARN) |
 | [Workspace file](docs/workspace-file.md) | One `oasis-workspace.toml` for every checkout |
 | [Path-free odoo.conf](docs/path-free-odoo-conf.md) | What oasis passes on the Odoo command line |
 | [Checkouts and worktrees](docs/checkouts-and-worktrees.md) | Checkout identity, databases per checkout, `worktree-init` |

@@ -25,12 +25,12 @@ class PolicyTableTests(unittest.TestCase):
     def test_tiers_follow_s1(self):
         table = tiers()
         for operation in ('setup', 'setup --apply', 'bootstrap', 'start', 'stop', 'restart',
-                          'setup-postgres', 'start-database',
-                          'install-module', 'update-module', 'doctor', 'check-environment', 'gc', 'gc --apply',
+                          'setup-postgres',
+                          'install-module', 'update-module', 'doctor', 'doctor --environment', 'gc', 'gc --apply',
                           'test-module', 'verify-module', 'worktree-init --dry-run'):
             self.assertEqual(table[operation], 'A', operation)
         for operation in ('worktree-init', 'drop-database', 'gc --apply --trash',
-                          'recreate-postgres-volume', 'recreate-database-volume', 'create a branch'):
+                          'recreate-postgres-volume', 'create a branch'):
             self.assertEqual(table[operation], 'B', operation)
         self.assertEqual(table['type a password'], 'C')
 
@@ -55,28 +55,21 @@ class PolicyTableTests(unittest.TestCase):
         # v0.20.0 S12: init-dev-database is gone, no alias.
         self.assertEqual([operation for operation in table if operation.split()[0] == 'init-dev-database'], [])
 
-    def test_a_deprecated_alias_has_the_tier_of_its_target(self):
-        # v0.16.0 S5: check-environment runs doctor --environment; both keep a row of the same tier, and the
-        # alias's reason says what it is.
-        # v0.20.0 S13: start-database runs setup-postgres and recreate-database-volume runs recreate-postgres-volume,
-        # with the same tier and the same --confirm.
-        self.assertEqual(policy.ALIASES, {'check-environment': 'doctor --environment', 'start-database': 'setup-postgres',
-                                          'recreate-database-volume': 'recreate-postgres-volume'})
-        rows = {row['operation']: row for row in policy.operations()}
-        for alias, target in policy.ALIASES.items():
-            self.assertEqual(rows[alias]['tier'], rows[target]['tier'], alias)
-            self.assertEqual(rows[alias]['kind'], rows[target]['kind'], alias)
-            self.assertEqual(rows[alias]['confirm'], rows[target]['confirm'], alias)
-            self.assertTrue(rows[alias]['reason'].startswith(f'deprecated alias of {target}; '), rows[alias])
+    def test_the_deprecated_aliases_have_no_row(self):
+        # v0.21.0 S7: check-environment, start-database and recreate-database-volume are gone; the commands they
+        # named keep their rows, tiers and --confirm.
+        result = subprocess.run([sys.executable, '-B', str(ROOT / 'tools/policy.py'), '--json'], text=True,
+                                capture_output=True)
+        self.assertEqual((result.returncode, result.stderr), (0, ''))
+        rows = {row['operation']: row for row in json.loads(result.stdout)['operations']}
+        for name in ('check-environment', 'start-database', 'recreate-database-volume'):
+            self.assertNotIn(name, rows)
+            self.assertNotIn(name, result.stdout)
+        self.assertNotIn('deprecated alias', result.stdout)
         self.assertEqual(rows['doctor --environment']['example'], 'oasis --project /p doctor --environment --quick')
         self.assertEqual((rows['recreate-postgres-volume']['tier'], rows['recreate-postgres-volume']['confirm']),
                          ('B', 'compose project'))
-        self.assertEqual(rows['setup-postgres']['tier'], 'A')
-        # The entry point lists the same aliases in its help.
-        tree = ast.parse((ROOT / 'oasis').read_text(encoding='utf-8'))
-        [listed] = [ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
-                    and [target.id for target in node.targets if isinstance(target, ast.Name)] == ['DEPRECATED_ALIASES']]
-        self.assertEqual(listed, policy.ALIASES)
+        self.assertEqual((rows['setup-postgres']['tier'], rows['setup-postgres']['confirm']), ('A', None))
 
     def test_every_row_is_complete_and_unique(self):
         rows = policy.operations()

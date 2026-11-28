@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The environment checks (v0.16.0 S5): `doctor --environment [--quick|--full]` runs this file with bash,
-# and tools/check-environment, its deprecated alias, sources it, so both print the same lines and exit
-# codes; bootstrap --apply ends with `check-environment --full`. Its helpers sit next to it: $(dirname "$0") is the tools directory either way.
+# The environment checks (v0.16.0 S5): `doctor --environment [--quick|--full]` runs this file with bash;
+# bootstrap --apply ends with `doctor --environment --full`. Its helpers sit next to it: $(dirname "$0") is the
+# tools directory.
 set -Eeuo pipefail
 source "$(dirname "$0")/common.sh"
 mode=${1:---quick}

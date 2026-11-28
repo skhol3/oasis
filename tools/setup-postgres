@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Starts this checkout's database service, its PostgreSQL (v0.16.0 S1, S6; named start-database before v0.20.0 S13,
-# which keeps that name as a deprecated alias: tools/start-database): `docker compose up -d --wait` of
+# Starts this checkout's database service, its PostgreSQL (v0.16.0 S1, S6; v0.20.0 S13 renamed it from start-database,
+# whose alias v0.21.0 S7 removed): `docker compose up -d --wait` of
 # [tooling].db_service with the compose file and the env file of the checkout's series, under the
 # cross-checkout lock, exactly as every database command starts it (common.sh wait_for_database), and
 # prints one line. Tier A in the agent policy (tools/policy.py): an agent runs it alone; `stop --database`

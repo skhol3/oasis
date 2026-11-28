@@ -35,10 +35,6 @@ run only with `--confirm` naming exactly what they change:
 | `recreate-postgres-volume` | the compose project (the top-level `name:` of the compose file, `compose_project=<name>` in the plan); see [The database account](setup.md#the-database-account) |
 | `create-database [--with-demo] [--lang <code>] [--country <code>] <module> <name>` | the database name |
 
-`recreate-database-volume`, the deprecated alias of `recreate-postgres-volume` (v0.20.0), takes the same
-`--confirm` and is Tier B too; `start-database`, the deprecated alias of `setup-postgres`, stays Tier A. Both
-keep working and print one stderr line naming the new name; what oasis prints names the new names only.
-
 Without it, or with another value, the command changes nothing, exits 2 and names the exact
 command to run, for example:
 
@@ -86,7 +82,6 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `stop` | A | stops this checkout's Odoo server; start runs it again |  |
 | `status` | A | reads and reports; changes nothing |  |
 | `setup-postgres` | A | starts the database service (PostgreSQL) every checkout shares, as every database command does; names no env file |  |
-| `start-database` | A | deprecated alias of setup-postgres; starts the database service every checkout shares, names no env file |  |
 | `stop --database` | B | stops the database service every checkout shares, ending the sessions of a server on it |  |
 | `install-module` | A | installs a module in an existing managed database; it never creates one (create-database does) |  |
 | `update-module` | A | updates a module in a managed database |  |
@@ -103,7 +98,6 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `audit-dependencies` | A | reads and reports; changes nothing |  |
 | `doctor` | A | reads and reports; changes nothing |  |
 | `doctor --environment` | A | checks the environment against its locks; reads and reports, changes nothing |  |
-| `check-environment` | A | deprecated alias of doctor --environment; reads and reports, changes nothing |  |
 | `policy` | A | prints this policy table; changes nothing |  |
 | `gc` | A | lists leftover disposable test databases; changes nothing |  |
 | `gc --apply` | A | drops disposable test databases no live run holds; rebuildable |  |
@@ -111,7 +105,6 @@ while another checkout's server runs). It takes no `--confirm`: the Gentle Shell
 | `gc --apply --trash` | B | drops the expired trash entries for good | project root |
 | `drop-database` | B | takes a database (and its filestore) out of use; only trash restore brings it back | database name |
 | `recreate-postgres-volume` | B | runs docker compose down -v for the compose project (-p), which removes its containers and networks, every named volume of its compose file and every anonymous volume of its containers (every database of its PostgreSQL), then starts the service again | compose project |
-| `recreate-database-volume` | B | deprecated alias of recreate-postgres-volume; deletes every database of the PostgreSQL volume of the compose project, then starts the service again | compose project |
 | `trash` | A | lists the trash; trash restore brings an entry back |  |
 | `worktree-init --dry-run` | A | prints the worktree plan; changes nothing |  |
 | `worktree-init` | B | adds a git worktree and, when it does not exist, a new branch | worktree path |

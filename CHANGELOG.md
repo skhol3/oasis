@@ -29,6 +29,12 @@ names) may still change in a minor release; every such change is listed here und
   and `recorded` take the requirements directory only.
 - `oasis_test_summary` no longer reads the runs before 0.8.0 under `<logs>/odoo19/`.
 - `create-database` no longer prints a WARN line for a `<database>.logins` of a version before 0.20.0.
+- Contract change: the deprecated aliases `start-database` (run `setup-postgres`), `recreate-database-volume` (run
+  `recreate-postgres-volume`, with the same `--confirm <compose project>`) and `check-environment [--quick|--full]`
+  (run `doctor --environment [--quick|--full]`): their tool scripts, the `dev/scripts/check-environment` project
+  wrapper, the entry point's command list and its *Deprecated aliases* help line, and their rows of the policy
+  table and of the bash guard. Each old name exits 2 (`Unsupported oasis command: <name>`), like any unknown
+  command. `bootstrap --apply` runs its trailing `doctor --environment --full` through `tools/doctor`.
 
 ## [0.20.0] - 2026-11-27
 

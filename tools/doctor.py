@@ -525,8 +525,6 @@ adopted one (setup --environment, or any other): its fix line names oasis --proj
 bootstrap --apply, the one command that changes it. bootstrap --apply ends with these --full checks.
 Prints PASS|WARN|FAIL|SKIP <check>=<value> per check, then environment_mode=<quick|full> and
 environment_failures=<n>; exit 1 when n > 0, 2 when the environment's Python is not the declared one.
-check-environment [--quick|--full] is a deprecated alias of doctor --environment: it keeps working,
-with the same lines and exit codes.
 '''
 
 
@@ -581,9 +579,8 @@ def main(arguments: list[str]) -> int:
         print(usage() + '\n' + HELP, end='')
         return 0
     if arguments[:1] == ['--environment'] and (arguments[1:] == [] or arguments[1:] in (['--quick'], ['--full'])):
-        # The environment checks (v0.16.0 S5), which check-environment, their deprecated alias, runs too: the
-        # same file with the same mode, so the same lines and exit codes. The entry point refuses it where it
-        # refuses check-environment (no workspace file).
+        # The environment checks (v0.16.0 S5). The entry point refuses them where the checkout has no
+        # workspace file, where doctor alone still runs.
         checks = Path(__file__).with_name('environment_checks.sh')
         os.execv('/bin/bash', ['bash', str(checks), *arguments[1:]])
     if arguments:

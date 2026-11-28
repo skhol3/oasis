@@ -9,7 +9,7 @@ without usable metadata (no name or version, or undecodable) is left out, never 
 An environment oasis created (bootstrap --apply or setup --apply ran `uv venv`) carries the mark
 `<environment>/.oasis-created`; any other environment is adopted. A drift from the locks is FAIL for the first
 and `WARN locked_environment=drifted` with the fix `oasis --project <checkout> bootstrap --apply` for an adopted
-one, in `doctor --environment --full`, `check-environment --full` and bootstrap's final checks, never counted
+one, in `doctor --environment --full` and bootstrap's final checks, never counted
 as a failure; no check writes the environment.
 """
 import oasis_test_env  # noqa: F401  first: XDG_CONFIG_HOME is scratch (tests/oasis_test_env.py)
@@ -203,7 +203,7 @@ class AdoptedEnvironmentTests(unittest.TestCase):
 
     def test_an_adopted_environment_that_drifted_is_a_warning_and_is_left_as_it_is(self):
         before = snapshot(self.environment)
-        for args in (('doctor', '--environment', '--full'), ('check-environment', '--full')):
+        for args in (('doctor', '--environment', '--full'),):
             with self.subTest(args=args):
                 code, stdout, stderr = self.cli(*args)
                 self.assertEqual((code, stderr), (0, ''), stdout)
@@ -215,7 +215,7 @@ class AdoptedEnvironmentTests(unittest.TestCase):
 
     def test_an_environment_oasis_created_that_drifted_still_fails(self):
         (self.environment / MARK).write_text('created by oasis\n')
-        for args in (('doctor', '--environment', '--full'), ('check-environment', '--full')):
+        for args in (('doctor', '--environment', '--full'),):
             with self.subTest(args=args):
                 code, stdout, stderr = self.cli(*args)
                 self.assertEqual((code, stderr), (1, 'FAIL locked_environment=drifted\n'))
@@ -228,7 +228,7 @@ class AdoptedEnvironmentTests(unittest.TestCase):
         self.python.write_text(self.python.read_text().replace(REAL_COMPARISON, (
             "*/check_environment.py) echo 'Traceback (most recent call last):' >&2; "
             "echo 'TypeError: broken' >&2; exit 1 ;;")))
-        for args in (('doctor', '--environment', '--full'), ('check-environment', '--full')):
+        for args in (('doctor', '--environment', '--full'),):
             with self.subTest(args=args):
                 code, stdout, stderr = self.cli(*args)
                 self.assertEqual((code, stderr), (1, 'Traceback (most recent call last):\nTypeError: broken\n'

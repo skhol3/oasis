@@ -127,7 +127,7 @@ require_runtime
 # exit, with one stderr line saying the doctor did not complete. The doctor's environment result for the
 # environment just synced, its drift line on stderr (an environment oasis created that still drifts, a lock it
 # cannot read, a comparison that crashed), is bootstrap's own result: the doctor's exit, with nothing added.
-# The two doctor lines bootstrap reads, printed by tools/environment_checks.sh (check-environment sources it): the
+# The two doctor lines bootstrap reads, printed by tools/environment_checks.sh (tools/doctor runs it): the
 # drift line at :89 (`fail "locked_environment=drifted"`, on stderr through fail() at :34) and the summary line
 # at :127 (`environment_failures=<n>`, the last line on stdout). Changing either there changes bootstrap's exit.
 doctor_drift_line='FAIL locked_environment=drifted'
@@ -151,7 +151,7 @@ exec 3>&1 4>&2
 # The doctor's stdout goes through fd 6 to the stdout filter, its stderr to the stderr filter; the doctor gets
 # none of bootstrap's extra descriptors. pipefail gives the doctor's exit (both filters exit 0). The subshell's own
 # stderr is /dev/null: bash's job report for a doctor killed by a signal (`Done ...`) is not a doctor line.
-markers=$( { { "$(dirname "$0")/check-environment" --full 2>&1 1>&6 3>&- 4>&- 5>&- 6>&- \
+markers=$( { { "$(dirname "$0")/doctor" --environment --full 2>&1 1>&6 3>&- 4>&- 5>&- 6>&- \
   | doctor_lines stderr; } 6>&1 | doctor_lines stdout; } 5>&1 1>/dev/null 2>/dev/null ) || doctor_exit=$?
 exec 3>&- 4>&-
 markers=$'\n'"$markers"$'\n'

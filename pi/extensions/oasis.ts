@@ -644,7 +644,7 @@ export default function oasisLayer(pi: ExtensionAPI) {
       full: Type.Optional(Type.Boolean({ description: "Run full diagnostics", default: false })),
     }),
     async execute(_id, params, signal, _onUpdate, ctx) {
-      // v0.16.0 S5: doctor --environment, which check-environment (a deprecated alias) runs with the same output.
+      // v0.16.0 S5: doctor --environment (named check-environment before; v0.21.0 S7 removed that name).
       return plain(ctx.cwd, ["doctor", "--environment", params.full ? "--full" : "--quick"], signal);
     },
   });

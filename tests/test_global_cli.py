@@ -16,13 +16,16 @@ PROGRAMS = ('oasis',)
 
 
 # v0.20.0 S12: create-database is the one creator (init-dev-database is gone); S13: setup-postgres and
-# recreate-postgres-volume, with start-database and recreate-database-volume kept as deprecated aliases.
-PUBLIC = ('audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
+# recreate-postgres-volume. v0.21.0 S7: the deprecated aliases are gone.
+PUBLIC = ('audit-dependencies', 'bootstrap', 'create-database', 'doctor',
           'drop-database', 'gc', 'install-module', 'lint-module', 'list-databases',
           'menu', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy',
-          'recreate-database-volume', 'recreate-postgres-volume', 'restart', 'setup', 'setup-postgres', 'start',
-          'start-database', 'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info',
+          'recreate-postgres-volume', 'restart', 'setup', 'setup-postgres', 'start',
+          'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info',
           'worktree-init', 'xmlid-info')
+# v0.21.0 S7: the deprecated aliases (v0.16.0 S5, v0.20.0 S13) and the command each named.
+REMOVED_ALIASES = {'check-environment': 'doctor --environment', 'start-database': 'setup-postgres',
+                   'recreate-database-volume': 'recreate-postgres-volume'}
 
 
 class GlobalCliTests(unittest.TestCase):
@@ -81,12 +84,10 @@ class GlobalCliTests(unittest.TestCase):
         self.assertIn('--project', result.stdout)
         self.assertIn('/absolute/project', result.stdout)
         self.assertIn('doctor --environment --quick', result.stdout)
-        # v0.16.0 S5: the deprecated name keeps its place in the command list, and the help says it is one.
-        # v0.20.0 S13: start-database and recreate-database-volume join it, each naming its new name.
-        self.assertIn('Deprecated aliases (they keep working): check-environment runs doctor --environment, '
-                      'start-database runs setup-postgres, recreate-database-volume runs recreate-postgres-volume\n',
-                      result.stdout)
-        self.assertNotIn('init-dev-database', result.stdout)
+        # v0.21.0 S7: the deprecated aliases are gone from the command list and the help.
+        self.assertNotIn('Deprecated aliases', result.stdout)
+        for name in ('init-dev-database', *REMOVED_ALIASES):
+            self.assertNotIn(name, result.stdout)
         for name in PUBLIC:
             self.assertIn(name, result.stdout)
         [listed] = [line for line in result.stdout.splitlines() if line.startswith('Commands: ')]
@@ -312,6 +313,34 @@ class GlobalCliTests(unittest.TestCase):
         (self.bundle / 'tools/init-dev-database').write_text(self.fake)
         self.assert_no_calls(self.invoke('--project', str(self.project), 'init-dev-database', 'coffee', 'cc_dev_x'),
                              'ERROR: Unsupported oasis command: init-dev-database\n')
+
+    def test_the_deprecated_aliases_are_gone(self):
+        # v0.21.0 S7: each old name runs nothing, even with its tool on disk: refused like any unknown command
+        # (as migrate is), with or without arguments and a workspace file.
+        for name in REMOVED_ALIASES:
+            (self.bundle / 'tools' / name).write_text(self.fake)
+        plain = self.temp / 'plain'
+        plain.mkdir()
+        for name in REMOVED_ALIASES:
+            for args in ((), ('--full',), ('--confirm', 'cc-shop'), ('--help',)):
+                for project in (self.project, plain):
+                    with self.subTest(name=name, args=args, project=project.name):
+                        self.assert_no_calls(self.invoke('--project', str(project), name, *args),
+                                             f'ERROR: Unsupported oasis command: {name}\n')
+        # The bundle ships neither their tool scripts nor the check-environment project wrapper.
+        for name in REMOVED_ALIASES:
+            self.assertFalse((ROOT / 'tools' / name).exists(), name)
+        self.assertFalse((ROOT / 'project-wrappers/check-environment').exists())
+        # The commands they named still run.
+        for name, args in (('doctor', ('--environment', '--full')), ('setup-postgres', ()),
+                           ('recreate-postgres-volume', ('--confirm', 'cc-shop'))):
+            with self.subTest(command=name):
+                self.log.unlink(missing_ok=True)
+                result = self.invoke('--project', str(self.project), name, *args)
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (17, 'delegated\n', 'delegated error\n'))
+                self.assertEqual(json.loads(self.log.read_text()),
+                                 {'argv': list(args), 'root': str(self.project), 'stdin': '', 'tool': name})
 
     def test_rejects_unknown_internal_and_pathlike_before_dispatch(self):
         for name in ('unknown', 'config.py', 'common.sh', 'audit_dependencies.py',

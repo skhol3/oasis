@@ -12,11 +12,11 @@ from pathlib import Path
 import sys
 
 COMMANDS = (
-    'audit-dependencies', 'bootstrap', 'check-environment', 'create-database', 'doctor',
+    'audit-dependencies', 'bootstrap', 'create-database', 'doctor',
     'drop-database', 'gc', 'install-module', 'lint-module', 'list-databases',
     'menu', 'model-info', 'module-info', 'module-status', 'odoo-shell', 'policy',
-    'recreate-database-volume', 'recreate-postgres-volume', 'restart', 'setup', 'setup-postgres', 'start',
-    'start-database', 'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info',
+    'recreate-postgres-volume', 'restart', 'setup', 'setup-postgres', 'start',
+    'status', 'stop', 'test-module', 'trash', 'update-module', 'verify-module', 'view-info',
     'worktree-init', 'xmlid-info',
 )
 PROGRAM = 'oasis'
@@ -24,13 +24,9 @@ PROGRAM = 'oasis'
 
 # Commands that run in a checkout without a workspace file: setup creates it, policy reads no
 # configuration, and `status --json` reports that the workspace is missing (v0.16.0 S3). Every other
-# command is refused there (missing configuration).
+# command is refused there (missing configuration), and so is `doctor --environment`: the environment checks need
+# the configuration.
 UNCONFIGURED_COMMANDS = ('doctor', 'policy', 'setup')
-# Deprecated command names (v0.16.0 S5; v0.20.0 S13): each keeps working, with the same output and exit codes as the
-# command it stands for (tools/policy.py ALIASES gives both the same tier); start-database and
-# recreate-database-volume print one stderr line naming the new name first (their tool scripts).
-DEPRECATED_ALIASES = {'check-environment': 'doctor --environment', 'start-database': 'setup-postgres',
-                      'recreate-database-volume': 'recreate-postgres-volume'}
 
 
 def configuration_reader(tools: Path):
@@ -72,8 +68,6 @@ def main() -> int:
         description=('Run an installed oasis tool for a project: --project, else the checkout of the '
                      'current directory.'),
         epilog=('Commands: ' + ', '.join(COMMANDS) + '\n'
-                'Deprecated aliases (they keep working): '
-                + ', '.join(f'{alias} runs {target}' for alias, target in DEPRECATED_ALIASES.items()) + '\n'
                 'New checkout: the setup command prints the plan of its configuration; setup --apply '
                 'creates it\n'
                 f'Example: {prog} --project /absolute/project doctor --environment --quick\n'
@@ -93,9 +87,8 @@ def main() -> int:
         return 2
     # argparse consumes a separator after the command; tool arguments must stay byte-for-byte.
     arguments = sys.argv[sys.argv.index(args.command, 1) + 1:]
-    # `doctor --environment` runs the environment checks, which need the configuration: refused where
-    # check-environment, its deprecated alias (DEPRECATED_ALIASES), is.
-    gated = 'check-environment' if args.command == 'doctor' and arguments[:1] == ['--environment'] else args.command
+    unconfigured = (args.command in UNCONFIGURED_COMMANDS
+                    and not (args.command == 'doctor' and arguments[:1] == ['--environment']))
     tools = Path(__file__).resolve().parent / 'tools'
     if args.project is not None and (not args.project or not Path(args.project).is_absolute()
                                      or not Path(args.project).is_dir()):
@@ -109,7 +102,7 @@ def main() -> int:
         if root is None:
             print(f'ERROR: {error}', file=sys.stderr)
             return 2
-    if (gated not in UNCONFIGURED_COMMANDS and not (args.command == 'status' and args.arguments == ['--json'])
+    if (not unconfigured and not (args.command == 'status' and args.arguments == ['--json'])
             and (config is None or config.workspace_file(root) is None)):
         message = (config.missing_configuration(root) if config is not None
                    else f'Missing tooling configuration: no oasis-workspace.toml at or above {root}.')

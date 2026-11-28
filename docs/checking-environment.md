@@ -1,7 +1,7 @@
 # Checking the environment
 
-One command, `doctor`, for two questions (v0.16.0: `check-environment` became `doctor --environment`; see
-[check-environment, a deprecated alias](#check-environment-a-deprecated-alias)):
+One command, `doctor`, for two questions (v0.16.0: `check-environment` became `doctor --environment`; v0.21.0
+removed the old name, see [check-environment, removed](#check-environment-removed)):
 
 - `oasis --project /absolute/project doctor` asks *can oasis work here at all?* It checks the environment contract up front and is read-only: it never starts a service and never prints file contents; its one connection logs in to PostgreSQL with the account Odoo uses (`postgres_connection`, below). In Gentle Shell, `/oasis doctor` shows the same report.
 - `oasis --project /absolute/project doctor --environment [--quick|--full]` asks *does the project environment match its locks?* `--quick` (the default) checks the requirement files and their fingerprint, `lock.sha256`, the environment's Python, the virtualenv, uv, the Odoo version and `compose config`; it skips the installed packages, the dependency audit and PostgreSQL (`SKIP <check>=use_--full`). `--full` also checks the installed packages against the locks (`dev.txt`, [The installed packages](#the-installed-packages)) and their compatibility, audits dependencies and logs in to PostgreSQL with the account Odoo uses (`postgres_connection`: the environment's Python and psycopg2 connect to the `db_host` and `db_port` of `odoo.conf` with the `db_user` and `db_password` it sets, else those of the env file; see [The database account](setup.md#the-database-account)), so it needs the database service running. A stopped service is `FAIL postgres_service=not_running`, followed on stderr by `  fix: oasis --project <checkout> setup-postgres` (v0.16.0). It prints `PASS postgres_connection=ready` or `FAIL postgres_connection=<authentication_failed|not_running|no_driver|failed|unchecked>` (`unchecked`: the probe printed none of the other words, an error of the environment's Python), never a value or the server's message; `authentication_failed` is followed on stderr by the same `  fix:` line as doctor's. It ends with `environment_mode=<quick|full>` and `environment_failures=<n>` (exit 1 when `n > 0`). Both modes print `FAIL env_file=unsupported_value <names>` and doctor's `  fix:` line on stderr when the env file writes an account variable Odoo would get with compose interpolation or a double-quoted escape ([The database account](setup.md#the-database-account)); `--full` then does not try the connection. The dependency audit (`oasis audit-dependencies [module]`, also run by `bootstrap --apply`) runs with the environment's Python, 3.7 and later: it maps each imported top-level module to its distribution with `importlib.metadata.packages_distributions` from Python 3.10, and on older Pythons (Odoo 15) from the installed distributions' `top_level.txt`, else their file lists, with the same output.
@@ -24,7 +24,7 @@ Move /home/you/odoo/19.0/environments/acme-next away and run oasis bootstrap --a
 - A failure of its own work: a refusal (exit 2), a failed compile of the locks (exit 2), `uv venv` or `uv pip sync` failing (their exit code). It stops there and runs no doctor.
 - The trailing doctor's `FAIL locked_environment=drifted` (stderr) for the environment it just synced: the sync did not produce the locked environment ([The installed packages](#the-installed-packages): an environment oasis created that still drifts, a lock that cannot be read, a comparison that crashed). It exits with the doctor's code (1) and prints nothing after the doctor's lines, also when other checks failed too.
 
-- A trailing doctor that did not complete: it did not run (exit 126 or 127, a missing or not executable `check-environment`) or died (a Python traceback, a signal, exit 128+n), so it printed no `environment_failures=<n>` summary line, or it exited with a code other than 0 or 1. Its lines are printed line by line, its exit code is bootstrap's, and one line on stderr says so:
+- A trailing doctor that did not complete: it did not run (exit 126 or 127, a missing or not executable `tools/doctor`) or died (a Python traceback, a signal, exit 128+n), so it printed no `environment_failures=<n>` summary line, or it exited with a code other than 0 or 1. Its lines are printed line by line, its exit code is bootstrap's, and one line on stderr says so:
 
   ```text
   doctor=incomplete exit=127: the trailing doctor --environment --full did not complete (no environment_failures= summary line); the sync succeeded; run oasis --project /home/you/odoo/19.0/projects/acme doctor --environment --full
@@ -86,7 +86,7 @@ Without it, the compile commands, `lock.sha256` and every message are exactly as
 
 ## The installed packages
 
-`doctor --environment --full` (and `check-environment --full`, and the end of `bootstrap --apply`) compares
+`doctor --environment --full` (and the end of `bootstrap --apply`) compares
 every pin of `dev.txt` with the distributions installed in the environment, with the environment's Python
 (3.8 and later). Names are normalized on both sides as [PEP 503](https://peps.python.org/pep-0503/) does
 (v0.17.0): lowercase, and runs of `-`, `_` and `.` become `-`, so `zope.event-5.0.dist-info`, as pip
@@ -113,19 +113,17 @@ An environment oasis created before 0.17.0 has no mark and is reported as adopte
 again, create the mark yourself (`touch <environment>/.oasis-created`), or move the environment away and
 run `bootstrap --apply`, which creates and marks it.
 
-## check-environment, a deprecated alias
+## check-environment, removed
 
-`check-environment [--quick|--full]` is the name `doctor --environment` had before v0.16.0. It keeps
-working and stays deprecated: through either entry point, from a project wrapper
-(`dev/scripts/check-environment`) or as the tool script, it runs the same checks as
-`doctor --environment` with the same mode and prints the same lines, with the same exit codes, as
-before; only its usage line differs (`Usage: <program> [--quick|--full]`, as before, against
-`Usage: <program> doctor [--environment [--quick|--full]]`). Both are refused where the other is: in a
-checkout without a workspace file, where `doctor` alone still runs (one
-`FAIL configuration`). `bootstrap --apply` still ends with these checks in `--full` mode (since 0.20.0 only their
-`FAIL locked_environment=drifted` makes it exit 1: [The exit code of bootstrap](#the-exit-code-of-bootstrap)). Use
-`doctor --environment` in new scripts and instructions; the agent tool `oasis_check_environment`
-runs it. The policy table lists both, Tier A ([Agent contract](agent-contract.md)).
+`check-environment [--quick|--full]` is the name `doctor --environment` had before v0.16.0; it was a deprecated
+alias until v0.21.0, which removed it: `oasis check-environment` exits 2 with `ERROR: Unsupported oasis command:
+check-environment`, like any unknown command, and neither the tool script nor the project wrapper
+`dev/scripts/check-environment` ships any more. Run `oasis --project <checkout> doctor --environment
+[--quick|--full]`: the same checks, lines and exit codes. It is refused in a checkout without a workspace file,
+where `doctor` alone still runs (one `FAIL configuration`). `bootstrap --apply` ends with these checks in `--full`
+mode (since 0.20.0 only their `FAIL locked_environment=drifted` makes it exit 1: [The exit code of
+bootstrap](#the-exit-code-of-bootstrap)). The agent tool `oasis_check_environment` keeps its name and runs
+`doctor --environment` ([Agent contract](agent-contract.md): Tier A).
 
 ## The doctor report
 

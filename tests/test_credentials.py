@@ -517,10 +517,10 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, 'no_driver\n', ''))
 
 
-class CheckEnvironmentConnectionTests(unittest.TestCase):
-    """check-environment --full connects with Odoo's account (tools/db_account.py probe), not psql."""
+class EnvironmentConnectionTests(unittest.TestCase):
+    """doctor --environment --full connects with Odoo's account (tools/db_account.py probe), not psql."""
     setUp = lifecycle.LifecycleTests.setUp
-    invoke = lifecycle.LifecycleTests.invoke
+    doctor_environment = lifecycle.LifecycleTests.doctor_environment
 
     def prepare(self):
         import test_environment
@@ -534,7 +534,7 @@ class CheckEnvironmentConnectionTests(unittest.TestCase):
     def test_an_authentication_failure_names_the_volume_recreate(self):
         self.prepare()
         self.env['FAKE_CONNECTION'] = 'authentication_failed'
-        result = self.invoke('check-environment', '--full')
+        result = self.doctor_environment('--full')
         self.assertEqual(result.returncode, 1)
         self.assertIn('PASS postgres_service=running\n', result.stdout)
         command = shlex.join(['oasis', '--project', str(self.root), 'recreate-postgres-volume', '--confirm', 'cc-shop'])
@@ -545,7 +545,7 @@ class CheckEnvironmentConnectionTests(unittest.TestCase):
             '(Tier B: it deletes every database of the service)\n'), result.stderr)
         self.assertNotIn('exec psql', self.commands.read_text())
         self.env['FAKE_CONNECTION'] = 'ready'
-        result = self.invoke('check-environment', '--full')
+        result = self.doctor_environment('--full')
         self.assertIn('PASS postgres_connection=ready\n', result.stdout)
 
 
@@ -558,7 +558,7 @@ class CheckEnvironmentConnectionTests(unittest.TestCase):
                                ('db_port = 6001\n', 'no db_host, db_port 6001')):
             with self.subTest(options=options):
                 conf.write_text(lifecycle.conf_text(options))
-                result = self.invoke('check-environment', '--full')
+                result = self.doctor_environment('--full')
                 self.assertEqual(result.returncode, 1)
                 self.assertTrue(result.stderr.endswith(
                     'FAIL postgres_connection=authentication_failed\n'
@@ -568,7 +568,7 @@ class CheckEnvironmentConnectionTests(unittest.TestCase):
                     'again\n'), result.stderr)
         # localhost names the published endpoint too.
         conf.write_text(lifecycle.conf_text('db_host = localhost\ndb_port = 6001\n'))
-        self.assertIn('recreate-postgres-volume --confirm cc-shop', self.invoke('check-environment', '--full').stderr)
+        self.assertIn('recreate-postgres-volume --confirm cc-shop', self.doctor_environment('--full').stderr)
 
     def test_each_word_of_the_probe_is_checked_and_an_unknown_one_is_unchecked(self):
         self.prepare()
@@ -579,7 +579,7 @@ class CheckEnvironmentConnectionTests(unittest.TestCase):
                              ('ready now', 'unchecked')):
             with self.subTest(answer=answer):
                 self.env['FAKE_CONNECTION'] = answer
-                result = self.invoke('check-environment', '--full')
+                result = self.doctor_environment('--full')
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(f'FAIL postgres_connection={word}\n', result.stderr)
                 self.assertNotIn('  fix:', result.stderr)
@@ -594,7 +594,7 @@ class CheckEnvironmentConnectionTests(unittest.TestCase):
                '(\\), so Odoo would get another credential\n')
         for mode in ('--quick', '--full'):
             with self.subTest(mode=mode):
-                result = self.invoke('check-environment', mode)
+                result = self.doctor_environment(mode)
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(fix, result.stderr)
                 self.assertNotIn(MARKER, result.stdout + result.stderr)
@@ -793,35 +793,6 @@ class RecreateVolumeTests(unittest.TestCase):
             f'ERROR: {self.root / "dev/compose.yml"} has no top-level name: add one (oasis doctor checks it), then run '
             'recreate-postgres-volume again.\n')))
         self.assertEqual(self.calls(), [])
-
-
-class RecreateVolumeAliasTests(unittest.TestCase):
-    """v0.20.0 S13: recreate-database-volume, the deprecated alias of recreate-postgres-volume, runs it exactly (Tier B,
-    --confirm <compose project>), with one deprecation line first on stderr."""
-    DEPRECATION = ('WARNING: recreate-database-volume is a deprecated alias of recreate-postgres-volume: run '
-                   'recreate-postgres-volume instead.\n')
-    setUp_fixture = lifecycle.LifecycleTests.setUp
-    setUp = RecreateVolumeTests.setUp
-    cli = RecreateVolumeTests.cli
-    calls = RecreateVolumeTests.calls
-
-    def test_the_alias_runs_the_same_and_prints_the_deprecation_line(self):
-        for args in ((), ('--confirm', 'other'), ('--confirm', 'cc-shop'), ('--help',), ('extra',)):
-            with self.subTest(args=args):
-                self.commands.unlink(missing_ok=True)
-                new = self.cli(*args)
-                new_calls = self.calls()
-                self.commands.unlink(missing_ok=True)
-                old = self.cli(*args, command='recreate-database-volume')
-                self.assertEqual((old.returncode, old.stdout, old.stderr),
-                                 (new.returncode, new.stdout, self.DEPRECATION + new.stderr))
-                self.assertEqual(self.calls(), new_calls)
-        # Without --confirm nothing changes and the command it names is the new one.
-        old = self.cli(command='recreate-database-volume')
-        self.assertEqual(old.returncode, 2)
-        self.assertIn(shlex.join(['oasis', '--project', str(self.root), 'recreate-postgres-volume', '--confirm', 'cc-shop']),
-                      old.stderr)
-        self.assertNotIn('recreate-database-volume', old.stdout + old.stderr.removeprefix(self.DEPRECATION))
 
 
 if __name__ == '__main__':

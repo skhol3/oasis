@@ -23,7 +23,7 @@ the same code here (compile), which then writes lock.sha256.
       compile stops before lock.sha256 (exit 2), naming the input and the command to run again.
   locks.py recorded <requirements dir>
       Exit 0 when overrides.txt does not exist or lock.sha256 records it, else 1: bootstrap and
-      check-environment add it to `sha256sum --check`, which cannot see a file lock.sha256 omits.
+      doctor --environment add it to `sha256sum --check`, which cannot see a file lock.sha256 omits.
   locks.py uv-env
       Prints `export UV_LEGACY_TAR_BACKEND=1` when the uv on PATH needs it (below), else nothing:
       bootstrap evaluates it before its uv commands.
